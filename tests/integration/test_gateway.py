@@ -1,27 +1,17 @@
 """Integration tests for Gateway assembly and HTTP endpoints."""
 
-import json
-
 import pytest
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig, ServerConfig
-from tests.conftest import PETSTORE_SPEC_RAW
 
 
 @pytest.fixture
-def petstore_spec_file(tmp_path):
-    spec_path = tmp_path / 'petstore.json'
-    spec_path.write_text(json.dumps(PETSTORE_SPEC_RAW))
-    return str(spec_path)
-
-
-@pytest.fixture
-def gateway(petstore_spec_file):
+def gateway(petstore_json_path):
     config = GatewayConfig(
         servers=[
-            ServerConfig(name='petstore', spec=petstore_spec_file),
+            ServerConfig(name='petstore', spec=str(petstore_json_path)),
         ],
     )
     return Gateway.from_config(config)
@@ -52,11 +42,11 @@ class TestGatewayAssembly:
     def test_no_auth_provider_for_no_auth(self, gateway):
         assert gateway._servers[0].auth_provider is None
 
-    def test_multiple_servers(self, petstore_spec_file):
+    def test_multiple_servers(self, petstore_json_path):
         config = GatewayConfig(
             servers=[
-                ServerConfig(name='pets', spec=petstore_spec_file),
-                ServerConfig(name='pets2', spec=petstore_spec_file, path_prefix='other'),
+                ServerConfig(name='pets', spec=str(petstore_json_path)),
+                ServerConfig(name='pets2', spec=str(petstore_json_path), path_prefix='other'),
             ],
         )
         gw = Gateway.from_config(config)
@@ -65,12 +55,12 @@ class TestGatewayAssembly:
         assert '/pets' in paths
         assert '/other' in paths
 
-    def test_empty_operations_raises(self, petstore_spec_file):
+    def test_empty_operations_raises(self, petstore_json_path):
         config = GatewayConfig(
             servers=[
                 ServerConfig(
                     name='test',
-                    spec=petstore_spec_file,
+                    spec=str(petstore_json_path),
                     policy={'allow': ['NONEXISTENT_OPERATION']},
                 ),
             ],

@@ -1,30 +1,32 @@
 """Tests for OpenAPI spec parsing and schema expansion."""
 
+import pytest
+
 from openapi_mcp_gateway.openapi import (
     _deep_merge,
     _expand_schema,
     _resolve_ref,
+    load_spec,
     parse_spec,
 )
-from tests.conftest import PETSTORE_SPEC_RAW
 
 
 class TestResolveRef:
-    def test_simple_ref(self):
-        result = _resolve_ref(PETSTORE_SPEC_RAW, '#/components/schemas/Pet')
+    def test_simple_ref(self, petstore_spec_raw):
+        result = _resolve_ref(petstore_spec_raw, '#/components/schemas/Pet')
         assert result['type'] == 'object'
         assert 'name' in result['properties']
 
-    def test_nested_ref(self):
-        result = _resolve_ref(PETSTORE_SPEC_RAW, '#/components/parameters/LimitParam')
+    def test_nested_ref(self, petstore_spec_raw):
+        result = _resolve_ref(petstore_spec_raw, '#/components/parameters/LimitParam')
         assert result['name'] == 'limit'
 
-    def test_bad_ref_returns_empty(self):
-        result = _resolve_ref(PETSTORE_SPEC_RAW, '#/components/schemas/DoesNotExist')
+    def test_bad_ref_returns_empty(self, petstore_spec_raw):
+        result = _resolve_ref(petstore_spec_raw, '#/components/schemas/DoesNotExist')
         assert result == {}
 
-    def test_bad_path_returns_empty(self):
-        result = _resolve_ref(PETSTORE_SPEC_RAW, '#/foo/bar/baz')
+    def test_bad_path_returns_empty(self, petstore_spec_raw):
+        result = _resolve_ref(petstore_spec_raw, '#/foo/bar/baz')
         assert result == {}
 
 
@@ -53,69 +55,70 @@ class TestDeepMerge:
 
 
 class TestExpandSchema:
-    def test_direct_ref(self):
+    def test_direct_ref(self, petstore_spec_raw):
         schema = {'$ref': '#/components/schemas/Pet'}
-        result = _expand_schema(PETSTORE_SPEC_RAW, schema)
+        result = _expand_schema(petstore_spec_raw, schema)
         assert result['type'] == 'object'
         assert 'name' in result['properties']
 
-    def test_allof_merge(self):
+    def test_allof_merge(self, petstore_spec_raw):
         schema = {'$ref': '#/components/schemas/PetWithOwner'}
-        result = _expand_schema(PETSTORE_SPEC_RAW, schema)
+        result = _expand_schema(petstore_spec_raw, schema)
         assert 'id' in result['properties']
         assert 'name' in result['properties']
         assert 'owner' in result['properties']
         assert set(result['required']) == {'name', 'owner'}
 
-    def test_oneof(self):
+    def test_oneof(self, petstore_spec_raw):
         schema = {'$ref': '#/components/schemas/PetOrError'}
-        result = _expand_schema(PETSTORE_SPEC_RAW, schema)
+        result = _expand_schema(petstore_spec_raw, schema)
         assert len(result['oneOf']) == 2
         assert result['oneOf'][0]['properties']['name']['type'] == 'string'
         assert result['oneOf'][1]['properties']['code']['type'] == 'integer'
 
-    def test_anyof(self):
+    def test_anyof(self, petstore_spec_raw):
         schema = {'$ref': '#/components/schemas/MaybePet'}
-        result = _expand_schema(PETSTORE_SPEC_RAW, schema)
+        result = _expand_schema(petstore_spec_raw, schema)
         assert len(result['anyOf']) == 2
         assert result['anyOf'][0]['properties']['name']['type'] == 'string'
         assert result['anyOf'][1] == {'type': 'null'}
 
-    def test_nested_object_properties(self):
+    def test_nested_object_properties(self, petstore_spec_raw):
         schema = {'$ref': '#/components/schemas/NestedOwner'}
-        result = _expand_schema(PETSTORE_SPEC_RAW, schema)
+        result = _expand_schema(petstore_spec_raw, schema)
         # pet property should be expanded
         assert result['properties']['pet']['type'] == 'object'
         assert 'name' in result['properties']['pet']['properties']
 
-    def test_nested_array_items(self):
+    def test_nested_array_items(self, petstore_spec_raw):
         schema = {'$ref': '#/components/schemas/NestedOwner'}
-        result = _expand_schema(PETSTORE_SPEC_RAW, schema)
+        result = _expand_schema(petstore_spec_raw, schema)
         # pets array items should be expanded
         assert result['properties']['pets']['type'] == 'array'
         assert result['properties']['pets']['items']['type'] == 'object'
         assert 'name' in result['properties']['pets']['items']['properties']
 
-    def test_plain_schema_unchanged(self):
+    def test_plain_schema_unchanged(self, petstore_spec_raw):
         schema = {'type': 'string', 'description': 'A name'}
-        result = _expand_schema(PETSTORE_SPEC_RAW, schema)
+        result = _expand_schema(petstore_spec_raw, schema)
         assert result == schema
 
-    def test_inline_allof(self):
+    def test_inline_allof(self, petstore_spec_raw):
         schema = {
             'allOf': [
                 {'$ref': '#/components/schemas/Pet'},
                 {'type': 'object', 'properties': {'color': {'type': 'string'}}},
             ],
         }
-        result = _expand_schema(PETSTORE_SPEC_RAW, schema)
+        result = _expand_schema(petstore_spec_raw, schema)
         assert 'name' in result['properties']
         assert 'color' in result['properties']
 
 
 class TestParseSpec:
-    def setup_method(self):
-        self.spec = parse_spec(PETSTORE_SPEC_RAW)
+    @pytest.fixture(autouse=True)
+    def _setup(self, petstore_spec_raw):
+        self.spec = parse_spec(petstore_spec_raw)
 
     def test_metadata(self):
         assert self.spec.title == 'Petstore'
@@ -187,3 +190,22 @@ class TestParseSpec:
 
     def test_security_schemes_parsed(self):
         assert 'oauth2' in self.spec.security_schemes
+
+
+class TestLoadSpec:
+    def test_load_json(self, petstore_json_path):
+        raw = load_spec(petstore_json_path)
+        assert raw['info']['title'] == 'Petstore'
+
+    def test_load_yaml(self, petstore_yml_path):
+        raw = load_spec(petstore_yml_path)
+        assert raw['info']['title'] == 'Petstore'
+
+    def test_json_and_yaml_equivalent(self, petstore_json_path, petstore_yml_path):
+        json_raw = load_spec(petstore_json_path)
+        yaml_raw = load_spec(petstore_yml_path)
+        assert json_raw == yaml_raw
+
+    def test_file_not_found(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            load_spec(tmp_path / 'nonexistent.json')
