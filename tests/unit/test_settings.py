@@ -49,8 +49,16 @@ class TestAuthConfig:
 
     def test_resolve_bearer_from_env(self, monkeypatch):
         monkeypatch.setenv('TEST_TOKEN', 'env-token')
-        auth = AuthConfig(type='bearer', token_env='TEST_TOKEN')
+        auth = AuthConfig(type='bearer', token='${TEST_TOKEN}')
         assert auth.resolve_header() == 'Bearer env-token'
+
+    def test_resolve_env_var_with_default(self):
+        auth = AuthConfig(type='bearer', token='${NONEXISTENT_VAR:-fallback-token}')
+        assert auth.resolve_header() == 'Bearer fallback-token'
+
+    def test_resolve_env_var_unset_no_default(self):
+        auth = AuthConfig(type='bearer', token='${NONEXISTENT_VAR}')
+        assert auth.resolve_header() is None
 
     def test_resolve_no_token(self):
         auth = AuthConfig(type='bearer')
@@ -62,7 +70,7 @@ class TestAuthConfig:
 
     def test_resolve_client_id(self, monkeypatch):
         monkeypatch.setenv('CID', 'client-123')
-        auth = AuthConfig(type='oauth2', client_id_env='CID')
+        auth = AuthConfig(type='oauth2', client_id='${CID}')
         assert auth.resolve_client_id() == 'client-123'
 
     def test_resolve_client_id_direct(self):
@@ -71,14 +79,14 @@ class TestAuthConfig:
 
     def test_resolve_client_secret(self, monkeypatch):
         monkeypatch.setenv('SEC', 'secret-456')
-        auth = AuthConfig(type='oauth2', client_secret_env='SEC')
+        auth = AuthConfig(type='oauth2', client_secret='${SEC}')
         assert auth.resolve_client_secret() == 'secret-456'
 
 
 class TestGatewayConfig:
     def test_default_url(self):
         config = GatewayConfig()
-        assert config.url == 'http://0.0.0.0:8000'
+        assert config.url == 'http://localhost:8000'
 
     def test_custom_url(self):
         config = GatewayConfig(url='https://mcp.example.com')

@@ -4,7 +4,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.gateway import Gateway
-from openapi_mcp_gateway.settings import GatewayConfig, ServerConfig
+from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, ServerConfig
 
 
 @pytest.fixture
@@ -81,28 +81,65 @@ class TestHealthEndpoint:
 
 
 class TestWellKnownEndpoints:
-    def test_oauth_authorization_server(self, client):
+    def test_no_auth_server_returns_404(self, client):
         response = client.get('/.well-known/oauth-authorization-server/petstore')
-        assert response.status_code == 200
-        data = response.json()
-        assert 'petstore' in data['issuer']
-        assert data['authorization_endpoint'].endswith('/authorize')
-        assert data['token_endpoint'].endswith('/token')
+        assert response.status_code == 404
 
-    def test_oauth_authorization_server_with_mcp(self, client):
-        response = client.get('/.well-known/oauth-authorization-server/petstore/mcp')
-        assert response.status_code == 200
-
-    def test_oauth_protected_resource(self, client):
+    def test_no_auth_protected_resource_returns_404(self, client):
         response = client.get('/.well-known/oauth-protected-resource/petstore')
-        assert response.status_code == 200
-        data = response.json()
-        assert data['resource'].endswith('/mcp')
+        assert response.status_code == 404
 
     def test_unknown_server_404(self, client):
         response = client.get('/.well-known/oauth-authorization-server/unknown')
         assert response.status_code == 404
 
-    def test_options_cors(self, client):
-        response = client.options('/.well-known/oauth-authorization-server/petstore')
+
+class TestWellKnownOAuth:
+    """Well-known endpoints for an OAuth-enabled server."""
+
+    @pytest.fixture
+    def oauth_client(self, petstore_json_path):
+        config = GatewayConfig(
+            url='https://mcp.example.com',
+            servers=[
+                ServerConfig(
+                    name='petstore',
+                    spec=str(petstore_json_path),
+                    auth=AuthConfig(
+                        type='oauth2',
+                        client_id='test-client-id',
+                        client_secret='test-client-secret',
+                        authorization_url='https://auth.example.com/authorize',
+                        token_url='https://auth.example.com/token',
+                        scopes=['read'],
+                    ),
+                ),
+            ],
+        )
+        gw = Gateway.from_config(config)
+        app = gw._build_app(transport='streamable-http')
+        return TestClient(app)
+
+    def test_authorization_server_metadata(self, oauth_client):
+        response = oauth_client.get('/.well-known/oauth-authorization-server/petstore')
+        assert response.status_code == 200
+        data = response.json()
+        assert 'petstore' in data['issuer']
+        assert data['authorization_endpoint'].endswith('/authorize')
+        assert data['token_endpoint'].endswith('/token')
+        assert 'S256' in data['code_challenge_methods_supported']
+
+    def test_authorization_server_with_mcp(self, oauth_client):
+        response = oauth_client.get('/.well-known/oauth-authorization-server/petstore/mcp')
+        assert response.status_code == 200
+
+    def test_protected_resource_metadata(self, oauth_client):
+        response = oauth_client.get('/.well-known/oauth-protected-resource/petstore')
+        assert response.status_code == 200
+        data = response.json()
+        assert data['resource'].endswith('/mcp')
+        assert len(data['authorization_servers']) == 1
+
+    def test_options_cors(self, oauth_client):
+        response = oauth_client.options('/.well-known/oauth-authorization-server/petstore')
         assert response.status_code == 200

@@ -2,32 +2,55 @@
 
 import os
 import pathlib
+import re
 import typing
 
 import pydantic
 import yaml
 
 
+def _resolve_env_var(value: str | None) -> str | None:
+    """Resolve ``${ENV_VAR}`` or ``${ENV_VAR:-default}`` in a string value.
+
+    If the entire string is a single ``${...}`` reference, returns the resolved
+    value (or None when the env var is unset and no default is given).
+    Otherwise returns the original string unchanged.
+    """
+    if value is None:
+        return None
+    m = re.fullmatch(r'\$\{(\w+)(?::-(.*))?\}', value)
+    if not m:
+        return value
+    env_value = os.environ.get(m.group(1))
+    if env_value is not None:
+        return env_value
+    if m.group(2) is not None:
+        return m.group(2)
+    return None
+
+
 class AuthConfig(pydantic.BaseModel):
-    """Authentication configuration for an upstream API."""
+    """Authentication configuration for an upstream API.
+
+    String fields (token, client_id, client_secret) support ``${ENV_VAR}``
+    and ``${ENV_VAR:-default}`` syntax for reading values from environment
+    variables at resolve time.
+    """
 
     type: typing.Literal['bearer', 'api_key', 'oauth2', 'none'] = 'none'
     token: str | None = None
-    token_env: str | None = None
     api_key_header: str = 'X-API-Key'
 
     # OAuth2 fields
     client_id: str | None = None
-    client_id_env: str | None = None
     client_secret: str | None = None
-    client_secret_env: str | None = None
+    authorization_url: str | None = None
+    token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
 
     def resolve_header(self) -> str | None:
         """Resolve the Authorization header value."""
-        token = self.token
-        if not token and self.token_env:
-            token = os.environ.get(self.token_env)
+        token = _resolve_env_var(self.token)
 
         if not token:
             return None
@@ -44,10 +67,10 @@ class AuthConfig(pydantic.BaseModel):
         return 'Authorization'
 
     def resolve_client_id(self) -> str | None:
-        return self.client_id or (os.environ.get(self.client_id_env) if self.client_id_env else None)
+        return _resolve_env_var(self.client_id)
 
     def resolve_client_secret(self) -> str | None:
-        return self.client_secret or (os.environ.get(self.client_secret_env) if self.client_secret_env else None)
+        return _resolve_env_var(self.client_secret)
 
 
 class CORSConfig(pydantic.BaseModel):
@@ -118,7 +141,8 @@ class GatewayConfig(pydantic.BaseModel):
     @pydantic.model_validator(mode='after')
     def _set_default_url(self) -> typing.Self:
         if not self.url:
-            self.url = f'http://{self.host}:{self.port}'
+            public_host = 'localhost' if self.host in ('0.0.0.0', '127.0.0.1') else self.host
+            self.url = f'http://{public_host}:{self.port}'
         return self
 
     @classmethod
@@ -136,12 +160,13 @@ class GatewayConfig(pydantic.BaseModel):
         spec: str,
         name: str = 'api',
         base_url: str | None = None,
-        transport: str = 'streamable-http',
+        auth: AuthConfig | None = None,
+        transport: typing.Literal['sse', 'streamable-http', 'stdio'] = 'streamable-http',
         host: str = '0.0.0.0',
         port: int = 8000,
     ) -> 'GatewayConfig':
         """Create a config for a single OpenAPI spec (CLI shorthand)."""
-        entry = ServerConfig(name=name, spec=spec, base_url=base_url)
+        entry = ServerConfig(name=name, spec=spec, base_url=base_url, auth=auth or AuthConfig())
         return cls(
             host=host,
             port=port,

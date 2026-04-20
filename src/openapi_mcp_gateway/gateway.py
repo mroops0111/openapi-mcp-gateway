@@ -7,15 +7,18 @@ import typing
 import pydantic
 import uvicorn
 from fastapi import FastAPI
+from mcp.server.auth.handlers.metadata import MetadataHandler, ProtectedResourceMetadataHandler
+from mcp.server.auth.routes import build_metadata, create_auth_routes, create_protected_resource_routes
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.shared.auth import ProtectedResourceMetadata
 from starlette.exceptions import HTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 
-from .auth.detector import detect_primary_oauth_flow
+from .auth.detector import DetectedOAuthFlow, detect_primary_oauth_flow
 from .auth.provider import GatewayOAuthProvider
 from .auth.resolver import AuthResolver, NullAuthResolver, OAuthAuthResolver, StaticAuthResolver
 from .generator import ToolGenerator
@@ -40,6 +43,7 @@ class _ServerBundle(typing.NamedTuple):
     mcp: FastMCP
     spec: OpenAPISpec
     auth_provider: GatewayOAuthProvider | None
+    auth_settings: AuthSettings | None = None
 
 
 class Gateway:
@@ -65,8 +69,6 @@ class Gateway:
             url=store_cfg.redis_url,
             prefix=store_cfg.key_prefix,
         )
-
-    # ── Public API ─────────────────────────────────────────────
 
     @classmethod
     def from_config(cls, config: GatewayConfig) -> 'Gateway':
@@ -126,8 +128,6 @@ class Gateway:
         for handle in self._servers:
             mcp_app = handle.mcp.sse_app() if transport == 'sse' else handle.mcp.streamable_http_app()
             app.mount(handle.mount_path, mcp_app)
-
-    # ── Internals ──────────────────────────────────────────────
 
     def _add_server_from_entry(self, entry: ServerConfig) -> None:
         raw = load_spec(entry.spec)
@@ -212,6 +212,7 @@ class Gateway:
                 mcp=mcp,
                 spec=spec,
                 auth_provider=auth_provider,
+                auth_settings=auth_settings,
             )
         )
 
@@ -225,37 +226,52 @@ class Gateway:
         if not client_id or not client_secret:
             raise ValueError(
                 f'Server "{entry.name}": OAuth2 requires client_id and client_secret. '
-                'Set them directly or via client_id_env / client_secret_env.'
+                'Set them directly or use ${ENV_VAR} syntax.'
             )
 
-        # Detect OAuth flow from spec
+        # Detect OAuth flow from spec, fall back to explicit config URLs
         detected = detect_primary_oauth_flow(spec)
-        if not detected:
-            raise ValueError(
-                f'Server "{entry.name}": auth type is oauth2 but no OAuth2 flow found in the OpenAPI spec\'s '
-                'securitySchemes. Add an oauth2 security scheme or use a different auth type.'
-            )
 
-        if not detected.authorization_url:
+        if detected and not detected.authorization_url:
             raise ValueError(
                 f'Server "{entry.name}": only authorization_code flow is supported for MCP OAuth. '
                 'The detected flow has no authorization_url.'
             )
 
+        if not detected:
+            # No securitySchemes in spec — require explicit URLs from config
+            if not entry.auth.authorization_url or not entry.auth.token_url:
+                raise ValueError(
+                    f'Server "{entry.name}": auth type is oauth2 but no OAuth2 flow found in the OpenAPI spec. '
+                    'Provide authorization_url and token_url in auth config, or add a securitySchemes '
+                    'section to the spec.'
+                )
+            detected = DetectedOAuthFlow(
+                flow_type='authorization_code',
+                authorization_url=entry.auth.authorization_url,
+                token_url=entry.auth.token_url,
+            )
+        else:
+            # Config URLs override spec-detected URLs if provided
+            if entry.auth.authorization_url:
+                detected.authorization_url = entry.auth.authorization_url
+            if entry.auth.token_url:
+                detected.token_url = entry.auth.token_url
+
         # Build callback URL
         gateway_url = self._config.url.rstrip('/')
         callback_url = f'{gateway_url}{entry.mount_path}/auth/callback'
 
-        scopes = entry.auth.scopes or list(detected.scopes.keys())
+        upstream_scopes = entry.auth.scopes or list(detected.scopes.keys())
 
         provider = GatewayOAuthProvider(
             store=self._store,
-            upstream_auth_url=detected.authorization_url,
+            upstream_auth_url=typing.cast(str, detected.authorization_url),
             upstream_token_url=detected.token_url,
             client_id=client_id,
             client_secret=client_secret,
             callback_url=callback_url,
-            scopes=scopes,
+            scopes=upstream_scopes,
             prefix=entry.name,
         )
 
@@ -266,10 +282,10 @@ class Gateway:
             revocation_options=RevocationOptions(enabled=True),
             client_registration_options=ClientRegistrationOptions(
                 enabled=True,
-                valid_scopes=scopes or ['api'],
-                default_scopes=scopes or ['api'],
+                valid_scopes=['api'],
+                default_scopes=['api'],
             ),
-            required_scopes=scopes or ['api'],
+            required_scopes=['api'],
         )
 
         resolver = OAuthAuthResolver(provider)
@@ -304,7 +320,45 @@ class Gateway:
             expose_headers=config.cors.expose_headers,
         )
 
-        # ── .well-known discovery endpoints (RFC 8414 / RFC 9728) ──
+        # Register OAuth routes for each provider with path prefix
+        for handle in self._servers:
+            if not handle.auth_provider or not handle.auth_settings:
+                continue
+
+            oauth_routes = create_auth_routes(
+                provider=handle.auth_provider,
+                issuer_url=handle.auth_settings.issuer_url,
+                service_documentation_url=handle.auth_settings.service_documentation_url,
+                client_registration_options=handle.auth_settings.client_registration_options,
+                revocation_options=handle.auth_settings.revocation_options,
+            )
+            for route in oauth_routes:
+                prefixed_path = f'{handle.mount_path.rstrip("/")}{route.path}'
+                app.router.add_route(
+                    path=prefixed_path,
+                    endpoint=route.endpoint,
+                    methods=route.methods,
+                    name=route.name,
+                )
+
+            # Register protected resource metadata routes (RFC 9728)
+            issuer = str(handle.auth_settings.issuer_url).rstrip('/')
+            pr_routes = create_protected_resource_routes(
+                resource_url=pydantic.AnyHttpUrl(f'{issuer}/mcp'),
+                authorization_servers=[handle.auth_settings.issuer_url],
+                scopes_supported=handle.auth_settings.client_registration_options.valid_scopes
+                if handle.auth_settings.client_registration_options
+                else None,
+            )
+            for route in pr_routes:
+                app.router.add_route(
+                    path=route.path,
+                    endpoint=route.endpoint,
+                    methods=route.methods,
+                    name=route.name,
+                )
+
+        # Well-known discovery endpoints (RFC 8414 / RFC 9728)
         server_lookup: dict[str, _ServerBundle] = {h.name: h for h in self._servers}
 
         @app.get('/.well-known/oauth-authorization-server/{server_name}')
@@ -313,25 +367,20 @@ class Gateway:
         @app.options('/.well-known/oauth-authorization-server/{server_name}/mcp')
         async def oauth_authorization_server_discovery(request: Request, server_name: str):
             handle = server_lookup.get(server_name)
-            if not handle:
+            if not handle or not handle.auth_settings:
                 return JSONResponse(
                     status_code=404,
                     content={'error': f'Server not found: {server_name}'},
                 )
-            base = config.url.rstrip('/')
-            issuer = f'{base}{handle.mount_path}'
-            return JSONResponse(
-                {
-                    'issuer': issuer,
-                    'authorization_endpoint': f'{issuer}/authorize',
-                    'token_endpoint': f'{issuer}/token',
-                    'registration_endpoint': f'{issuer}/register',
-                    'response_types_supported': ['code'],
-                    'grant_types_supported': ['authorization_code', 'refresh_token'],
-                    'token_endpoint_auth_methods_supported': ['client_secret_post'],
-                    'revocation_endpoint': f'{issuer}/revoke',
-                }
+            metadata = build_metadata(
+                issuer_url=handle.auth_settings.issuer_url,
+                service_documentation_url=handle.auth_settings.service_documentation_url,
+                client_registration_options=handle.auth_settings.client_registration_options
+                or ClientRegistrationOptions(),
+                revocation_options=handle.auth_settings.revocation_options or RevocationOptions(),
             )
+            handler = MetadataHandler(metadata)
+            return await handler.handle(request)
 
         @app.get('/.well-known/oauth-protected-resource/{server_name}')
         @app.options('/.well-known/oauth-protected-resource/{server_name}')
@@ -339,21 +388,22 @@ class Gateway:
         @app.options('/.well-known/oauth-protected-resource/{server_name}/mcp')
         async def oauth_protected_resource_discovery(request: Request, server_name: str):
             handle = server_lookup.get(server_name)
-            if not handle:
+            if not handle or not handle.auth_settings:
                 return JSONResponse(
                     status_code=404,
                     content={'error': f'Server not found: {server_name}'},
                 )
-            base = config.url.rstrip('/')
-            issuer = f'{base}{handle.mount_path}'
-            return JSONResponse(
-                {
-                    'resource': f'{issuer}/mcp',
-                    'authorization_servers': [issuer],
-                }
+            issuer = str(handle.auth_settings.issuer_url).rstrip('/')
+            metadata = ProtectedResourceMetadata(
+                resource=pydantic.AnyHttpUrl(f'{issuer}/mcp'),
+                authorization_servers=[pydantic.AnyHttpUrl(issuer)],
+                scopes_supported=handle.auth_settings.client_registration_options.valid_scopes
+                if handle.auth_settings.client_registration_options
+                else None,
             )
+            handler = ProtectedResourceMetadataHandler(metadata)
+            return await handler.handle(request)
 
-        # ── Health check ──
         @app.get('/healthz')
         async def healthz():
             return {
@@ -369,7 +419,7 @@ class Gateway:
                 ],
             }
 
-        # ── Mount MCP apps ──
+        # Mount MCP apps AFTER registering OAuth routes
         for handle in self._servers:
             mcp_app = handle.mcp.sse_app() if transport == 'sse' else handle.mcp.streamable_http_app()
             app.mount(handle.mount_path, mcp_app)

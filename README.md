@@ -61,7 +61,7 @@ servers:
     path_prefix: gh              # mount at /gh instead of /github
     auth:
       type: bearer
-      token_env: GITHUB_TOKEN
+      token: ${GITHUB_TOKEN}
     policy:
       allow:
         - "GET /repos/*"
@@ -111,7 +111,7 @@ gateway.add_server(
     spec="./github-openapi.json",
     base_url="https://api.github.com",
     path_prefix="gh",
-    auth={"type": "bearer", "token_env": "GITHUB_TOKEN"},
+    auth={"type": "bearer", "token": "${GITHUB_TOKEN}"},
     policy={"allow": ["GET /repos/*"]},
 )
 
@@ -138,7 +138,7 @@ For APIs that require OAuth2, the gateway acts as an intermediary:
 - The gateway authenticates with the **upstream API** (upstream OAuth)
 - Tokens are mapped and managed automatically
 
-The gateway auto-detects OAuth2 flows from the OpenAPI spec's `securitySchemes`. You only need to provide `client_id` and `client_secret`.
+The gateway auto-detects OAuth2 flows from the OpenAPI spec's `securitySchemes`. If the spec has no `securitySchemes`, provide `authorization_url` and `token_url` explicitly.
 
 ```yaml
 servers:
@@ -146,8 +146,8 @@ servers:
     spec: ./my-saas-openapi.json
     auth:
       type: oauth2
-      client_id_env: MY_SAAS_CLIENT_ID
-      client_secret_env: MY_SAAS_CLIENT_SECRET
+      client_id: ${MY_SAAS_CLIENT_ID}
+      client_secret: ${MY_SAAS_CLIENT_SECRET}
       scopes:
         - read
         - write
@@ -207,13 +207,12 @@ MCP Client → Gateway (OAuth Server) → Upstream API (OAuth Provider)
 | `base_url` | string | from spec | Override upstream API base URL |
 | `path_prefix` | string | `{name}` | Override mount path (default: `/{name}`) |
 | `auth.type` | string | `none` | `bearer`, `api_key`, `oauth2`, or `none` |
-| `auth.token` | string | - | Static token value |
-| `auth.token_env` | string | - | Environment variable for the token |
+| `auth.token` | string | - | Token value or `${ENV_VAR}` reference |
 | `auth.api_key_header` | string | `X-API-Key` | Header name for API key auth |
-| `auth.client_id` | string | - | OAuth2 client ID |
-| `auth.client_id_env` | string | - | Environment variable for OAuth2 client ID |
-| `auth.client_secret` | string | - | OAuth2 client secret |
-| `auth.client_secret_env` | string | - | Environment variable for OAuth2 client secret |
+| `auth.client_id` | string | - | OAuth2 client ID or `${ENV_VAR}` reference |
+| `auth.client_secret` | string | - | OAuth2 client secret or `${ENV_VAR}` reference |
+| `auth.authorization_url` | string | from spec | OAuth2 authorization URL (if not in spec) |
+| `auth.token_url` | string | from spec | OAuth2 token URL (if not in spec) |
 | `auth.scopes` | list | from spec | OAuth2 scopes to request |
 | `policy.allow` | list | - | Only expose matching operations |
 | `policy.deny` | list | - | Exclude matching operations |
@@ -260,15 +259,23 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full class diagram and design pat
 Usage: openapi-mcp-gateway [OPTIONS]
 
 Options:
-  --spec TEXT                     Path or URL to a single OpenAPI spec.
-  --config PATH                  Path to a YAML config file.
-  --name TEXT                    Server name when using --spec (default: api).
-  --base-url TEXT                Override the upstream API base URL.
+  --spec TEXT                      Path or URL to a single OpenAPI spec.
+  --config PATH                    Path to a YAML config file.
+  --name TEXT                      Server name (default: api).
+  --base-url TEXT                  Override the upstream API base URL.
   --transport [sse|streamable-http|stdio]
-                                 MCP transport protocol.
-  --host TEXT                    Bind host (default: 0.0.0.0).
-  --port INTEGER                 Bind port (default: 8000).
-  --help                         Show this message and exit.
+                                   MCP transport protocol.
+  --host TEXT                      Bind host (default: 0.0.0.0).
+  --port INTEGER                   Bind port (default: 8000).
+  --auth-type [none|bearer|api_key|oauth2]
+                                   Authentication type.
+  --auth-token TEXT                Token or ${ENV_VAR} reference.
+  --auth-client-id TEXT            OAuth2 client ID or ${ENV_VAR}.
+  --auth-client-secret TEXT        OAuth2 client secret or ${ENV_VAR}.
+  --auth-scopes TEXT               Comma-separated OAuth2 scopes.
+  --auth-authorization-url TEXT    OAuth2 authorization URL.
+  --auth-token-url TEXT            OAuth2 token URL.
+  --help                           Show this message and exit.
 ```
 
 ## License

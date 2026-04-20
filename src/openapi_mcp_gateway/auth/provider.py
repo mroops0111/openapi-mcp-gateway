@@ -27,6 +27,7 @@ from ..stores.base import TokenStore
 
 MCP_ACCESS_TOKEN_TTL = 3600  # 1 hour
 MCP_REFRESH_TOKEN_TTL = 86400  # 24 hours
+MCP_SCOPES = ['api']
 
 
 class GatewayOAuthProvider:
@@ -249,7 +250,7 @@ class GatewayOAuthProvider:
                 'redirect_uri': redirect_uri,
                 'redirect_uri_provided_explicitly': redirect_uri_provided_explicitly,
                 'expires_at': time.time() + 300,
-                'scopes': self.scopes or ['api'],
+                'scopes': MCP_SCOPES,
                 'code_challenge': code_challenge,
             },
             ttl=300,
