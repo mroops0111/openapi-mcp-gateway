@@ -1,5 +1,4 @@
-"""Generic HTTP client for upstream API calls."""
-
+import json
 import typing
 
 import httpx
@@ -58,9 +57,20 @@ class APIClient:
             request_kwargs['headers'] = headers
 
         response = await self._client.request(method.upper(), path, **request_kwargs)
-        response.raise_for_status()
+        if response.is_error:
+            raise httpx.HTTPStatusError(
+                f"{response.status_code} {response.reason_phrase} for '{response.request.url}': {response.text}",
+                request=response.request,
+                response=response,
+            )
+
+        if response.status_code == 204 or not response.content:
+            return {'status': response.status_code}
 
         content_type = response.headers.get('content-type', '')
         if 'application/json' in content_type:
-            return response.json()
+            try:
+                return response.json()
+            except json.JSONDecodeError:
+                return {'data': response.text}
         return {'data': response.text}

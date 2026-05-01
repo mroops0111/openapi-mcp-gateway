@@ -1,0 +1,52 @@
+# Multi-server example — three APIs behind one gateway.
+# Each server is mounted at /{name}/mcp.
+#
+# Prerequisites:
+#   export GITHUB_TOKEN="ghp_..."
+#   export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
+#
+# Usage: openapi-mcp-gateway --config examples/multi-server.yml
+
+host: "0.0.0.0"
+port: 8000
+url: http://localhost:8000   # public-facing URL (used for OAuth callback discovery)
+transport: streamable-http
+debug: false
+
+# Optional: switch to Redis for shared token storage across replicas.
+# store:
+#   type: redis
+#   redis_url: redis://localhost:6379
+#   key_prefix: mcp_gw
+
+cors:
+  allow_origins: ["*"]
+  allow_methods: ["*"]
+  allow_headers: ["*"]
+
+servers:
+  - name: petstore
+    spec: https://petstore3.swagger.io/api/v3/openapi.json
+
+  - name: github
+    spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
+    auth:
+      type: bearer
+      token: ${GITHUB_TOKEN}
+    policy:
+      allow:
+        - "GET /repos/*"
+        - "GET /users/*"
+
+  - name: asana
+    spec: https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml
+    auth:
+      type: oauth2
+      client_id: ${ASANA_CLIENT_ID}
+      client_secret: ${ASANA_CLIENT_SECRET}
+      scopes:
+        - openid
+        - email
+        - profile
+        - users:read
+        - workspaces:read

@@ -1,9 +1,4 @@
-"""Generic OAuth2 authorization server provider for the MCP gateway.
-
-Implements the MCP SDK's OAuthAuthorizationServerProvider protocol,
-acting as an intermediary between MCP clients and upstream OAuth providers.
-"""
-
+import logging
 import secrets
 import time
 import typing
@@ -24,6 +19,8 @@ from starlette.exceptions import HTTPException
 
 from ..stores.base import TokenStore
 
+
+logger = logging.getLogger(__name__)
 
 MCP_ACCESS_TOKEN_TTL = 3600  # 1 hour
 MCP_REFRESH_TOKEN_TTL = 86400  # 24 hours
@@ -99,6 +96,7 @@ class GatewayOAuthProvider:
         if self.scopes:
             query_params['scope'] = ' '.join(self.scopes)
 
+        logger.info('Upstream OAuth authorize: scopes=%s', self.scopes)
         return f'{self.upstream_auth_url}?{urllib.parse.urlencode(query_params)}'
 
     async def load_authorization_code(
@@ -384,4 +382,7 @@ class GatewayOAuthProvider:
             if not access_token:
                 raise HTTPException(400, 'Upstream returned no access_token')
 
+            logger.info(
+                'Upstream token response: granted_scope=%r expires_in=%s', data.get('scope'), data.get('expires_in')
+            )
             return access_token, data.get('refresh_token'), data.get('expires_in', 3600)

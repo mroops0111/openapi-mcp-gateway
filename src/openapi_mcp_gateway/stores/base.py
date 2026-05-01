@@ -1,5 +1,3 @@
-"""Abstract token store base class."""
-
 import abc
 import typing
 

@@ -1,8 +1,7 @@
-"""OpenAPI specification loader and parser."""
-
 import json
 import pathlib
 import typing
+import urllib.parse
 
 import httpx
 import pydantic
@@ -138,10 +137,30 @@ def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) ->
     return result
 
 
-def parse_spec(raw: dict[str, typing.Any]) -> OpenAPISpec:
-    """Parse a raw OpenAPI dict into structured data."""
+def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str | None) -> list[dict[str, typing.Any]]:
+    """Resolve relative server URLs against the spec's source URL (OpenAPI 3.0 §4.7.5)."""
+    if not source or not source.startswith(('http://', 'https://')):
+        return servers
+    resolved: list[dict[str, typing.Any]] = []
+    for server in servers:
+        url = server.get('url', '')
+        if url and not url.startswith(('http://', 'https://')):
+            resolved.append({**server, 'url': urllib.parse.urljoin(source, url)})
+        else:
+            resolved.append(server)
+    return resolved
+
+
+def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPISpec:
+    """Parse a raw OpenAPI dict into structured data.
+
+    Args:
+        raw: The decoded OpenAPI document.
+        source: Optional URL the spec was loaded from. Used to resolve relative
+            ``servers[].url`` entries per OpenAPI 3.0 §4.7.5.
+    """
     info = raw.get('info', {})
-    servers = raw.get('servers', [])
+    servers = _resolve_relative_servers(raw.get('servers', []), source)
     security_schemes = raw.get('components', {}).get('securitySchemes', {})
     global_security = raw.get('security', [])
 

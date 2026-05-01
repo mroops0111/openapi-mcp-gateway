@@ -1,5 +1,3 @@
-"""Auto-detect OAuth2 flows from OpenAPI securitySchemes."""
-
 import typing
 
 import pydantic

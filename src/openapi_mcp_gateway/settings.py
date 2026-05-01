@@ -1,5 +1,3 @@
-"""Configuration models for the gateway."""
-
 import os
 import pathlib
 import re
@@ -141,7 +139,7 @@ class GatewayConfig(pydantic.BaseModel):
     @pydantic.model_validator(mode='after')
     def _set_default_url(self) -> typing.Self:
         if not self.url:
-            public_host = 'localhost' if self.host in ('0.0.0.0', '127.0.0.1') else self.host
+            public_host = 'localhost' if self.host == '0.0.0.0' else self.host
             self.url = f'http://{public_host}:{self.port}'
         return self
 

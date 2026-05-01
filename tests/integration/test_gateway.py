@@ -4,7 +4,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.gateway import Gateway
-from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, ServerConfig
+from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
 
 
 @pytest.fixture
@@ -61,7 +61,7 @@ class TestGatewayAssembly:
                 ServerConfig(
                     name='test',
                     spec=str(petstore_json_path),
-                    policy={'allow': ['NONEXISTENT_OPERATION']},
+                    policy=PolicyConfig(allow=['NONEXISTENT_OPERATION']),
                 ),
             ],
         )

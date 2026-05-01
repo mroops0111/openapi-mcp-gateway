@@ -1,0 +1,10 @@
+# Petstore — public API, no auth required.
+# Usage: openapi-mcp-gateway --config examples/petstore.yml
+
+host: "0.0.0.0"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: petstore
+    spec: https://petstore3.swagger.io/api/v3/openapi.json

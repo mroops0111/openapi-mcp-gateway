@@ -1,5 +1,3 @@
-"""Redis-backed token store — for production multi-process deployments."""
-
 import json
 import typing
 

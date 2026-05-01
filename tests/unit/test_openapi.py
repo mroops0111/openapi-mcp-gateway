@@ -192,6 +192,39 @@ class TestParseSpec:
         assert 'oauth2' in self.spec.security_schemes
 
 
+class TestRelativeServerResolution:
+    @pytest.fixture
+    def relative_spec_raw(self):
+        return {
+            'openapi': '3.0.0',
+            'info': {'title': 'T', 'version': '1'},
+            'servers': [{'url': '/api/v3'}],
+            'paths': {},
+        }
+
+    def test_resolves_path_against_url_source(self, relative_spec_raw):
+        spec = parse_spec(relative_spec_raw, source='https://petstore3.swagger.io/api/v3/openapi.json')
+        assert spec.default_base_url == 'https://petstore3.swagger.io/api/v3'
+
+    def test_leaves_absolute_url_alone(self):
+        raw = {
+            'openapi': '3.0.0',
+            'info': {'title': 'T', 'version': '1'},
+            'servers': [{'url': 'https://api.example.com/v1'}],
+            'paths': {},
+        }
+        spec = parse_spec(raw, source='https://other.com/spec.json')
+        assert spec.default_base_url == 'https://api.example.com/v1'
+
+    def test_no_source_passes_through(self, relative_spec_raw):
+        spec = parse_spec(relative_spec_raw)
+        assert spec.default_base_url == '/api/v3'
+
+    def test_local_file_source_passes_through(self, relative_spec_raw, tmp_path):
+        spec = parse_spec(relative_spec_raw, source=str(tmp_path / 'spec.json'))
+        assert spec.default_base_url == '/api/v3'
+
+
 class TestLoadSpec:
     def test_load_json(self, petstore_json_path):
         raw = load_spec(petstore_json_path)

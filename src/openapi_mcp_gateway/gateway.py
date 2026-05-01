@@ -1,5 +1,3 @@
-"""Gateway: orchestrates multiple MCP servers from OpenAPI specs."""
-
 import contextlib
 import dataclasses
 import typing
@@ -131,7 +129,7 @@ class Gateway:
 
     def _add_server_from_entry(self, entry: ServerConfig) -> None:
         raw = load_spec(entry.spec)
-        spec = parse_spec(raw)
+        spec = parse_spec(raw, source=entry.spec)
 
         base_url = entry.base_url or spec.default_base_url
         if not base_url:
@@ -262,8 +260,6 @@ class Gateway:
         gateway_url = self._config.url.rstrip('/')
         callback_url = f'{gateway_url}{entry.mount_path}/auth/callback'
 
-        upstream_scopes = entry.auth.scopes or list(detected.scopes.keys())
-
         provider = GatewayOAuthProvider(
             store=self._store,
             upstream_auth_url=typing.cast(str, detected.authorization_url),
@@ -271,7 +267,7 @@ class Gateway:
             client_id=client_id,
             client_secret=client_secret,
             callback_url=callback_url,
-            scopes=upstream_scopes,
+            scopes=entry.auth.scopes,
             prefix=entry.name,
         )
 

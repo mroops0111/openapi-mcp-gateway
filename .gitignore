@@ -1,15 +1,26 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Distribution / packaging
+*.egg
 *.egg-info/
-dist/
 build/
+dist/
+
+# Virtual environments
 .venv/
 venv/
-.env
-*.egg
-.ruff_cache/
+
+# Caches
 .mypy_cache/
 .pytest_cache/
+.ruff_cache/
+
+# Local secrets / state
+.env
 *.tokens.json
+
+# Internal docs (drafts, not ready for publish)
 docs/

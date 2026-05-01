@@ -1,7 +1,7 @@
-"""Dynamically generate MCP tools from OpenAPI operations."""
-
 import inspect
 import json
+import keyword
+import re
 import typing
 
 import inflection
@@ -11,6 +11,25 @@ from mcp.server.fastmcp import Context, FastMCP
 from .auth.resolver import AuthResolver, NullAuthResolver
 from .client import APIClient
 from .openapi import OperationInfo, ParameterInfo
+
+
+_INVALID_IDENT_CHARS = re.compile(r'[^A-Za-z0-9_]')
+
+
+def _sanitize_name(name: str) -> str:
+    """Replace characters not allowed in Python identifiers with underscores.
+
+    Used for both tool names (e.g. ``meta/root`` → ``meta_root``) and parameter
+    names (e.g. ``enterprise-team`` → ``enterprise_team``). Python keywords
+    are suffixed with ``_`` (PEP 8 convention). The original name is preserved
+    separately for path/query/header substitution.
+    """
+    sanitized = _INVALID_IDENT_CHARS.sub('_', name)
+    if sanitized and sanitized[0].isdigit():
+        sanitized = '_' + sanitized
+    if keyword.iskeyword(sanitized):
+        sanitized += '_'
+    return sanitized
 
 
 class ToolGenerator:
@@ -43,7 +62,7 @@ class ToolGenerator:
             url_params=url_params,
             body_params=body_params,
         )
-        tool_name = inflection.underscore(operation.operation_id)
+        tool_name = _sanitize_name(inflection.underscore(operation.operation_id))
         description = operation.description or operation.summary or f'{operation.method.upper()} {operation.path}'
         self.mcp.tool(name=tool_name, description=description)(tool_function)
 
@@ -59,9 +78,9 @@ class ToolGenerator:
         auth_resolver = self.auth_resolver
         timeout = self.timeout
 
-        url_param_names = [p.name for p in url_params]
-        body_param_names = [p.name for p in body_params]
-        all_params = url_params + body_params
+        # Map sanitized python identifier → ParameterInfo (carries original API name)
+        url_param_by_pname: dict[str, ParameterInfo] = {_sanitize_name(p.name): p for p in url_params}
+        body_param_by_pname: dict[str, ParameterInfo] = {_sanitize_name(p.name): p for p in body_params}
 
         async def tool_function(**kwargs: typing.Any) -> str:
             ctx: Context = kwargs.pop('ctx')
@@ -75,20 +94,23 @@ class ToolGenerator:
             query_params: dict[str, typing.Any] = {}
             extra_headers: dict[str, str] = {}
 
-            for name in url_param_names:
-                value = kwargs.get(name)
+            for pname, param_info in url_param_by_pname.items():
+                value = kwargs.get(pname)
                 if value is None:
                     continue
-                if f'{{{name}}}' in resolved_path:
-                    resolved_path = resolved_path.replace(f'{{{name}}}', str(value))
+                original = param_info.name
+                if f'{{{original}}}' in resolved_path:
+                    resolved_path = resolved_path.replace(f'{{{original}}}', str(value))
+                elif param_info.location == 'header':
+                    extra_headers[original] = str(value)
                 else:
-                    param_info = next((p for p in url_params if p.name == name), None)
-                    if param_info and param_info.location == 'header':
-                        extra_headers[name] = str(value)
-                    else:
-                        query_params[name] = value
+                    query_params[original] = value
 
-            body = {name: kwargs[name] for name in body_param_names if kwargs.get(name) is not None}
+            body = {
+                param_info.name: kwargs[pname]
+                for pname, param_info in body_param_by_pname.items()
+                if kwargs.get(pname) is not None
+            }
 
             headers: dict[str, str] = {}
             if auth_header:
@@ -107,19 +129,19 @@ class ToolGenerator:
             return json.dumps(result, indent=2, ensure_ascii=False)
 
         # Build signature: required params → ctx → optional params
-        # Deduplicate by name (first occurrence wins)
-        seen_names: set[str] = set()
-        unique_params: list[ParameterInfo] = []
-        for p in all_params:
-            if p.name not in seen_names:
-                seen_names.add(p.name)
-                unique_params.append(p)
-        all_params = unique_params
+        # Deduplicate by sanitized name (first occurrence wins)
+        seen_pnames: set[str] = set()
+        ordered_params: list[tuple[str, ParameterInfo]] = []
+        for p in url_params + body_params:
+            pname = _sanitize_name(p.name)
+            if pname not in seen_pnames:
+                seen_pnames.add(pname)
+                ordered_params.append((pname, p))
 
         annotations: dict[str, typing.Any] = {}
         signature_params: list[inspect.Parameter] = []
 
-        for param in all_params:
+        for pname, param in ordered_params:
             if param.required:
                 py_type = _schema_to_python_type(param.schema_)
                 ann = (
@@ -128,16 +150,16 @@ class ToolGenerator:
                     else py_type
                 )
                 signature_params.append(
-                    inspect.Parameter(name=param.name, kind=inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=ann)
+                    inspect.Parameter(name=pname, kind=inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=ann)
                 )
-                annotations[param.name] = ann
+                annotations[pname] = ann
 
         signature_params.append(
             inspect.Parameter(name='ctx', kind=inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=Context)
         )
         annotations['ctx'] = Context
 
-        for param in all_params:
+        for pname, param in ordered_params:
             if not param.required:
                 py_type = _schema_to_python_type(param.schema_)
                 ann = (
@@ -147,13 +169,13 @@ class ToolGenerator:
                 )
                 signature_params.append(
                     inspect.Parameter(
-                        name=param.name,
+                        name=pname,
                         kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
                         annotation=ann,
                         default=None,
                     )
                 )
-                annotations[param.name] = ann
+                annotations[pname] = ann
 
         tool_function.__signature__ = inspect.Signature(signature_params)
         tool_function.__annotations__ = annotations

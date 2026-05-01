@@ -1,5 +1,3 @@
-"""AuthResolver — Strategy pattern for resolving upstream API auth headers."""
-
 import abc
 import typing
 

@@ -1,5 +1,7 @@
 """Tests for configuration models."""
 
+import pathlib
+
 import pytest
 import yaml
 
@@ -8,6 +10,9 @@ from openapi_mcp_gateway.settings import (
     GatewayConfig,
     ServerConfig,
 )
+
+
+EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[2] / 'examples'
 
 
 class TestServerConfig:
@@ -138,3 +143,13 @@ class TestGatewayConfig:
         assert config.store.type == 'redis'
         assert config.store.redis_url == 'redis://redis:6379'
         assert config.store.key_prefix == 'custom'
+
+
+@pytest.mark.parametrize('yaml_path', sorted(EXAMPLES_DIR.glob('*.yml')))
+def test_example_yaml_parses(yaml_path: pathlib.Path):
+    """Every shipped example YAML must parse into a valid GatewayConfig."""
+    config = GatewayConfig.from_yaml(yaml_path)
+    assert config.servers, f'{yaml_path.name} declares no servers'
+    for server in config.servers:
+        assert server.name
+        assert server.spec

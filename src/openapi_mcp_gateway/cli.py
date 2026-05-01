@@ -1,5 +1,3 @@
-"""CLI entry point for the OpenAPI MCP Gateway."""
-
 import typing
 
 import click

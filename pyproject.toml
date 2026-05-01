@@ -39,14 +39,17 @@ dev = [
     "pytest-asyncio>=1.0.0",
     "fakeredis>=2.26.0",
     "httpx>=0.28.0",
+    "basedpyright>=1.20.0",
+    "ruff>=0.8.0",
 ]
 
 [project.scripts]
 openapi-mcp-gateway = "openapi_mcp_gateway.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/mroops-com/openapi-mcp-gateway"
-Repository = "https://github.com/mroops-com/openapi-mcp-gateway"
+Homepage = "https://github.com/mroops0111/openapi-mcp-gateway"
+Repository = "https://github.com/mroops0111/openapi-mcp-gateway"
+Issues = "https://github.com/mroops0111/openapi-mcp-gateway/issues"
 
 [build-system]
 requires = ["hatchling"]

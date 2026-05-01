@@ -1,0 +1,19 @@
+# GitHub REST API — Bearer auth via Personal Access Token.
+#
+# Prerequisites:
+#   1. Create a PAT: https://github.com/settings/tokens (classic) or
+#      https://github.com/settings/personal-access-tokens (fine-grained)
+#   2. export GITHUB_TOKEN="ghp_..."
+#
+# Usage: openapi-mcp-gateway --config examples/github.yml
+
+host: "0.0.0.0"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: github
+    spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
+    auth:
+      type: bearer
+      token: ${GITHUB_TOKEN}

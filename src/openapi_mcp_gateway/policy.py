@@ -1,5 +1,3 @@
-"""Policy controls for filtering which OpenAPI operations are exposed as MCP tools."""
-
 import fnmatch
 
 from .openapi import OperationInfo

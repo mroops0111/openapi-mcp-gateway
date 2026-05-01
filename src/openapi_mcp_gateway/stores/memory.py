@@ -1,5 +1,3 @@
-"""In-memory token store — zero dependencies, suitable for dev and single-process deployments."""
-
 import time
 import typing
 
