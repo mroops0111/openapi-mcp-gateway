@@ -3,7 +3,8 @@
 #
 # Prerequisites:
 #   1. Create an Asana app: https://app.asana.com/0/my-apps
-#   2. Add redirect URL: http://127.0.0.1:8000/asana/auth/callback
+#   2. Add redirect URL: http://localhost:8000/asana/auth/callback
+#      (matches default url when host is 0.0.0.0; set top-level url in config if you need another base)
 #   3. export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
 #
 # Usage: openapi-mcp-gateway --config examples/asana.yml

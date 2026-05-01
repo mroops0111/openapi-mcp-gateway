@@ -155,9 +155,9 @@ Run `openapi-mcp-gateway --help` for the CLI reference. For YAML config, the [Qu
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `host` | string | `0.0.0.0` | Bind host |
+| `host` | string | `0.0.0.0` | Bind address (`0.0.0.0` = all interfaces). Clients on the same machine usually open `http://localhost:{port}` or `http://127.0.0.1:{port}`. |
 | `port` | int | `8000` | Bind port |
-| `url` | string | `http://{host}:{port}` | Public-facing URL for OAuth callbacks |
+| `url` | string | *(empty)* | Public base URL for OAuth redirects and discovery. When unset: `http://localhost:{port}` if `host` is `0.0.0.0`, otherwise `http://{host}:{port}`. Override when your registered redirect URI uses another host (tunnel, reverse proxy, etc.). |
 | `transport` | string | `streamable-http` | `sse`, `streamable-http`, or `stdio` |
 | `store.type` | string | `memory` | `memory` or `redis` |
 | `store.redis_url` | string | `redis://localhost:6379` | Redis URL when `store.type: redis` |
