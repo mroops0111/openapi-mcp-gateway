@@ -74,6 +74,7 @@ class GatewayOAuthProvider:
             client_info.client_id,
             client_info.model_dump(exclude_none=True, mode='json'),
         )
+        logger.info('Registered MCP client: client_id=%s prefix=%s', client_info.client_id, self._prefix)
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         client_id = self._require_client_id(client)
@@ -115,6 +116,7 @@ class GatewayOAuthProvider:
         data = await self.store.get('mcp_auth_code', authorization_code.code)
 
         if not data or data['client_id'] != client_id:
+            logger.warning('OAuth code exchange rejected: reason=invalid_code client_id=%s', client_id)
             raise TokenError(error='invalid_grant', error_description='Invalid authorization code')
 
         api_access_token = await self.store.get_mapping(
@@ -122,6 +124,7 @@ class GatewayOAuthProvider:
         ) or await self.store.get_mapping('client', client_id, 'api_access_token')
 
         if not api_access_token:
+            logger.warning('OAuth code exchange rejected: reason=no_upstream_token client_id=%s', client_id)
             raise TokenError(error='invalid_grant', error_description='No upstream API token found')
 
         api_refresh_token = await self.store.get_mapping('mcp_auth_code', authorization_code.code, 'api_refresh_token')
@@ -156,17 +159,20 @@ class GatewayOAuthProvider:
         data = await self.store.get('mcp_refresh_token', refresh_token.token)
 
         if not data or data['client_id'] != client_id:
+            logger.warning('OAuth refresh rejected: reason=invalid_refresh_token client_id=%s', client_id)
             raise TokenError(error='invalid_grant', error_description='Invalid refresh token')
 
         api_access_token = await self.store.get_mapping('mcp_refresh_token', refresh_token.token, 'api_access_token')
         api_refresh_token = await self.store.get_mapping('mcp_refresh_token', refresh_token.token, 'api_refresh_token')
 
         if not api_access_token:
+            logger.warning('OAuth refresh rejected: reason=mapping_lost client_id=%s', client_id)
             raise TokenError(error='invalid_grant', error_description='Upstream token mapping lost')
 
         # Check if upstream access token is still valid
         if not await self.store.get('api_access_token', api_access_token):
             if not api_refresh_token:
+                logger.warning('OAuth refresh rejected: reason=upstream_expired_no_refresh client_id=%s', client_id)
                 raise TokenError(
                     error='invalid_grant',
                     error_description='Upstream token expired and no refresh token available; re-authenticate',
@@ -198,6 +204,7 @@ class GatewayOAuthProvider:
         return new_token
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+        kind = 'access' if isinstance(token, AccessToken) else 'refresh'
         if isinstance(token, AccessToken):
             paired = await self.store.get_mapping('mcp_access_token', token.token, 'mcp_refresh_token')
             if paired:
@@ -208,6 +215,7 @@ class GatewayOAuthProvider:
             if paired:
                 await self.store.delete('mcp_access_token', paired)
             await self.store.delete('mcp_refresh_token', token.token)
+        logger.info('Revoked MCP %s token (prefix=%s)', kind, self._prefix)
 
     # ── Gateway-specific methods ──
 
@@ -219,6 +227,7 @@ class GatewayOAuthProvider:
         """
         state_data = await self.store.get('mcp_auth_state', state)
         if not state_data:
+            logger.warning('OAuth callback rejected: reason=invalid_state state=%s', state)
             raise HTTPException(400, 'Invalid state parameter')
 
         redirect_uri = state_data['redirect_uri']
@@ -268,6 +277,12 @@ class GatewayOAuthProvider:
         # Clean up state
         await self.store.delete('mcp_auth_state', state)
 
+        logger.info(
+            'Upstream OAuth callback handled: client_id=%s expires_in=%s refresh=%s',
+            client_id,
+            expires_in,
+            bool(api_refresh_token),
+        )
         return construct_redirect_uri(redirect_uri, code=mcp_auth_code, state=state)
 
     async def get_api_access_token(self) -> str | None:
@@ -375,11 +390,17 @@ class GatewayOAuthProvider:
             )
 
             if response.status_code != 200:
+                logger.warning(
+                    'Upstream token exchange failed: status=%d url=%s',
+                    response.status_code,
+                    self.upstream_token_url,
+                )
                 raise HTTPException(400, f'Upstream token exchange failed: {response.text}')
 
             data = response.json()
             access_token = data.get('access_token')
             if not access_token:
+                logger.warning('Upstream token exchange returned no access_token: url=%s', self.upstream_token_url)
                 raise HTTPException(400, 'Upstream returned no access_token')
 
             logger.info(

@@ -1,7 +1,11 @@
 import json
+import logging
 import typing
 
 import httpx
+
+
+logger = logging.getLogger(__name__)
 
 
 class APIClient:
@@ -56,13 +60,22 @@ class APIClient:
         if headers:
             request_kwargs['headers'] = headers
 
+        logger.debug('Upstream request: %s %s', method.upper(), path)
         response = await self._client.request(method.upper(), path, **request_kwargs)
         if response.is_error:
+            logger.warning(
+                'Upstream error: %s %s → %d %s',
+                method.upper(),
+                response.request.url,
+                response.status_code,
+                response.reason_phrase,
+            )
             raise httpx.HTTPStatusError(
                 f"{response.status_code} {response.reason_phrase} for '{response.request.url}': {response.text}",
                 request=response.request,
                 response=response,
             )
+        logger.debug('Upstream response: %s %s → %d', method.upper(), path, response.status_code)
 
         if response.status_code == 204 or not response.content:
             return {'status': response.status_code}

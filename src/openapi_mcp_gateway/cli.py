@@ -1,9 +1,14 @@
+import logging
 import typing
 
 import click
 
 from .gateway import Gateway
-from .settings import AuthConfig, GatewayConfig
+from .logger import FORMATS, LEVELS, setup
+from .settings import AuthConfig, GatewayConfig, LoggingConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 @click.command()
@@ -52,6 +57,38 @@ from .settings import AuthConfig, GatewayConfig
 @click.option('--auth-scopes', type=str, default=None, help='Comma-separated upstream OAuth2 scopes.')
 @click.option('--auth-authorization-url', type=str, default=None, help='OAuth2 authorization URL (if not in spec).')
 @click.option('--auth-token-url', type=str, default=None, help='OAuth2 token URL (if not in spec).')
+@click.option(
+    '--log-level',
+    type=click.Choice(LEVELS, case_sensitive=False),
+    default=None,
+    help='Logging level (default: INFO, or value from --config).',
+)
+@click.option(
+    '--log-format',
+    type=click.Choice(FORMATS, case_sensitive=False),
+    default=None,
+    help='Log output format: text (human-readable) or json (structured).',
+)
+@click.option(
+    '--log-file',
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help='Also write logs to this file (in addition to stderr).',
+)
+@click.option(
+    '-v',
+    '--verbose',
+    is_flag=True,
+    default=False,
+    help='Shortcut for --log-level DEBUG.',
+)
+@click.option(
+    '-q',
+    '--quiet',
+    is_flag=True,
+    default=False,
+    help='Shortcut for --log-level WARNING.',
+)
 def main(
     spec: str | None,
     config_path: str | None,
@@ -67,6 +104,11 @@ def main(
     auth_scopes: str | None,
     auth_authorization_url: str | None,
     auth_token_url: str | None,
+    log_level: str | None,
+    log_format: str | None,
+    log_file: str | None,
+    verbose: bool,
+    quiet: bool,
 ) -> None:
     """Turn any OpenAPI specification into an MCP server.
 
@@ -97,9 +139,16 @@ def main(
     \b
     stdio transport (for Claude Desktop / IDE integration):
         openapi-mcp-gateway --spec petstore.json --transport stdio
+
+    \b
+    Verbose logging in JSON format, also written to a file:
+        openapi-mcp-gateway --spec petstore.json -v --log-format json --log-file gateway.log
     """
     if not spec and not config_path:
         raise click.UsageError('Either --spec or --config is required.')
+
+    if verbose and quiet:
+        raise click.UsageError('--verbose and --quiet are mutually exclusive.')
 
     if config_path:
         config = GatewayConfig.from_yaml(config_path)
@@ -127,6 +176,28 @@ def main(
         )
     else:
         raise click.UsageError('Either --spec or --config is required.')
+
+    config.logging = _resolve_logging_config(
+        base=config.logging,
+        cli_level=log_level,
+        cli_format=log_format,
+        cli_file=log_file,
+        verbose=verbose,
+        quiet=quiet,
+    )
+
+    setup(
+        level=config.logging.level,
+        format=config.logging.format,
+        file=config.logging.file,
+    )
+    logger.debug(
+        'CLI invoked transport=%s host=%s port=%s servers=%d',
+        config.transport,
+        config.host,
+        config.port,
+        len(config.servers),
+    )
 
     gateway = Gateway.from_config(config)
     gateway.run()
@@ -176,6 +247,33 @@ def _build_auth_config(
         token_url=auth_token_url,
         scopes=scopes,
     )
+
+
+def _resolve_logging_config(
+    base: LoggingConfig,
+    cli_level: str | None,
+    cli_format: str | None,
+    cli_file: str | None,
+    verbose: bool,
+    quiet: bool,
+) -> LoggingConfig:
+    """Layer CLI flags on top of the YAML/default LoggingConfig.
+
+    Precedence (highest first): -v / -q → --log-level → YAML/default.
+    """
+    if verbose:
+        level = 'DEBUG'
+    elif quiet:
+        level = 'WARNING'
+    elif cli_level:
+        level = cli_level.upper()
+    else:
+        level = base.level
+
+    fmt = cli_format.lower() if cli_format else base.format
+    file_ = cli_file if cli_file is not None else base.file
+
+    return LoggingConfig(level=level, format=fmt, file=file_)
 
 
 if __name__ == '__main__':

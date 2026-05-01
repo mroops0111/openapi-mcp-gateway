@@ -1,9 +1,13 @@
 import json
+import logging
 import typing
 
 import redis.asyncio as aioredis
 
 from .base import TokenStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class RedisTokenStore(TokenStore):
@@ -16,6 +20,7 @@ class RedisTokenStore(TokenStore):
     def __init__(self, url: str = 'redis://localhost:6379', prefix: str = 'mcp_gw') -> None:
         self._prefix = prefix
         self._redis: aioredis.Redis = aioredis.from_url(url, decode_responses=True)
+        logger.debug('RedisTokenStore connected: url=%s prefix=%s', url, prefix)
 
     def _key(self, namespace: str, key: str) -> str:
         return f'{self._prefix}:{namespace}:{key}'

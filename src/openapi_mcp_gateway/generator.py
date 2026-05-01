@@ -1,6 +1,7 @@
 import inspect
 import json
 import keyword
+import logging
 import re
 import typing
 
@@ -11,6 +12,9 @@ from mcp.server.fastmcp import Context, FastMCP
 from .auth.resolver import AuthResolver, NullAuthResolver
 from .client import APIClient
 from .openapi import OperationInfo, ParameterInfo
+
+
+logger = logging.getLogger(__name__)
 
 
 _INVALID_IDENT_CHARS = re.compile(r'[^A-Za-z0-9_]')
@@ -50,6 +54,7 @@ class ToolGenerator:
     def register_operations(self, operations: list[OperationInfo]) -> None:
         for operation in operations:
             self._register_tool(operation)
+        logger.info('Registered %d MCP tool(s) on server "%s"', len(operations), self.mcp.name)
 
     def _register_tool(self, operation: OperationInfo) -> None:
         # Separate parameters by location
@@ -65,6 +70,7 @@ class ToolGenerator:
         tool_name = _sanitize_name(inflection.underscore(operation.operation_id))
         description = operation.description or operation.summary or f'{operation.method.upper()} {operation.path}'
         self.mcp.tool(name=tool_name, description=description)(tool_function)
+        logger.debug('Tool registered: %s ← %s %s', tool_name, operation.method.upper(), operation.path)
 
     def _generate_tool_function(
         self,

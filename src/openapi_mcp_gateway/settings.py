@@ -88,6 +88,18 @@ class StoreConfig(pydantic.BaseModel):
     key_prefix: str = 'mcp_gw'
 
 
+class LoggingConfig(pydantic.BaseModel):
+    """Logging configuration.
+
+    CLI flags (``--log-level``, ``--log-format``, ``--log-file``,
+    ``--verbose`` / ``--quiet``) override values set here.
+    """
+
+    level: typing.Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] = 'INFO'
+    format: typing.Literal['text', 'json'] = 'text'
+    file: str | None = None
+
+
 class PolicyConfig(pydantic.BaseModel):
     """Policy rules for filtering operations."""
 
@@ -134,6 +146,7 @@ class GatewayConfig(pydantic.BaseModel):
     enable_docs: bool = False
     cors: CORSConfig = CORSConfig()
     store: StoreConfig = StoreConfig()
+    logging: LoggingConfig = LoggingConfig()
     servers: list[ServerConfig] = pydantic.Field(default_factory=list)
 
     @pydantic.model_validator(mode='after')

@@ -1,5 +1,6 @@
 import contextlib
 import dataclasses
+import logging
 import typing
 
 import pydantic
@@ -24,6 +25,9 @@ from .openapi import OpenAPISpec, load_spec, parse_spec
 from .policy import filter_operations
 from .settings import GatewayConfig, PolicyConfig, ServerConfig
 from .stores import create_store
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
@@ -67,6 +71,7 @@ class Gateway:
             url=store_cfg.redis_url,
             prefix=store_cfg.key_prefix,
         )
+        logger.debug('Token store initialised: type=%s prefix=%s', store_cfg.type, store_cfg.key_prefix)
 
     @classmethod
     def from_config(cls, config: GatewayConfig) -> 'Gateway':
@@ -114,11 +119,25 @@ class Gateway:
         if transport == 'stdio':
             if len(self._servers) != 1:
                 raise ValueError('stdio transport only supports a single server')
+            logger.info('Starting MCP server "%s" over stdio', self._servers[0].name)
             self._servers[0].mcp.run(transport='stdio')
             return
 
         app = self._build_app(transport=transport)
-        uvicorn.run(app, host=host, port=port)
+        logger.info(
+            'Starting gateway: transport=%s bind=%s:%d servers=%d',
+            transport,
+            host,
+            port,
+            len(self._servers),
+        )
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level=self._config.logging.level.lower(),
+            log_config=None,
+        )
 
     def mount(self, app: FastAPI, transport: str | None = None) -> None:
         """Mount all MCP servers onto an existing FastAPI application."""
@@ -128,8 +147,16 @@ class Gateway:
             app.mount(handle.mount_path, mcp_app)
 
     def _add_server_from_entry(self, entry: ServerConfig) -> None:
+        logger.info('Loading server "%s" from spec=%s', entry.name, entry.spec)
         raw = load_spec(entry.spec)
         spec = parse_spec(raw, source=entry.spec)
+        logger.debug(
+            'Parsed spec for "%s": title=%r version=%r operations=%d',
+            entry.name,
+            spec.title,
+            spec.version,
+            len(spec.operations),
+        )
 
         base_url = entry.base_url or spec.default_base_url
         if not base_url:
@@ -144,6 +171,15 @@ class Gateway:
             allow=entry.policy.allow,
             deny=entry.policy.deny,
             marked_only=entry.policy.marked_only,
+        )
+        logger.debug(
+            'Policy applied to "%s": %d → %d operations (allow=%s deny=%s marked_only=%s)',
+            entry.name,
+            len(spec.operations),
+            len(operations),
+            entry.policy.allow,
+            entry.policy.deny,
+            entry.policy.marked_only,
         )
 
         if not operations:
@@ -212,6 +248,14 @@ class Gateway:
                 auth_provider=auth_provider,
                 auth_settings=auth_settings,
             )
+        )
+        logger.info(
+            'Registered server "%s": mount=%s base_url=%s tools=%d auth=%s',
+            entry.name,
+            entry.mount_path,
+            base_url,
+            len(operations),
+            entry.auth.type,
         )
 
     def _setup_oauth(
@@ -282,6 +326,14 @@ class Gateway:
                 default_scopes=['api'],
             ),
             required_scopes=['api'],
+        )
+
+        logger.debug(
+            'OAuth set up for "%s": authorize=%s token=%s scopes=%s',
+            entry.name,
+            detected.authorization_url,
+            detected.token_url,
+            entry.auth.scopes,
         )
 
         resolver = OAuthAuthResolver(provider)

@@ -37,6 +37,10 @@ servers:
       allow:
         - "GET /repos/*"
         - "GET /users/*"
+      deny:
+        # carve out sensitive sub-resources from the allow list above
+        - "GET /repos/*/actions/secrets*"
+        - "GET /repos/*/environments/*/secrets*"
 
   - name: asana
     spec: https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml

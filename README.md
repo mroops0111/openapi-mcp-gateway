@@ -9,36 +9,26 @@ Turn any OpenAPI specification into a [Model Context Protocol (MCP)](https://mod
 
 ```bash
 openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
-# → MCP server live at http://127.0.0.1:8000/api/mcp
+# Server live at http://127.0.0.1:8000/api/mcp
 ```
 
-No code generation, no scaffolding — point it at a spec and the gateway dynamically registers each operation as an MCP tool. Works with multiple APIs at once, handles Bearer / API key / OAuth2 authentication, and runs over Streamable HTTP, SSE, or stdio.
+- **No code generation.** Point it at a spec and every operation becomes an MCP tool.
+- **Multi-API.** Run several OpenAPI services in one process, each on its own mount path.
+- **Auth built in.** Bearer, API Key, and OAuth2 (with per-user delegation).
+- **Flexible transport.** Streamable HTTP, SSE, or stdio.
 
 ---
 
 ## Table of Contents
 
-- [Why](#why)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Authentication](#authentication)
 - [Configuration](#configuration)
 - [Python API](#python-api)
-- [Claude Desktop / IDE Integration](#claude-desktop--ide-integration)
-- [Architecture](#architecture)
-- [Development](#development)
 - [License](#license)
 
 ---
-
-## Why
-
-LLM agents need tools, and most production APIs already document themselves with OpenAPI. Writing a bespoke MCP server for each API duplicates that work. This gateway closes the gap:
-
-- **Zero glue code** — operations become MCP tools at startup, derived from the spec
-- **Auth that just works** — Bearer / API key / OAuth2, with `${ENV_VAR}` interpolation
-- **Multi-tenant** — one gateway, many APIs, each mounted under `/{name}/mcp`
-- **Production-ready** — Redis-backed token store, CORS, policy filters, Streamable HTTP
 
 ## Installation
 
@@ -62,7 +52,7 @@ Requires Python 3.11+.
 
 ## Quick Start
 
-### 1. Public API, no auth
+### 1. Public API, No Auth
 
 ```bash
 openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
@@ -70,7 +60,7 @@ openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json --na
 
 Connect an MCP client to `http://127.0.0.1:8000/petstore/mcp`.
 
-### 2. Bearer token
+### 2. Bearer Token
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
@@ -81,7 +71,7 @@ openapi-mcp-gateway \
     --auth-token '${GITHUB_TOKEN}'
 ```
 
-### 3. OAuth2 (auto-detected from spec)
+### 3. OAuth2 (Auto-Detected from Spec)
 
 ```bash
 export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
@@ -94,9 +84,7 @@ openapi-mcp-gateway \
     --auth-scopes "openid,email,profile,users:read,workspaces:read"
 ```
 
-The MCP client redirects through the gateway, the gateway redirects through Asana, and the upstream token is mapped behind the scenes.
-
-### 4. Multiple APIs at once
+### 4. Multiple APIs at Once
 
 ```yaml
 # servers.yml
@@ -120,16 +108,31 @@ servers:
 openapi-mcp-gateway --config servers.yml
 ```
 
-Full runnable examples live in [`examples/`](examples/) — each YAML documents its prerequisites at the top.
+Runnable examples live in [`examples/`](examples/). Each YAML lists its prerequisites at the top.
+
+### 5. Local Desktop Client (stdio)
+
+For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
+
+```json
+{
+  "mcpServers": {
+    "petstore": {
+      "command": "openapi-mcp-gateway",
+      "args": ["--spec", "/abs/path/to/openapi.json", "--transport", "stdio"]
+    }
+  }
+}
+```
 
 ## Authentication
 
-| Type | Use case | Required fields |
+| Type | Use Case | Required Fields |
 |------|----------|-----------------|
-| `none` | Public APIs | — |
+| `none` | Public APIs |  |
 | `bearer` | Personal access tokens, API tokens | `token` |
-| `api_key` | Custom-header API keys | `token`, `api_key_header` |
-| `oauth2` | Per-user delegated access | `client_id`, `client_secret`, `scopes` |
+| `api_key` | API key in `X-API-Key` header (override with `auth.api_key_header`) | `token` |
+| `oauth2` | Per-user delegated access | `client_id`, `client_secret` |
 
 All string fields support `${ENV_VAR}` and `${ENV_VAR:-default}` interpolation, resolved at request time:
 
@@ -139,72 +142,61 @@ auth:
   token: ${GITHUB_TOKEN}
 ```
 
-### OAuth2 details
+### OAuth2 Details
 
-For OAuth2, the gateway acts as a bridge between the MCP client and the upstream API:
-
-```
-MCP client ──┐                                        ┌── upstream API
-             │                                        │
-             ▼          1. authorize                  ▼
-        ┌────────┐ ─────────────────────────► ┌─────────────┐
-        │Gateway │                            │ OAuth2 IdP  │
-        │        │ ◄───────────────────────── │             │
-        └────────┘     2. code → tokens       └─────────────┘
-             │
-             │  3. issue MCP token (mapped to upstream token)
-             ▼
-        MCP client uses MCP token; gateway swaps it for the upstream token on every tool call.
-```
-
-The gateway auto-detects `authorizationUrl` / `tokenUrl` / `scopes` from the spec's `securitySchemes`. Override with `auth.authorization_url` and `auth.token_url` if the spec is incomplete.
-
-`.well-known` discovery endpoints are exposed per server:
-- `GET /.well-known/oauth-authorization-server/{name}` — RFC 8414
-- `GET /.well-known/oauth-protected-resource/{name}/mcp` — RFC 9728
+`authorizationUrl`, `tokenUrl`, and `scopes` are read from the spec's `securitySchemes`. Override `auth.authorization_url`, `auth.token_url`, or `auth.scopes` when the spec is incomplete.
 
 ## Configuration
 
-### Top-level
+Run `openapi-mcp-gateway --help` for the CLI reference. For YAML config, the [Quick Start](#quick-start) examples cover most setups; the full field reference:
+
+<details>
+<summary><b>Top-Level Fields</b></summary>
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `host` | string | `0.0.0.0` | Bind host |
 | `port` | int | `8000` | Bind port |
-| `url` | string | `http://{host}:{port}` | Public-facing URL (used for OAuth callbacks) |
+| `url` | string | `http://{host}:{port}` | Public-facing URL for OAuth callbacks |
 | `transport` | string | `streamable-http` | `sse`, `streamable-http`, or `stdio` |
-| `debug` | bool | `false` | Verbose logging |
-| `enable_docs` | bool | `false` | Expose `/docs` and `/redoc` |
-| `cors.*` | — | `["*"]` | `allow_origins`, `allow_methods`, `allow_headers`, `expose_headers` |
 | `store.type` | string | `memory` | `memory` or `redis` |
 | `store.redis_url` | string | `redis://localhost:6379` | Redis URL when `store.type: redis` |
-| `store.key_prefix` | string | `mcp_gw` | Redis key prefix |
+| `logging.level` | string | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `logging.format` | string | `text` | `text` or `json` |
+| `logging.file` | string |  | Mirror logs to this file |
+| `servers` | list | required | List of per-server config entries |
 
-### Per-server
+</details>
+
+<details>
+<summary><b>Per-Server Fields</b></summary>
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `name` | string | required | Unique identifier; mount path defaults to `/{name}` |
 | `spec` | string | required | Path or URL to OpenAPI document (JSON or YAML) |
 | `base_url` | string | from spec | Override the upstream base URL |
-| `path_prefix` | string | `{name}` | Override the mount path |
-| `auth.*` | — | — | See [Authentication](#authentication) |
-| `policy.allow` | list | — | Only expose matching operations |
-| `policy.deny` | list | — | Exclude matching operations |
-| `policy.marked_only` | bool | `false` | Only expose ops with `x-mcp-integration` |
+| `auth.*` |  |  | See [Authentication](#authentication) |
+| `policy.allow` | list |  | Only expose matching operations |
+| `policy.deny` | list |  | Exclude matching operations |
 | `timeout` | float | `90` | HTTP timeout in seconds |
 
-### Policy patterns
+</details>
 
-Patterns use `fnmatch` syntax against either:
-- Operation ID: `getUsers`, `create*`, `*User*`
-- Method + path: `GET /users/*`, `DELETE *`
+### Filtering Operations
 
-### `x-mcp-integration` marker
-
-Mark operations directly in your OpenAPI spec for selective exposure:
+Use `policy.allow` and `policy.deny` with `fnmatch` syntax against operation IDs (`getUsers`, `create*`) or method + path (`GET /users/*`):
 
 ```yaml
+policy:
+  allow: ["GET /repos/*"]
+  deny:  ["GET /repos/*/actions/secrets*"]
+```
+
+Or mark operations directly in the spec and enable `marked_only`:
+
+```yaml
+# openapi.yml
 paths:
   /users:
     get:
@@ -213,8 +205,17 @@ paths:
         expose:
           tool: {}
 ```
+```yaml
+# servers.yml
+policy:
+  marked_only: true
+```
 
-Combined with `policy.marked_only: true`, only marked operations become tools.
+Filters apply in order: `marked_only`, then `allow`, then `deny`.
+
+### Logging
+
+Configure via the `logging.*` YAML keys or via CLI flags. `-v` and `-q` are shortcuts for `DEBUG` and `WARNING`.
 
 ## Python API
 
@@ -249,64 +250,6 @@ gateway.add_server(name="petstore", spec="petstore.json")
 gateway.mount(app)
 ```
 
-## Claude Desktop / IDE Integration
-
-Run over stdio for local desktop clients:
-
-```json
-{
-  "mcpServers": {
-    "petstore": {
-      "command": "openapi-mcp-gateway",
-      "args": ["--spec", "/abs/path/to/openapi.json", "--transport", "stdio"]
-    }
-  }
-}
-```
-
-## Architecture
-
-The gateway parses each spec into operation metadata, generates a synthetic Python signature per operation (sanitizing tool/parameter names so identifiers like `meta/root` or `enterprise-team` round-trip cleanly), and delegates to FastMCP for transport. A per-server OAuth provider bridges MCP-side tokens to upstream-side tokens through a swappable token store.
-
-## CLI Reference
-
-```
-Usage: openapi-mcp-gateway [OPTIONS]
-
-Options:
-  --spec TEXT                      Path or URL to a single OpenAPI spec.
-  --config PATH                    Path to a YAML config file.
-  --name TEXT                      Server name (default: api).
-  --base-url TEXT                  Override the upstream API base URL.
-  --transport [sse|streamable-http|stdio]
-                                   MCP transport protocol.
-  --host TEXT                      Bind host (default: 0.0.0.0).
-  --port INTEGER                   Bind port (default: 8000).
-  --auth-type [none|bearer|api_key|oauth2]
-                                   Authentication type.
-  --auth-token TEXT                Token or ${ENV_VAR} reference.
-  --auth-client-id TEXT            OAuth2 client ID or ${ENV_VAR}.
-  --auth-client-secret TEXT        OAuth2 client secret or ${ENV_VAR}.
-  --auth-scopes TEXT               Comma-separated OAuth2 scopes.
-  --auth-authorization-url TEXT    OAuth2 authorization URL.
-  --auth-token-url TEXT            OAuth2 token URL.
-  --help                           Show this message and exit.
-```
-
-## Development
-
-```bash
-git clone https://github.com/mroops0111/openapi-mcp-gateway
-cd openapi-mcp-gateway
-
-uv sync --extra dev          # install dev dependencies
-uv run pytest                # run tests
-uv run ruff check            # lint
-uv run ruff format           # format
-```
-
-Patches welcome — please open an issue first for non-trivial changes.
-
 ## License
 
-[MIT](LICENSE) © YunTai Yang
+[MIT](LICENSE)

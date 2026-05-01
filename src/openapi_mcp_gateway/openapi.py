@@ -1,4 +1,5 @@
 import json
+import logging
 import pathlib
 import typing
 import urllib.parse
@@ -6,6 +7,9 @@ import urllib.parse
 import httpx
 import pydantic
 import yaml
+
+
+logger = logging.getLogger(__name__)
 
 
 class ParameterInfo(pydantic.BaseModel):
@@ -65,6 +69,7 @@ def load_spec(source: str | pathlib.Path) -> dict[str, typing.Any]:
     source_str = str(source)
 
     if source_str.startswith(('http://', 'https://')):
+        logger.debug('Fetching OpenAPI spec from URL: %s', source_str)
         response = httpx.get(source_str, timeout=30, follow_redirects=True)
         response.raise_for_status()
         content_type = response.headers.get('content-type', '')
@@ -79,11 +84,9 @@ def load_spec(source: str | pathlib.Path) -> dict[str, typing.Any]:
     if not path.exists():
         raise FileNotFoundError(f'OpenAPI spec not found: {path}')
 
+    logger.debug('Loading OpenAPI spec from file: %s', path)
     text = path.read_text(encoding='utf-8')
-    if path.suffix in ('.yaml', '.yml'):
-        return yaml.safe_load(text)
-    return json.loads(text)
-
+    return yaml.safe_load(text) if path.suffix in ('.yaml', '.yml') else json.loads(text)
 
 def _resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:
     """Resolve a JSON $ref pointer (e.g. #/components/schemas/Foo)."""
