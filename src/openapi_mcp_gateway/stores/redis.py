@@ -23,6 +23,7 @@ class RedisTokenStore(TokenStore):
         logger.debug('RedisTokenStore connected: url=%s prefix=%s', url, prefix)
 
     def _key(self, namespace: str, key: str) -> str:
+        """Compose ``{prefix}:{namespace}:{key}`` for Redis storage."""
         return f'{self._prefix}:{namespace}:{key}'
 
     async def get(self, namespace: str, key: str) -> typing.Any | None:

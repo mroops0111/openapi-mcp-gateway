@@ -3,10 +3,9 @@ import typing
 
 
 class TokenStore(abc.ABC):
-    """Abstract base class for pluggable token storage backends.
+    """Key/value persistence with TTL plus directional namespace mappings.
 
-    Stores key-value data with optional TTL, and supports
-    directional mappings between namespaces (e.g. mcp_access_token → api_access_token).
+    Used to correlate MCP OAuth artefacts with upstream API credentials.
     """
 
     @abc.abstractmethod

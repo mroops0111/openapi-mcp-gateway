@@ -6,7 +6,7 @@ from ..openapi import OpenAPISpec
 
 
 class DetectedOAuthFlow(pydantic.BaseModel):
-    """An OAuth2 flow detected from an OpenAPI security scheme."""
+    """Minimal OAuth2 flow metadata extracted from ``components.securitySchemes``."""
 
     flow_type: typing.Literal['authorization_code', 'client_credentials']
     authorization_url: str | None = None
@@ -15,10 +15,7 @@ class DetectedOAuthFlow(pydantic.BaseModel):
 
 
 def detect_oauth_flows(spec: OpenAPISpec) -> list[DetectedOAuthFlow]:
-    """Detect OAuth2 flows from the OpenAPI spec's securitySchemes.
-
-    Returns a list of detected flows, preferring authorization_code over client_credentials.
-    """
+    """Return every OAuth2 flow advertised under ``securitySchemes``."""
     flows: list[DetectedOAuthFlow] = []
 
     for _scheme_name, scheme in spec.security_schemes.items():
@@ -52,10 +49,9 @@ def detect_oauth_flows(spec: OpenAPISpec) -> list[DetectedOAuthFlow]:
 
 
 def detect_primary_oauth_flow(spec: OpenAPISpec) -> DetectedOAuthFlow | None:
-    """Detect the primary OAuth2 flow from the spec.
+    """Pick a single OAuth2 flow, favouring ``authorization_code``.
 
-    Prefers authorization_code over client_credentials.
-    Returns None if no OAuth2 flow is found.
+    Returns ``None`` when the document defines no OAuth2 flows.
     """
     flows = detect_oauth_flows(spec)
     if not flows:

@@ -8,11 +8,10 @@ import yaml
 
 
 def _resolve_env_var(value: str | None) -> str | None:
-    """Resolve ``${ENV_VAR}`` or ``${ENV_VAR:-default}`` in a string value.
+    """Substitute ``${VAR}`` or ``${VAR:-default}`` when ``value`` is a lone reference.
 
-    If the entire string is a single ``${...}`` reference, returns the resolved
-    value (or None when the env var is unset and no default is given).
-    Otherwise returns the original string unchanged.
+    Otherwise returns ``value`` unchanged. Returns ``None`` when the variable
+    is unset and no default is provided.
     """
     if value is None:
         return None
@@ -47,7 +46,10 @@ class AuthConfig(pydantic.BaseModel):
     scopes: list[str] = pydantic.Field(default_factory=list)
 
     def resolve_header(self) -> str | None:
-        """Resolve the Authorization header value."""
+        """Return ``Bearer …`` or raw token text for configured auth types.
+
+        Returns ``None`` when no token is configured or type does not use a header value.
+        """
         token = _resolve_env_var(self.token)
 
         if not token:
@@ -60,19 +62,22 @@ class AuthConfig(pydantic.BaseModel):
         return None
 
     def resolve_header_name(self) -> str:
+        """HTTP header name carrying credentials (API key field vs ``Authorization``)."""
         if self.type == 'api_key':
             return self.api_key_header
         return 'Authorization'
 
     def resolve_client_id(self) -> str | None:
+        """OAuth client id after ``${…}`` substitution."""
         return _resolve_env_var(self.client_id)
 
     def resolve_client_secret(self) -> str | None:
+        """OAuth client secret after ``${…}`` substitution."""
         return _resolve_env_var(self.client_secret)
 
 
 class CORSConfig(pydantic.BaseModel):
-    """CORS middleware configuration."""
+    """Starlette CORS middleware settings for the HTTP gateway."""
 
     allow_origins: list[str] = ['*']
     allow_methods: list[str] = ['*']
@@ -81,7 +86,7 @@ class CORSConfig(pydantic.BaseModel):
 
 
 class StoreConfig(pydantic.BaseModel):
-    """Token store backend configuration."""
+    """Which ``TokenStore`` backend to use (in-process or Redis)."""
 
     type: typing.Literal['memory', 'redis'] = 'memory'
     redis_url: str = 'redis://localhost:6379'
@@ -101,7 +106,7 @@ class LoggingConfig(pydantic.BaseModel):
 
 
 class PolicyConfig(pydantic.BaseModel):
-    """Policy rules for filtering operations."""
+    """Glob-style filters controlling which operations become MCP tools."""
 
     allow: list[str] | None = None
     deny: list[str] | None = None
@@ -109,7 +114,7 @@ class PolicyConfig(pydantic.BaseModel):
 
 
 class ServerConfig(pydantic.BaseModel):
-    """Configuration for a single API server."""
+    """One upstream API: OpenAPI location, auth, policy, and HTTP timeout."""
 
     name: str
     spec: str  # File path or URL to OpenAPI spec
@@ -122,6 +127,7 @@ class ServerConfig(pydantic.BaseModel):
     @pydantic.field_validator('name')
     @classmethod
     def _validate_name(cls, v: str) -> str:
+        """Reject server names that are not alphanumeric (aside from ``-`` / ``_``)."""
         if not v.replace('-', '').replace('_', '').isalnum():
             raise ValueError(f'Server name must be alphanumeric (with - or _): {v}')
         return v
@@ -129,14 +135,14 @@ class ServerConfig(pydantic.BaseModel):
     @pydantic.computed_field
     @property
     def mount_path(self) -> str:
-        """The URL path where this server is mounted."""
+        """HTTP path prefix for this server (from ``path_prefix`` or ``name``)."""
         if self.path_prefix is not None:
             return f'/{self.path_prefix.strip("/")}'
         return f'/{self.name}'
 
 
 class GatewayConfig(pydantic.BaseModel):
-    """Top-level gateway configuration."""
+    """Process-wide gateway listen address, transports, store, logging, and servers."""
 
     host: str = '0.0.0.0'
     port: int = 8000
@@ -151,6 +157,7 @@ class GatewayConfig(pydantic.BaseModel):
 
     @pydantic.model_validator(mode='after')
     def _set_default_url(self) -> typing.Self:
+        """Set ``url`` to ``http://{host}:{port}`` when unset (map ``0.0.0.0`` to localhost)."""
         if not self.url:
             public_host = 'localhost' if self.host == '0.0.0.0' else self.host
             self.url = f'http://{public_host}:{self.port}'
@@ -158,7 +165,7 @@ class GatewayConfig(pydantic.BaseModel):
 
     @classmethod
     def from_yaml(cls, path: str | pathlib.Path) -> 'GatewayConfig':
-        """Load configuration from a YAML file."""
+        """Load gateway configuration from a YAML file on disk."""
         p = pathlib.Path(path).expanduser().resolve()
         if not p.exists():
             raise FileNotFoundError(f'Config file not found: {p}')
@@ -176,7 +183,7 @@ class GatewayConfig(pydantic.BaseModel):
         host: str = '0.0.0.0',
         port: int = 8000,
     ) -> 'GatewayConfig':
-        """Create a config for a single OpenAPI spec (CLI shorthand)."""
+        """Build a single-server configuration (CLI convenience wrapper)."""
         entry = ServerConfig(name=name, spec=spec, base_url=base_url, auth=auth or AuthConfig())
         return cls(
             host=host,

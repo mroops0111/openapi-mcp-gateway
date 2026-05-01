@@ -28,14 +28,11 @@ MCP_SCOPES = ['api']
 
 
 class GatewayOAuthProvider:
-    """Generic OAuth provider that bridges MCP OAuth ↔ upstream OAuth.
+    """Implement MCP's OAuth server provider API against an upstream OAuth2 API.
 
-    For each server that uses OAuth2, one instance is created.
-    It handles:
-      - MCP client registration & token lifecycle
-      - Redirecting users to the upstream authorization URL
-      - Exchanging upstream auth codes for upstream tokens
-      - Mapping MCP tokens ↔ upstream tokens in the store
+    Registers MCP clients, forwards browser authorization to the upstream IdP,
+    exchanges grants with ``upstream_token_url``, and keeps MCP ↔ upstream token
+    mappings inside ``store``.
     """
 
     def __init__(
@@ -49,6 +46,7 @@ class GatewayOAuthProvider:
         scopes: list[str] | None = None,
         prefix: str = 'gateway',
     ) -> None:
+        """Bind token ``store``, upstream endpoints, IdP client credentials, and callback."""
         self.store = store
         self.upstream_auth_url = upstream_auth_url
         self.upstream_token_url = upstream_token_url
@@ -61,12 +59,14 @@ class GatewayOAuthProvider:
     # ── MCP SDK OAuthAuthorizationServerProvider interface ──
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        """Load MCP OAuth client registration state by ``client_id``."""
         data = await self.store.get('mcp_client', client_id)
         if data:
             return OAuthClientInformationFull(**data)
         return None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        """Persist ``client_info`` for subsequent authorize/token exchanges."""
         if not client_info.client_id:
             raise ValueError('client_id is required')
         await self.store.set(
@@ -77,6 +77,7 @@ class GatewayOAuthProvider:
         logger.info('Registered MCP client: client_id=%s prefix=%s', client_info.client_id, self._prefix)
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
+        """Return the upstream authorize URL with PKCE/state payload stored in ``store``."""
         client_id = self._require_client_id(client)
         state = params.state or secrets.token_hex(16)
 
@@ -103,6 +104,7 @@ class GatewayOAuthProvider:
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
+        """Hydrate ``AuthorizationCode`` when it belongs to ``client``."""
         client_id = self._require_client_id(client)
         data = await self.store.get('mcp_auth_code', authorization_code)
         if data and data['client_id'] == client_id:
@@ -112,6 +114,7 @@ class GatewayOAuthProvider:
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
+        """Exchange an MCP authorization code for MCP access/refresh tokens."""
         client_id = self._require_client_id(client)
         data = await self.store.get('mcp_auth_code', authorization_code.code)
 
@@ -137,12 +140,14 @@ class GatewayOAuthProvider:
         )
 
     async def load_access_token(self, token: str) -> AccessToken | None:
+        """Return MCP access token payload when ``token`` is valid."""
         data = await self.store.get('mcp_access_token', token)
         if data:
             return AccessToken(**data)
         return None
 
     async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
+        """Return MCP refresh metadata scoped to ``client``."""
         client_id = self._require_client_id(client)
         data = await self.store.get('mcp_refresh_token', refresh_token)
         if data and data['client_id'] == client_id:
@@ -155,6 +160,7 @@ class GatewayOAuthProvider:
         refresh_token: RefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
+        """Rotate MCP tokens while preserving upstream refresh semantics."""
         client_id = self._require_client_id(client)
         data = await self.store.get('mcp_refresh_token', refresh_token.token)
 
@@ -204,6 +210,7 @@ class GatewayOAuthProvider:
         return new_token
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+        """Delete MCP tokens plus paired refresh/access mappings from ``store``."""
         kind = 'access' if isinstance(token, AccessToken) else 'refresh'
         if isinstance(token, AccessToken):
             paired = await self.store.get_mapping('mcp_access_token', token.token, 'mcp_refresh_token')
@@ -220,10 +227,10 @@ class GatewayOAuthProvider:
     # ── Gateway-specific methods ──
 
     async def handle_upstream_callback(self, code: str, state: str) -> str:
-        """Handle the upstream OAuth callback.
+        """Finish the browser redirect: swap upstream ``code`` for MCP authorization artifacts.
 
-        Exchanges the upstream code for tokens, stores them,
-        creates an MCP auth code, and returns the redirect URI.
+        Validates ``state``, exchanges tokens at ``upstream_token_url``, persists API
+        credentials, builds an MCP authorization code, and returns the client redirect URI.
         """
         state_data = await self.store.get('mcp_auth_state', state)
         if not state_data:
@@ -286,11 +293,7 @@ class GatewayOAuthProvider:
         return construct_redirect_uri(redirect_uri, code=mcp_auth_code, state=state)
 
     async def get_api_access_token(self) -> str | None:
-        """Get the upstream API access token for the current request.
-
-        Uses the MCP access token from the request context to look up
-        the corresponding upstream token.
-        """
+        """Map the active MCP access token (request context) to the upstream bearer secret."""
         mcp_access_token = get_access_token()
         if not mcp_access_token:
             return None
@@ -300,6 +303,7 @@ class GatewayOAuthProvider:
 
     @staticmethod
     def _require_client_id(client: OAuthClientInformationFull) -> str:
+        """Return ``client.client_id`` or raise ``ValueError``."""
         if not client.client_id:
             raise ValueError('client_id is required')
         return client.client_id
@@ -311,6 +315,7 @@ class GatewayOAuthProvider:
         api_access_token: str,
         api_refresh_token: str | None,
     ) -> OAuthToken:
+        """Mint MCP access/refresh tokens and map them to upstream API tokens."""
         mcp_access = f'mcp_{secrets.token_hex(32)}'
         mcp_refresh = f'mcp_refresh_{secrets.token_hex(32)}'
         now = int(time.time())
@@ -366,6 +371,7 @@ class GatewayOAuthProvider:
         )
 
     async def _store_api_token(self, client_id: str, token: str, expires_in: int) -> None:
+        """Persist upstream access token metadata under ``api_access_token`` with TTL."""
         await self.store.set(
             'api_access_token',
             token,
@@ -378,10 +384,7 @@ class GatewayOAuthProvider:
         )
 
     async def _request_upstream_token(self, request_data: dict[str, typing.Any]) -> tuple[str, str | None, int]:
-        """Exchange credentials with the upstream OAuth token endpoint.
-
-        Returns: (access_token, refresh_token | None, expires_in)
-        """
+        """POST ``request_data`` to upstream token URL; return ``(access, refresh | None, expires_in)``."""
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 self.upstream_token_url,

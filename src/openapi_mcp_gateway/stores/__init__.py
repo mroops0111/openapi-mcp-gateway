@@ -6,14 +6,14 @@ __all__ = ['MemoryTokenStore', 'TokenStore']
 
 
 def create_store(store_type: str = 'memory', **kwargs) -> TokenStore:
-    """Factory function to create a TokenStore instance.
+    """Instantiate the configured ``TokenStore`` backend.
 
     Args:
-        store_type: 'memory' or 'redis'
-        **kwargs: Passed to the store constructor (e.g. url, prefix for Redis)
+        store_type: Either ``memory`` or ``redis``.
+        **kwargs: Forwarded to ``RedisTokenStore`` (for example ``url``, ``prefix``).
 
     Returns:
-        A TokenStore-compatible instance.
+        A concrete ``TokenStore`` implementation.
     """
     if store_type == 'memory':
         return MemoryTokenStore()

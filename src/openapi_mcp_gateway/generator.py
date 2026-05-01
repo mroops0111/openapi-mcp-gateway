@@ -17,18 +17,12 @@ from .openapi import OperationInfo, ParameterInfo
 logger = logging.getLogger(__name__)
 
 
-_INVALID_IDENT_CHARS = re.compile(r'[^A-Za-z0-9_]')
+INVALID_IDENT_CHARS = re.compile(r'[^A-Za-z0-9_]')
 
 
 def _sanitize_name(name: str) -> str:
-    """Replace characters not allowed in Python identifiers with underscores.
-
-    Used for both tool names (e.g. ``meta/root`` → ``meta_root``) and parameter
-    names (e.g. ``enterprise-team`` → ``enterprise_team``). Python keywords
-    are suffixed with ``_`` (PEP 8 convention). The original name is preserved
-    separately for path/query/header substitution.
-    """
-    sanitized = _INVALID_IDENT_CHARS.sub('_', name)
+    """Return a valid Python identifier, prefixing digits and suffixing keywords."""
+    sanitized = INVALID_IDENT_CHARS.sub('_', name)
     if sanitized and sanitized[0].isdigit():
         sanitized = '_' + sanitized
     if keyword.iskeyword(sanitized):
@@ -37,7 +31,7 @@ def _sanitize_name(name: str) -> str:
 
 
 class ToolGenerator:
-    """Generates MCP tools from a list of OpenAPI operations."""
+    """Bind OpenAPI operations onto a FastMCP server as callable tools."""
 
     def __init__(
         self,
@@ -46,17 +40,20 @@ class ToolGenerator:
         auth_resolver: AuthResolver | None = None,
         timeout: float = 90,
     ):
+        """Store MCP server handle, upstream URL, auth resolver, and HTTP timeout."""
         self.mcp = mcp
         self.base_url = base_url
         self.auth_resolver = auth_resolver or NullAuthResolver()
         self.timeout = timeout
 
     def register_operations(self, operations: list[OperationInfo]) -> None:
+        """Declare one MCP tool per ``OperationInfo`` after policy filtering."""
         for operation in operations:
             self._register_tool(operation)
         logger.info('Registered %d MCP tool(s) on server "%s"', len(operations), self.mcp.name)
 
     def _register_tool(self, operation: OperationInfo) -> None:
+        """Register a single FastMCP tool with generated signature and description."""
         # Separate parameters by location
         url_params = [p for p in operation.parameters if p.location in ('path', 'query', 'header')]
         body_params = [p for p in operation.parameters if p.location == 'body']
@@ -79,7 +76,7 @@ class ToolGenerator:
         url_params: list[ParameterInfo],
         body_params: list[ParameterInfo],
     ) -> typing.Callable:
-        """Build a tool function with a synthetic signature matching the operation's parameters."""
+        """Return an async callable with ``inspect.Signature`` matching parameters."""
         base_url = self.base_url
         auth_resolver = self.auth_resolver
         timeout = self.timeout
@@ -189,7 +186,7 @@ class ToolGenerator:
 
 
 def _schema_to_python_type(schema: dict[str, typing.Any]) -> typing.Any:
-    """Convert an OpenAPI schema type to a Python type annotation."""
+    """Map JSON Schema ``type`` / ``items`` to typing-compatible annotations."""
     schema_type = schema.get('type', 'string')
 
     if schema_type == 'string':

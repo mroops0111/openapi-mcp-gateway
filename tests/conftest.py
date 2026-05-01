@@ -26,7 +26,6 @@ def petstore_yml_path() -> pathlib.Path:
 
 @pytest.fixture
 def petstore_spec_raw() -> dict:
-    """Load the petstore spec as a raw dict (from JSON fixture)."""
     return json.loads((FIXTURES_DIR / 'petstore.json').read_text())
 
 

@@ -32,14 +32,12 @@ logger = logging.getLogger(__name__)
 
 @dataclasses.dataclass
 class _AppContext:
-    """Lifespan context passed to MCP tool functions."""
+    """Values injected into MCP tool handlers via FastMCP lifespan."""
 
     auth_provider: GatewayOAuthProvider | None = None
 
 
 class _ServerBundle(typing.NamedTuple):
-    """Internal handle for a registered MCP server."""
-
     name: str
     mount_path: str
     mcp: FastMCP
@@ -49,20 +47,22 @@ class _ServerBundle(typing.NamedTuple):
 
 
 class Gateway:
-    """Multi-server MCP gateway.
+    """Expose several OpenAPI backends as MCP servers in one process.
 
-    Usage:
+    Typical usage::
+
         gateway = Gateway()
         gateway.add_server(name="petstore", spec="petstore.json")
         gateway.run()
 
-    Or with a config file:
+    Or load multiple servers from YAML::
+
         config = GatewayConfig.from_yaml("servers.yml")
-        gateway = Gateway.from_config(config)
-        gateway.run()
+        Gateway.from_config(config).run()
     """
 
     def __init__(self, config: GatewayConfig | None = None):
+        """Create a gateway; optionally pre-fill ``GatewayConfig``."""
         self._config = config or GatewayConfig()
         self._servers: list[_ServerBundle] = []
         store_cfg = self._config.store
@@ -75,7 +75,7 @@ class Gateway:
 
     @classmethod
     def from_config(cls, config: GatewayConfig) -> 'Gateway':
-        """Build a gateway from a GatewayConfig, registering all servers."""
+        """Construct a gateway and register every entry in ``config.servers``."""
         gw = cls(config=config)
         for entry in config.servers:
             gw._add_server_from_entry(entry)
@@ -91,7 +91,7 @@ class Gateway:
         policy: dict[str, typing.Any] | None = None,
         timeout: float = 90,
     ) -> None:
-        """Add an MCP server from an OpenAPI spec."""
+        """Register a server from arguments (convenience over building ``ServerConfig``)."""
         from .settings import AuthConfig
 
         entry = ServerConfig(
@@ -111,7 +111,7 @@ class Gateway:
         host: str | None = None,
         port: int | None = None,
     ) -> None:
-        """Start the gateway server."""
+        """Start ``uvicorn`` (HTTP/SSE) or the stdio transport for a single server."""
         transport = transport or self._config.transport
         host = host or self._config.host
         port = port or self._config.port
@@ -140,13 +140,14 @@ class Gateway:
         )
 
     def mount(self, app: FastAPI, transport: str | None = None) -> None:
-        """Mount all MCP servers onto an existing FastAPI application."""
+        """Mount each registered MCP sub-app on ``app`` at its configured path."""
         transport = transport or self._config.transport
         for handle in self._servers:
             mcp_app = handle.mcp.sse_app() if transport == 'sse' else handle.mcp.streamable_http_app()
             app.mount(handle.mount_path, mcp_app)
 
     def _add_server_from_entry(self, entry: ServerConfig) -> None:
+        """Internal: wire one ``ServerConfig`` from parsed spec through tool registration."""
         logger.info('Loading server "%s" from spec=%s', entry.name, entry.spec)
         raw = load_spec(entry.spec)
         spec = parse_spec(raw, source=entry.spec)
@@ -261,7 +262,7 @@ class Gateway:
     def _setup_oauth(
         self, entry: ServerConfig, spec: OpenAPISpec
     ) -> tuple[GatewayOAuthProvider, AuthResolver, AuthSettings]:
-        """Set up OAuth for a server entry."""
+        """Internal: build OAuth provider plus MCP auth metadata for ``entry``."""
         client_id = entry.auth.resolve_client_id()
         client_secret = entry.auth.resolve_client_secret()
 
@@ -340,6 +341,7 @@ class Gateway:
         return provider, resolver, auth_settings
 
     def _build_app(self, transport: str) -> FastAPI:
+        """Internal: assemble CORS, OAuth, discovery routes, health check, and MCP mounts."""
         config = self._config
 
         @contextlib.asynccontextmanager

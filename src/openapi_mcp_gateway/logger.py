@@ -22,11 +22,15 @@ RESET = '\033[0m'
 
 
 def iso_time(record: logging.LogRecord) -> str:
+    """Format ``record.created`` as an ISO-8601 string with millisecond precision."""
     return datetime.datetime.fromtimestamp(record.created).isoformat(timespec='milliseconds')
 
 
 class JsonFormatter(logging.Formatter):
+    """Emit one JSON object per log line (time, level, logger, message)."""
+
     def format(self, record: logging.LogRecord) -> str:
+        """Return a single-line JSON encoding of standard record fields."""
         return json.dumps(
             {
                 'time': iso_time(record),
@@ -39,14 +43,18 @@ class JsonFormatter(logging.Formatter):
 
 
 class TextFormatter(logging.Formatter):
+    """Human-readable log lines; optional ANSI colors when ``use_color`` is True."""
+
     def __init__(self, use_color: bool = False) -> None:
         super().__init__(TEXT_FORMAT)
         self.use_color = use_color
 
     def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:  # noqa: N802
+        """Use ISO timestamps instead of the default ``strftime`` layout."""
         return iso_time(record)
 
     def format(self, record: logging.LogRecord) -> str:
+        """Format ``TEXT_FORMAT``, optionally coloring level and logger names."""
         if not self.use_color:
             return super().format(record)
         color = LEVEL_COLORS.get(record.levelname, '')
@@ -62,18 +70,19 @@ class TextFormatter(logging.Formatter):
 
 
 def stderr_supports_color() -> bool:
+    """Return False when ``NO_COLOR`` is set or stderr is not a TTY."""
     if os.environ.get('NO_COLOR'):
         return False
     return sys.stderr.isatty()
 
 
 def setup(level: str = 'INFO', format: str = 'text', file: str | None = None) -> None:
-    """Configure logging for the gateway and its dependencies.
+    """Attach JSON or text handlers to the root logger for gateway processes.
 
-    Sets the root logger so uvicorn, mcp, and our own modules share one
-    handler chain. stderr output is colorised when attached to a TTY
-    (override with NO_COLOR=1); file output is always plain. Safe to
-    call multiple times — handlers are reset on each call.
+    Clears existing root handlers on each call. Third-party loggers under
+    ``uvicorn`` / ``mcp`` are stripped of duplicate handlers so records flow
+    through this configuration. stderr uses color only when it is a TTY and
+    ``NO_COLOR`` is unset.
     """
     is_json = format == 'json'
 

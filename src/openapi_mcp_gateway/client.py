@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class APIClient:
-    """Async HTTP client that wraps httpx for upstream API requests."""
+    """Thin async HTTP wrapper around ``httpx.AsyncClient`` for upstream calls."""
 
     def __init__(
         self,
@@ -17,6 +17,7 @@ class APIClient:
         headers: dict[str, str] | None = None,
         timeout: float = 90,
     ):
+        """Configure base URL, optional default headers, and per-request timeout."""
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=timeout,
@@ -24,18 +25,23 @@ class APIClient:
         )
 
     async def aclose(self) -> None:
+        """Close the underlying HTTP client."""
         await self._client.aclose()
 
     async def __aenter__(self) -> typing.Self:
+        """Enter async context manager scope."""
         return self
 
     async def __aexit__(self, *exc_info: typing.Any) -> None:
+        """Close the client when leaving context."""
         await self.aclose()
 
     def set_auth_header(self, token: str, scheme: str = 'Bearer') -> None:
+        """Set the ``Authorization`` header using ``scheme`` and ``token``."""
         self._client.headers['Authorization'] = f'{scheme} {token}'
 
     def set_header(self, key: str, value: str) -> None:
+        """Set an arbitrary default header on the underlying client."""
         self._client.headers[key] = value
 
     async def request(
@@ -46,11 +52,14 @@ class APIClient:
         data: dict[str, typing.Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> dict[str, typing.Any]:
-        """Make an HTTP request to the upstream API.
+        """Perform ``method`` against ``path`` (relative to ``base_url``).
+
+        JSON bodies use the ``json`` parameter for POST/PUT/PATCH. Raises
+        ``httpx.HTTPStatusError`` on HTTP error responses.
 
         Returns:
-            Parsed response. JSON responses are returned as-is,
-            other content types are wrapped as {'data': text}.
+            Decoded JSON object for ``application/json``, ``{'status': code}``
+            for empty 204 bodies, or ``{'data': text}`` for other media types.
         """
         request_kwargs: dict[str, typing.Any] = {}
         if params:

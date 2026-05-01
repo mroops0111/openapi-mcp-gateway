@@ -110,7 +110,7 @@ def main(
     verbose: bool,
     quiet: bool,
 ) -> None:
-    """Turn any OpenAPI specification into an MCP server.
+    """Run the gateway CLI: load config from ``--spec`` or ``--config``, then serve.
 
     \b
     Single spec (no auth):
@@ -212,7 +212,7 @@ def _build_auth_config(
     auth_authorization_url: str | None,
     auth_token_url: str | None,
 ) -> AuthConfig:
-    """Build an AuthConfig from CLI flags."""
+    """Construct ``AuthConfig`` from optional auth-related CLI flags."""
     has_auth_flags = any(
         [
             auth_type,
@@ -257,10 +257,7 @@ def _resolve_logging_config(
     verbose: bool,
     quiet: bool,
 ) -> LoggingConfig:
-    """Layer CLI flags on top of the YAML/default LoggingConfig.
-
-    Precedence (highest first): -v / -q → --log-level → YAML/default.
-    """
+    """Merge verbosity shortcuts and explicit log flags onto YAML defaults."""
     if verbose:
         level = 'DEBUG'
     elif quiet:
@@ -270,10 +267,22 @@ def _resolve_logging_config(
     else:
         level = base.level
 
-    fmt = cli_format.lower() if cli_format else base.format
+    fmt: str = cli_format.lower() if cli_format else base.format
     file_ = cli_file if cli_file is not None else base.file
 
-    return LoggingConfig(level=level, format=fmt, file=file_)
+    if level not in LEVELS:
+        level = base.level
+    if fmt not in FORMATS:
+        fmt = base.format
+
+    return LoggingConfig(
+        level=typing.cast(
+            typing.Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+            level,
+        ),
+        format=typing.cast(typing.Literal['text', 'json'], fmt),
+        file=file_,
+    )
 
 
 if __name__ == '__main__':

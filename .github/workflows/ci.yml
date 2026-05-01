@@ -12,26 +12,26 @@ concurrency:
 
 jobs:
   lint:
-    name: Lint & format
+    name: Lint & Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --dev --extra redis
+      - run: uv sync --extra dev --extra redis
       - run: uv run ruff check src/ tests/
       - run: uv run ruff format --check src/ tests/
 
   typecheck:
-    name: Type check (basedpyright)
+    name: Type Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --dev --extra redis
+      - run: uv sync --extra dev --extra redis
       - run: uv run basedpyright src/ tests/
 
   test:
@@ -47,7 +47,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-      - run: uv sync --dev --extra redis
+      - run: uv sync --extra dev --extra redis
       - run: uv run pytest tests/ -v --tb=short
 
   build:

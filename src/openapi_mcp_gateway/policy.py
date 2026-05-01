@@ -4,11 +4,10 @@ from .openapi import OperationInfo
 
 
 def matches_pattern(operation: OperationInfo, pattern: str) -> bool:
-    """Check if an operation matches a filter pattern.
+    """Return True if ``operation`` matches ``pattern``.
 
-    Supported patterns:
-        - Operation ID: "getUsers", "create*"
-        - METHOD path: "GET /users/*", "POST /api/*"
+    ``pattern`` may glob-match ``operation_id``, or use ``METHOD /path`` form
+    where both method and path support shell-style wildcards.
     """
     # Try as "METHOD path" pattern
     if ' ' in pattern:
@@ -26,16 +25,17 @@ def filter_operations(
     deny: list[str] | None = None,
     marked_only: bool = False,
 ) -> list[OperationInfo]:
-    """Filter operations based on policy rules.
+    """Apply ``allow``, ``deny``, and ``marked_only`` rules to ``operations``.
 
     Args:
-        operations: All parsed operations.
-        allow: If set, only operations matching at least one pattern are included.
-        deny: Operations matching any pattern are excluded.
-        marked_only: If True, only include operations with x-mcp-integration.expose.tool.
+        operations: Candidate operations (typically from ``parse_spec``).
+        allow: If set, keep only operations matching at least one pattern.
+        deny: Exclude operations matching any of these patterns.
+        marked_only: If True, keep only operations exposed via
+            ``x-mcp-integration.expose.tool``.
 
     Returns:
-        Filtered list of operations.
+        The filtered sequence (possibly empty).
     """
     result = operations
 
