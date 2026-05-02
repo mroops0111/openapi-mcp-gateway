@@ -1,8 +1,8 @@
 # OpenAPI MCP Gateway
 
 [![CI](https://github.com/mroops0111/openapi-mcp-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/mroops0111/openapi-mcp-gateway/actions/workflows/ci.yml)
-[![PyPI version](https://img.shields.io/pypi/v/openapi-mcp-gateway.svg)](https://pypi.org/project/openapi-mcp-gateway/)
-[![Python Version](https://img.shields.io/pypi/pyversions/openapi-mcp-gateway.svg)](https://pypi.org/project/openapi-mcp-gateway/)
+[![PyPI version](https://img.shields.io/pypi/v/openapi-mcp-gateway.svg?v=1)](https://pypi.org/project/openapi-mcp-gateway/)
+[![Python Version](https://img.shields.io/pypi/pyversions/openapi-mcp-gateway.svg?v=1)](https://pypi.org/project/openapi-mcp-gateway/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Turn any OpenAPI specification into a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with a single command.
