@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Build distributions
+    name: Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +36,7 @@ jobs:
           path: dist/
 
   publish-pypi:
-    name: Publish to PyPI
+    name: Publish
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -59,7 +59,7 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   github-release:
-    name: Create GitHub Release
+    name: GitHub Release
     needs: publish-pypi
     runs-on: ubuntu-latest
     permissions:
