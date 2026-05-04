@@ -58,6 +58,7 @@ def mock_upstream(monkeypatch):
     ``APIClient(...)`` constructions in this test will dispatch HTTP traffic to
     ``handler`` instead of the real network.
     """
+
     def install(handler: _HttpHandler) -> None:
         def patched_init(self, base_url, headers=None, timeout=90):
             self._client = httpx.AsyncClient(
@@ -65,5 +66,7 @@ def mock_upstream(monkeypatch):
                 headers=headers or {},
                 transport=httpx.MockTransport(handler),
             )
+
         monkeypatch.setattr(APIClient, '__init__', patched_init)
+
     return install
