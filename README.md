@@ -2,31 +2,21 @@
 
 [![CI](https://github.com/mroops0111/openapi-mcp-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/mroops0111/openapi-mcp-gateway/actions/workflows/ci.yml)
 [![PyPI version](https://img.shields.io/pypi/v/openapi-mcp-gateway.svg?v=1)](https://pypi.org/project/openapi-mcp-gateway/)
+[![PyPI Downloads](https://static.pepy.tech/badge/openapi-mcp-gateway/month)](https://pepy.tech/projects/openapi-mcp-gateway)
 [![Python Version](https://img.shields.io/pypi/pyversions/openapi-mcp-gateway.svg?v=1)](https://pypi.org/project/openapi-mcp-gateway/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Turn any OpenAPI specification into a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with a single command.
+Turn any OpenAPI (Swagger) specification into a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with a single command. Give Claude Desktop, Cursor, Cline, or any MCP client access to GitHub, Asana, Slack, or your internal REST APIs without writing tool wrappers.
 
 ```bash
 openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 # Server live at http://127.0.0.1:8000/api/mcp
 ```
 
-- **No code generation.** Point it at a spec and every operation becomes an MCP tool.
-- **Multi-API.** Run several OpenAPI services in one process, each on its own mount path.
+- **Zero glue code.** Every operation in your spec becomes an MCP tool automatically.
+- **Multi-API.** Expose GitHub, Slack, and internal services from one process, each on its own mount path.
 - **Auth built in.** Bearer, API Key, and OAuth2 (with per-user delegation).
-- **Flexible transport.** Streamable HTTP, SSE, or stdio.
-
----
-
-## Table of Contents
-
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Authentication](#authentication)
-- [Configuration](#configuration)
-- [Python API](#python-api)
-- [License](#license)
+- **Flexible transport.** Streamable HTTP, SSE, or stdio for desktop clients.
 
 ---
 
@@ -45,7 +35,7 @@ uv add openapi-mcp-gateway
 Optional extras:
 
 ```bash
-pip install "openapi-mcp-gateway[redis]"   # Redis token store
+pip install "openapi-mcp-gateway[redis]"   # Redis token store, used for auth memoization
 ```
 
 Requires Python 3.11+.
@@ -86,29 +76,45 @@ openapi-mcp-gateway \
 
 ### 4. Multiple APIs at Once
 
+Mix public, bearer, and OAuth2 services in a single config. Each server is mounted at `/{name}/mcp`:
+
 ```yaml
 # servers.yml
 host: "0.0.0.0"
 port: 8000
+url: http://localhost:8000   # public base URL for OAuth callbacks
 
 servers:
   - name: petstore
     spec: https://petstore3.swagger.io/api/v3/openapi.json
 
   - name: github
-    spec: ./openapi/github.json
+    spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
     auth:
       type: bearer
       token: ${GITHUB_TOKEN}
     policy:
       allow: ["GET /repos/*", "GET /users/*"]
+      deny:  ["GET /repos/*/actions/secrets*"]
+
+  - name: asana
+    spec: https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml
+    auth:
+      type: oauth2
+      client_id: ${ASANA_CLIENT_ID}
+      client_secret: ${ASANA_CLIENT_SECRET}
+      scopes: [openid, email, profile, users:read, workspaces:read]
 ```
 
 ```bash
+export GITHUB_TOKEN="ghp_..."
+export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
 openapi-mcp-gateway --config servers.yml
 ```
 
-Runnable examples live in [`examples/`](examples/). Each YAML lists its prerequisites at the top.
+Runnable variants of this multi-server setup live in [`examples/`](examples/): [`multi-server.yml`](examples/multi-server.yml), [`asana.yml`](examples/asana.yml), [`github.yml`](examples/github.yml), [`petstore.yml`](examples/petstore.yml). Each YAML lists its prerequisites at the top.
+
+`${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`. Override `auth.authorization_url`, `auth.token_url`, or `auth.scopes` when the spec is incomplete.
 
 ### 5. Local Desktop Client (stdio)
 
@@ -124,27 +130,6 @@ For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
   }
 }
 ```
-
-## Authentication
-
-| Type | Use Case | Required Fields |
-|------|----------|-----------------|
-| `none` | Public APIs |  |
-| `bearer` | Personal access tokens, API tokens | `token` |
-| `api_key` | API key in `X-API-Key` header (override with `auth.api_key_header`) | `token` |
-| `oauth2` | Per-user delegated access | `client_id`, `client_secret` |
-
-All string fields support `${ENV_VAR}` and `${ENV_VAR:-default}` interpolation, resolved at request time:
-
-```yaml
-auth:
-  type: bearer
-  token: ${GITHUB_TOKEN}
-```
-
-### OAuth2 Details
-
-`authorizationUrl`, `tokenUrl`, and `scopes` are read from the spec's `securitySchemes`. Override `auth.authorization_url`, `auth.token_url`, or `auth.scopes` when the spec is incomplete.
 
 ## Configuration
 
@@ -176,7 +161,11 @@ Run `openapi-mcp-gateway --help` for the CLI reference. For YAML config, the [Qu
 | `name` | string | required | Unique identifier; mount path defaults to `/{name}` |
 | `spec` | string | required | Path or URL to OpenAPI document (JSON or YAML) |
 | `base_url` | string | from spec | Override the upstream base URL |
-| `auth.*` |  |  | See [Authentication](#authentication) |
+| `auth.type` | string | `none` | `none`, `bearer`, `api_key`, or `oauth2` |
+| `auth.token` | string |  | Required for `bearer` / `api_key` |
+| `auth.api_key_header` | string | `X-API-Key` | Header name for `api_key` |
+| `auth.client_id`, `auth.client_secret` | string |  | Required for `oauth2` |
+| `auth.scopes`, `auth.authorization_url`, `auth.token_url` |  | from spec | OAuth2 overrides when `securitySchemes` is incomplete |
 | `policy.allow` | list |  | Only expose matching operations |
 | `policy.deny` | list |  | Exclude matching operations |
 | `timeout` | float | `90` | HTTP timeout in seconds |
