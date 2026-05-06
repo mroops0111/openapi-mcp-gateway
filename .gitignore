@@ -22,5 +22,7 @@ venv/
 .env
 *.tokens.json
 
-# Internal docs (drafts, not ready for publish)
+# Internal docs
 docs/
+*.md
+!README.md
