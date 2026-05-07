@@ -27,53 +27,59 @@ def _build_spec(security_schemes: dict | None = None) -> OpenAPISpec:
 
 def _spec_with_authorization_code() -> OpenAPISpec:
     """Spec declaring only the ``authorization_code`` flow."""
-    return _build_spec({
-        'oauth': {
-            'type': 'oauth2',
-            'flows': {
-                'authorizationCode': {
-                    'authorizationUrl': 'https://auth.example.com/authorize',
-                    'tokenUrl': 'https://auth.example.com/token',
-                    'scopes': {'read': 'r', 'write': 'w'},
+    return _build_spec(
+        {
+            'oauth': {
+                'type': 'oauth2',
+                'flows': {
+                    'authorizationCode': {
+                        'authorizationUrl': 'https://auth.example.com/authorize',
+                        'tokenUrl': 'https://auth.example.com/token',
+                        'scopes': {'read': 'r', 'write': 'w'},
+                    },
                 },
             },
-        },
-    })
+        }
+    )
 
 
 def _spec_with_client_credentials() -> OpenAPISpec:
     """Spec declaring only the ``client_credentials`` flow."""
-    return _build_spec({
-        'oauth': {
-            'type': 'oauth2',
-            'flows': {
-                'clientCredentials': {
-                    'tokenUrl': 'https://auth.example.com/token',
-                    'scopes': {'api': 'api'},
+    return _build_spec(
+        {
+            'oauth': {
+                'type': 'oauth2',
+                'flows': {
+                    'clientCredentials': {
+                        'tokenUrl': 'https://auth.example.com/token',
+                        'scopes': {'api': 'api'},
+                    },
                 },
             },
-        },
-    })
+        }
+    )
 
 
 def _spec_with_both_flows() -> OpenAPISpec:
     """Spec declaring both ``authorization_code`` and ``client_credentials``."""
-    return _build_spec({
-        'oauth': {
-            'type': 'oauth2',
-            'flows': {
-                'authorizationCode': {
-                    'authorizationUrl': 'https://auth.example.com/authorize',
-                    'tokenUrl': 'https://auth.example.com/token',
-                    'scopes': {'api': 'api'},
-                },
-                'clientCredentials': {
-                    'tokenUrl': 'https://auth.example.com/token',
-                    'scopes': {'api': 'api'},
+    return _build_spec(
+        {
+            'oauth': {
+                'type': 'oauth2',
+                'flows': {
+                    'authorizationCode': {
+                        'authorizationUrl': 'https://auth.example.com/authorize',
+                        'tokenUrl': 'https://auth.example.com/token',
+                        'scopes': {'api': 'api'},
+                    },
+                    'clientCredentials': {
+                        'tokenUrl': 'https://auth.example.com/token',
+                        'scopes': {'api': 'api'},
+                    },
                 },
             },
-        },
-    })
+        }
+    )
 
 
 def _entry(auth: AuthConfig, name: str = 'srv') -> ServerConfig:
@@ -234,14 +240,16 @@ class TestClientCredentialsFlowHandler:
         handler = ClientCredentialsFlowHandler()
         flow = resolve_oauth_flow(entry, spec)
 
-        setup = handler.build(OAuthFlowContext(
-            entry=entry,
-            spec=spec,
-            oauth_flow=flow,
-            store=MemoryTokenStore(),
-            gateway_url='http://localhost:8000',
-            mount_path='/srv',
-        ))
+        setup = handler.build(
+            OAuthFlowContext(
+                entry=entry,
+                spec=spec,
+                oauth_flow=flow,
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                mount_path='/srv',
+            )
+        )
 
         token_source = setup.resolver._token_source  # type: ignore[attr-defined]
         assert isinstance(token_source, ClientCredentialsTokenSource)
@@ -263,14 +271,16 @@ class TestAuthorizationCodeFlowHandler:
         handler = AuthorizationCodeFlowHandler()
         flow = resolve_oauth_flow(entry, spec)
 
-        setup = handler.build(OAuthFlowContext(
-            entry=entry,
-            spec=spec,
-            oauth_flow=flow,
-            store=MemoryTokenStore(),
-            gateway_url='http://localhost:8000/',
-            mount_path='/srv',
-        ))
+        setup = handler.build(
+            OAuthFlowContext(
+                entry=entry,
+                spec=spec,
+                oauth_flow=flow,
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000/',
+                mount_path='/srv',
+            )
+        )
 
         assert setup.provider is not None
         assert setup.provider.callback_url == 'http://localhost:8000/srv/auth/callback'

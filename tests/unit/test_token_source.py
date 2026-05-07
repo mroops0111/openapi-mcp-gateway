@@ -27,9 +27,7 @@ class TestClientCredentialsTokenSourceFetch:
             client_secret='secret',
             scopes=['read', 'write'],
         )
-        post_mock = AsyncMock(
-            return_value=_build_response(200, {'access_token': 'fresh-token', 'expires_in': 3600})
-        )
+        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'fresh-token', 'expires_in': 3600}))
         source._http_client = MagicMock()
         source._http_client.post = post_mock
 
@@ -51,9 +49,7 @@ class TestClientCredentialsTokenSourceFetch:
             client_id='cid',
             client_secret='secret',
         )
-        post_mock = AsyncMock(
-            return_value=_build_response(200, {'access_token': 'cached-token', 'expires_in': 3600})
-        )
+        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'cached-token', 'expires_in': 3600}))
         source._http_client = MagicMock()
         source._http_client.post = post_mock
 
@@ -123,9 +119,7 @@ class TestClientCredentialsTokenSourceErrors:
             client_secret='secret',
         )
         source._http_client = MagicMock()
-        source._http_client.post = AsyncMock(
-            return_value=_build_response(401, payload={}, text='invalid_client')
-        )
+        source._http_client.post = AsyncMock(return_value=_build_response(401, payload={}, text='invalid_client'))
 
         with pytest.raises(RuntimeError, match='401'):
             await source.get_token()
@@ -138,9 +132,7 @@ class TestClientCredentialsTokenSourceErrors:
             client_secret='secret',
         )
         source._http_client = MagicMock()
-        source._http_client.post = AsyncMock(
-            return_value=_build_response(200, payload={'expires_in': 3600})
-        )
+        source._http_client.post = AsyncMock(return_value=_build_response(200, payload={'expires_in': 3600}))
 
         with pytest.raises(RuntimeError, match='access_token'):
             await source.get_token()

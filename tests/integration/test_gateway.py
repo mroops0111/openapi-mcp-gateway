@@ -8,6 +8,7 @@ import pytest
 from mcp.server.fastmcp import Context
 from starlette.testclient import TestClient
 
+from openapi_mcp_gateway.auth import token_source as token_source_module
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
 
@@ -275,8 +276,6 @@ class TestClientCredentialsFlowEndToEnd:
 
     async def test_tool_call_attaches_fetched_bearer(self, cc_gateway_config, mock_upstream, monkeypatch):
         """A tool call fetches a token from the IdP, then forwards it as ``Authorization`` upstream."""
-        from openapi_mcp_gateway.auth import token_source as token_source_module
-
         token_response = MagicMock()
         token_response.status_code = 200
         token_response.json.return_value = {'access_token': 'cc-bearer-xyz', 'expires_in': 3600}
@@ -284,7 +283,10 @@ class TestClientCredentialsFlowEndToEnd:
 
         token_post_mock = AsyncMock(return_value=token_response)
         monkeypatch.setattr(
-            token_source_module.httpx.AsyncClient, 'post', token_post_mock, raising=False,
+            token_source_module.httpx.AsyncClient,
+            'post',
+            token_post_mock,
+            raising=False,
         )
 
         gateway = Gateway.from_config(cc_gateway_config)
@@ -307,14 +309,14 @@ class TestClientCredentialsFlowEndToEnd:
         post_args = token_post_mock.await_args
         assert post_args is not None
         # The first positional arg is the URL, second positional or kwargs carry data.
-        assert post_args.args[0] == 'https://auth.example.com/token' or \
-            post_args.kwargs.get('url') == 'https://auth.example.com/token'
+        assert (
+            post_args.args[0] == 'https://auth.example.com/token'
+            or post_args.kwargs.get('url') == 'https://auth.example.com/token'
+        )
         assert post_args.kwargs['data']['grant_type'] == 'client_credentials'
 
     async def test_token_is_cached_across_tool_calls(self, cc_gateway_config, mock_upstream, monkeypatch):
         """Multiple tool calls share a single cached token (one POST to the IdP)."""
-        from openapi_mcp_gateway.auth import token_source as token_source_module
-
         token_response = MagicMock()
         token_response.status_code = 200
         token_response.json.return_value = {'access_token': 'cached', 'expires_in': 3600}
@@ -322,7 +324,10 @@ class TestClientCredentialsFlowEndToEnd:
 
         token_post_mock = AsyncMock(return_value=token_response)
         monkeypatch.setattr(
-            token_source_module.httpx.AsyncClient, 'post', token_post_mock, raising=False,
+            token_source_module.httpx.AsyncClient,
+            'post',
+            token_post_mock,
+            raising=False,
         )
 
         gateway = Gateway.from_config(cc_gateway_config)

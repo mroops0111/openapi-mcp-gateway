@@ -77,8 +77,7 @@ class ClientCredentialsTokenSource(TokenSource):
     def _is_token_valid(self) -> bool:
         """Return True iff a cached token exists and is not within the refresh skew."""
         return (
-            self._access_token is not None
-            and time.monotonic() < self._expires_at_monotonic - self.refresh_skew_seconds
+            self._access_token is not None and time.monotonic() < self._expires_at_monotonic - self.refresh_skew_seconds
         )
 
     async def _fetch_token(self) -> None:
@@ -107,9 +106,7 @@ class ClientCredentialsTokenSource(TokenSource):
                 response.status_code,
                 self.token_url,
             )
-            raise RuntimeError(
-                f'Client credentials token fetch failed ({response.status_code}): {response.text}'
-            )
+            raise RuntimeError(f'Client credentials token fetch failed ({response.status_code}): {response.text}')
 
         payload = response.json()
         access_token = payload.get('access_token')

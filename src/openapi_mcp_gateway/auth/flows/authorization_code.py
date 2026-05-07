@@ -440,9 +440,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
                 'Provide auth.authorization_url or add it to the spec securitySchemes.'
             )
         if not oauth_flow.token_url:
-            raise ValueError(
-                f'Server "{entry.name}": authorization_code flow requires token_url.'
-            )
+            raise ValueError(f'Server "{entry.name}": authorization_code flow requires token_url.')
 
         gateway_url = flow_context.gateway_url.rstrip('/')
         callback_url = f'{gateway_url}{flow_context.mount_path}/auth/callback'

@@ -172,7 +172,9 @@ class TestGetApiAccessToken:
         mock_access_token = MagicMock()
         mock_access_token.token = 'mcp_test_token'
 
-        with patch('openapi_mcp_gateway.auth.flows.authorization_code.get_access_token', return_value=mock_access_token):
+        with patch(
+            'openapi_mcp_gateway.auth.flows.authorization_code.get_access_token', return_value=mock_access_token
+        ):
             result = await provider.get_api_access_token()
 
         assert result == 'api_real_token'

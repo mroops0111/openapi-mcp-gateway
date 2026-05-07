@@ -45,13 +45,12 @@ class JsonFormatter(logging.Formatter):
 class TextFormatter(logging.Formatter):
     """Human-readable log lines; optional ANSI colors when ``use_color`` is True."""
 
+    default_time_format = '%Y-%m-%dT%H:%M:%S'
+    default_msec_format = '%s.%03d'
+
     def __init__(self, use_color: bool = False) -> None:
         super().__init__(TEXT_FORMAT)
         self.use_color = use_color
-
-    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:  # noqa: N802
-        """Use ISO timestamps instead of the default ``strftime`` layout."""
-        return iso_time(record)
 
     def format(self, record: logging.LogRecord) -> str:
         """Format ``TEXT_FORMAT``, optionally coloring level and logger names."""

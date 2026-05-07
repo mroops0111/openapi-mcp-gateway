@@ -23,7 +23,7 @@ from .auth.resolver import AuthResolver, NullAuthResolver, StaticAuthResolver
 from .generator import ToolGenerator
 from .openapi import OpenAPISpec, load_spec, parse_spec
 from .policy import filter_operations
-from .settings import GatewayConfig, PolicyConfig, ServerConfig
+from .settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
 from .stores import create_store
 
 
@@ -93,8 +93,6 @@ class Gateway:
         timeout: float = 90,
     ) -> None:
         """Register a server from arguments (convenience over building ``ServerConfig``)."""
-        from .settings import AuthConfig
-
         entry = ServerConfig(
             name=name,
             spec=spec,
