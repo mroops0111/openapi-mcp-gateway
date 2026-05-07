@@ -44,6 +44,7 @@ class AuthConfig(pydantic.BaseModel):
     authorization_url: str | None = None
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
+    flow: typing.Literal['authorization_code', 'client_credentials'] | None = None
 
     def resolve_header(self) -> str | None:
         """Return ``Bearer …`` or raw token text for configured auth types.

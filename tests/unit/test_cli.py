@@ -108,6 +108,7 @@ class TestAuthInference:
             auth_scopes=None,
             auth_authorization_url=None,
             auth_token_url=None,
+            auth_flow=None,
         )
         assert auth.type == 'none'
         assert auth.token is None
@@ -123,6 +124,7 @@ class TestAuthInference:
             auth_scopes=None,
             auth_authorization_url=None,
             auth_token_url=None,
+            auth_flow=None,
         )
         assert auth.type == 'bearer'
         assert auth.token == 'my-token'
@@ -137,6 +139,7 @@ class TestAuthInference:
             auth_scopes=None,
             auth_authorization_url=None,
             auth_token_url=None,
+            auth_flow=None,
         )
         assert auth.type == 'oauth2'
         assert auth.client_id == 'cid'
@@ -152,6 +155,7 @@ class TestAuthInference:
             auth_scopes=None,
             auth_authorization_url=None,
             auth_token_url=None,
+            auth_flow=None,
         )
         assert auth.type == 'api_key'
 
@@ -165,6 +169,7 @@ class TestAuthInference:
             auth_scopes='read , write,admin',
             auth_authorization_url=None,
             auth_token_url=None,
+            auth_flow=None,
         )
         assert auth.scopes == ['read', 'write', 'admin']
 
@@ -179,6 +184,7 @@ class TestAuthInference:
                 auth_scopes='read',
                 auth_authorization_url=None,
                 auth_token_url=None,
+                auth_flow=None,
             )
 
     def test_oauth_urls_carried_through(self):
@@ -191,6 +197,7 @@ class TestAuthInference:
             auth_scopes=None,
             auth_authorization_url='https://auth.example.com/authorize',
             auth_token_url='https://auth.example.com/token',
+            auth_flow=None,
         )
         assert auth.authorization_url == 'https://auth.example.com/authorize'
         assert auth.token_url == 'https://auth.example.com/token'
