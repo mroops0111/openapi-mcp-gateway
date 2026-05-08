@@ -274,8 +274,8 @@ def _cli_layer(
 ) -> dict[str, typing.Any]:
     """Translate CLI flags into a partial ``GatewayConfig`` dict (only fields the user set).
 
-    ``-v`` and ``-q`` are resolved against ``--log-level`` here, so the rest of the
-    pipeline only sees a single ``logging.level`` value alongside other layers.
+    ``-v`` and ``-q`` are resolved against ``--log-level`` here,
+    so the rest of the pipeline only sees a single ``logging.level`` value alongside other layers.
     Unset flags are omitted entirely so they do not shadow earlier layers.
     """
     layer: dict[str, typing.Any] = {}

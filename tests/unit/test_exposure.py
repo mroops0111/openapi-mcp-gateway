@@ -139,7 +139,11 @@ class TestToolGeneration:
 
 
 class TestGeneratedSignature:
-    """``build_tool_function`` builds a signature with required→ctx→optional order and JSON-Schema-driven types."""
+    """``build_tool_function`` builds the FastMCP-facing signature.
+
+    Required params come first, then the injected ``ctx``, then optional params,
+    and parameter annotations are driven by the JSON Schema attached to each spec parameter.
+    """
 
     def _generator(self) -> tuple[ToolGenerator, FastMCP]:
         """Fresh generator + FastMCP for each test."""
