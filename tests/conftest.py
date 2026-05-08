@@ -60,7 +60,8 @@ def mock_upstream(monkeypatch):
     """
 
     def install(handler: _HttpHandler) -> None:
-        def patched_init(self, base_url, headers=None, timeout=90):
+        def patched_init(self, base_url, headers=None, timeout=90, transport=None):
+            del transport  # MockTransport always wins so an in-process ASGI is overridden in tests.
             self._client = httpx.AsyncClient(
                 base_url=base_url,
                 headers=headers or {},

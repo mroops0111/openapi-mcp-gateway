@@ -16,13 +16,22 @@ class APIClient:
         base_url: str,
         headers: dict[str, str] | None = None,
         timeout: float = 90,
+        transport: httpx.AsyncBaseTransport | None = None,
     ):
-        """Configure base URL, optional default headers, and per-request timeout."""
-        self._client = httpx.AsyncClient(
-            base_url=base_url,
-            timeout=timeout,
-            headers=headers or {},
-        )
+        """Configure base URL, default headers, timeout, and optional async transport.
+
+        ``transport`` lets callers route requests somewhere other than the
+        network — typically an ``httpx.ASGITransport`` for in-process FastAPI
+        integration or an ``httpx.MockTransport`` in tests.
+        """
+        client_kwargs: dict[str, typing.Any] = {
+            'base_url': base_url,
+            'timeout': timeout,
+            'headers': headers or {},
+        }
+        if transport is not None:
+            client_kwargs['transport'] = transport
+        self._client = httpx.AsyncClient(**client_kwargs)
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""

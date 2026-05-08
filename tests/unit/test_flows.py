@@ -4,10 +4,15 @@ from openapi_mcp_gateway.auth.flows import (
     AuthorizationCodeFlowHandler,
     ClientCredentialsFlowHandler,
     OAuthFlowContext,
+    PassthroughFlowHandler,
     build_oauth_flow,
 )
 from openapi_mcp_gateway.auth.flows.factory import resolve_oauth_flow
-from openapi_mcp_gateway.auth.resolver import AuthorizationCodeAuthResolver, TokenSourceAuthResolver
+from openapi_mcp_gateway.auth.resolver import (
+    AuthorizationCodeAuthResolver,
+    PassthroughAuthResolver,
+    TokenSourceAuthResolver,
+)
 from openapi_mcp_gateway.auth.token_source import ClientCredentialsTokenSource
 from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
@@ -215,9 +220,24 @@ class TestBuildOAuthFlow:
                 mount_path='/srv',
             )
 
-    def test_authorization_code_requires_credentials(self):
-        """Missing client_id/client_secret on authorization_code raises ``ValueError``."""
+    def test_authorization_code_without_creds_falls_back_to_passthrough(self):
+        """Auto-detected authorization_code without client credentials switches to passthrough."""
         entry = _entry(AuthConfig(type='oauth2'))
+        setup = build_oauth_flow(
+            entry=entry,
+            spec=_spec_with_authorization_code(),
+            store=MemoryTokenStore(),
+            gateway_url='http://localhost:8000',
+            mount_path='/srv',
+        )
+        assert isinstance(setup.resolver, PassthroughAuthResolver)
+        assert setup.provider is None
+        assert setup.settings is None
+        assert setup.on_shutdown is None
+
+    def test_explicit_authorization_code_without_creds_raises(self):
+        """Forcing ``flow='authorization_code'`` without credentials still fails fast."""
+        entry = _entry(AuthConfig(type='oauth2', flow='authorization_code'))
         with pytest.raises(ValueError, match='client_id and client_secret'):
             build_oauth_flow(
                 entry=entry,
@@ -226,6 +246,43 @@ class TestBuildOAuthFlow:
                 gateway_url='http://localhost:8000',
                 mount_path='/srv',
             )
+
+    def test_explicit_passthrough_short_circuits_detector(self):
+        """``flow='passthrough'`` is honoured even when the spec declares no OAuth flows."""
+        entry = _entry(AuthConfig(type='oauth2', flow='passthrough'))
+        setup = build_oauth_flow(
+            entry=entry,
+            spec=_build_spec(),
+            store=MemoryTokenStore(),
+            gateway_url='http://localhost:8000',
+            mount_path='/srv',
+        )
+        assert isinstance(setup.resolver, PassthroughAuthResolver)
+
+
+class TestPassthroughFlowHandler:
+    """``PassthroughFlowHandler`` builds a minimal setup (resolver only)."""
+
+    def test_build_returns_passthrough_resolver(self):
+        """The handler returns an ``OAuthFlowSetup`` carrying only a ``PassthroughAuthResolver``."""
+        from openapi_mcp_gateway.auth.detector import DetectedOAuthFlow
+
+        entry = _entry(AuthConfig(type='oauth2', flow='passthrough'))
+        flow = DetectedOAuthFlow(flow_type='passthrough')
+        setup = PassthroughFlowHandler().build(
+            OAuthFlowContext(
+                entry=entry,
+                spec=_build_spec(),
+                oauth_flow=flow,
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                mount_path='/srv',
+            )
+        )
+        assert isinstance(setup.resolver, PassthroughAuthResolver)
+        assert setup.provider is None
+        assert setup.settings is None
+        assert setup.on_shutdown is None
 
 
 class TestClientCredentialsFlowHandler:
