@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import dataclasses
 import logging
@@ -17,13 +18,12 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 
-from .auth.detector import DetectedOAuthFlow, detect_primary_oauth_flow
-from .auth.provider import GatewayOAuthProvider
-from .auth.resolver import AuthResolver, NullAuthResolver, OAuthAuthResolver, StaticAuthResolver
+from .auth.flows import AuthorizationCodeProvider, build_oauth_flow
+from .auth.resolver import AuthResolver, NullAuthResolver, StaticAuthResolver
 from .generator import ToolGenerator
 from .openapi import OpenAPISpec, load_spec, parse_spec
 from .policy import filter_operations
-from .settings import GatewayConfig, PolicyConfig, ServerConfig
+from .settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
 from .stores import create_store
 
 
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 class _AppContext:
     """Values injected into MCP tool handlers via FastMCP lifespan."""
 
-    auth_provider: GatewayOAuthProvider | None = None
+    auth_provider: AuthorizationCodeProvider | None = None
 
 
 class _ServerBundle(typing.NamedTuple):
@@ -42,7 +42,7 @@ class _ServerBundle(typing.NamedTuple):
     mount_path: str
     mcp: FastMCP
     spec: OpenAPISpec
-    auth_provider: GatewayOAuthProvider | None
+    auth_provider: AuthorizationCodeProvider | None
     auth_settings: AuthSettings | None = None
 
 
@@ -65,6 +65,7 @@ class Gateway:
         """Create a gateway; optionally pre-fill ``GatewayConfig``."""
         self._config = config or GatewayConfig()
         self._servers: list[_ServerBundle] = []
+        self._shutdown_hooks: list[typing.Callable[[], typing.Awaitable[None]]] = []
         store_cfg = self._config.store
         self._store = create_store(
             store_type=store_cfg.type,
@@ -76,10 +77,10 @@ class Gateway:
     @classmethod
     def from_config(cls, config: GatewayConfig) -> 'Gateway':
         """Construct a gateway and register every entry in ``config.servers``."""
-        gw = cls(config=config)
+        gateway = cls(config=config)
         for entry in config.servers:
-            gw._add_server_from_entry(entry)
-        return gw
+            gateway._add_server_from_entry(entry)
+        return gateway
 
     def add_server(
         self,
@@ -92,8 +93,6 @@ class Gateway:
         timeout: float = 90,
     ) -> None:
         """Register a server from arguments (convenience over building ``ServerConfig``)."""
-        from .settings import AuthConfig
-
         entry = ServerConfig(
             name=name,
             spec=spec,
@@ -120,7 +119,10 @@ class Gateway:
             if len(self._servers) != 1:
                 raise ValueError('stdio transport only supports a single server')
             logger.info('Starting MCP server "%s" over stdio', self._servers[0].name)
-            self._servers[0].mcp.run(transport='stdio')
+            try:
+                self._servers[0].mcp.run(transport='stdio')
+            finally:
+                self._run_shutdown_hooks_blocking()
             return
 
         app = self._build_app(transport=transport)
@@ -190,12 +192,23 @@ class Gateway:
             )
 
         # Resolve auth strategy
-        auth_provider: GatewayOAuthProvider | None = None
+        auth_provider: AuthorizationCodeProvider | None = None
         auth_resolver: AuthResolver
         auth_settings: AuthSettings | None = None
 
         if entry.auth.type == 'oauth2':
-            auth_provider, auth_resolver, auth_settings = self._setup_oauth(entry, spec)
+            setup = build_oauth_flow(
+                entry=entry,
+                spec=spec,
+                store=self._store,
+                gateway_url=self._config.url,
+                mount_path=entry.mount_path,
+            )
+            auth_resolver = setup.resolver
+            auth_provider = setup.provider
+            auth_settings = setup.settings
+            if setup.on_shutdown is not None:
+                self._shutdown_hooks.append(setup.on_shutdown)
         elif entry.auth.type in ('bearer', 'api_key'):
             header_value = entry.auth.resolve_header()
             auth_resolver = StaticAuthResolver(header_value) if header_value else NullAuthResolver()
@@ -259,86 +272,24 @@ class Gateway:
             entry.auth.type,
         )
 
-    def _setup_oauth(
-        self, entry: ServerConfig, spec: OpenAPISpec
-    ) -> tuple[GatewayOAuthProvider, AuthResolver, AuthSettings]:
-        """Internal: build OAuth provider plus MCP auth metadata for ``entry``."""
-        client_id = entry.auth.resolve_client_id()
-        client_secret = entry.auth.resolve_client_secret()
+    async def _run_shutdown_hooks(self) -> None:
+        """Run every flow-registered shutdown hook, swallowing per-hook errors."""
+        for hook in self._shutdown_hooks:
+            try:
+                await hook()
+            except Exception:
+                logger.exception('Shutdown hook raised an exception')
 
-        if not client_id or not client_secret:
-            raise ValueError(
-                f'Server "{entry.name}": OAuth2 requires client_id and client_secret. '
-                'Set them directly or use ${ENV_VAR} syntax.'
-            )
+    def _run_shutdown_hooks_blocking(self) -> None:
+        """Synchronous wrapper around ``_run_shutdown_hooks`` for the stdio code path."""
+        if not self._shutdown_hooks:
+            return
 
-        # Detect OAuth flow from spec, fall back to explicit config URLs
-        detected = detect_primary_oauth_flow(spec)
-
-        if detected and not detected.authorization_url:
-            raise ValueError(
-                f'Server "{entry.name}": only authorization_code flow is supported for MCP OAuth. '
-                'The detected flow has no authorization_url.'
-            )
-
-        if not detected:
-            # No securitySchemes in spec — require explicit URLs from config
-            if not entry.auth.authorization_url or not entry.auth.token_url:
-                raise ValueError(
-                    f'Server "{entry.name}": auth type is oauth2 but no OAuth2 flow found in the OpenAPI spec. '
-                    'Provide authorization_url and token_url in auth config, or add a securitySchemes '
-                    'section to the spec.'
-                )
-            detected = DetectedOAuthFlow(
-                flow_type='authorization_code',
-                authorization_url=entry.auth.authorization_url,
-                token_url=entry.auth.token_url,
-            )
-        else:
-            # Config URLs override spec-detected URLs if provided
-            if entry.auth.authorization_url:
-                detected.authorization_url = entry.auth.authorization_url
-            if entry.auth.token_url:
-                detected.token_url = entry.auth.token_url
-
-        # Build callback URL
-        gateway_url = self._config.url.rstrip('/')
-        callback_url = f'{gateway_url}{entry.mount_path}/auth/callback'
-
-        provider = GatewayOAuthProvider(
-            store=self._store,
-            upstream_auth_url=typing.cast(str, detected.authorization_url),
-            upstream_token_url=detected.token_url,
-            client_id=client_id,
-            client_secret=client_secret,
-            callback_url=callback_url,
-            scopes=entry.auth.scopes,
-            prefix=entry.name,
-        )
-
-        server_url = pydantic.AnyHttpUrl(f'{gateway_url}{entry.mount_path}')
-        auth_settings = AuthSettings(
-            issuer_url=server_url,
-            resource_server_url=server_url,
-            revocation_options=RevocationOptions(enabled=True),
-            client_registration_options=ClientRegistrationOptions(
-                enabled=True,
-                valid_scopes=['api'],
-                default_scopes=['api'],
-            ),
-            required_scopes=['api'],
-        )
-
-        logger.debug(
-            'OAuth set up for "%s": authorize=%s token=%s scopes=%s',
-            entry.name,
-            detected.authorization_url,
-            detected.token_url,
-            entry.auth.scopes,
-        )
-
-        resolver = OAuthAuthResolver(provider)
-        return provider, resolver, auth_settings
+        try:
+            asyncio.run(self._run_shutdown_hooks())
+        except RuntimeError:
+            # Loop already running (unlikely on stdio shutdown) — best-effort.
+            logger.warning('Could not run shutdown hooks: event loop already running')
 
     def _build_app(self, transport: str) -> FastAPI:
         """Internal: assemble CORS, OAuth, discovery routes, health check, and MCP mounts."""
@@ -350,6 +301,7 @@ class Gateway:
                 for handle in self._servers:
                     await stack.enter_async_context(handle.mcp.session_manager.run())
                 yield
+            await self._run_shutdown_hooks()
             await self._store.close()
 
         app = FastAPI(

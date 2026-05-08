@@ -5,6 +5,7 @@ import typing
 import urllib.parse
 
 import httpx
+import pydantic
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import (
     AccessToken,
@@ -14,25 +15,30 @@ from mcp.server.auth.provider import (
     TokenError,
     construct_redirect_uri,
 )
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from starlette.exceptions import HTTPException
 
-from ..stores.base import TokenStore
+from ...stores.base import TokenStore
+from ..resolver import AuthorizationCodeAuthResolver
+from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 
 
 logger = logging.getLogger(__name__)
+
 
 MCP_ACCESS_TOKEN_TTL = 3600  # 1 hour
 MCP_REFRESH_TOKEN_TTL = 86400  # 24 hours
 MCP_SCOPES = ['api']
 
 
-class GatewayOAuthProvider:
+class AuthorizationCodeProvider:
     """Implement MCP's OAuth server provider API against an upstream OAuth2 API.
 
     Registers MCP clients, forwards browser authorization to the upstream IdP,
     exchanges grants with ``upstream_token_url``, and keeps MCP ↔ upstream token
-    mappings inside ``store``.
+    mappings inside ``store``. Specific to the ``authorization_code`` flow:
+    each MCP access token corresponds to one user's upstream token.
     """
 
     def __init__(
@@ -410,3 +416,69 @@ class GatewayOAuthProvider:
                 'Upstream token response: granted_scope=%r expires_in=%s', data.get('scope'), data.get('expires_in')
             )
             return access_token, data.get('refresh_token'), data.get('expires_in', 3600)
+
+
+class AuthorizationCodeFlowHandler(OAuthFlowHandler):
+    """Build the per-user ``authorization_code`` setup: provider + AuthSettings + resolver."""
+
+    def build(self, flow_context: OAuthFlowContext) -> OAuthFlowSetup:
+        """Construct ``AuthorizationCodeProvider`` and matching MCP ``AuthSettings``."""
+        entry = flow_context.entry
+        oauth_flow = flow_context.oauth_flow
+
+        client_id = entry.auth.resolve_client_id()
+        client_secret = entry.auth.resolve_client_secret()
+        if not client_id or not client_secret:
+            raise ValueError(
+                f'Server "{entry.name}": authorization_code flow requires client_id and client_secret. '
+                'Set them directly or use ${ENV_VAR} syntax.'
+            )
+
+        if not oauth_flow.authorization_url:
+            raise ValueError(
+                f'Server "{entry.name}": authorization_code flow requires authorization_url. '
+                'Provide auth.authorization_url or add it to the spec securitySchemes.'
+            )
+        if not oauth_flow.token_url:
+            raise ValueError(f'Server "{entry.name}": authorization_code flow requires token_url.')
+
+        gateway_url = flow_context.gateway_url.rstrip('/')
+        callback_url = f'{gateway_url}{flow_context.mount_path}/auth/callback'
+
+        provider = AuthorizationCodeProvider(
+            store=flow_context.store,
+            upstream_auth_url=oauth_flow.authorization_url,
+            upstream_token_url=oauth_flow.token_url,
+            client_id=client_id,
+            client_secret=client_secret,
+            callback_url=callback_url,
+            scopes=entry.auth.scopes,
+            prefix=entry.name,
+        )
+
+        server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')
+        settings = AuthSettings(
+            issuer_url=server_url,
+            resource_server_url=server_url,
+            revocation_options=RevocationOptions(enabled=True),
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True,
+                valid_scopes=['api'],
+                default_scopes=['api'],
+            ),
+            required_scopes=['api'],
+        )
+
+        logger.debug(
+            'Authorization code flow set up for "%s": authorize=%s token=%s scopes=%s',
+            entry.name,
+            oauth_flow.authorization_url,
+            oauth_flow.token_url,
+            entry.auth.scopes,
+        )
+
+        return OAuthFlowSetup(
+            resolver=AuthorizationCodeAuthResolver(provider),
+            provider=provider,
+            settings=settings,
+        )

@@ -58,6 +58,12 @@ logger = logging.getLogger(__name__)
 @click.option('--auth-authorization-url', type=str, default=None, help='OAuth2 authorization URL (if not in spec).')
 @click.option('--auth-token-url', type=str, default=None, help='OAuth2 token URL (if not in spec).')
 @click.option(
+    '--auth-flow',
+    type=click.Choice(['authorization_code', 'client_credentials']),
+    default=None,
+    help='OAuth2 flow when the spec declares more than one (defaults to authorization_code).',
+)
+@click.option(
     '--log-level',
     type=click.Choice(LEVELS, case_sensitive=False),
     default=None,
@@ -104,6 +110,7 @@ def main(
     auth_scopes: str | None,
     auth_authorization_url: str | None,
     auth_token_url: str | None,
+    auth_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
     log_level: str | None,
     log_format: str | None,
     log_file: str | None,
@@ -164,6 +171,7 @@ def main(
             auth_scopes=auth_scopes,
             auth_authorization_url=auth_authorization_url,
             auth_token_url=auth_token_url,
+            auth_flow=auth_flow,
         )
         config = GatewayConfig.from_single_spec(
             spec=spec,
@@ -211,6 +219,7 @@ def _build_auth_config(
     auth_scopes: str | None,
     auth_authorization_url: str | None,
     auth_token_url: str | None,
+    auth_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
 ) -> AuthConfig:
     """Construct ``AuthConfig`` from optional auth-related CLI flags."""
     has_auth_flags = any(
@@ -222,6 +231,7 @@ def _build_auth_config(
             auth_scopes,
             auth_authorization_url,
             auth_token_url,
+            auth_flow,
         ]
     )
 
@@ -229,7 +239,7 @@ def _build_auth_config(
         return AuthConfig()
 
     if not auth_type:
-        if auth_client_id:
+        if auth_client_id or auth_flow:
             auth_type = 'oauth2'
         elif auth_token:
             auth_type = 'bearer'
@@ -246,6 +256,7 @@ def _build_auth_config(
         authorization_url=auth_authorization_url,
         token_url=auth_token_url,
         scopes=scopes,
+        flow=auth_flow,
     )
 
 

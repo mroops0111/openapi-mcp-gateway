@@ -2,6 +2,13 @@ from .base import TokenStore
 from .memory import MemoryTokenStore
 
 
+_RedisTokenStore: type[TokenStore] | None
+try:
+    from .redis import RedisTokenStore as _RedisTokenStore
+except ImportError:
+    _RedisTokenStore = None
+
+
 __all__ = ['MemoryTokenStore', 'TokenStore']
 
 
@@ -18,11 +25,9 @@ def create_store(store_type: str = 'memory', **kwargs) -> TokenStore:
     if store_type == 'memory':
         return MemoryTokenStore()
     if store_type == 'redis':
-        try:
-            from .redis import RedisTokenStore
-        except ImportError:
-            raise ImportError(  # noqa: B904
+        if _RedisTokenStore is None:
+            raise ImportError(
                 'Redis store requires the redis package. Install with: pip install openapi-mcp-gateway[redis]'
             )
-        return RedisTokenStore(**kwargs)
+        return _RedisTokenStore(**kwargs)
     raise ValueError(f'Unknown store type: {store_type}. Supported: memory, redis')

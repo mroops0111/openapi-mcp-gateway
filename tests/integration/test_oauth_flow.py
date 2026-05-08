@@ -6,7 +6,7 @@ from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import AnyHttpUrl
 from starlette.exceptions import HTTPException
 
-from openapi_mcp_gateway.auth.provider import GatewayOAuthProvider
+from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeProvider
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 
 
@@ -18,8 +18,8 @@ def store():
 
 @pytest.fixture
 def provider(store):
-    """``GatewayOAuthProvider`` wired against ``auth.example.com`` for the petstore prefix."""
-    return GatewayOAuthProvider(
+    """``AuthorizationCodeProvider`` wired against ``auth.example.com`` for the petstore prefix."""
+    return AuthorizationCodeProvider(
         store=store,
         upstream_auth_url='https://auth.example.com/authorize',
         upstream_token_url='https://auth.example.com/token',
@@ -172,14 +172,16 @@ class TestGetApiAccessToken:
         mock_access_token = MagicMock()
         mock_access_token.token = 'mcp_test_token'
 
-        with patch('openapi_mcp_gateway.auth.provider.get_access_token', return_value=mock_access_token):
+        with patch(
+            'openapi_mcp_gateway.auth.flows.authorization_code.get_access_token', return_value=mock_access_token
+        ):
             result = await provider.get_api_access_token()
 
         assert result == 'api_real_token'
 
     async def test_get_api_access_token_no_context(self, provider):
         """Without an active MCP token context, the resolver returns ``None``."""
-        with patch('openapi_mcp_gateway.auth.provider.get_access_token', return_value=None):
+        with patch('openapi_mcp_gateway.auth.flows.authorization_code.get_access_token', return_value=None):
             result = await provider.get_api_access_token()
         assert result is None
 

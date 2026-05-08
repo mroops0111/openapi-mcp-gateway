@@ -1,11 +1,14 @@
 import json
+import pathlib
 import typing
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 from mcp.server.fastmcp import Context
 from starlette.testclient import TestClient
 
+from openapi_mcp_gateway.auth import token_source as token_source_module
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
 
@@ -205,3 +208,135 @@ class TestEndToEndToolInvocation:
         assert captured['url'].startswith('https://petstore.example.com/v1/pets')
 
         assert json.loads(result) == [{'id': 1, 'name': 'fido'}]
+
+
+def _write_client_credentials_spec(tmp_path: pathlib.Path) -> pathlib.Path:
+    """Persist a minimal OpenAPI spec declaring only ``clientCredentials`` security."""
+    spec = {
+        'openapi': '3.0.0',
+        'info': {'title': 'cc-petstore', 'version': '1.0.0'},
+        'servers': [{'url': 'https://petstore.example.com/v1'}],
+        'components': {
+            'securitySchemes': {
+                'oauth2': {
+                    'type': 'oauth2',
+                    'flows': {
+                        'clientCredentials': {
+                            'tokenUrl': 'https://auth.example.com/token',
+                            'scopes': {'api': 'API access'},
+                        },
+                    },
+                },
+            },
+        },
+        'paths': {
+            '/pets': {
+                'get': {
+                    'operationId': 'listPets',
+                    'summary': 'List pets',
+                    'responses': {'200': {'description': 'ok'}},
+                },
+            },
+        },
+    }
+    path = tmp_path / 'cc-petstore.json'
+    path.write_text(json.dumps(spec), encoding='utf-8')
+    return path
+
+
+class TestClientCredentialsFlowEndToEnd:
+    """End-to-end behaviour of the ``client_credentials`` OAuth flow."""
+
+    @pytest.fixture
+    def cc_gateway_config(self, tmp_path):
+        """Config for a single-server gateway whose spec declares only clientCredentials."""
+        spec_path = _write_client_credentials_spec(tmp_path)
+        return GatewayConfig(
+            servers=[
+                ServerConfig(
+                    name='petstore',
+                    spec=str(spec_path),
+                    auth=AuthConfig(
+                        type='oauth2',
+                        client_id='gateway-id',
+                        client_secret='gateway-secret',
+                        scopes=['api'],
+                    ),
+                ),
+            ],
+        )
+
+    def test_setup_uses_client_credentials_flow(self, cc_gateway_config):
+        """The gateway picks the client_credentials flow when only that flow is declared."""
+        gateway = Gateway.from_config(cc_gateway_config)
+        bundle = gateway._servers[0]
+        assert bundle.auth_provider is None
+        assert bundle.auth_settings is None
+        assert len(gateway._shutdown_hooks) == 1
+
+    async def test_tool_call_attaches_fetched_bearer(self, cc_gateway_config, mock_upstream, monkeypatch):
+        """A tool call fetches a token from the IdP, then forwards it as ``Authorization`` upstream."""
+        token_response = MagicMock()
+        token_response.status_code = 200
+        token_response.json.return_value = {'access_token': 'cc-bearer-xyz', 'expires_in': 3600}
+        token_response.text = ''
+
+        token_post_mock = AsyncMock(return_value=token_response)
+        monkeypatch.setattr(
+            token_source_module.httpx.AsyncClient,
+            'post',
+            token_post_mock,
+            raising=False,
+        )
+
+        gateway = Gateway.from_config(cc_gateway_config)
+
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['authorization'] = request.headers.get('authorization')
+            captured['url'] = str(request.url)
+            return httpx.Response(200, json=[{'id': 1, 'name': 'fido'}])
+
+        mock_upstream(handler)
+
+        mcp = gateway._servers[0].mcp
+        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'list_pets')
+        await tool.run({}, context=_stub_context())
+
+        assert captured['authorization'] == 'Bearer cc-bearer-xyz'
+        token_post_mock.assert_awaited_once()
+        post_args = token_post_mock.await_args
+        assert post_args is not None
+        # The first positional arg is the URL, second positional or kwargs carry data.
+        assert (
+            post_args.args[0] == 'https://auth.example.com/token'
+            or post_args.kwargs.get('url') == 'https://auth.example.com/token'
+        )
+        assert post_args.kwargs['data']['grant_type'] == 'client_credentials'
+
+    async def test_token_is_cached_across_tool_calls(self, cc_gateway_config, mock_upstream, monkeypatch):
+        """Multiple tool calls share a single cached token (one POST to the IdP)."""
+        token_response = MagicMock()
+        token_response.status_code = 200
+        token_response.json.return_value = {'access_token': 'cached', 'expires_in': 3600}
+        token_response.text = ''
+
+        token_post_mock = AsyncMock(return_value=token_response)
+        monkeypatch.setattr(
+            token_source_module.httpx.AsyncClient,
+            'post',
+            token_post_mock,
+            raising=False,
+        )
+
+        gateway = Gateway.from_config(cc_gateway_config)
+        mock_upstream(lambda request: httpx.Response(200, json=[]))
+
+        mcp = gateway._servers[0].mcp
+        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'list_pets')
+        await tool.run({}, context=_stub_context())
+        await tool.run({}, context=_stub_context())
+        await tool.run({}, context=_stub_context())
+
+        assert token_post_mock.await_count == 1
