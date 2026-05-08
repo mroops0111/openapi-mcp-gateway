@@ -144,11 +144,11 @@ def main(
         openapi-mcp-gateway --config servers.yml
 
     \b
-    stdio transport (for Claude Desktop / IDE integration):
+    stdio transport (Claude Desktop / IDE integration):
         openapi-mcp-gateway --spec petstore.json --transport stdio
 
     \b
-    Verbose logging in JSON format, also written to a file:
+    Verbose JSON logs written to a file:
         openapi-mcp-gateway --spec petstore.json -v --log-format json --log-file gateway.log
     """
     if not spec and not config_path:
@@ -221,7 +221,7 @@ def _build_auth_config(
     auth_token_url: str | None,
     auth_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
 ) -> AuthConfig:
-    """Construct ``AuthConfig`` from optional auth-related CLI flags."""
+    """Construct ``AuthConfig`` from the auth-related CLI flags."""
     has_auth_flags = any(
         [
             auth_type,
@@ -268,7 +268,7 @@ def _resolve_logging_config(
     verbose: bool,
     quiet: bool,
 ) -> LoggingConfig:
-    """Merge verbosity shortcuts and explicit log flags onto YAML defaults."""
+    """Merge ``-v`` / ``-q`` shortcuts and explicit log flags onto the YAML defaults."""
     if verbose:
         level = 'DEBUG'
     elif quiet:

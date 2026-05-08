@@ -27,15 +27,13 @@ def build_oauth_flow(
     gateway_url: str,
     mount_path: str,
 ) -> OAuthFlowSetup:
-    """Resolve the effective OAuth flow and dispatch to its handler.
+    """Resolve the effective OAuth flow for ``entry`` and dispatch to its handler.
 
     Resolution order:
 
-    1. Detect all OAuth flows from the spec.
-    2. Pick one according to ``entry.auth.flow`` (if set), otherwise prefer
-       ``authorization_code``.
-    3. If the spec declared no flows, synthesise a flow from
-       ``entry.auth.{authorization_url,token_url,scopes}``.
+    1. Detect all OAuth flows declared in the spec.
+    2. Pick one per ``entry.auth.flow`` if set, otherwise prefer ``authorization_code``.
+    3. If the spec declares none, synthesise from ``entry.auth.{authorization_url, token_url, scopes}``.
     4. Apply config-supplied URL overrides on top of the spec-declared values.
     """
     oauth_flow = resolve_oauth_flow(entry, spec)
@@ -58,14 +56,15 @@ def build_oauth_flow(
 
 
 def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthFlow:
-    """Pick the effective OAuth flow for ``entry`` from spec + config.
+    """Pick the effective OAuth flow for ``entry`` from the spec and config combined.
 
-    Honours ``entry.auth.flow`` as an explicit override, falls back to
-    ``authorization_code`` when the spec declares both, and synthesises a
-    flow from explicit URLs if the spec declares none. When the resolved
-    flow is ``authorization_code`` but the gateway lacks the ``client_id`` /
-    ``client_secret`` needed to act as an MCP-side OAuth server, fall back
-    to ``passthrough`` so the MCP client's own token can reach the upstream.
+    Honours ``entry.auth.flow`` as an explicit override,
+    falls back to ``authorization_code`` when the spec declares both,
+    and synthesises a flow from explicit URLs if the spec declares none.
+
+    When the resolved flow is ``authorization_code`` but the gateway lacks
+    the ``client_id`` / ``client_secret`` needed to act as an MCP-side OAuth server,
+    it falls back to ``passthrough`` so the MCP client's own token reaches the upstream.
     """
     explicit_flow_type = entry.auth.flow
 
@@ -76,7 +75,7 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
     selected_flow = _pick_from_declared_flows(declared_flows, explicit_flow_type)
 
     if selected_flow is None:
-        # Spec has no OAuth flows declared — must build from explicit config.
+        # Spec declared no OAuth flows, so the flow must be synthesised from explicit config.
         selected_flow = _synthesise_from_config(entry, explicit_flow_type)
 
     if entry.auth.authorization_url:
@@ -110,7 +109,7 @@ def _pick_from_declared_flows(
     declared_flows: list[DetectedOAuthFlow],
     explicit_flow_type: str | None,
 ) -> DetectedOAuthFlow | None:
-    """Return the spec-declared flow matching ``explicit_flow_type`` or the preferred default."""
+    """Return the spec-declared flow matching ``explicit_flow_type``, or the preferred default."""
     if not declared_flows:
         return None
 
@@ -130,7 +129,7 @@ def _pick_from_declared_flows(
 
 
 def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None) -> DetectedOAuthFlow:
-    """Build a ``DetectedOAuthFlow`` purely from explicit config when the spec has none."""
+    """Build a ``DetectedOAuthFlow`` from explicit config when the spec declares none."""
     if not entry.auth.token_url:
         raise ValueError(
             f'Server "{entry.name}": auth type is oauth2 but the spec has no OAuth2 flow '

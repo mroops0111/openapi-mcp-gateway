@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class _ServerBundle(typing.NamedTuple):
-    """Runtime objects per registered MCP server, mounted onto the gateway FastAPI app."""
+    """Runtime objects for one registered MCP server, mounted onto the gateway FastAPI app."""
 
     name: str
     mount_path: str
@@ -40,11 +40,7 @@ def build_app(
     on_shutdown: typing.Callable[[], typing.Awaitable[None]],
     transport: str,
 ) -> FastAPI:
-    """Assemble the gateway FastAPI app with CORS, OAuth, discovery, health, and MCP mounts.
-
-    Pure function: every input is explicit and the result is a fully
-    configured ``FastAPI`` instance the caller can pass to ``uvicorn.run``.
-    """
+    """Assemble the gateway FastAPI app with CORS, OAuth, discovery, health, and MCP mounts."""
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -84,7 +80,7 @@ def build_app(
 
 
 def _register_oauth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
-    """Mount per-server MCP-side OAuth endpoints + RFC 9728 protected-resource routes."""
+    """Mount MCP-side OAuth endpoints and RFC 9728 protected-resource routes per server."""
     for handle in servers:
         if not handle.auth_provider or not handle.auth_settings:
             continue

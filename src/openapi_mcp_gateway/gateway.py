@@ -48,14 +48,9 @@ def _compose_with_passthrough(
     base: AuthResolver,
     forward_incoming_headers: tuple[str, ...],
 ) -> AuthResolver:
-    """Wrap ``base`` so headers from the live MCP request flow through alongside it.
+    """Forward ``forward_incoming_headers`` from the live MCP request alongside ``base``.
 
-    When ``forward_incoming_headers`` is empty, ``base`` is returned unchanged.
-    Otherwise the result is a ``CompositeAuthResolver`` that runs the
-    incoming-header forwarder first and ``base`` second — meaning
-    gateway-minted credentials (e.g. ``Authorization`` from the
-    client_credentials flow) override the client's incoming token while
-    other headers (e.g. ``X-API-Key``) still pass through.
+    ``base`` wins on collision, so gateway-minted credentials override the client's incoming token.
     """
     if not forward_incoming_headers:
         return base
@@ -64,7 +59,7 @@ def _compose_with_passthrough(
 
 @dataclasses.dataclass
 class _AppContext:
-    """Values injected into MCP tool handlers via FastMCP lifespan."""
+    """Per-server lifespan context injected into FastMCP tool handlers."""
 
     auth_provider: AuthorizationCodeProvider | None = None
 
@@ -85,7 +80,6 @@ class Gateway:
     """
 
     def __init__(self, config: GatewayConfig | None = None):
-        """Create a gateway; optionally pre-fill ``GatewayConfig``."""
         self._config = config or GatewayConfig()
         self._servers: list[_ServerBundle] = []
         self._shutdown_hooks: list[typing.Callable[[], typing.Awaitable[None]]] = []
@@ -99,7 +93,7 @@ class Gateway:
 
     @classmethod
     def from_config(cls, config: GatewayConfig) -> typing.Self:
-        """Construct a gateway and register every entry in ``config.servers``."""
+        """Build a gateway and register every entry in ``config.servers``."""
         gateway: typing.Self = cls(config=config)
         for server_config in config.servers:
             gateway._add_server_from_server_config(server_config=server_config)
@@ -117,24 +111,16 @@ class Gateway:
         passthrough_headers: tuple[str, ...] = _DEFAULT_FASTAPI_PASSTHROUGH_HEADERS,
         config: GatewayConfig | None = None,
     ) -> typing.Self:
-        """Construct a gateway that exposes ``@mcp_tool``-decorated routes of ``app``.
+        """Expose ``@mcp_tool``-decorated routes of ``app`` in-process via ``httpx.ASGITransport``.
 
-        Tool definitions are derived live from ``app.openapi()``; upstream calls
-        are routed through ``httpx.ASGITransport`` so the gateway and ``app``
-        share a process. Auth is auto-detected from the spec's ``securitySchemes``:
-        no scheme → no auth; ``client_credentials`` → service-token flow;
-        ``authorization_code`` → full provider flow when ``auth.client_id`` /
-        ``client_secret`` are set, otherwise passthrough of the MCP client's
-        ``Authorization`` header.
+        Auth is auto-detected from the spec's ``securitySchemes``:
+        no scheme gives no auth,
+        ``client_credentials`` selects the service-token flow,
+        ``authorization_code`` uses the full provider when ``client_id`` and ``client_secret`` are set,
+        else it falls back to passthrough of the client's ``Authorization`` header.
 
-        ``passthrough_headers`` lists request headers to copy verbatim from
-        the live MCP call to the FastAPI route. The default covers the two
-        common credential headers (``Authorization``, ``X-API-Key``); for
-        ``Authorization`` the auth resolver wins when it set one (so
-        client_credentials / authorization_code flows continue to use the
-        gateway-minted token). Pass extra names (e.g.
-        ``('Authorization', 'X-API-Key', 'Cookie')``) when the upstream uses
-        additional per-request headers.
+        ``passthrough_headers`` copies headers verbatim from the live MCP call to the FastAPI route.
+        The auth resolver wins on ``Authorization`` collision, so minted tokens take priority.
         """
         gateway: typing.Self = cls(config=config or GatewayConfig())
         gateway._add_fastapi_app(
@@ -157,7 +143,7 @@ class Gateway:
         policy: dict[str, typing.Any] | None = None,
         timeout: float = 90,
     ) -> None:
-        """Register a server from arguments (convenience over building ``ServerConfig``)."""
+        """Register a server inline (convenience over building ``ServerConfig`` directly)."""
         server_config = ServerConfig(
             name=name,
             spec=spec,
@@ -175,7 +161,7 @@ class Gateway:
         host: str | None = None,
         port: int | None = None,
     ) -> None:
-        """Start ``uvicorn`` (HTTP/SSE) or the stdio transport for a single server."""
+        """Serve over ``uvicorn`` (HTTP/SSE) or stdio (single-server only)."""
         transport = transport or self._config.transport
         host = host or self._config.host
         port = port or self._config.port
@@ -207,14 +193,13 @@ class Gateway:
         )
 
     def mount(self, app: FastAPI, transport: str | None = None) -> None:
-        """Mount each registered MCP sub-app on ``app`` at its configured path."""
+        """Mount every registered MCP sub-app onto ``app`` at its configured path."""
         transport = transport or self._config.transport
         for handle in self._servers:
             mcp_app = handle.mcp.sse_app() if transport == 'sse' else handle.mcp.streamable_http_app()
             app.mount(handle.mount_path, mcp_app)
 
     def _add_server_from_server_config(self, server_config: ServerConfig) -> None:
-        """Internal: wire one ``ServerConfig`` from parsed spec through tool registration."""
         logger.info('Loading server "%s" from spec=%s', server_config.name, server_config.spec)
         raw = load_spec(server_config.spec)
         spec = parse_spec(raw, source=server_config.spec)
@@ -272,7 +257,6 @@ class Gateway:
         timeout: float,
         passthrough_headers: tuple[str, ...],
     ) -> None:
-        """Internal: register a same-process FastAPI app as an MCP server."""
         logger.info('Registering FastAPI app as MCP server "%s"', name)
         spec = parse_spec(app.openapi())
 
@@ -325,7 +309,6 @@ class Gateway:
         transport: httpx.AsyncBaseTransport | None = None,
         forward_incoming_headers: tuple[str, ...] = (),
     ) -> None:
-        """Resolve auth, optionally compose with passthrough, build FastMCP, register tools."""
         base_resolver, auth_provider, auth_settings = self._resolve_auth(server_config, spec)
         auth_resolver = _compose_with_passthrough(base_resolver, forward_incoming_headers)
         mcp = self._build_fastmcp(server_config.name, auth_provider, auth_settings)
@@ -366,7 +349,6 @@ class Gateway:
         entry: ServerConfig,
         spec: OpenAPISpec,
     ) -> tuple[AuthResolver, AuthorizationCodeProvider | None, AuthSettings | None]:
-        """Pick the resolver/provider/settings triple appropriate for ``entry.auth.type``."""
         auth_provider: AuthorizationCodeProvider | None = None
         auth_resolver: AuthResolver
         auth_settings: AuthSettings | None = None
@@ -404,8 +386,6 @@ class Gateway:
         auth_provider: AuthorizationCodeProvider | None,
         auth_settings: AuthSettings | None,
     ) -> FastMCP:
-        """Construct a ``FastMCP`` carrying the per-server lifespan and auth wiring."""
-
         @contextlib.asynccontextmanager
         async def lifespan(_app: FastMCP, _auth_provider=auth_provider):
             try:
@@ -423,7 +403,6 @@ class Gateway:
 
     @staticmethod
     def _register_oauth_callback(mcp: FastMCP, auth_provider: AuthorizationCodeProvider) -> None:
-        """Mount the ``/auth/callback`` route used by the upstream OAuth redirect."""
         _auth_provider = auth_provider
 
         @mcp.custom_route('/auth/callback', methods=['GET'])
@@ -436,7 +415,6 @@ class Gateway:
             return RedirectResponse(status_code=302, url=redirect_uri)
 
     async def _run_shutdown_hooks(self) -> None:
-        """Run every flow-registered shutdown hook, swallowing per-hook errors."""
         for hook in self._shutdown_hooks:
             try:
                 await hook()
@@ -444,18 +422,16 @@ class Gateway:
                 logger.exception('Shutdown hook raised an exception')
 
     def _run_shutdown_hooks_blocking(self) -> None:
-        """Synchronous wrapper around ``_run_shutdown_hooks`` for the stdio code path."""
         if not self._shutdown_hooks:
             return
 
         try:
             asyncio.run(self._run_shutdown_hooks())
         except RuntimeError:
-            # Loop already running (unlikely on stdio shutdown) — best-effort.
+            # Loop already running (unlikely on stdio shutdown); best-effort.
             logger.warning('Could not run shutdown hooks: event loop already running')
 
     def _build_app(self, transport: str) -> FastAPI:
-        """Internal: delegate to ``app.build_app`` with the gateway's runtime state."""
         return build_app(
             servers=self._servers,
             config=self._config,

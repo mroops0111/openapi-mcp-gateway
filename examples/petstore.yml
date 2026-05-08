@@ -1,4 +1,4 @@
-# Petstore — public API, no auth required.
+# Petstore: public API, no auth required.
 # Usage: openapi-mcp-gateway --config examples/petstore.yml
 
 host: "0.0.0.0"

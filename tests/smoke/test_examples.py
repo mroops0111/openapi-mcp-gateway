@@ -36,10 +36,10 @@ def _smoke_credentials(monkeypatch):
 async def test_example_config_lists_tools(config_name: str):
     """Each example YAML loads, builds a gateway, and exposes at least one tool per server.
 
-    The OpenAPI specs are fetched over HTTP (network required) and tool
-    invocation is intentionally not exercised — that would require real
-    upstream credentials and would defeat the point of a quick assembly
-    smoke. We only verify the MCP client can ``list_tools`` against every
+    The OpenAPI specs are fetched over HTTP (network required), and tool
+    invocation is intentionally not exercised, since that would require real
+    upstream credentials and defeat the point of a quick assembly smoke.
+    The test only verifies the MCP client can ``list_tools`` against every
     server registered from the config.
     """
     config = GatewayConfig.from_yaml(_EXAMPLES_DIR / config_name)

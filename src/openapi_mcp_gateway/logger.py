@@ -22,7 +22,7 @@ RESET = '\033[0m'
 
 
 def iso_time(record: logging.LogRecord) -> str:
-    """Format ``record.created`` as an ISO-8601 string with millisecond precision."""
+    """Format ``record.created`` as ISO-8601 with millisecond precision."""
     return datetime.datetime.fromtimestamp(record.created).isoformat(timespec='milliseconds')
 
 
@@ -30,7 +30,6 @@ class JsonFormatter(logging.Formatter):
     """Emit one JSON object per log line (time, level, logger, message)."""
 
     def format(self, record: logging.LogRecord) -> str:
-        """Return a single-line JSON encoding of standard record fields."""
         return json.dumps(
             {
                 'time': iso_time(record),
@@ -43,7 +42,7 @@ class JsonFormatter(logging.Formatter):
 
 
 class TextFormatter(logging.Formatter):
-    """Human-readable log lines; optional ANSI colors when ``use_color`` is True."""
+    """Human-readable log lines, with optional ANSI colour on level and logger names."""
 
     default_time_format = '%Y-%m-%dT%H:%M:%S'
     default_msec_format = '%s.%03d'
@@ -53,7 +52,6 @@ class TextFormatter(logging.Formatter):
         self.use_color = use_color
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format ``TEXT_FORMAT``, optionally coloring level and logger names."""
         if not self.use_color:
             return super().format(record)
         color = LEVEL_COLORS.get(record.levelname, '')

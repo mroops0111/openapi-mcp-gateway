@@ -160,7 +160,7 @@ class TestParseSpec:
         assert 'adminListPets' in ids
 
     def test_param_dedup(self):
-        """``listPets`` has ``limit`` at both path-level and operation-level — should dedup."""
+        """``listPets`` has ``limit`` at both path-level and operation-level, should dedup."""
         list_pets = next(op for op in self.spec.operations if op.operation_id == 'listPets')
         limit_params = [param for param in list_pets.parameters if param.name == 'limit']
         assert len(limit_params) == 1
@@ -182,7 +182,7 @@ class TestParseSpec:
         assert name_param.required is True
 
     def test_allof_request_body_expanded(self):
-        """``createPetWithOwner`` body uses ``allOf`` — should merge ``Pet`` + owner."""
+        """``createPetWithOwner`` body uses ``allOf``, should merge ``Pet`` and owner."""
         operation = next(op for op in self.spec.operations if op.operation_id == 'createPetWithOwner')
         body_params = [param for param in operation.parameters if param.location == 'body']
         names = {param.name for param in body_params}

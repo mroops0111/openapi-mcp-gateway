@@ -11,10 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 class RedisTokenStore(TokenStore):
-    """Redis implementation of the TokenStore protocol.
+    """Redis-backed ``TokenStore``.
 
-    Uses native Redis TTL for automatic key expiry. All data is stored
-    as JSON strings under a configurable key prefix.
+    Uses native Redis TTL for automatic key expiry.
+    All data is stored as JSON strings under a configurable key prefix.
     """
 
     def __init__(self, url: str = 'redis://localhost:6379', prefix: str = 'mcp_gw') -> None:
@@ -23,7 +23,6 @@ class RedisTokenStore(TokenStore):
         logger.debug('RedisTokenStore connected: url=%s prefix=%s', url, prefix)
 
     def _key(self, namespace: str, key: str) -> str:
-        """Compose ``{prefix}:{namespace}:{key}`` for Redis storage."""
         return f'{self._prefix}:{namespace}:{key}'
 
     async def get(self, namespace: str, key: str) -> typing.Any | None:

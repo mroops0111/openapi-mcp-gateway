@@ -8,11 +8,11 @@ from ..openapi import OpenAPISpec
 class DetectedOAuthFlow(pydantic.BaseModel):
     """Minimal OAuth2 flow metadata describing how the gateway should obtain tokens.
 
-    ``authorization_code`` and ``client_credentials`` are produced directly by
-    ``detect_oauth_flows`` when those flows are declared in the spec.
-    ``passthrough`` is never produced from a spec — the factory selects it as
-    a fallback when authorization_code is detected but the gateway lacks the
-    upstream client credentials needed to act as an MCP-side OAuth server.
+    ``authorization_code`` and ``client_credentials`` come directly from the spec
+    via ``detect_oauth_flows``. ``passthrough`` is never produced from a spec;
+    the factory selects it as a fallback when ``authorization_code`` is declared
+    but the gateway lacks ``client_id`` / ``client_secret`` to act as an MCP-side
+    OAuth server.
     """
 
     flow_type: typing.Literal['authorization_code', 'client_credentials', 'passthrough']
@@ -22,7 +22,7 @@ class DetectedOAuthFlow(pydantic.BaseModel):
 
 
 def detect_oauth_flows(spec: OpenAPISpec) -> list[DetectedOAuthFlow]:
-    """Return every OAuth2 flow advertised under ``securitySchemes``."""
+    """Return every supported OAuth2 flow advertised under ``securitySchemes``."""
     flows: list[DetectedOAuthFlow] = []
 
     for _scheme_name, scheme in spec.security_schemes.items():
@@ -56,15 +56,11 @@ def detect_oauth_flows(spec: OpenAPISpec) -> list[DetectedOAuthFlow]:
 
 
 def detect_primary_oauth_flow(spec: OpenAPISpec) -> DetectedOAuthFlow | None:
-    """Pick a single OAuth2 flow, favouring ``authorization_code``.
-
-    Returns ``None`` when the document defines no OAuth2 flows.
-    """
+    """Pick one OAuth2 flow, preferring ``authorization_code``; ``None`` if the spec declares none."""
     flows = detect_oauth_flows(spec)
     if not flows:
         return None
 
-    # Prefer authorization_code
     for flow in flows:
         if flow.flow_type == 'authorization_code':
             return flow
@@ -72,11 +68,10 @@ def detect_primary_oauth_flow(spec: OpenAPISpec) -> DetectedOAuthFlow | None:
 
 
 def detect_unsupported_oauth_flows(spec: OpenAPISpec) -> list[str]:
-    """Return OAuth2 flow names declared by the spec that the gateway does not implement.
+    """Return spec-declared OAuth2 flow names that the gateway does not implement.
 
-    Currently the gateway only implements ``authorizationCode`` and
-    ``clientCredentials``; ``password`` and ``implicit`` are deprecated by the
-    OAuth 2.1 working group and are intentionally not supported.
+    Only ``authorizationCode`` and ``clientCredentials`` are supported.
+    ``password`` and ``implicit`` are deprecated by OAuth 2.1 and intentionally omitted.
     """
     supported = {'authorizationCode', 'clientCredentials'}
     unsupported: list[str] = []
