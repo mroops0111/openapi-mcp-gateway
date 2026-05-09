@@ -4,24 +4,34 @@ import dataclasses
 import logging
 import typing
 
-import pydantic
+import httpx
 import uvicorn
 from fastapi import FastAPI
-from mcp.server.auth.handlers.metadata import MetadataHandler, ProtectedResourceMetadataHandler
-from mcp.server.auth.routes import build_metadata, create_auth_routes, create_protected_resource_routes
-from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.shared.auth import ProtectedResourceMetadata
 from starlette.exceptions import HTTPException
-from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import RedirectResponse
 
+from .app import _ServerBundle, build_app
+from .auth.detector import detect_oauth_flows, detect_unsupported_oauth_flows
 from .auth.flows import AuthorizationCodeProvider, build_oauth_flow
-from .auth.resolver import AuthResolver, NullAuthResolver, StaticAuthResolver
+from .auth.resolver import (
+    AuthResolver,
+    CompositeAuthResolver,
+    NullAuthResolver,
+    PassthroughAuthResolver,
+    StaticAuthResolver,
+)
+from .fastapi import (
+    collect_marked_routes,
+    filter_marked_operations,
+    infer_auth_from_declared_flows,
+    override_with_metadata,
+    warn_on_mixed_security_schemes,
+)
 from .generator import ToolGenerator
-from .openapi import OpenAPISpec, load_spec, parse_spec
+from .openapi import OpenAPISpec, OperationInfo, load_spec, parse_spec
 from .policy import filter_operations
 from .settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
 from .stores import create_store
@@ -30,20 +40,33 @@ from .stores import create_store
 logger = logging.getLogger(__name__)
 
 
+_FASTAPI_BASE_URL = 'http://fastapi.local'
+_DEFAULT_FASTAPI_PASSTHROUGH_HEADERS: tuple[str, ...] = ('Authorization', 'X-API-Key')
+
+
+def _compose_with_passthrough(
+    base: AuthResolver,
+    forward_incoming_headers: tuple[str, ...],
+) -> AuthResolver:
+    """Wrap ``base`` so headers from the live MCP request flow through alongside it.
+
+    When ``forward_incoming_headers`` is empty, ``base`` is returned unchanged.
+    Otherwise the result is a ``CompositeAuthResolver`` that runs the
+    incoming-header forwarder first and ``base`` second — meaning
+    gateway-minted credentials (e.g. ``Authorization`` from the
+    client_credentials flow) override the client's incoming token while
+    other headers (e.g. ``X-API-Key``) still pass through.
+    """
+    if not forward_incoming_headers:
+        return base
+    return CompositeAuthResolver([PassthroughAuthResolver(forward_incoming_headers), base])
+
+
 @dataclasses.dataclass
 class _AppContext:
     """Values injected into MCP tool handlers via FastMCP lifespan."""
 
     auth_provider: AuthorizationCodeProvider | None = None
-
-
-class _ServerBundle(typing.NamedTuple):
-    name: str
-    mount_path: str
-    mcp: FastMCP
-    spec: OpenAPISpec
-    auth_provider: AuthorizationCodeProvider | None
-    auth_settings: AuthSettings | None = None
 
 
 class Gateway:
@@ -66,20 +89,62 @@ class Gateway:
         self._config = config or GatewayConfig()
         self._servers: list[_ServerBundle] = []
         self._shutdown_hooks: list[typing.Callable[[], typing.Awaitable[None]]] = []
-        store_cfg = self._config.store
+        store_config = self._config.store
         self._store = create_store(
-            store_type=store_cfg.type,
-            url=store_cfg.redis_url,
-            prefix=store_cfg.key_prefix,
+            store_type=store_config.type,
+            url=store_config.redis_url,
+            prefix=store_config.key_prefix,
         )
-        logger.debug('Token store initialised: type=%s prefix=%s', store_cfg.type, store_cfg.key_prefix)
+        logger.debug('Token store initialised: type=%s prefix=%s', store_config.type, store_config.key_prefix)
 
     @classmethod
-    def from_config(cls, config: GatewayConfig) -> 'Gateway':
+    def from_config(cls, config: GatewayConfig) -> typing.Self:
         """Construct a gateway and register every entry in ``config.servers``."""
-        gateway = cls(config=config)
-        for entry in config.servers:
-            gateway._add_server_from_entry(entry)
+        gateway: typing.Self = cls(config=config)
+        for server_config in config.servers:
+            gateway._add_server_from_server_config(server_config=server_config)
+        return gateway
+
+    @classmethod
+    def from_fastapi(
+        cls,
+        app: FastAPI,
+        *,
+        name: str = 'fastapi',
+        path_prefix: str | None = None,
+        auth: AuthConfig | None = None,
+        timeout: float = 90,
+        passthrough_headers: tuple[str, ...] = _DEFAULT_FASTAPI_PASSTHROUGH_HEADERS,
+        config: GatewayConfig | None = None,
+    ) -> typing.Self:
+        """Construct a gateway that exposes ``@mcp_tool``-decorated routes of ``app``.
+
+        Tool definitions are derived live from ``app.openapi()``; upstream calls
+        are routed through ``httpx.ASGITransport`` so the gateway and ``app``
+        share a process. Auth is auto-detected from the spec's ``securitySchemes``:
+        no scheme → no auth; ``client_credentials`` → service-token flow;
+        ``authorization_code`` → full provider flow when ``auth.client_id`` /
+        ``client_secret`` are set, otherwise passthrough of the MCP client's
+        ``Authorization`` header.
+
+        ``passthrough_headers`` lists request headers to copy verbatim from
+        the live MCP call to the FastAPI route. The default covers the two
+        common credential headers (``Authorization``, ``X-API-Key``); for
+        ``Authorization`` the auth resolver wins when it set one (so
+        client_credentials / authorization_code flows continue to use the
+        gateway-minted token). Pass extra names (e.g.
+        ``('Authorization', 'X-API-Key', 'Cookie')``) when the upstream uses
+        additional per-request headers.
+        """
+        gateway: typing.Self = cls(config=config or GatewayConfig())
+        gateway._add_fastapi_app(
+            app=app,
+            name=name,
+            path_prefix=path_prefix,
+            auth=auth,
+            timeout=timeout,
+            passthrough_headers=passthrough_headers,
+        )
         return gateway
 
     def add_server(
@@ -93,7 +158,7 @@ class Gateway:
         timeout: float = 90,
     ) -> None:
         """Register a server from arguments (convenience over building ``ServerConfig``)."""
-        entry = ServerConfig(
+        server_config = ServerConfig(
             name=name,
             spec=spec,
             base_url=base_url,
@@ -102,7 +167,7 @@ class Gateway:
             policy=PolicyConfig.model_validate(policy) if policy else PolicyConfig(),
             timeout=timeout,
         )
-        self._add_server_from_entry(entry)
+        self._add_server_from_server_config(server_config=server_config)
 
     def run(
         self,
@@ -148,50 +213,160 @@ class Gateway:
             mcp_app = handle.mcp.sse_app() if transport == 'sse' else handle.mcp.streamable_http_app()
             app.mount(handle.mount_path, mcp_app)
 
-    def _add_server_from_entry(self, entry: ServerConfig) -> None:
+    def _add_server_from_server_config(self, server_config: ServerConfig) -> None:
         """Internal: wire one ``ServerConfig`` from parsed spec through tool registration."""
-        logger.info('Loading server "%s" from spec=%s', entry.name, entry.spec)
-        raw = load_spec(entry.spec)
-        spec = parse_spec(raw, source=entry.spec)
+        logger.info('Loading server "%s" from spec=%s', server_config.name, server_config.spec)
+        raw = load_spec(server_config.spec)
+        spec = parse_spec(raw, source=server_config.spec)
         logger.debug(
             'Parsed spec for "%s": title=%r version=%r operations=%d',
-            entry.name,
+            server_config.name,
             spec.title,
             spec.version,
             len(spec.operations),
         )
 
-        base_url = entry.base_url or spec.default_base_url
+        base_url = server_config.base_url or spec.default_base_url
         if not base_url:
             raise ValueError(
-                f'Server "{entry.name}": no base_url provided and none found in OpenAPI spec. '
+                f'Server "{server_config.name}": no base_url provided and none found in OpenAPI spec. '
                 'Set base_url in config or add a servers entry to your spec.'
             )
 
-        # Filter operations by policy
         operations = filter_operations(
             spec.operations,
-            allow=entry.policy.allow,
-            deny=entry.policy.deny,
-            marked_only=entry.policy.marked_only,
+            allow=server_config.policy.allow,
+            deny=server_config.policy.deny,
+            marked_only=server_config.policy.marked_only,
         )
         logger.debug(
             'Policy applied to "%s": %d → %d operations (allow=%s deny=%s marked_only=%s)',
-            entry.name,
+            server_config.name,
             len(spec.operations),
             len(operations),
-            entry.policy.allow,
-            entry.policy.deny,
-            entry.policy.marked_only,
+            server_config.policy.allow,
+            server_config.policy.deny,
+            server_config.policy.marked_only,
         )
 
         if not operations:
             raise ValueError(
-                f'Server "{entry.name}": no operations to expose after applying policy. '
+                f'Server "{server_config.name}": no operations to expose after applying policy. '
                 'Check your allow/deny rules or the OpenAPI spec.'
             )
 
-        # Resolve auth strategy
+        self._register_server_bundle(
+            server_config=server_config,
+            spec=spec,
+            operations=operations,
+            base_url=base_url,
+        )
+
+    def _add_fastapi_app(
+        self,
+        app: FastAPI,
+        *,
+        name: str,
+        path_prefix: str | None,
+        auth: AuthConfig | None,
+        timeout: float,
+        passthrough_headers: tuple[str, ...],
+    ) -> None:
+        """Internal: register a same-process FastAPI app as an MCP server."""
+        logger.info('Registering FastAPI app as MCP server "%s"', name)
+        spec = parse_spec(app.openapi())
+
+        declared = detect_oauth_flows(spec)
+        unsupported = detect_unsupported_oauth_flows(spec)
+        if unsupported and not declared:
+            raise ValueError(
+                f'FastAPI server "{name}" declares only unsupported OAuth2 flows: {unsupported}. '
+                'Only authorizationCode and clientCredentials are supported.'
+            )
+
+        selections = collect_marked_routes(app)
+        if not selections:
+            raise ValueError(f'FastAPI server "{name}": no routes are decorated with @mcp_tool, nothing to expose.')
+
+        marked = filter_marked_operations(spec.operations, selections)
+        if not marked:
+            raise ValueError(
+                f'FastAPI server "{name}": @mcp_tool routes did not match any OpenAPI operations '
+                '(check that the decorator is applied below the FastAPI route decorator).'
+            )
+        operations = [override_with_metadata(operation, metadata) for operation, metadata in marked]
+
+        warn_on_mixed_security_schemes(name, operations)
+
+        server_config = ServerConfig(
+            name=name,
+            spec=f'<fastapi:{name}>',
+            path_prefix=path_prefix,
+            auth=auth or infer_auth_from_declared_flows(declared),
+            timeout=timeout,
+        )
+
+        self._register_server_bundle(
+            server_config=server_config,
+            spec=spec,
+            operations=operations,
+            base_url=_FASTAPI_BASE_URL,
+            transport=httpx.ASGITransport(app=app),
+            forward_incoming_headers=passthrough_headers,
+        )
+
+    def _register_server_bundle(
+        self,
+        *,
+        server_config: ServerConfig,
+        spec: OpenAPISpec,
+        operations: list[OperationInfo],
+        base_url: str,
+        transport: httpx.AsyncBaseTransport | None = None,
+        forward_incoming_headers: tuple[str, ...] = (),
+    ) -> None:
+        """Resolve auth, optionally compose with passthrough, build FastMCP, register tools."""
+        base_resolver, auth_provider, auth_settings = self._resolve_auth(server_config, spec)
+        auth_resolver = _compose_with_passthrough(base_resolver, forward_incoming_headers)
+        mcp = self._build_fastmcp(server_config.name, auth_provider, auth_settings)
+        if auth_provider is not None:
+            self._register_oauth_callback(mcp, auth_provider)
+
+        generator = ToolGenerator(
+            mcp=mcp,
+            base_url=base_url,
+            auth_resolver=auth_resolver,
+            timeout=server_config.timeout,
+            transport=transport,
+        )
+        generator.register_operations(operations)
+
+        self._servers.append(
+            _ServerBundle(
+                name=server_config.name,
+                mount_path=server_config.mount_path,
+                mcp=mcp,
+                spec=spec,
+                auth_provider=auth_provider,
+                auth_settings=auth_settings,
+            )
+        )
+        logger.info(
+            'Registered server "%s": mount=%s base_url=%s tools=%d auth=%s resolver=%s',
+            server_config.name,
+            server_config.mount_path,
+            base_url,
+            len(operations),
+            server_config.auth.type,
+            type(auth_resolver).__name__,
+        )
+
+    def _resolve_auth(
+        self,
+        entry: ServerConfig,
+        spec: OpenAPISpec,
+    ) -> tuple[AuthResolver, AuthorizationCodeProvider | None, AuthSettings | None]:
+        """Pick the resolver/provider/settings triple appropriate for ``entry.auth.type``."""
         auth_provider: AuthorizationCodeProvider | None = None
         auth_resolver: AuthResolver
         auth_settings: AuthSettings | None = None
@@ -211,11 +386,26 @@ class Gateway:
                 self._shutdown_hooks.append(setup.on_shutdown)
         elif entry.auth.type in ('bearer', 'api_key'):
             header_value = entry.auth.resolve_header()
-            auth_resolver = StaticAuthResolver(header_value) if header_value else NullAuthResolver()
+            if header_value:
+                auth_resolver = StaticAuthResolver(
+                    header_value=header_value,
+                    header_name=entry.auth.resolve_header_name(),
+                )
+            else:
+                auth_resolver = NullAuthResolver()
         else:
             auth_resolver = NullAuthResolver()
 
-        # Create MCP server
+        return auth_resolver, auth_provider, auth_settings
+
+    @staticmethod
+    def _build_fastmcp(
+        name: str,
+        auth_provider: AuthorizationCodeProvider | None,
+        auth_settings: AuthSettings | None,
+    ) -> FastMCP:
+        """Construct a ``FastMCP`` carrying the per-server lifespan and auth wiring."""
+
         @contextlib.asynccontextmanager
         async def lifespan(_app: FastMCP, _auth_provider=auth_provider):
             try:
@@ -223,54 +413,27 @@ class Gateway:
             finally:
                 pass
 
-        mcp = FastMCP(
-            f'{entry.name} (via OpenAPI MCP Gateway)',
+        return FastMCP(
+            f'{name} (via OpenAPI MCP Gateway)',
             auth_server_provider=auth_provider,
             auth=auth_settings,
             lifespan=lifespan,
             transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
         )
 
-        # Register callback route for OAuth
-        if auth_provider:
-            _auth_provider = auth_provider
+    @staticmethod
+    def _register_oauth_callback(mcp: FastMCP, auth_provider: AuthorizationCodeProvider) -> None:
+        """Mount the ``/auth/callback`` route used by the upstream OAuth redirect."""
+        _auth_provider = auth_provider
 
-            @mcp.custom_route('/auth/callback', methods=['GET'])
-            async def upstream_callback_handler(request, _provider=_auth_provider):
-                code = request.query_params.get('code')
-                state = request.query_params.get('state')
-                if not code or not state:
-                    raise HTTPException(400, 'Missing code or state parameter')
-                redirect_uri = await _provider.handle_upstream_callback(code, state)
-                return RedirectResponse(status_code=302, url=redirect_uri)
-
-        # Register tools
-        generator = ToolGenerator(
-            mcp=mcp,
-            base_url=base_url,
-            auth_resolver=auth_resolver,
-            timeout=entry.timeout,
-        )
-        generator.register_operations(operations)
-
-        self._servers.append(
-            _ServerBundle(
-                name=entry.name,
-                mount_path=entry.mount_path,
-                mcp=mcp,
-                spec=spec,
-                auth_provider=auth_provider,
-                auth_settings=auth_settings,
-            )
-        )
-        logger.info(
-            'Registered server "%s": mount=%s base_url=%s tools=%d auth=%s',
-            entry.name,
-            entry.mount_path,
-            base_url,
-            len(operations),
-            entry.auth.type,
-        )
+        @mcp.custom_route('/auth/callback', methods=['GET'])
+        async def upstream_callback_handler(request, _provider=_auth_provider):
+            code = request.query_params.get('code')
+            state = request.query_params.get('state')
+            if not code or not state:
+                raise HTTPException(400, 'Missing code or state parameter')
+            redirect_uri = await _provider.handle_upstream_callback(code, state)
+            return RedirectResponse(status_code=302, url=redirect_uri)
 
     async def _run_shutdown_hooks(self) -> None:
         """Run every flow-registered shutdown hook, swallowing per-hook errors."""
@@ -292,138 +455,11 @@ class Gateway:
             logger.warning('Could not run shutdown hooks: event loop already running')
 
     def _build_app(self, transport: str) -> FastAPI:
-        """Internal: assemble CORS, OAuth, discovery routes, health check, and MCP mounts."""
-        config = self._config
-
-        @contextlib.asynccontextmanager
-        async def lifespan(app: FastAPI):
-            async with contextlib.AsyncExitStack() as stack:
-                for handle in self._servers:
-                    await stack.enter_async_context(handle.mcp.session_manager.run())
-                yield
-            await self._run_shutdown_hooks()
-            await self._store.close()
-
-        app = FastAPI(
-            title='OpenAPI MCP Gateway',
-            debug=config.debug,
-            lifespan=lifespan,
-            docs_url='/docs' if config.enable_docs else None,
-            redoc_url='/redoc' if config.enable_docs else None,
-            openapi_url='/openapi.json' if config.enable_docs else None,
+        """Internal: delegate to ``app.build_app`` with the gateway's runtime state."""
+        return build_app(
+            servers=self._servers,
+            config=self._config,
+            store=self._store,
+            on_shutdown=self._run_shutdown_hooks,
+            transport=transport,
         )
-
-        # CORS
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=config.cors.allow_origins,
-            allow_methods=config.cors.allow_methods,
-            allow_headers=config.cors.allow_headers,
-            expose_headers=config.cors.expose_headers,
-        )
-
-        # Register OAuth routes for each provider with path prefix
-        for handle in self._servers:
-            if not handle.auth_provider or not handle.auth_settings:
-                continue
-
-            oauth_routes = create_auth_routes(
-                provider=handle.auth_provider,
-                issuer_url=handle.auth_settings.issuer_url,
-                service_documentation_url=handle.auth_settings.service_documentation_url,
-                client_registration_options=handle.auth_settings.client_registration_options,
-                revocation_options=handle.auth_settings.revocation_options,
-            )
-            for route in oauth_routes:
-                prefixed_path = f'{handle.mount_path.rstrip("/")}{route.path}'
-                app.router.add_route(
-                    path=prefixed_path,
-                    endpoint=route.endpoint,
-                    methods=route.methods,
-                    name=route.name,
-                )
-
-            # Register protected resource metadata routes (RFC 9728)
-            issuer = str(handle.auth_settings.issuer_url).rstrip('/')
-            pr_routes = create_protected_resource_routes(
-                resource_url=pydantic.AnyHttpUrl(f'{issuer}/mcp'),
-                authorization_servers=[handle.auth_settings.issuer_url],
-                scopes_supported=handle.auth_settings.client_registration_options.valid_scopes
-                if handle.auth_settings.client_registration_options
-                else None,
-            )
-            for route in pr_routes:
-                app.router.add_route(
-                    path=route.path,
-                    endpoint=route.endpoint,
-                    methods=route.methods,
-                    name=route.name,
-                )
-
-        # Well-known discovery endpoints (RFC 8414 / RFC 9728)
-        server_lookup: dict[str, _ServerBundle] = {h.name: h for h in self._servers}
-
-        @app.get('/.well-known/oauth-authorization-server/{server_name}')
-        @app.options('/.well-known/oauth-authorization-server/{server_name}')
-        @app.get('/.well-known/oauth-authorization-server/{server_name}/mcp')
-        @app.options('/.well-known/oauth-authorization-server/{server_name}/mcp')
-        async def oauth_authorization_server_discovery(request: Request, server_name: str):
-            handle = server_lookup.get(server_name)
-            if not handle or not handle.auth_settings:
-                return JSONResponse(
-                    status_code=404,
-                    content={'error': f'Server not found: {server_name}'},
-                )
-            metadata = build_metadata(
-                issuer_url=handle.auth_settings.issuer_url,
-                service_documentation_url=handle.auth_settings.service_documentation_url,
-                client_registration_options=handle.auth_settings.client_registration_options
-                or ClientRegistrationOptions(),
-                revocation_options=handle.auth_settings.revocation_options or RevocationOptions(),
-            )
-            handler = MetadataHandler(metadata)
-            return await handler.handle(request)
-
-        @app.get('/.well-known/oauth-protected-resource/{server_name}')
-        @app.options('/.well-known/oauth-protected-resource/{server_name}')
-        @app.get('/.well-known/oauth-protected-resource/{server_name}/mcp')
-        @app.options('/.well-known/oauth-protected-resource/{server_name}/mcp')
-        async def oauth_protected_resource_discovery(request: Request, server_name: str):
-            handle = server_lookup.get(server_name)
-            if not handle or not handle.auth_settings:
-                return JSONResponse(
-                    status_code=404,
-                    content={'error': f'Server not found: {server_name}'},
-                )
-            issuer = str(handle.auth_settings.issuer_url).rstrip('/')
-            metadata = ProtectedResourceMetadata(
-                resource=pydantic.AnyHttpUrl(f'{issuer}/mcp'),
-                authorization_servers=[pydantic.AnyHttpUrl(issuer)],
-                scopes_supported=handle.auth_settings.client_registration_options.valid_scopes
-                if handle.auth_settings.client_registration_options
-                else None,
-            )
-            handler = ProtectedResourceMetadataHandler(metadata)
-            return await handler.handle(request)
-
-        @app.get('/healthz')
-        async def healthz():
-            return {
-                'status': 'ok',
-                'servers': [
-                    {
-                        'name': h.name,
-                        'path': h.mount_path,
-                        'title': h.spec.title,
-                        'auth': 'oauth2' if h.auth_provider else 'static',
-                    }
-                    for h in self._servers
-                ],
-            }
-
-        # Mount MCP apps AFTER registering OAuth routes
-        for handle in self._servers:
-            mcp_app = handle.mcp.sse_app() if transport == 'sse' else handle.mcp.streamable_http_app()
-            app.mount(handle.mount_path, mcp_app)
-
-        return app

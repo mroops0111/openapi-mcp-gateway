@@ -52,6 +52,20 @@ jobs:
       - run: uv sync --extra dev --extra redis
       - run: uv run pytest tests/ -v --tb=short
 
+  smoke:
+    name: Smoke (External Deps)
+    runs-on: ubuntu-latest
+    # Hits the live FastAPI repo + public OpenAPI spec URLs (Petstore, GitHub,
+    # Asana). Network-dependent — failures here often mean a third-party URL
+    # is down, not a real regression. Investigate before assuming a bug.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev --extra redis
+      - run: uv run pytest -m smoke -v --tb=short
+
   build:
     name: Build
     runs-on: ubuntu-latest

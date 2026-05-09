@@ -5,6 +5,7 @@ import logging
 import re
 import typing
 
+import httpx
 import inflection
 import pydantic
 from mcp.server.fastmcp import Context, FastMCP
@@ -17,12 +18,12 @@ from .openapi import OperationInfo, ParameterInfo
 logger = logging.getLogger(__name__)
 
 
-INVALID_IDENT_CHARS = re.compile(r'[^A-Za-z0-9_]')
+_INVALID_IDENT_CHARS = re.compile(r'[^A-Za-z0-9_]')
 
 
 def _sanitize_name(name: str) -> str:
     """Return a valid Python identifier, prefixing digits and suffixing keywords."""
-    sanitized = INVALID_IDENT_CHARS.sub('_', name)
+    sanitized = _INVALID_IDENT_CHARS.sub('_', name)
     if sanitized and sanitized[0].isdigit():
         sanitized = '_' + sanitized
     if keyword.iskeyword(sanitized):
@@ -39,12 +40,22 @@ class ToolGenerator:
         base_url: str,
         auth_resolver: AuthResolver | None = None,
         timeout: float = 90,
+        transport: httpx.AsyncBaseTransport | None = None,
     ):
-        """Store MCP server handle, upstream URL, auth resolver, and HTTP timeout."""
+        """Store MCP server handle, upstream URL, auth resolver, timeout, and transport.
+
+        ``transport`` is forwarded to every per-request ``APIClient`` so the
+        gateway can route upstream calls in-process (``httpx.ASGITransport``)
+        instead of over the network. The ``auth_resolver`` is the single
+        source of upstream headers — compose ``CompositeAuthResolver`` if
+        more than one source is needed (e.g. forwarding ``X-API-Key`` from
+        the MCP client alongside a gateway-minted ``Authorization``).
+        """
         self.mcp = mcp
         self.base_url = base_url
         self.auth_resolver = auth_resolver or NullAuthResolver()
         self.timeout = timeout
+        self.transport = transport
 
     def register_operations(self, operations: list[OperationInfo]) -> None:
         """Declare one MCP tool per ``OperationInfo`` after policy filtering."""
@@ -54,14 +65,17 @@ class ToolGenerator:
 
     def _register_tool(self, operation: OperationInfo) -> None:
         """Register a single FastMCP tool with generated signature and description."""
-        # Separate parameters by location
-        url_params = [p for p in operation.parameters if p.location in ('path', 'query', 'header')]
+        path_params = [p for p in operation.parameters if p.location == 'path']
+        query_params = [p for p in operation.parameters if p.location == 'query']
+        header_params = [p for p in operation.parameters if p.location == 'header']
         body_params = [p for p in operation.parameters if p.location == 'body']
 
         tool_function = self._generate_tool_function(
             method=operation.method,
             path=operation.path,
-            url_params=url_params,
+            path_params=path_params,
+            query_params=query_params,
+            header_params=header_params,
             body_params=body_params,
         )
         tool_name = _sanitize_name(inflection.underscore(operation.operation_id))
@@ -73,41 +87,47 @@ class ToolGenerator:
         self,
         method: str,
         path: str,
-        url_params: list[ParameterInfo],
+        path_params: list[ParameterInfo],
+        query_params: list[ParameterInfo],
+        header_params: list[ParameterInfo],
         body_params: list[ParameterInfo],
     ) -> typing.Callable:
         """Return an async callable with ``inspect.Signature`` matching parameters."""
         base_url = self.base_url
         auth_resolver = self.auth_resolver
         timeout = self.timeout
+        transport = self.transport
 
         # Map sanitized python identifier → ParameterInfo (carries original API name)
-        url_param_by_pname: dict[str, ParameterInfo] = {_sanitize_name(p.name): p for p in url_params}
-        body_param_by_pname: dict[str, ParameterInfo] = {_sanitize_name(p.name): p for p in body_params}
+        path_param_by_pname: dict[str, ParameterInfo] = {_sanitize_name(param.name): param for param in path_params}
+        query_param_by_pname: dict[str, ParameterInfo] = {_sanitize_name(param.name): param for param in query_params}
+        header_param_by_pname: dict[str, ParameterInfo] = {_sanitize_name(param.name): param for param in header_params}
+        body_param_by_pname: dict[str, ParameterInfo] = {_sanitize_name(param.name): param for param in body_params}
 
         async def tool_function(**kwargs: typing.Any) -> str:
             ctx: Context = kwargs.pop('ctx')
             await ctx.report_progress(0, 1, f'Sending request to {method.upper()} {path} ...')
 
-            # Resolve auth header dynamically
-            auth_header = await auth_resolver.resolve(ctx)
+            auth_headers = await auth_resolver.resolve(ctx)
 
-            # Build path with path params substituted
             resolved_path = path
-            query_params: dict[str, typing.Any] = {}
-            extra_headers: dict[str, str] = {}
-
-            for pname, param_info in url_param_by_pname.items():
+            for pname, param_info in path_param_by_pname.items():
                 value = kwargs.get(pname)
                 if value is None:
                     continue
-                original = param_info.name
-                if f'{{{original}}}' in resolved_path:
-                    resolved_path = resolved_path.replace(f'{{{original}}}', str(value))
-                elif param_info.location == 'header':
-                    extra_headers[original] = str(value)
-                else:
-                    query_params[original] = value
+                resolved_path = resolved_path.replace(f'{{{param_info.name}}}', str(value))
+
+            query_args: dict[str, typing.Any] = {
+                param_info.name: kwargs[pname]
+                for pname, param_info in query_param_by_pname.items()
+                if kwargs.get(pname) is not None
+            }
+
+            header_args: dict[str, str] = {
+                param_info.name: str(kwargs[pname])
+                for pname, param_info in header_param_by_pname.items()
+                if kwargs.get(pname) is not None
+            }
 
             body = {
                 param_info.name: kwargs[pname]
@@ -115,16 +135,18 @@ class ToolGenerator:
                 if kwargs.get(pname) is not None
             }
 
-            headers: dict[str, str] = {}
-            if auth_header:
-                headers['Authorization'] = auth_header
-            headers.update(extra_headers)
+            headers: dict[str, str] = {**auth_headers, **header_args}
 
-            async with APIClient(base_url=base_url, headers=headers, timeout=timeout) as client:
+            async with APIClient(
+                base_url=base_url,
+                headers=headers,
+                timeout=timeout,
+                transport=transport,
+            ) as client:
                 result = await client.request(
                     method,
                     resolved_path,
-                    params=query_params or None,
+                    params=query_args or None,
                     data=body or None,
                 )
 
@@ -135,7 +157,7 @@ class ToolGenerator:
         # Deduplicate by sanitized name (first occurrence wins)
         seen_pnames: set[str] = set()
         ordered_params: list[tuple[str, ParameterInfo]] = []
-        for p in url_params + body_params:
+        for p in path_params + query_params + header_params + body_params:
             pname = _sanitize_name(p.name)
             if pname not in seen_pnames:
                 seen_pnames.add(pname)

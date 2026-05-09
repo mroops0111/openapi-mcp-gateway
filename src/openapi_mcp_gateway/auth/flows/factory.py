@@ -7,6 +7,7 @@ from ..detector import DetectedOAuthFlow, detect_oauth_flows
 from .authorization_code import AuthorizationCodeFlowHandler
 from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 from .client_credentials import ClientCredentialsFlowHandler
+from .passthrough import PassthroughFlowHandler
 
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 OAUTH_FLOW_HANDLERS: dict[str, type[OAuthFlowHandler]] = {
     'authorization_code': AuthorizationCodeFlowHandler,
     'client_credentials': ClientCredentialsFlowHandler,
+    'passthrough': PassthroughFlowHandler,
 }
 
 
@@ -60,11 +62,17 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
 
     Honours ``entry.auth.flow`` as an explicit override, falls back to
     ``authorization_code`` when the spec declares both, and synthesises a
-    flow from explicit URLs if the spec declares none.
+    flow from explicit URLs if the spec declares none. When the resolved
+    flow is ``authorization_code`` but the gateway lacks the ``client_id`` /
+    ``client_secret`` needed to act as an MCP-side OAuth server, fall back
+    to ``passthrough`` so the MCP client's own token can reach the upstream.
     """
-    declared_flows = detect_oauth_flows(spec)
     explicit_flow_type = entry.auth.flow
 
+    if explicit_flow_type == 'passthrough':
+        return DetectedOAuthFlow(flow_type='passthrough')
+
+    declared_flows = detect_oauth_flows(spec)
     selected_flow = _pick_from_declared_flows(declared_flows, explicit_flow_type)
 
     if selected_flow is None:
@@ -75,6 +83,18 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
         selected_flow.authorization_url = entry.auth.authorization_url
     if entry.auth.token_url:
         selected_flow.token_url = entry.auth.token_url
+
+    if (
+        selected_flow.flow_type == 'authorization_code'
+        and explicit_flow_type != 'authorization_code'
+        and not (entry.auth.resolve_client_id() and entry.auth.resolve_client_secret())
+    ):
+        logger.info(
+            'Server "%s": authorization_code flow declared but no client_id/client_secret '
+            'configured; falling back to passthrough mode',
+            entry.name,
+        )
+        return DetectedOAuthFlow(flow_type='passthrough')
 
     logger.debug(
         'Resolved OAuth flow for "%s": flow=%s authorization_url=%s token_url=%s',

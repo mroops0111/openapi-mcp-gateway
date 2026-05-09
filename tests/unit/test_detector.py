@@ -1,4 +1,8 @@
-from openapi_mcp_gateway.auth.detector import detect_oauth_flows, detect_primary_oauth_flow
+from openapi_mcp_gateway.auth.detector import (
+    detect_oauth_flows,
+    detect_primary_oauth_flow,
+    detect_unsupported_oauth_flows,
+)
 from openapi_mcp_gateway.openapi import OpenAPISpec
 
 
@@ -94,3 +98,32 @@ class TestDetectPrimaryOAuthFlow:
         primary = detect_primary_oauth_flow(_spec({'oauth2': CLIENT_CREDS_SCHEME}))
         assert primary is not None
         assert primary.flow_type == 'client_credentials'
+
+
+class TestDetectUnsupportedOAuthFlows:
+    """``detect_unsupported_oauth_flows`` lists OAuth2 flow names the gateway does not implement."""
+
+    def test_empty_when_only_supported_flows(self):
+        """Schemes with only authorizationCode/clientCredentials produce no unsupported flows."""
+        scheme = {
+            'type': 'oauth2',
+            'flows': {**AUTH_CODE_SCHEME['flows'], **CLIENT_CREDS_SCHEME['flows']},
+        }
+        assert detect_unsupported_oauth_flows(_spec({'oauth2': scheme})) == []
+
+    def test_lists_password_and_implicit(self):
+        """``password`` and ``implicit`` are surfaced for callers to reject."""
+        scheme = {
+            'type': 'oauth2',
+            'flows': {
+                'password': {'tokenUrl': 'https://auth.example.com/token', 'scopes': {}},
+                'implicit': {'authorizationUrl': 'https://auth.example.com/authorize', 'scopes': {}},
+            },
+        }
+        unsupported = detect_unsupported_oauth_flows(_spec({'oauth2': scheme}))
+        assert sorted(unsupported) == ['implicit', 'password']
+
+    def test_ignores_non_oauth_schemes(self):
+        """Non-oauth2 schemes are ignored when looking for unsupported flows."""
+        spec = _spec({'apiKey': {'type': 'apiKey', 'in': 'header', 'name': 'X-API-Key'}})
+        assert detect_unsupported_oauth_flows(spec) == []

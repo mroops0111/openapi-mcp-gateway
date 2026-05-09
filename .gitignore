@@ -26,3 +26,11 @@ venv/
 docs/
 *.md
 !README.md
+
+# IDE
+.claude
+.cursor
+.vscode
+
+# MacOS
+.DS_Store

@@ -15,14 +15,14 @@ def _resolve_env_var(value: str | None) -> str | None:
     """
     if value is None:
         return None
-    m = re.fullmatch(r'\$\{(\w+)(?::-(.*))?\}', value)
-    if not m:
+    match = re.fullmatch(r'\$\{(\w+)(?::-(.*))?\}', value)
+    if not match:
         return value
-    env_value = os.environ.get(m.group(1))
+    env_value = os.environ.get(match.group(1))
     if env_value is not None:
         return env_value
-    if m.group(2) is not None:
-        return m.group(2)
+    if match.group(2) is not None:
+        return match.group(2)
     return None
 
 
@@ -44,7 +44,7 @@ class AuthConfig(pydantic.BaseModel):
     authorization_url: str | None = None
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
-    flow: typing.Literal['authorization_code', 'client_credentials'] | None = None
+    flow: typing.Literal['authorization_code', 'client_credentials', 'passthrough'] | None = None
 
     def resolve_header(self) -> str | None:
         """Return ``Bearer …`` or raw token text for configured auth types.
@@ -165,12 +165,12 @@ class GatewayConfig(pydantic.BaseModel):
         return self
 
     @classmethod
-    def from_yaml(cls, path: str | pathlib.Path) -> 'GatewayConfig':
+    def from_yaml(cls, path: str | pathlib.Path) -> typing.Self:
         """Load gateway configuration from a YAML file on disk."""
-        p = pathlib.Path(path).expanduser().resolve()
-        if not p.exists():
-            raise FileNotFoundError(f'Config file not found: {p}')
-        raw = yaml.safe_load(p.read_text(encoding='utf-8'))
+        path = pathlib.Path(path).expanduser().resolve()
+        if not path.exists():
+            raise FileNotFoundError(f'Config file not found: {path}')
+        raw = yaml.safe_load(path.read_text(encoding='utf-8'))
         return cls.model_validate(raw)
 
     @classmethod
@@ -183,7 +183,7 @@ class GatewayConfig(pydantic.BaseModel):
         transport: typing.Literal['sse', 'streamable-http', 'stdio'] = 'streamable-http',
         host: str = '0.0.0.0',
         port: int = 8000,
-    ) -> 'GatewayConfig':
+    ) -> typing.Self:
         """Build a single-server configuration (CLI convenience wrapper)."""
         entry = ServerConfig(name=name, spec=spec, base_url=base_url, auth=auth or AuthConfig())
         return cls(
