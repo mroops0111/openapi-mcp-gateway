@@ -27,6 +27,28 @@ class ToolMetadata(pydantic.BaseModel):
 CallableT = typing.TypeVar('CallableT', bound=typing.Callable[..., typing.Any])
 
 
+def mark_tool(
+    func: CallableT,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    expose: bool = True,
+) -> CallableT:
+    """Imperative version of ``@mcp_tool`` for routes you cannot decorate at definition.
+
+    Use when the route lives in code you do not own (third-party FastAPI app,
+    routes pulled in via ``include_router`` from another package, dynamically
+    registered endpoints) but you still want to expose it as an MCP tool.
+
+    Equivalent to applying ``@mcp_tool(name=..., description=..., expose=...)``
+    to ``func`` after the fact. Returns ``func`` so it can be chained or used
+    inside a comprehension.
+    """
+    metadata = ToolMetadata(name=name, description=description, expose=expose)
+    setattr(func, _TOOL_METADATA_ATTR, metadata)
+    return func
+
+
 def mcp_tool(
     *,
     name: str | None = None,
@@ -39,11 +61,9 @@ def mcp_tool(
     ``name`` and ``description`` override the OpenAPI-derived tool name and description.
     ``expose=False`` opts out without removing the decorator.
     """
-    metadata = ToolMetadata(name=name, description=description, expose=expose)
 
     def decorator(func: CallableT) -> CallableT:
-        setattr(func, _TOOL_METADATA_ATTR, metadata)
-        return func
+        return mark_tool(func, name=name, description=description, expose=expose)
 
     return decorator
 

@@ -7,6 +7,22 @@ import pydantic
 import yaml
 
 
+def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Recursively merge ``override`` into ``base``; ``override`` wins for non-dict values.
+
+    Keys present only in ``base`` are preserved.
+    Keys whose value on both sides is a dict are merged recursively,
+    so a partial ``{'logging': {'level': 'DEBUG'}}`` does not blow away the rest of ``logging``.
+    """
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 def _resolve_env_var(value: str | None) -> str | None:
     """Substitute ``${VAR}`` or ``${VAR:-default}`` when ``value`` is a lone reference,
     otherwise pass it through unchanged.
@@ -160,12 +176,8 @@ class GatewayConfig(pydantic.BaseModel):
 
     @classmethod
     def from_yaml(cls, path: str | pathlib.Path) -> typing.Self:
-        """Load gateway config from a YAML file."""
-        path = pathlib.Path(path).expanduser().resolve()
-        if not path.exists():
-            raise FileNotFoundError(f'Config file not found: {path}')
-        raw = yaml.safe_load(path.read_text(encoding='utf-8'))
-        return cls.model_validate(raw)
+        """Load gateway config from a YAML file (thin wrapper over ``build_gateway_config``)."""
+        return typing.cast(typing.Self, build_gateway_config(yaml_layer(path)))
 
     @classmethod
     def from_single_spec(
@@ -174,15 +186,72 @@ class GatewayConfig(pydantic.BaseModel):
         name: str = 'api',
         base_url: str | None = None,
         auth: AuthConfig | None = None,
-        transport: typing.Literal['sse', 'streamable-http', 'stdio'] = 'streamable-http',
-        host: str = '0.0.0.0',
-        port: int = 8000,
+        transport: typing.Literal['sse', 'streamable-http', 'stdio'] | None = None,
+        host: str | None = None,
+        port: int | None = None,
     ) -> typing.Self:
-        """Build a single-server config (CLI convenience wrapper)."""
-        entry = ServerConfig(name=name, spec=spec, base_url=base_url, auth=auth or AuthConfig())
-        return cls(
-            host=host,
-            port=port,
-            transport=transport,
-            servers=[entry],
-        )
+        """Build a single-server config; ``host`` / ``port`` / ``transport`` only override when set."""
+        layers: list[dict[str, typing.Any]] = [
+            single_spec_layer(spec=spec, name=name, base_url=base_url, auth=auth or AuthConfig()),
+        ]
+        runtime: dict[str, typing.Any] = {}
+        if host is not None:
+            runtime['host'] = host
+        if port is not None:
+            runtime['port'] = port
+        if transport is not None:
+            runtime['transport'] = transport
+        if runtime:
+            layers.append(runtime)
+        return typing.cast(typing.Self, build_gateway_config(*layers))
+
+
+def yaml_layer(path: str | pathlib.Path) -> dict[str, typing.Any]:
+    """Read a YAML config file into a partial-settings dict.
+
+    Empty files yield an empty layer (no contributions).
+    Missing files raise ``FileNotFoundError`` to match historical behaviour.
+    """
+    resolved = pathlib.Path(path).expanduser().resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f'Config file not found: {resolved}')
+    raw = yaml.safe_load(resolved.read_text(encoding='utf-8'))
+    return raw or {}
+
+
+def single_spec_layer(
+    *,
+    spec: str,
+    name: str = 'api',
+    base_url: str | None = None,
+    auth: AuthConfig | None = None,
+) -> dict[str, typing.Any]:
+    """Build a partial-settings dict for the single-spec CLI / API entry path.
+
+    The returned dict mirrors the ``servers:`` shape that ``GatewayConfig`` expects,
+    so it composes via ``build_gateway_config`` like any other layer.
+    """
+    server: dict[str, typing.Any] = {'name': name, 'spec': spec}
+    if base_url is not None:
+        server['base_url'] = base_url
+    server['auth'] = (auth or AuthConfig()).model_dump()
+    return {'servers': [server]}
+
+
+def build_gateway_config(*layers: dict[str, typing.Any]) -> GatewayConfig:
+    """Compose layered partial-settings dicts (later wins) into a validated ``GatewayConfig``.
+
+    The contract for a *layer* is: a dict containing only the fields that source
+    actually supplies. Pydantic defaults form the implicit floor, so callers
+    never need to repeat them. Order encodes precedence; typical CLI use is::
+
+        build_gateway_config(yaml_layer, cli_layer)
+
+    Sub-trees (``logging``, per-server ``policy`` / ``auth``) merge recursively,
+    so a CLI flag that only sets ``logging.level`` does not erase ``logging.format`` from YAML.
+    Lists (``servers``) are replaced wholesale, since merging by index is rarely what you want.
+    """
+    merged: dict[str, typing.Any] = {}
+    for layer in layers:
+        merged = _deep_merge(merged, layer)
+    return GatewayConfig.model_validate(merged)

@@ -1,12 +1,15 @@
 import logging
 import pathlib
+import typing
 from unittest import mock
 
 import click
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from openapi_mcp_gateway import cli
+from openapi_mcp_gateway.settings import GatewayConfig
 
 
 PACKAGE_LOGGER = 'openapi_mcp_gateway'
@@ -34,6 +37,24 @@ def _run(*args, gateway_run: mock.Mock | None = None):
     with mock.patch.object(cli.Gateway, 'run', gateway_run):
         result = runner.invoke(cli.main, list(args), catch_exceptions=False)
     return result, gateway_run
+
+
+def _run_capture_config(*args) -> tuple[typing.Any, GatewayConfig | None]:
+    """Run the CLI without starting uvicorn, returning the effective ``GatewayConfig``."""
+    captured: dict[str, GatewayConfig] = {}
+    real_from_config = cli.Gateway.from_config
+
+    def spy(config: GatewayConfig) -> typing.Any:
+        captured['config'] = config
+        return real_from_config(config)
+
+    runner = CliRunner()
+    with (
+        mock.patch.object(cli.Gateway, 'from_config', side_effect=spy),
+        mock.patch.object(cli.Gateway, 'run', mock.Mock()),
+    ):
+        result = runner.invoke(cli.main, list(args), catch_exceptions=False)
+    return result, captured.get('config')
 
 
 class TestLoggingFlags:
@@ -201,3 +222,52 @@ class TestAuthInference:
         )
         assert auth.authorization_url == 'https://auth.example.com/authorize'
         assert auth.token_url == 'https://auth.example.com/token'
+
+
+class TestConfigPrecedence:
+    """End-to-end: yaml + cli flags compose with non-None-wins precedence."""
+
+    def _yaml_with_port(self, tmp_path: pathlib.Path, **fields) -> pathlib.Path:
+        data = {'servers': [{'name': 'pets', 'spec': str(PETSTORE_SPEC)}], **fields}
+        path = tmp_path / 'config.yml'
+        path.write_text(yaml.dump(data))
+        return path
+
+    def test_yaml_port_preserved_when_no_cli_port(self, tmp_path):
+        """Regression: omitting ``--port`` must not let a CLI default clobber the YAML value."""
+        yaml_path = self._yaml_with_port(tmp_path, port=9000, host='127.0.0.1')
+        result, config = _run_capture_config('--config', str(yaml_path))
+        assert result.exit_code == 0, result.output
+        assert config is not None
+        assert config.port == 9000
+        assert config.host == '127.0.0.1'
+
+    def test_cli_port_overrides_yaml(self, tmp_path):
+        """An explicit ``--port`` wins over the YAML value."""
+        yaml_path = self._yaml_with_port(tmp_path, port=9000)
+        result, config = _run_capture_config('--config', str(yaml_path), '--port', '7777')
+        assert result.exit_code == 0, result.output
+        assert config is not None
+        assert config.port == 7777
+
+    def test_cli_log_format_does_not_blow_away_yaml_log_level(self, tmp_path):
+        """Sub-tree merge: ``--log-format`` only sets ``logging.format``, leaves YAML ``logging.level`` intact."""
+        yaml_path = self._yaml_with_port(
+            tmp_path,
+            logging={'level': 'WARNING', 'format': 'text'},
+        )
+        result, config = _run_capture_config('--config', str(yaml_path), '--log-format', 'json')
+        assert result.exit_code == 0, result.output
+        assert config is not None
+        assert config.logging.level == 'WARNING'
+        assert config.logging.format == 'json'
+
+    def test_pydantic_default_used_when_neither_yaml_nor_cli_set(self, tmp_path):
+        """With neither layer setting a field, the Pydantic default is the floor."""
+        yaml_path = self._yaml_with_port(tmp_path)
+        result, config = _run_capture_config('--config', str(yaml_path))
+        assert result.exit_code == 0, result.output
+        assert config is not None
+        assert config.host == '0.0.0.0'
+        assert config.port == 8000
+        assert config.transport == 'streamable-http'

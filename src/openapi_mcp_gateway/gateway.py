@@ -161,10 +161,15 @@ class Gateway:
         host: str | None = None,
         port: int | None = None,
     ) -> None:
-        """Serve over ``uvicorn`` (HTTP/SSE) or stdio (single-server only)."""
-        transport = transport or self._config.transport
-        host = host or self._config.host
-        port = port or self._config.port
+        """Serve over ``uvicorn`` (HTTP/SSE) or stdio (single-server only).
+
+        ``transport`` / ``host`` / ``port`` only override ``self._config`` when explicitly set,
+        matching the precedence used by the CLI and YAML loader: non-None wins, otherwise the
+        layered config value (which already accounts for ``--config`` and Pydantic defaults) stands.
+        """
+        transport = transport if transport is not None else self._config.transport
+        host = host if host is not None else self._config.host
+        port = port if port is not None else self._config.port
 
         if transport == 'stdio':
             if len(self._servers) != 1:
@@ -194,7 +199,7 @@ class Gateway:
 
     def mount(self, app: FastAPI, transport: str | None = None) -> None:
         """Mount every registered MCP sub-app onto ``app`` at its configured path."""
-        transport = transport or self._config.transport
+        transport = transport if transport is not None else self._config.transport
         for handle in self._servers:
             mcp_app = handle.mcp.sse_app() if transport == 'sse' else handle.mcp.streamable_http_app()
             app.mount(handle.mount_path, mcp_app)
