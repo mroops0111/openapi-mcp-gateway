@@ -1,4 +1,4 @@
-# GitHub REST API — Bearer auth via Personal Access Token.
+# GitHub REST API: Bearer auth via Personal Access Token.
 #
 # Prerequisites:
 #   1. Create a PAT: https://github.com/settings/tokens (classic) or

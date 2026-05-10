@@ -22,7 +22,7 @@ _INVALID_IDENT_CHARS = re.compile(r'[^A-Za-z0-9_]')
 
 
 def _sanitize_name(name: str) -> str:
-    """Return a valid Python identifier, prefixing digits and suffixing keywords."""
+    """Coerce ``name`` to a valid Python identifier (digit prefix, keyword suffix)."""
     sanitized = _INVALID_IDENT_CHARS.sub('_', name)
     if sanitized and sanitized[0].isdigit():
         sanitized = '_' + sanitized
@@ -42,14 +42,12 @@ class ToolGenerator:
         timeout: float = 90,
         transport: httpx.AsyncBaseTransport | None = None,
     ):
-        """Store MCP server handle, upstream URL, auth resolver, timeout, and transport.
+        """Bind the MCP server, upstream URL, auth resolver, timeout, and optional async transport.
 
-        ``transport`` is forwarded to every per-request ``APIClient`` so the
-        gateway can route upstream calls in-process (``httpx.ASGITransport``)
-        instead of over the network. The ``auth_resolver`` is the single
-        source of upstream headers — compose ``CompositeAuthResolver`` if
-        more than one source is needed (e.g. forwarding ``X-API-Key`` from
-        the MCP client alongside a gateway-minted ``Authorization``).
+        ``auth_resolver`` is the single source of upstream headers,
+        so use ``CompositeAuthResolver`` if multiple sources are needed.
+        ``transport`` (e.g. ``httpx.ASGITransport``) routes upstream calls in-process
+        instead of over the network.
         """
         self.mcp = mcp
         self.base_url = base_url
@@ -58,13 +56,12 @@ class ToolGenerator:
         self.transport = transport
 
     def register_operations(self, operations: list[OperationInfo]) -> None:
-        """Declare one MCP tool per ``OperationInfo`` after policy filtering."""
+        """Declare one MCP tool per ``OperationInfo``."""
         for operation in operations:
             self._register_tool(operation)
         logger.info('Registered %d MCP tool(s) on server "%s"', len(operations), self.mcp.name)
 
     def _register_tool(self, operation: OperationInfo) -> None:
-        """Register a single FastMCP tool with generated signature and description."""
         path_params = [p for p in operation.parameters if p.location == 'path']
         query_params = [p for p in operation.parameters if p.location == 'query']
         header_params = [p for p in operation.parameters if p.location == 'header']
@@ -92,13 +89,13 @@ class ToolGenerator:
         header_params: list[ParameterInfo],
         body_params: list[ParameterInfo],
     ) -> typing.Callable:
-        """Return an async callable with ``inspect.Signature`` matching parameters."""
+        """Build an async callable whose ``inspect.Signature`` mirrors the operation's parameters."""
         base_url = self.base_url
         auth_resolver = self.auth_resolver
         timeout = self.timeout
         transport = self.transport
 
-        # Map sanitized python identifier → ParameterInfo (carries original API name)
+        # Sanitised Python identifier to ParameterInfo (preserves original API name on the value).
         path_param_by_pname: dict[str, ParameterInfo] = {_sanitize_name(param.name): param for param in path_params}
         query_param_by_pname: dict[str, ParameterInfo] = {_sanitize_name(param.name): param for param in query_params}
         header_param_by_pname: dict[str, ParameterInfo] = {_sanitize_name(param.name): param for param in header_params}
@@ -153,8 +150,7 @@ class ToolGenerator:
             await ctx.report_progress(1, 1, 'Request completed')
             return json.dumps(result, indent=2, ensure_ascii=False)
 
-        # Build signature: required params → ctx → optional params
-        # Deduplicate by sanitized name (first occurrence wins)
+        # Signature order: required params, then ctx, then optional params. Dedup by sanitised name.
         seen_pnames: set[str] = set()
         ordered_params: list[tuple[str, ParameterInfo]] = []
         for p in path_params + query_params + header_params + body_params:
@@ -208,7 +204,7 @@ class ToolGenerator:
 
 
 def _schema_to_python_type(schema: dict[str, typing.Any]) -> typing.Any:
-    """Map JSON Schema ``type`` / ``items`` to typing-compatible annotations."""
+    """Map a JSON Schema fragment to a Python type annotation."""
     schema_type = schema.get('type', 'string')
 
     if schema_type == 'string':

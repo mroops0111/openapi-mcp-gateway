@@ -5,7 +5,7 @@ import click
 
 from .gateway import Gateway
 from .logger import FORMATS, LEVELS, setup
-from .settings import AuthConfig, GatewayConfig, LoggingConfig
+from .settings import AuthConfig, build_gateway_config, single_spec_layer, yaml_layer
 
 
 logger = logging.getLogger(__name__)
@@ -25,11 +25,21 @@ logger = logging.getLogger(__name__)
 @click.option(
     '--transport',
     type=click.Choice(['sse', 'streamable-http', 'stdio']),
-    default='streamable-http',
-    help='MCP transport protocol.',
+    default=None,
+    help='MCP transport protocol (default: streamable-http; overridable in --config).',
 )
-@click.option('--host', type=str, default='0.0.0.0', help='Bind host.')
-@click.option('--port', type=int, default=8000, help='Bind port.')
+@click.option(
+    '--host',
+    type=str,
+    default=None,
+    help='Bind host (default: 0.0.0.0; overridable in --config).',
+)
+@click.option(
+    '--port',
+    type=int,
+    default=None,
+    help='Bind port (default: 8000; overridable in --config).',
+)
 @click.option(
     '--auth-type',
     type=click.Choice(['none', 'bearer', 'api_key', 'oauth2']),
@@ -100,9 +110,9 @@ def main(
     config_path: str | None,
     name: str,
     base_url: str | None,
-    transport: typing.Literal['sse', 'streamable-http', 'stdio'],
-    host: str,
-    port: int,
+    transport: typing.Literal['sse', 'streamable-http', 'stdio'] | None,
+    host: str | None,
+    port: int | None,
     auth_type: typing.Literal['none', 'bearer', 'api_key', 'oauth2'] | None,
     auth_token: str | None,
     auth_client_id: str | None,
@@ -144,11 +154,11 @@ def main(
         openapi-mcp-gateway --config servers.yml
 
     \b
-    stdio transport (for Claude Desktop / IDE integration):
+    stdio transport (Claude Desktop / IDE integration):
         openapi-mcp-gateway --spec petstore.json --transport stdio
 
     \b
-    Verbose logging in JSON format, also written to a file:
+    Verbose JSON logs written to a file:
         openapi-mcp-gateway --spec petstore.json -v --log-format json --log-file gateway.log
     """
     if not spec and not config_path:
@@ -158,11 +168,8 @@ def main(
         raise click.UsageError('--verbose and --quiet are mutually exclusive.')
 
     if config_path:
-        config = GatewayConfig.from_yaml(config_path)
-        config.transport = transport
-        config.host = host
-        config.port = port
-    elif spec:
+        source_layer = yaml_layer(config_path)
+    else:
         auth = _build_auth_config(
             auth_type=auth_type,
             auth_token=auth_token,
@@ -173,26 +180,20 @@ def main(
             auth_token_url=auth_token_url,
             auth_flow=auth_flow,
         )
-        config = GatewayConfig.from_single_spec(
-            spec=spec,
-            name=name,
-            base_url=base_url,
-            auth=auth,
-            transport=transport,
-            host=host,
-            port=port,
-        )
-    else:
-        raise click.UsageError('Either --spec or --config is required.')
+        source_layer = single_spec_layer(spec=typing.cast(str, spec), name=name, base_url=base_url, auth=auth)
 
-    config.logging = _resolve_logging_config(
-        base=config.logging,
-        cli_level=log_level,
-        cli_format=log_format,
-        cli_file=log_file,
+    cli_layer = _cli_layer(
+        host=host,
+        port=port,
+        transport=transport,
+        log_level=log_level,
+        log_format=log_format,
+        log_file=log_file,
         verbose=verbose,
         quiet=quiet,
     )
+
+    config = build_gateway_config(source_layer, cli_layer)
 
     setup(
         level=config.logging.level,
@@ -221,7 +222,7 @@ def _build_auth_config(
     auth_token_url: str | None,
     auth_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
 ) -> AuthConfig:
-    """Construct ``AuthConfig`` from optional auth-related CLI flags."""
+    """Construct ``AuthConfig`` from the auth-related CLI flags."""
     has_auth_flags = any(
         [
             auth_type,
@@ -260,40 +261,46 @@ def _build_auth_config(
     )
 
 
-def _resolve_logging_config(
-    base: LoggingConfig,
-    cli_level: str | None,
-    cli_format: str | None,
-    cli_file: str | None,
+def _cli_layer(
+    *,
+    host: str | None,
+    port: int | None,
+    transport: typing.Literal['sse', 'streamable-http', 'stdio'] | None,
+    log_level: str | None,
+    log_format: str | None,
+    log_file: str | None,
     verbose: bool,
     quiet: bool,
-) -> LoggingConfig:
-    """Merge verbosity shortcuts and explicit log flags onto YAML defaults."""
+) -> dict[str, typing.Any]:
+    """Translate CLI flags into a partial ``GatewayConfig`` dict (only fields the user set).
+
+    ``-v`` and ``-q`` are resolved against ``--log-level`` here, so the rest of the
+    pipeline only sees a single ``logging.level`` value alongside other layers.
+    Unset flags are omitted entirely so they do not shadow earlier layers.
+    """
+    layer: dict[str, typing.Any] = {}
+    if host is not None:
+        layer['host'] = host
+    if port is not None:
+        layer['port'] = port
+    if transport is not None:
+        layer['transport'] = transport
+
+    log_layer: dict[str, typing.Any] = {}
     if verbose:
-        level = 'DEBUG'
+        log_layer['level'] = 'DEBUG'
     elif quiet:
-        level = 'WARNING'
-    elif cli_level:
-        level = cli_level.upper()
-    else:
-        level = base.level
+        log_layer['level'] = 'WARNING'
+    elif log_level is not None:
+        log_layer['level'] = log_level.upper()
+    if log_format is not None:
+        log_layer['format'] = log_format.lower()
+    if log_file is not None:
+        log_layer['file'] = log_file
+    if log_layer:
+        layer['logging'] = log_layer
 
-    fmt: str = cli_format.lower() if cli_format else base.format
-    file_ = cli_file if cli_file is not None else base.file
-
-    if level not in LEVELS:
-        level = base.level
-    if fmt not in FORMATS:
-        fmt = base.format
-
-    return LoggingConfig(
-        level=typing.cast(
-            typing.Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-            level,
-        ),
-        format=typing.cast(typing.Literal['text', 'json'], fmt),
-        file=file_,
-    )
+    return layer
 
 
 if __name__ == '__main__':

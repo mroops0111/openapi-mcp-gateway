@@ -116,7 +116,7 @@ class TestStoreMapping:
         assert await store.get_mapping('mcp_access', 'mcp_1', 'mcp_refresh') == 'ref_b'
 
     async def test_mapping_direction(self, store):
-        """Mappings are directional — the reverse lookup must not exist."""
+        """Mappings are directional, so the reverse lookup must not exist."""
         await store.set_mapping('from_ns', 'key', 'to_ns', 'value')
         assert await store.get_mapping('from_ns', 'key', 'to_ns') == 'value'
         assert await store.get_mapping('to_ns', 'value', 'from_ns') is None

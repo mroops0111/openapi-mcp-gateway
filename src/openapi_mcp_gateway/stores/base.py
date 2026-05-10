@@ -3,34 +3,24 @@ import typing
 
 
 class TokenStore(abc.ABC):
-    """Key/value persistence with TTL plus directional namespace mappings.
+    """Namespaced key-value persistence with TTL and directional namespace mappings.
 
     Used to correlate MCP OAuth artefacts with upstream API credentials.
+    Common namespaces: ``mcp_client``, ``mcp_access_token``, ``mcp_refresh_token``,
+    ``mcp_auth_code``, ``mcp_auth_state``, ``api_access_token``.
     """
 
     @abc.abstractmethod
     async def get(self, namespace: str, key: str) -> typing.Any | None:
-        """Get data by namespace and key.
-
-        Args:
-            namespace: e.g. 'mcp_client', 'mcp_access_token', 'api_access_token'
-            key: unique identifier within the namespace
-        """
+        """Look up data by ``(namespace, key)``."""
 
     @abc.abstractmethod
     async def set(self, namespace: str, key: str, data: typing.Any, ttl: int | None = None) -> None:
-        """Store data with optional TTL.
-
-        Args:
-            namespace: e.g. 'mcp_access_token'
-            key: unique identifier
-            data: JSON-serializable data
-            ttl: time-to-live in seconds, None for no expiry
-        """
+        """Store JSON-serialisable ``data`` under ``(namespace, key)`` with optional TTL in seconds."""
 
     @abc.abstractmethod
     async def delete(self, namespace: str, key: str) -> None:
-        """Delete data by namespace and key."""
+        """Delete the entry at ``(namespace, key)``."""
 
     @abc.abstractmethod
     async def set_mapping(
@@ -41,17 +31,14 @@ class TokenStore(abc.ABC):
         to_key: str,
         ttl: int | None = None,
     ) -> None:
-        """Create a directional mapping: (from_ns, from_key) → to_key in to_ns.
+        """Record a directional mapping from ``(from_ns, from_key)`` to ``to_key`` in ``to_ns``.
 
-        Example: set_mapping('mcp_access_token', 'mcp_xxx', 'api_access_token', 'api_yyy')
+        Example: ``set_mapping('mcp_access_token', 'mcp_xxx', 'api_access_token', 'api_yyy')``.
         """
 
     @abc.abstractmethod
     async def get_mapping(self, from_ns: str, from_key: str, to_ns: str) -> typing.Any | None:
-        """Resolve a directional mapping.
-
-        Returns the target key in to_ns, or None if not found.
-        """
+        """Return the target key in ``to_ns`` for ``(from_ns, from_key)``, or ``None``."""
 
     @abc.abstractmethod
     async def close(self) -> None:

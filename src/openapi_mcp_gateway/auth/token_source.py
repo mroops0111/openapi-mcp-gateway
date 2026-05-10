@@ -17,26 +17,25 @@ DEFAULT_TOKEN_LIFETIME_SECONDS = 3600.0
 class TokenSource(abc.ABC):
     """Abstract bearer-token provider used by per-request auth resolvers.
 
-    Implementations cache an access token and transparently refresh it before
-    expiry. Callers should treat ``get_token`` as cheap; concrete
-    implementations are responsible for de-duplicating concurrent refreshes.
+    Implementations cache the access token and refresh it transparently before expiry.
+    ``get_token`` should be cheap; concrete implementations must de-dup concurrent refreshes.
     """
 
     @abc.abstractmethod
     async def get_token(self) -> str:
-        """Return a currently-valid bearer token, fetching/refreshing as needed."""
+        """Return a currently-valid bearer token, fetching or refreshing as needed."""
 
     async def aclose(self) -> None:
-        """Release any resources held by the token source. Default is a no-op."""
+        """Release resources held by the token source. Default is a no-op."""
         return None
 
 
 class ClientCredentialsTokenSource(TokenSource):
     """Fetch and cache an OAuth2 ``client_credentials`` token from an upstream IdP.
 
-    The token is fetched lazily on the first ``get_token`` call and cached
-    until ``refresh_skew_seconds`` before its declared expiry. Concurrent
-    refreshes are de-duplicated through an internal ``asyncio.Lock``.
+    The token is fetched lazily on first ``get_token`` and cached until
+    ``refresh_skew_seconds`` before its declared expiry.
+    Concurrent refreshes are de-duped through an internal ``asyncio.Lock``.
     """
 
     def __init__(
@@ -47,7 +46,6 @@ class ClientCredentialsTokenSource(TokenSource):
         scopes: list[str] | None = None,
         refresh_skew_seconds: float = DEFAULT_REFRESH_SKEW_SECONDS,
     ) -> None:
-        """Bind upstream token endpoint, client credentials, and refresh policy."""
         self.token_url = token_url
         self.client_id = client_id
         self.client_secret = client_secret
@@ -59,7 +57,7 @@ class ClientCredentialsTokenSource(TokenSource):
         self._http_client: httpx.AsyncClient | None = None
 
     async def get_token(self) -> str:
-        """Return a cached token if still valid; otherwise fetch a new one."""
+        """Return a cached token if still valid, otherwise fetch a new one."""
         if self._is_token_valid():
             return typing.cast(str, self._access_token)
         async with self._lock:
@@ -69,19 +67,16 @@ class ClientCredentialsTokenSource(TokenSource):
             return typing.cast(str, self._access_token)
 
     async def aclose(self) -> None:
-        """Close the internal HTTP client if it was created."""
         if self._http_client is not None:
             await self._http_client.aclose()
             self._http_client = None
 
     def _is_token_valid(self) -> bool:
-        """Return True iff a cached token exists and is not within the refresh skew."""
         return (
             self._access_token is not None and time.monotonic() < self._expires_at_monotonic - self.refresh_skew_seconds
         )
 
     async def _fetch_token(self) -> None:
-        """Exchange client credentials for an access token at ``token_url``."""
         request_data: dict[str, str] = {
             'grant_type': 'client_credentials',
             'client_id': self.client_id,

@@ -1,4 +1,4 @@
-# Multi-server example — three APIs behind one gateway.
+# Multi-server example: three APIs behind one gateway.
 # Each server is mounted at /{name}/mcp.
 #
 # Prerequisites:

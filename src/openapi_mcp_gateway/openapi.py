@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class ParameterInfo(pydantic.BaseModel):
-    """One OpenAPI parameter (path, query, header, cookie, or body) with schema metadata."""
+    """One OpenAPI parameter (path, query, header, cookie, or body) with its schema."""
 
     name: str
     location: typing.Literal['path', 'query', 'header', 'cookie', 'body']
@@ -40,12 +40,12 @@ class OperationInfo(pydantic.BaseModel):
 
     @property
     def tool_exposed(self) -> bool:
-        """True if ``x-mcp-integration.expose`` includes a ``tool`` entry."""
+        """True iff ``x-mcp-integration.expose`` includes a ``tool`` entry."""
         return 'tool' in self.x_mcp_integration.get('expose', {})
 
 
 class OpenAPISpec(pydantic.BaseModel):
-    """Decoded OpenAPI document with flattened operations and component schemes."""
+    """Decoded OpenAPI document with flattened operations and component schemas."""
 
     raw: dict[str, typing.Any]
     title: str = ''
@@ -57,18 +57,14 @@ class OpenAPISpec(pydantic.BaseModel):
 
     @property
     def default_base_url(self) -> str | None:
-        """Return ``servers[0].url`` when present, else ``None``."""
+        """Return ``servers[0].url`` if present, else ``None``."""
         if self.servers:
             return self.servers[0].get('url')
         return None
 
 
 def load_spec(source: str | pathlib.Path) -> dict[str, typing.Any]:
-    """Load a raw OpenAPI document from a filesystem path or HTTP(S) URL.
-
-    JSON and YAML encodings are supported. Raises ``FileNotFoundError`` for
-    missing local paths.
-    """
+    """Load a JSON or YAML OpenAPI document from a filesystem path or HTTP(S) URL."""
     source_str = str(source)
 
     if source_str.startswith(('http://', 'https://')):
@@ -93,7 +89,7 @@ def load_spec(source: str | pathlib.Path) -> dict[str, typing.Any]:
 
 
 def _resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:
-    """Return the object at ``ref`` (JSON Pointer into ``raw``), or ``{}`` if missing."""
+    """Resolve a ``#/foo/bar`` JSON Pointer into ``raw``, returning ``{}`` if missing."""
     parts = ref.lstrip('#/').split('/')
     node = raw
     for part in parts:
@@ -104,11 +100,7 @@ def _resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:
 
 
 def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
-    """Recursively merge ``override`` into ``base``.
-
-    Values under the ``required`` key are concatenated and deduplicated instead
-    of overwritten.
-    """
+    """Recursively merge ``override`` into ``base``; ``required`` lists are concatenated and deduped instead of overwritten."""
     result = base.copy()
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
@@ -121,7 +113,7 @@ def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) ->
 
 
 def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
-    """Expand JSON Schema: resolve ``$ref``, merge ``allOf``, recurse ``oneOf``/``anyOf``."""
+    """Expand a JSON Schema fragment: resolve ``$ref``, merge ``allOf``, recurse into ``oneOf`` / ``anyOf``."""
     if '$ref' in schema:
         resolved = _resolve_ref(raw, schema['$ref'])
         return _expand_schema(raw, resolved)
@@ -149,7 +141,7 @@ def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) ->
 
 
 def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str | None) -> list[dict[str, typing.Any]]:
-    """Resolve relative ``servers[].url`` values against ``source`` (OpenAPI 3.0 §4.7.5)."""
+    """Resolve relative ``servers[].url`` against ``source`` per OpenAPI 3.0 §4.7.5."""
     if not source or not source.startswith(('http://', 'https://')):
         return servers
     resolved: list[dict[str, typing.Any]] = []
@@ -163,13 +155,7 @@ def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str 
 
 
 def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPISpec:
-    """Parse a decoded OpenAPI mapping into models.
-
-    Args:
-        raw: Parsed JSON/YAML root object (typically from ``load_spec``).
-        source: URL the document was fetched from; used only to resolve
-            relative ``servers[].url`` values (OpenAPI 3.0 §4.7.5).
-    """
+    """Parse a decoded OpenAPI mapping into models. ``source`` is only used to resolve relative ``servers[].url`` values."""
     info = raw.get('info', {})
     servers = _resolve_relative_servers(raw.get('servers', []), source)
     security_schemes = raw.get('components', {}).get('securitySchemes', {})
@@ -188,10 +174,9 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
 
             operation_id = operation.get('operationId')
             if not operation_id:
-                # Generate one from method + path
                 operation_id = f'{method}_{path}'.replace('/', '_').replace('{', '').replace('}', '').strip('_')
 
-            # Parse parameters (operation-level overrides path-level per OpenAPI spec)
+            # Operation-level parameters override path-level (OpenAPI 3.0 §4.7.9.2).
             params: list[ParameterInfo] = []
             seen_params: set[str] = set()
             for param in operation.get('parameters', []) + path_item.get('parameters', []):
@@ -213,7 +198,6 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                     )
                 )
 
-            # Parse request body as body parameters
             request_body = operation.get('requestBody', {})
             if '$ref' in request_body:
                 request_body = _resolve_ref(raw, request_body['$ref'])

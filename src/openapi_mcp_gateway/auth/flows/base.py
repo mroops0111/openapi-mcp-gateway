@@ -19,8 +19,7 @@ if typing.TYPE_CHECKING:
 class OAuthFlowContext:
     """Inputs every ``OAuthFlowHandler`` needs to assemble its components.
 
-    Fields are filled in by the factory (``build_oauth_flow``) before
-    dispatching to a concrete handler.
+    Populated by ``build_oauth_flow`` before it dispatches to a concrete handler.
     """
 
     entry: ServerConfig
@@ -35,10 +34,10 @@ class OAuthFlowContext:
 class OAuthFlowSetup:
     """Result of an ``OAuthFlowHandler.build`` call, consumed by ``Gateway``.
 
-    Only ``resolver`` is always present. ``provider`` and ``settings`` are
-    populated when a flow needs to act as an MCP-side OAuth server (currently
-    only ``authorization_code``). ``on_shutdown`` lets a flow register a
-    cleanup callback that the gateway invokes when shutting down.
+    Only ``resolver`` is always set. ``provider`` and ``settings`` are populated
+    when the flow needs to act as an MCP-side OAuth server (currently only
+    ``authorization_code``).
+    ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
     resolver: AuthResolver
@@ -48,13 +47,12 @@ class OAuthFlowSetup:
 
 
 class OAuthFlowHandler(abc.ABC):
-    """Strategy: how a single OAuth flow type wires upstream + MCP-side auth.
+    """Strategy describing how one OAuth flow wires upstream and MCP-side auth.
 
-    Subclasses live under ``auth/flows/`` and are registered in
-    ``OAUTH_FLOW_HANDLERS`` so the factory can dispatch to them by
-    ``flow_type``.
+    Subclasses live under ``auth/flows/`` and register themselves in
+    ``OAUTH_FLOW_HANDLERS`` so the factory can dispatch by ``flow_type``.
     """
 
     @abc.abstractmethod
     def build(self, flow_context: OAuthFlowContext) -> OAuthFlowSetup:
-        """Return the resolver, optional MCP provider/settings, and shutdown hook."""
+        """Return the resolver, optional MCP provider and settings, and any shutdown hook."""
