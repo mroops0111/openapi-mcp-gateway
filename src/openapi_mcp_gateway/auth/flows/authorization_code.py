@@ -33,12 +33,12 @@ MCP_SCOPES = ['api']
 
 
 class AuthorizationCodeProvider:
-    """Implement MCP's OAuth server provider API against an upstream OAuth2 API.
+    """MCP OAuth server provider that fronts an upstream ``authorization_code`` API.
 
     Registers MCP clients, forwards browser authorization to the upstream IdP,
-    exchanges grants with ``upstream_token_url``, and keeps MCP ↔ upstream token
-    mappings inside ``store``. Specific to the ``authorization_code`` flow:
-    each MCP access token corresponds to one user's upstream token.
+    exchanges grants at ``upstream_token_url``, and keeps the MCP-to-upstream
+    token mappings inside ``store``.
+    Each MCP access token corresponds to one user's upstream token.
     """
 
     def __init__(
@@ -52,7 +52,6 @@ class AuthorizationCodeProvider:
         scopes: list[str] | None = None,
         prefix: str = 'gateway',
     ) -> None:
-        """Bind token ``store``, upstream endpoints, IdP client credentials, and callback."""
         self.store = store
         self.upstream_auth_url = upstream_auth_url
         self.upstream_token_url = upstream_token_url
@@ -62,17 +61,15 @@ class AuthorizationCodeProvider:
         self.scopes = scopes or []
         self._prefix = prefix
 
-    # ── MCP SDK OAuthAuthorizationServerProvider interface ──
+    # MCP SDK OAuthAuthorizationServerProvider interface
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        """Load MCP OAuth client registration state by ``client_id``."""
         data = await self.store.get('mcp_client', client_id)
         if data:
             return OAuthClientInformationFull(**data)
         return None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        """Persist ``client_info`` for subsequent authorize/token exchanges."""
         if not client_info.client_id:
             raise ValueError('client_id is required')
         await self.store.set(
@@ -83,7 +80,7 @@ class AuthorizationCodeProvider:
         logger.info('Registered MCP client: client_id=%s prefix=%s', client_info.client_id, self._prefix)
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
-        """Return the upstream authorize URL with PKCE/state payload stored in ``store``."""
+        """Return the upstream authorize URL after stashing PKCE/state payload in ``store``."""
         client_id = self._require_client_id(client)
         state = params.state or secrets.token_hex(16)
 
@@ -110,7 +107,6 @@ class AuthorizationCodeProvider:
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
-        """Hydrate ``AuthorizationCode`` when it belongs to ``client``."""
         client_id = self._require_client_id(client)
         data = await self.store.get('mcp_auth_code', authorization_code)
         if data and data['client_id'] == client_id:
@@ -120,7 +116,7 @@ class AuthorizationCodeProvider:
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
-        """Exchange an MCP authorization code for MCP access/refresh tokens."""
+        """Exchange an MCP auth code for MCP access and refresh tokens."""
         client_id = self._require_client_id(client)
         data = await self.store.get('mcp_auth_code', authorization_code.code)
 
@@ -146,14 +142,12 @@ class AuthorizationCodeProvider:
         )
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        """Return MCP access token payload when ``token`` is valid."""
         data = await self.store.get('mcp_access_token', token)
         if data:
             return AccessToken(**data)
         return None
 
     async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
-        """Return MCP refresh metadata scoped to ``client``."""
         client_id = self._require_client_id(client)
         data = await self.store.get('mcp_refresh_token', refresh_token)
         if data and data['client_id'] == client_id:
@@ -181,7 +175,6 @@ class AuthorizationCodeProvider:
             logger.warning('OAuth refresh rejected: reason=mapping_lost client_id=%s', client_id)
             raise TokenError(error='invalid_grant', error_description='Upstream token mapping lost')
 
-        # Check if upstream access token is still valid
         if not await self.store.get('api_access_token', api_access_token):
             if not api_refresh_token:
                 logger.warning('OAuth refresh rejected: reason=upstream_expired_no_refresh client_id=%s', client_id)
@@ -207,7 +200,6 @@ class AuthorizationCodeProvider:
             api_refresh_token=api_refresh_token,
         )
 
-        # Revoke old tokens
         old_access = await self.store.get_mapping('mcp_refresh_token', refresh_token.token, 'mcp_access_token')
         if old_access:
             await self.store.delete('mcp_access_token', old_access)
@@ -216,7 +208,7 @@ class AuthorizationCodeProvider:
         return new_token
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
-        """Delete MCP tokens plus paired refresh/access mappings from ``store``."""
+        """Delete MCP tokens and their paired refresh/access mappings."""
         kind = 'access' if isinstance(token, AccessToken) else 'refresh'
         if isinstance(token, AccessToken):
             paired = await self.store.get_mapping('mcp_access_token', token.token, 'mcp_refresh_token')
@@ -230,13 +222,14 @@ class AuthorizationCodeProvider:
             await self.store.delete('mcp_refresh_token', token.token)
         logger.info('Revoked MCP %s token (prefix=%s)', kind, self._prefix)
 
-    # ── Gateway-specific methods ──
+    # Gateway-specific methods
 
     async def handle_upstream_callback(self, code: str, state: str) -> str:
-        """Finish the browser redirect: swap upstream ``code`` for MCP authorization artifacts.
+        """Finish the browser redirect by swapping the upstream ``code`` for MCP auth artefacts.
 
-        Validates ``state``, exchanges tokens at ``upstream_token_url``, persists API
-        credentials, builds an MCP authorization code, and returns the client redirect URI.
+        Validates ``state``, exchanges tokens at ``upstream_token_url``,
+        persists the upstream credentials, builds an MCP authorization code,
+        and returns the client redirect URI.
         """
         state_data = await self.store.get('mcp_auth_state', state)
         if not state_data:
@@ -248,7 +241,6 @@ class AuthorizationCodeProvider:
         redirect_uri_provided_explicitly = state_data['redirect_uri_provided_explicitly']
         client_id = state_data['client_id']
 
-        # Exchange upstream code for tokens
         api_access_token, api_refresh_token, expires_in = await self._request_upstream_token(
             {
                 'client_id': self.client_id,
@@ -259,7 +251,6 @@ class AuthorizationCodeProvider:
             }
         )
 
-        # Create MCP auth code
         mcp_auth_code = f'mcp_{secrets.token_hex(16)}'
         await self.store.set(
             'mcp_auth_code',
@@ -276,10 +267,8 @@ class AuthorizationCodeProvider:
             ttl=300,
         )
 
-        # Store upstream tokens
         await self._store_api_token(client_id, api_access_token, expires_in)
 
-        # Create mappings
         await self.store.set_mapping('mcp_auth_code', mcp_auth_code, 'api_access_token', api_access_token, ttl=300)
         if api_refresh_token:
             await self.store.set_mapping(
@@ -287,7 +276,6 @@ class AuthorizationCodeProvider:
             )
         await self.store.set_mapping('client', client_id, 'api_access_token', api_access_token)
 
-        # Clean up state
         await self.store.delete('mcp_auth_state', state)
 
         logger.info(
@@ -299,17 +287,16 @@ class AuthorizationCodeProvider:
         return construct_redirect_uri(redirect_uri, code=mcp_auth_code, state=state)
 
     async def get_api_access_token(self) -> str | None:
-        """Map the active MCP access token (request context) to the upstream bearer secret."""
+        """Map the active MCP access token (from request context) to the upstream bearer."""
         mcp_access_token = get_access_token()
         if not mcp_access_token:
             return None
         return await self.store.get_mapping('mcp_access_token', mcp_access_token.token, 'api_access_token')
 
-    # ── Private helpers ──
+    # Private helpers
 
     @staticmethod
     def _require_client_id(client: OAuthClientInformationFull) -> str:
-        """Return ``client.client_id`` or raise ``ValueError``."""
         if not client.client_id:
             raise ValueError('client_id is required')
         return client.client_id
@@ -321,7 +308,7 @@ class AuthorizationCodeProvider:
         api_access_token: str,
         api_refresh_token: str | None,
     ) -> OAuthToken:
-        """Mint MCP access/refresh tokens and map them to upstream API tokens."""
+        """Mint MCP access and refresh tokens and map them to the upstream API tokens."""
         mcp_access = f'mcp_{secrets.token_hex(32)}'
         mcp_refresh = f'mcp_refresh_{secrets.token_hex(32)}'
         now = int(time.time())
@@ -350,11 +337,11 @@ class AuthorizationCodeProvider:
             ttl=MCP_REFRESH_TOKEN_TTL,
         )
 
-        # mcp_access → api_access (for tool calls)
+        # mcp_access -> api_access drives tool calls.
         await self.store.set_mapping(
             'mcp_access_token', mcp_access, 'api_access_token', api_access_token, ttl=MCP_ACCESS_TOKEN_TTL
         )
-        # mcp_refresh → api_access (for refresh chain)
+        # mcp_refresh -> api_access keeps the upstream token reachable through the refresh chain.
         await self.store.set_mapping(
             'mcp_refresh_token', mcp_refresh, 'api_access_token', api_access_token, ttl=MCP_REFRESH_TOKEN_TTL
         )
@@ -362,7 +349,7 @@ class AuthorizationCodeProvider:
             await self.store.set_mapping(
                 'mcp_refresh_token', mcp_refresh, 'api_refresh_token', api_refresh_token, ttl=MCP_REFRESH_TOKEN_TTL
             )
-        # Pair access ↔ refresh for revoke lookup
+        # Pair access and refresh in both directions for revoke lookup.
         await self.store.set_mapping(
             'mcp_access_token', mcp_access, 'mcp_refresh_token', mcp_refresh, ttl=MCP_ACCESS_TOKEN_TTL
         )
@@ -390,7 +377,7 @@ class AuthorizationCodeProvider:
         )
 
     async def _request_upstream_token(self, request_data: dict[str, typing.Any]) -> tuple[str, str | None, int]:
-        """POST ``request_data`` to upstream token URL; return ``(access, refresh | None, expires_in)``."""
+        """POST ``request_data`` to ``upstream_token_url`` and return ``(access, refresh | None, expires_in)``."""
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 self.upstream_token_url,
@@ -419,10 +406,9 @@ class AuthorizationCodeProvider:
 
 
 class AuthorizationCodeFlowHandler(OAuthFlowHandler):
-    """Build the per-user ``authorization_code`` setup: provider + AuthSettings + resolver."""
+    """Build the per-user ``authorization_code`` setup: provider, ``AuthSettings``, and resolver."""
 
     def build(self, flow_context: OAuthFlowContext) -> OAuthFlowSetup:
-        """Construct ``AuthorizationCodeProvider`` and matching MCP ``AuthSettings``."""
         entry = flow_context.entry
         oauth_flow = flow_context.oauth_flow
 

@@ -6,7 +6,7 @@
 [![Python Version](https://img.shields.io/pypi/pyversions/openapi-mcp-gateway.svg?v=1)](https://pypi.org/project/openapi-mcp-gateway/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Turn any OpenAPI (Swagger) specification into a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with a single command. Give Claude Desktop, Cursor, Cline, or any MCP client access to GitHub, Asana, Slack, or your internal REST APIs without writing tool wrappers.
+Turn any OpenAPI (Swagger) spec into a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with one command, or expose your existing FastAPI app the same way by decorating routes with `@mcp_tool`. Run several APIs from one process, each on its own mount path, with Bearer, API Key, and OAuth2 (`authorization_code` for per-user delegation, `client_credentials` for service tokens) auth built in. Works with Claude Desktop, Cursor, Cline, and any other MCP client.
 
 ```bash
 openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
@@ -15,7 +15,8 @@ openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 
 - **Zero glue code.** Every operation in your spec becomes an MCP tool automatically.
 - **Multi-API.** Expose GitHub, Slack, and internal services from one process, each on its own mount path.
-- **Auth built in.** Bearer, API Key, and OAuth2 (with per-user delegation).
+- **Auth built in.** Bearer, API Key, and OAuth2, including per-user delegation (`authorization_code`) and service tokens (`client_credentials`).
+- **FastAPI native.** Decorate routes with `@mcp_tool` to expose them as MCP tools in-process, with no extra network hop and no separate spec to maintain.
 - **Flexible transport.** Streamable HTTP, SSE, or stdio for desktop clients.
 
 ---
@@ -61,7 +62,9 @@ openapi-mcp-gateway \
     --auth-token '${GITHUB_TOKEN}'
 ```
 
-### 3. OAuth2 (Auto-Detected from Spec)
+### 3. OAuth2, Per-User Delegation (`authorization_code`)
+
+The gateway runs its own OAuth server so each MCP client authenticates as its own end-user; tokens are minted per session.
 
 ```bash
 export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
@@ -74,7 +77,22 @@ openapi-mcp-gateway \
     --auth-scopes "openid,email,profile,users:read,workspaces:read"
 ```
 
-### 4. Multiple APIs at Once
+### 4. OAuth2, Service Token (`client_credentials`)
+
+When the gateway holds its own credentials and shares one upstream token across every MCP client. No per-user OAuth dance:
+
+```bash
+export SVC_CLIENT_ID="..." SVC_CLIENT_SECRET="..."
+openapi-mcp-gateway \
+    --spec ./service-api.json \
+    --name svc \
+    --auth-type oauth2 \
+    --auth-flow client_credentials \
+    --auth-client-id '${SVC_CLIENT_ID}' \
+    --auth-client-secret '${SVC_CLIENT_SECRET}'
+```
+
+### 5. Multiple APIs at Once
 
 Mix public, bearer, and OAuth2 services in a single config. Each server is mounted at `/{name}/mcp`:
 
@@ -116,7 +134,7 @@ Runnable variants of this multi-server setup live in [`examples/`](examples/): [
 
 `${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`. Override `auth.authorization_url`, `auth.token_url`, or `auth.scopes` when the spec is incomplete.
 
-### 5. Local Desktop Client (stdio)
+### 6. Local Desktop Client (stdio)
 
 For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
 
@@ -133,7 +151,9 @@ For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
 
 ## Configuration
 
-Run `openapi-mcp-gateway --help` for the CLI reference. For YAML config, the [Quick Start](#quick-start) examples cover most setups; the full field reference:
+Run `openapi-mcp-gateway --help` for the CLI reference. The [Quick Start](#quick-start) examples cover most setups; the full field reference is below.
+
+When values appear in more than one place, the rule is **defaults < YAML (`--config`) < CLI flags < `Gateway.run(...)` kwargs**, and a layer only overrides what it actually sets. Sub-trees (`logging`, per-server `auth`) merge field-by-field; the `servers` list is replaced wholesale.
 
 <details>
 <summary><b>Top-Level Fields</b></summary>
@@ -204,7 +224,7 @@ Filters apply in order: `marked_only`, then `allow`, then `deny`.
 
 ### Logging
 
-Configure via the `logging.*` YAML keys or via CLI flags. `-v` and `-q` are shortcuts for `DEBUG` and `WARNING`.
+Configure via the `logging.*` YAML keys or via CLI flags (`--log-level`, `--log-format`, `--log-file`); `-v` and `-q` are shortcuts for `DEBUG` and `WARNING`. CLI flags override YAML field-by-field, following the precedence rule above.
 
 ## Python API
 
@@ -227,17 +247,33 @@ gateway.add_server(
 gateway.run(port=8000)
 ```
 
-Or mount into an existing FastAPI app:
+### Expose Your FastAPI App as MCP Tools
+
+Already running FastAPI? Decorate the routes you want to expose with `@mcp_tool` and the gateway picks them up. No second spec, no separate process. Routes run in-process via `httpx.ASGITransport`, so there is no extra network hop:
 
 ```python
 from fastapi import FastAPI
-from openapi_mcp_gateway import Gateway
+from openapi_mcp_gateway import Gateway, mcp_tool
 
 app = FastAPI()
-gateway = Gateway()
-gateway.add_server(name="petstore", spec="petstore.json")
-gateway.mount(app)
+
+@app.get("/items/{item_id}")
+@mcp_tool()
+def read_item(item_id: int):
+    return {"id": item_id}
+
+@app.get("/internal/health")  # not decorated → not exposed
+def health():
+    return {"ok": True}
+
+Gateway.from_fastapi(app, name="myapp").run()
 ```
+
+Auth is auto-detected from the app's `securitySchemes`. If the gateway and the app share an OAuth realm, the MCP client's `Authorization` header passes through verbatim; for `client_credentials` schemes the gateway mints upstream tokens from its own credentials. Mix and match by passing an explicit `auth=AuthConfig(...)` to `Gateway.from_fastapi`.
+
+Got routes you can't decorate at definition (third-party app, `include_router` from another package)? Use `mark_tool(func)` to attach the same metadata imperatively.
+
+To mount the MCP routes onto an existing FastAPI app instead of running standalone, use `Gateway.mount(app)`.
 
 ## License
 

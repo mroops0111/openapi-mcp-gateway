@@ -1,4 +1,4 @@
-# Asana — OAuth2 authorization code flow.
+# Asana: OAuth2 authorization code flow.
 # The gateway auto-detects authorizationUrl / tokenUrl from the spec's securitySchemes.
 #
 # Prerequisites:

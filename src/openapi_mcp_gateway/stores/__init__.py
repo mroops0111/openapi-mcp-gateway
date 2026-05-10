@@ -13,14 +13,9 @@ __all__ = ['MemoryTokenStore', 'TokenStore']
 
 
 def create_store(store_type: str = 'memory', **kwargs) -> TokenStore:
-    """Instantiate the configured ``TokenStore`` backend.
+    """Instantiate the configured ``TokenStore`` backend (``memory`` or ``redis``).
 
-    Args:
-        store_type: Either ``memory`` or ``redis``.
-        **kwargs: Forwarded to ``RedisTokenStore`` (for example ``url``, ``prefix``).
-
-    Returns:
-        A concrete ``TokenStore`` implementation.
+    Extra ``**kwargs`` are forwarded to ``RedisTokenStore`` (e.g. ``url``, ``prefix``).
     """
     if store_type == 'memory':
         return MemoryTokenStore()

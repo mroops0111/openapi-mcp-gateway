@@ -7,6 +7,9 @@ from openapi_mcp_gateway.settings import (
     AuthConfig,
     GatewayConfig,
     ServerConfig,
+    build_gateway_config,
+    single_spec_layer,
+    yaml_layer,
 )
 
 
@@ -186,3 +189,95 @@ def test_example_yaml_parses(yaml_path: pathlib.Path):
     for server in config.servers:
         assert server.name
         assert server.spec
+
+
+class TestBuildGatewayConfig:
+    """Layered composition: ``build_gateway_config(*layers)`` precedence and merging."""
+
+    def test_no_layers_returns_pydantic_defaults(self):
+        """With no layers, every field falls back to its Pydantic default."""
+        config = build_gateway_config()
+        assert config.host == '0.0.0.0'
+        assert config.port == 8000
+        assert config.transport == 'streamable-http'
+
+    def test_layer_order_later_wins(self):
+        """When two layers set the same scalar, the later one in the argument list wins."""
+        config = build_gateway_config({'port': 9000}, {'port': 9100})
+        assert config.port == 9100
+
+    def test_unset_field_in_later_layer_does_not_clobber_earlier(self):
+        """A later layer that omits a field leaves the earlier value intact (the bug we fixed)."""
+        config = build_gateway_config({'port': 9000}, {'host': '127.0.0.1'})
+        assert config.port == 9000
+        assert config.host == '127.0.0.1'
+
+    def test_sub_tree_merges_recursively(self):
+        """Setting only ``logging.level`` in a later layer keeps ``logging.format`` from the earlier one."""
+        config = build_gateway_config(
+            {'logging': {'level': 'DEBUG', 'format': 'json'}},
+            {'logging': {'level': 'WARNING'}},
+        )
+        assert config.logging.level == 'WARNING'
+        assert config.logging.format == 'json'
+
+    def test_lists_are_replaced_not_concatenated(self):
+        """``servers`` (and any list field) is overwritten wholesale by a later layer."""
+        config = build_gateway_config(
+            {'servers': [{'name': 'a', 'spec': 'a.json'}]},
+            {'servers': [{'name': 'b', 'spec': 'b.json'}]},
+        )
+        assert [s.name for s in config.servers] == ['b']
+
+    def test_invalid_field_raises_validation_error(self):
+        """Pydantic validation runs once on the merged dict; bad input surfaces immediately."""
+        with pytest.raises(ValueError):
+            build_gateway_config({'port': 'not-an-int'})
+
+
+class TestLayerHelpers:
+    """The pure-data layer producers consumed by ``build_gateway_config``."""
+
+    def test_yaml_layer_reads_file(self, tmp_path):
+        """``yaml_layer`` returns the parsed dict ready to compose."""
+        yaml_path = tmp_path / 'c.yml'
+        yaml_path.write_text(yaml.dump({'port': 9000, 'servers': []}))
+        layer = yaml_layer(yaml_path)
+        assert layer == {'port': 9000, 'servers': []}
+
+    def test_yaml_layer_empty_file_yields_empty_dict(self, tmp_path):
+        """An empty YAML file contributes nothing rather than crashing on ``None``."""
+        yaml_path = tmp_path / 'empty.yml'
+        yaml_path.write_text('')
+        assert yaml_layer(yaml_path) == {}
+
+    def test_yaml_layer_missing_raises(self):
+        """Missing files surface as ``FileNotFoundError`` (matches ``from_yaml`` history)."""
+        with pytest.raises(FileNotFoundError):
+            yaml_layer('/nonexistent/path.yml')
+
+    def test_single_spec_layer_minimal(self):
+        """The minimum spec entry produces a well-shaped one-server layer."""
+        layer = single_spec_layer(spec='petstore.json', name='pets')
+        assert layer == {
+            'servers': [
+                {
+                    'name': 'pets',
+                    'spec': 'petstore.json',
+                    'auth': AuthConfig().model_dump(),
+                },
+            ],
+        }
+
+    def test_single_spec_layer_carries_base_url_and_auth(self):
+        """``base_url`` and a custom ``auth`` flow through into the server dict."""
+        layer = single_spec_layer(
+            spec='api.json',
+            name='api',
+            base_url='https://example.com',
+            auth=AuthConfig(type='bearer', token='${TOK}'),
+        )
+        server = layer['servers'][0]
+        assert server['base_url'] == 'https://example.com'
+        assert server['auth']['type'] == 'bearer'
+        assert server['auth']['token'] == '${TOK}'

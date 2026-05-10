@@ -14,7 +14,7 @@ from openapi_mcp_gateway.auth.resolver import (
 
 @pytest.fixture
 def mock_context():
-    """Stand-in MCP context — most resolvers don't inspect it."""
+    """Stand-in MCP context (most resolvers don't inspect it)."""
     return MagicMock()
 
 
@@ -28,7 +28,7 @@ class TestNullAuthResolver:
 
 
 class TestStaticAuthResolver:
-    """``StaticAuthResolver`` returns one fixed header — name + value chosen at construction."""
+    """``StaticAuthResolver`` returns one fixed header whose name and value are chosen at construction."""
 
     async def test_default_header_name_is_authorization(self, mock_context):
         """Without an override the resolver targets the ``Authorization`` header."""
