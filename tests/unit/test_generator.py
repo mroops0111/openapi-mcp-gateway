@@ -5,7 +5,7 @@ import httpx
 from mcp.server.fastmcp import Context, FastMCP
 
 from openapi_mcp_gateway.generator import ToolGenerator, _sanitize_name
-from openapi_mcp_gateway.openapi import OperationInfo, ParameterInfo
+from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ParameterInfo
 
 
 class _StubContext:
@@ -234,3 +234,68 @@ class TestGeneratedSignature:
         generator.register_operations([operation])
         tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'do_thing')
         assert tool.fn.__annotations__['ids'] == list[int]
+
+
+class TestToolOverride:
+    """``x-mcp-integration.expose.tool`` overrides reach the registered tool."""
+
+    def _generator(self) -> tuple[ToolGenerator, FastMCP]:
+        """Fresh generator + FastMCP for each test."""
+        mcp = FastMCP('test')
+        return ToolGenerator(mcp=mcp, base_url='https://api.example.com'), mcp
+
+    def test_name_override_applied(self):
+        """``expose.tool.name`` replaces the auto-derived tool name."""
+        generator, mcp = self._generator()
+        operation = OperationInfo(
+            operation_id='adminListPets',
+            method='get',
+            path='/admin/pets',
+            x_mcp_integration=McpIntegration.model_validate({'expose': {'tool': {'name': 'list_admin_pets'}}}),
+        )
+        generator.register_operations([operation])
+        names = {tool.name for tool in mcp._tool_manager.list_tools()}
+        assert 'list_admin_pets' in names
+        assert 'admin_list_pets' not in names
+
+    def test_description_override_applied(self):
+        """``expose.tool.description`` replaces the OpenAPI description for the LLM."""
+        generator, mcp = self._generator()
+        operation = OperationInfo(
+            operation_id='adminListPets',
+            method='get',
+            path='/admin/pets',
+            description='Original description from spec.',
+            x_mcp_integration=McpIntegration.model_validate(
+                {'expose': {'tool': {'description': 'Override description.'}}}
+            ),
+        )
+        generator.register_operations([operation])
+        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'admin_list_pets')
+        assert tool.description == 'Override description.'
+
+    def test_override_name_sanitised(self):
+        """A user-supplied name still flows through ``_sanitize_name``."""
+        generator, mcp = self._generator()
+        operation = OperationInfo(
+            operation_id='adminListPets',
+            method='get',
+            path='/admin/pets',
+            x_mcp_integration=McpIntegration.model_validate({'expose': {'tool': {'name': 'list-admin-pets'}}}),
+        )
+        generator.register_operations([operation])
+        names = {tool.name for tool in mcp._tool_manager.list_tools()}
+        assert 'list_admin_pets' in names
+
+    def test_falls_back_to_auto_when_no_override(self):
+        """Without an override, name and description come from the operation."""
+        generator, mcp = self._generator()
+        operation = OperationInfo(
+            operation_id='listPets',
+            method='get',
+            path='/pets',
+            description='Auto description.',
+        )
+        generator.register_operations([operation])
+        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'list_pets')
+        assert tool.description == 'Auto description.'

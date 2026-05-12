@@ -198,6 +198,15 @@ class TestParseSpec:
         list_op = next(op for op in self.spec.operations if op.operation_id == 'listPets')
         assert list_op.tool_exposed is False
 
+    def test_x_mcp_integration_tool_override_parsed(self):
+        """``expose.tool.name`` and ``description`` reach the typed model."""
+        admin_op = next(op for op in self.spec.operations if op.operation_id == 'adminListPets')
+        assert admin_op.x_mcp_integration.expose is not None
+        override = admin_op.x_mcp_integration.expose.tool
+        assert override is not None
+        assert override.name == 'listAdminPets'
+        assert override.description == 'List pets visible only to admin users.'
+
     def test_generated_operation_id(self):
         """Operations without ``operationId`` get one synthesised from method+path."""
         raw = {

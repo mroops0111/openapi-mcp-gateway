@@ -25,6 +25,25 @@ class ParameterInfo(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(populate_by_name=True)
 
 
+class ToolOverride(pydantic.BaseModel):
+    """Spec-author overrides for the MCP tool generated from an operation."""
+
+    name: str | None = None
+    description: str | None = None
+
+
+class Expose(pydantic.BaseModel):
+    """Which MCP primitives an operation is exposed as."""
+
+    tool: ToolOverride | None = None
+
+
+class McpIntegration(pydantic.BaseModel):
+    """Parsed ``x-mcp-integration`` operation extension."""
+
+    expose: Expose | None = None
+
+
 class OperationInfo(pydantic.BaseModel):
     """One HTTP operation from ``paths`` with parameters, security, and MCP integration flags."""
 
@@ -36,12 +55,13 @@ class OperationInfo(pydantic.BaseModel):
     tags: list[str] = pydantic.Field(default_factory=list)
     parameters: list[ParameterInfo] = pydantic.Field(default_factory=list)
     security: list[dict[str, list[str]]] = pydantic.Field(default_factory=list)
-    x_mcp_integration: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    x_mcp_integration: McpIntegration = pydantic.Field(default_factory=McpIntegration)
 
     @property
     def tool_exposed(self) -> bool:
-        """True iff ``x-mcp-integration.expose`` includes a ``tool`` entry."""
-        return 'tool' in self.x_mcp_integration.get('expose', {})
+        """True iff ``x-mcp-integration.expose.tool`` is present."""
+        expose = self.x_mcp_integration.expose
+        return expose is not None and expose.tool is not None
 
 
 class OpenAPISpec(pydantic.BaseModel):
