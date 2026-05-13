@@ -23,6 +23,7 @@ from .auth.resolver import (
     PassthroughAuthResolver,
     StaticAuthResolver,
 )
+from .exposure import MetaToolGenerator, ToolGenerator, UpstreamBinding
 from .fastapi import (
     collect_marked_routes,
     filter_marked_operations,
@@ -30,7 +31,6 @@ from .fastapi import (
     override_with_metadata,
     warn_on_mixed_security_schemes,
 )
-from .generator import ToolGenerator
 from .openapi import OpenAPISpec, OperationInfo, load_spec, parse_spec
 from .policy import filter_operations
 from .settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
@@ -320,14 +320,14 @@ class Gateway:
         if auth_provider is not None:
             self._register_oauth_callback(mcp, auth_provider)
 
-        generator = ToolGenerator(
-            mcp=mcp,
+        binding = UpstreamBinding(
             base_url=base_url,
             auth_resolver=auth_resolver,
             timeout=server_config.timeout,
             transport=transport,
         )
-        generator.register_operations(operations)
+        generator_cls = MetaToolGenerator if server_config.exposure == 'dynamic' else ToolGenerator
+        generator_cls(mcp=mcp, binding=binding).register(operations)
 
         self._servers.append(
             _ServerBundle(

@@ -45,6 +45,21 @@ class TestServerConfig:
         with pytest.raises(ValueError, match='alphanumeric'):
             ServerConfig(name='my api!', spec='x.json')
 
+    def test_exposure_defaults_to_static(self):
+        """Without an explicit ``exposure`` value, a server is static."""
+        server = ServerConfig(name='petstore', spec='petstore.json')
+        assert server.exposure == 'static'
+
+    def test_exposure_dynamic_parsed(self):
+        """``exposure: dynamic`` is accepted as a typed literal."""
+        server = ServerConfig(name='petstore', spec='petstore.json', exposure='dynamic')
+        assert server.exposure == 'dynamic'
+
+    def test_exposure_rejects_unknown(self):
+        """Any value outside the literal set is rejected by Pydantic."""
+        with pytest.raises(ValueError):
+            ServerConfig(name='petstore', spec='petstore.json', exposure='hybrid')
+
 
 class TestAuthConfig:
     """Header resolution and env-var substitution on ``AuthConfig``."""

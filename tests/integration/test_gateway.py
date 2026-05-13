@@ -210,6 +210,53 @@ class TestEndToEndToolInvocation:
         assert json.loads(result) == [{'id': 1, 'name': 'fido'}]
 
 
+class TestDynamicExposureEndToEnd:
+    """Full assembly chain when ``exposure: dynamic`` swaps tools for the three meta-tools."""
+
+    @pytest.fixture
+    def dynamic_gateway(self, petstore_json_path):
+        """Petstore gateway with the server flipped to dynamic exposure."""
+        config = GatewayConfig(
+            servers=[
+                ServerConfig(name='petstore', spec=str(petstore_json_path), exposure='dynamic'),
+            ],
+        )
+        return Gateway.from_config(config)
+
+    def test_only_three_meta_tools_registered(self, dynamic_gateway):
+        """An MCP client sees just ``list_operations``, ``get_operation``, ``call_operation``."""
+        mcp = dynamic_gateway._servers[0].mcp
+        names = {tool.name for tool in mcp._tool_manager.list_tools()}
+        assert names == {'list_operations', 'get_operation', 'call_operation'}
+
+    async def test_list_then_get_then_call_roundtrip(self, dynamic_gateway, mock_upstream):
+        """An LLM-style ``list → get → call`` sequence drives an upstream call with correct query."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['method'] = request.method
+            captured['url'] = str(request.url)
+            return httpx.Response(200, json=[{'id': 1, 'name': 'fido'}])
+
+        mock_upstream(handler)
+
+        mcp = dynamic_gateway._servers[0].mcp
+        tools = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
+
+        listing = json.loads(await tools['list_operations'].fn(ctx=_stub_context()))
+        assert {entry['name'] for entry in listing} >= {'list_pets', 'get_pet_by_id'}
+
+        described = json.loads(await tools['get_operation'].fn(name='list_pets', ctx=_stub_context()))
+        assert described['input_schema']['properties']['limit']['type'] == 'integer'
+
+        result = json.loads(
+            await tools['call_operation'].fn(name='list_pets', arguments={'limit': 5}, ctx=_stub_context())
+        )
+        assert captured['method'] == 'GET'
+        assert 'limit=5' in captured['url']
+        assert result == [{'id': 1, 'name': 'fido'}]
+
+
 def _write_client_credentials_spec(tmp_path: pathlib.Path) -> pathlib.Path:
     """Persist a minimal OpenAPI spec declaring only ``clientCredentials`` security."""
     spec = {
