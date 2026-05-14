@@ -189,6 +189,7 @@ When values appear in more than one place, the rule is **defaults < YAML (`--con
 | `policy.allow` | list |  | Only expose matching operations |
 | `policy.deny` | list |  | Exclude matching operations |
 | `timeout` | float | `90` | HTTP timeout in seconds |
+| `exposure` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`list_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand. |
 
 </details>
 
@@ -221,6 +222,30 @@ policy:
 ```
 
 Filters apply in order: `marked_only`, then `allow`, then `deny`.
+
+### Dynamic Exposure
+
+For APIs with hundreds of operations (GitHub, Stripe, etc.), registering every operation as its own MCP tool can blow the LLM's context window before the agent does anything. Flip the server to `exposure: dynamic` and the client sees three meta-tools instead:
+
+```yaml
+servers:
+  - name: github
+    spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
+    exposure: dynamic   # default is 'static'
+    auth:
+      type: bearer
+      token: ${GITHUB_TOKEN}
+```
+
+The three meta-tools:
+
+- `list_operations()` returns `[{name, description}, ...]` for every operation on this server.
+- `get_operation(name)` returns one operation's JSON Schema for input arguments.
+- `call_operation(name, arguments)` invokes that operation against the upstream.
+
+The LLM walks `list → get → call` to discover and invoke operations on demand. Auth, path templating, and per-operation request shape are identical to static mode; the only thing that changes is how the operations are surfaced to the client.
+
+`exposure` is per-server, so `/github/mcp` can run `dynamic` while `/petstore/mcp` runs `static` in the same process.
 
 ### Logging
 

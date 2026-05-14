@@ -142,6 +142,7 @@ class Gateway:
         auth: dict[str, typing.Any] | None = None,
         policy: dict[str, typing.Any] | None = None,
         timeout: float = 90,
+        exposure: typing.Literal['static', 'dynamic'] = 'static',
     ) -> None:
         """Register a server inline (convenience over building ``ServerConfig`` directly)."""
         server_config = ServerConfig(
@@ -152,6 +153,7 @@ class Gateway:
             auth=AuthConfig.model_validate(auth) if auth else AuthConfig(),
             policy=PolicyConfig.model_validate(policy) if policy else PolicyConfig(),
             timeout=timeout,
+            exposure=exposure,
         )
         self._add_server_from_server_config(server_config=server_config)
 

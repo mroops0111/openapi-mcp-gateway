@@ -1,0 +1,24 @@
+# GitHub REST API exposed via dynamic meta-tools.
+#
+# GitHub's OpenAPI spec carries 700+ operations. Registering each as its own
+# MCP tool overflows most LLM context windows on connect. With
+# `exposure: dynamic` the client sees only three meta-tools and the LLM
+# walks list -> get -> call to pick operations on demand.
+#
+# Prerequisites:
+#   1. Create a PAT: https://github.com/settings/tokens
+#   2. export GITHUB_TOKEN="ghp_..."
+#
+# Usage: openapi-mcp-gateway --config examples/github-dynamic.yml
+
+host: "0.0.0.0"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: github
+    spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
+    exposure: dynamic
+    auth:
+      type: bearer
+      token: ${GITHUB_TOKEN}
