@@ -6,18 +6,19 @@
 [![Python Version](https://img.shields.io/pypi/pyversions/openapi-mcp-gateway.svg?v=1)](https://pypi.org/project/openapi-mcp-gateway/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Turn any OpenAPI (Swagger) spec into a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with one command, or expose your existing FastAPI app the same way by decorating routes with `@mcp_tool`. Run several APIs from one process, each on its own mount path, with Bearer, API Key, and OAuth2 (`authorization_code` for per-user delegation, `client_credentials` for service tokens) auth built in. Works with Claude Desktop, Cursor, Cline, and any other MCP client.
+Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, or expose your existing FastAPI app the same way. Several APIs in one process, each on its own mount path with its own auth.
 
 ```bash
 openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 # Server live at http://127.0.0.1:8000/api/mcp
 ```
 
-- **Zero glue code.** Every operation in your spec becomes an MCP tool automatically.
-- **Multi-API.** Expose GitHub, Slack, and internal services from one process, each on its own mount path.
-- **Auth built in.** Bearer, API Key, and OAuth2, including per-user delegation (`authorization_code`) and service tokens (`client_credentials`).
-- **FastAPI native.** Decorate routes with `@mcp_tool` to expose them as MCP tools in-process, with no extra network hop and no separate spec to maintain.
-- **Flexible transport.** Streamable HTTP, SSE, or stdio for desktop clients.
+- **Multi-spec, multi-auth.** Mount GitHub, an OAuth2 SaaS, and your internal API in one process. Each `(server, user)` pair has its own token namespace, no cross-talk. Bearer, API key, OAuth2 `authorization_code` for end-user delegation, and `client_credentials` for service flows all coexist.
+- **FastAPI native, route-level.** Decorate individual routes with `@mcp_tool` to opt them in one by one, no whole-app exposure. Routes run in-process via `httpx.ASGITransport`, no extra network hop and no second spec to maintain.
+- **Dynamic exposure.** For specs with hundreds of operations that blow the LLM context window, flip a server to `exposure: dynamic` and the agent walks `list → get → call` meta-tools on demand.
+- **Pluggable token store.** Memory by default. Switch to Redis when you need to share state across replicas.
+
+Streamable HTTP, SSE, and stdio all supported on the same binary. Works with Claude Desktop, Cursor, Cline, or any other MCP client.
 
 ---
 
