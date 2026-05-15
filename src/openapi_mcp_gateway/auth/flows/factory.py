@@ -62,9 +62,13 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
     falls back to ``authorization_code`` when the spec declares both,
     and synthesises a flow from explicit URLs if the spec declares none.
 
-    When the resolved flow is ``authorization_code`` but the gateway lacks
-    the ``client_id`` / ``client_secret`` needed to act as an MCP-side OAuth server,
-    it falls back to ``passthrough`` so the MCP client's own token reaches the upstream.
+    Raises ``ValueError`` when ``authorization_code`` is auto-selected,
+    but the gateway lacks the ``client_id`` / ``client_secret`` needed to act as an MCP-side OAuth server.
+
+    Passthrough is never auto-selected.
+    Forwarding the MCP client's token to a third-party upstream violates RFC 8707 audience binding,
+    the "confused deputy" pattern the MCP 2025-11-25 spec forbids.
+    Set ``auth.flow: passthrough`` explicitly only when the gateway and the upstream share the same OAuth audience.
     """
     explicit_flow_type = entry.auth.flow
 
@@ -88,12 +92,18 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
         and explicit_flow_type != 'authorization_code'
         and not (entry.auth.resolve_client_id() and entry.auth.resolve_client_secret())
     ):
-        logger.info(
-            'Server "%s": authorization_code flow declared but no client_id/client_secret '
-            'configured; falling back to passthrough mode',
-            entry.name,
+        raise ValueError(
+            f'Server "{entry.name}": authorization_code flow declared in spec but no client_id/client_secret configured.\n\n'
+            'For third-party APIs (GitHub, Stripe, Asana, any external SaaS): '
+            'you MUST register an OAuth app with the provider and set client_id/client_secret, '
+            'so the gateway can mint its own upstream tokens. '
+            "Forwarding the MCP client's token to a third-party upstream is forbidden by the MCP authorization spec "
+            '(RFC 8707 audience binding).\n\n'
+            'auth.flow: passthrough is ONLY for the rare case where the gateway and the upstream share the same OAuth audience, '
+            'e.g. internal corporate SSO where both sides trust the same IdP-issued tokens, '
+            'or the FastAPI integration where the gateway is mounted onto the app it exposes. '
+            'It is NOT safe for third-party SaaS APIs.'
         )
-        return DetectedOAuthFlow(flow_type='passthrough')
 
     logger.debug(
         'Resolved OAuth flow for "%s": flow=%s authorization_url=%s token_url=%s',
