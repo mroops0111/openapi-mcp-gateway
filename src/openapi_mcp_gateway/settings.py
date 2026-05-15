@@ -135,6 +135,7 @@ class ServerConfig(pydantic.BaseModel):
     auth: AuthConfig = AuthConfig()
     policy: PolicyConfig = PolicyConfig()
     timeout: float = 90
+    exposure: typing.Literal['static', 'dynamic'] = 'static'
 
     @pydantic.field_validator('name')
     @classmethod

@@ -23,6 +23,7 @@ from .auth.resolver import (
     PassthroughAuthResolver,
     StaticAuthResolver,
 )
+from .exposure import MetaToolGenerator, ToolGenerator, UpstreamBinding
 from .fastapi import (
     collect_marked_routes,
     filter_marked_operations,
@@ -30,7 +31,6 @@ from .fastapi import (
     override_with_metadata,
     warn_on_mixed_security_schemes,
 )
-from .generator import ToolGenerator
 from .openapi import OpenAPISpec, OperationInfo, load_spec, parse_spec
 from .policy import filter_operations
 from .settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
@@ -142,6 +142,7 @@ class Gateway:
         auth: dict[str, typing.Any] | None = None,
         policy: dict[str, typing.Any] | None = None,
         timeout: float = 90,
+        exposure: typing.Literal['static', 'dynamic'] = 'static',
     ) -> None:
         """Register a server inline (convenience over building ``ServerConfig`` directly)."""
         server_config = ServerConfig(
@@ -152,6 +153,7 @@ class Gateway:
             auth=AuthConfig.model_validate(auth) if auth else AuthConfig(),
             policy=PolicyConfig.model_validate(policy) if policy else PolicyConfig(),
             timeout=timeout,
+            exposure=exposure,
         )
         self._add_server_from_server_config(server_config=server_config)
 
@@ -320,14 +322,14 @@ class Gateway:
         if auth_provider is not None:
             self._register_oauth_callback(mcp, auth_provider)
 
-        generator = ToolGenerator(
-            mcp=mcp,
+        binding = UpstreamBinding(
             base_url=base_url,
             auth_resolver=auth_resolver,
             timeout=server_config.timeout,
             transport=transport,
         )
-        generator.register_operations(operations)
+        generator_cls = MetaToolGenerator if server_config.exposure == 'dynamic' else ToolGenerator
+        generator_cls(mcp=mcp, binding=binding).register(operations)
 
         self._servers.append(
             _ServerBundle(
