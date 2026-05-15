@@ -146,7 +146,9 @@ paths:
       summary: Admin list pets
       x-mcp-integration:
         expose:
-          tool: {}
+          tool:
+            name: listAdminPets
+            description: List pets visible only to admin users.
       responses:
         '200':
           description: OK

@@ -75,8 +75,18 @@ class ToolGenerator:
             header_params=header_params,
             body_params=body_params,
         )
-        tool_name = _sanitize_name(inflection.underscore(operation.operation_id))
-        description = operation.description or operation.summary or f'{operation.method.upper()} {operation.path}'
+        override = operation.x_mcp_integration.expose.tool if operation.x_mcp_integration.expose else None
+        tool_name = (
+            _sanitize_name(override.name)
+            if override and override.name
+            else _sanitize_name(inflection.underscore(operation.operation_id))
+        )
+        description = (
+            (override.description if override and override.description else None)
+            or operation.description
+            or operation.summary
+            or f'{operation.method.upper()} {operation.path}'
+        )
         self.mcp.tool(name=tool_name, description=description)(tool_function)
         logger.debug('Tool registered: %s ← %s %s', tool_name, operation.method.upper(), operation.path)
 
