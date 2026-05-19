@@ -141,9 +141,18 @@ def override_with_metadata(operation: OperationInfo, metadata: ToolMetadata) -> 
 
 
 def infer_auth_from_declared_flows(declared: list[DetectedOAuthFlow]) -> AuthConfig:
-    """Default to ``oauth2`` when the spec declares any supported flow; ``none`` otherwise."""
+    """Default to ``oauth2`` with explicit ``passthrough`` flow when the FastAPI app declares any supported OAuth flow,
+    ``none`` otherwise.
+
+    Passthrough is the correct default here because the gateway is mounted onto the same app it exposes:
+    gateway and upstream share the OAuth audience,
+    so forwarding the MCP client's ``Authorization`` header verbatim does not cross an audience boundary.
+
+    For third-party APIs the gateway must mint its own upstream tokens per RFC 8707;
+    that path is selected by passing an explicit ``auth=AuthConfig(...)`` with credentials.
+    """
     if declared:
-        return AuthConfig(type='oauth2')
+        return AuthConfig(type='oauth2', flow='passthrough')
     return AuthConfig(type='none')
 
 

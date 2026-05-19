@@ -9,13 +9,14 @@
 Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, or expose your existing FastAPI app the same way. Several APIs in one process, each on its own mount path with its own auth.
 
 ```bash
-openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
+uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 # Server live at http://127.0.0.1:8000/api/mcp
 ```
 
 - **Multi-spec, multi-auth.** Mount GitHub, an OAuth2 SaaS, and your internal API in one process. Each `(server, user)` pair has its own token namespace, no cross-talk. Bearer, API key, OAuth2 `authorization_code` for end-user delegation, and `client_credentials` for service flows all coexist.
 - **FastAPI native, route-level.** Decorate individual routes with `@mcp_tool` to opt them in one by one, no whole-app exposure. Routes run in-process via `httpx.ASGITransport`, no extra network hop and no second spec to maintain.
 - **Dynamic exposure.** For specs with hundreds of operations that blow the LLM context window, flip a server to `exposure: dynamic` and the agent walks `list → get → call` meta-tools on demand.
+- **Spec-compliant authorization.** Audience-bound tokens, no silent passthrough to third-party upstreams [[MCP Authorization Spec: Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction)].
 - **Pluggable token store.** Memory by default. Switch to Redis when you need to share state across replicas.
 
 Streamable HTTP, SSE, and stdio all supported on the same binary. Works with Claude Desktop, Cursor, Cline, or any other MCP client.
@@ -24,11 +25,7 @@ Streamable HTTP, SSE, and stdio all supported on the same binary. Works with Cla
 
 ## Installation
 
-```bash
-pip install openapi-mcp-gateway
-```
-
-Or with [uv](https://docs.astral.sh/uv/):
+Add the gateway to your project with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv add openapi-mcp-gateway
@@ -37,7 +34,7 @@ uv add openapi-mcp-gateway
 Optional extras:
 
 ```bash
-pip install "openapi-mcp-gateway[redis]"   # Redis token store, used for auth memoization
+uv add "openapi-mcp-gateway[redis]"   # Redis token store, used for auth memoization
 ```
 
 Requires Python 3.11+.
@@ -47,7 +44,9 @@ Requires Python 3.11+.
 ### 1. Public API, No Auth
 
 ```bash
-openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
+# `uvx` runs the published package without installing it into your project;
+# swap in `uv run` once you've added the gateway as a dependency.
+uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
 ```
 
 Connect an MCP client to `http://127.0.0.1:8000/petstore/mcp`.
@@ -56,7 +55,7 @@ Connect an MCP client to `http://127.0.0.1:8000/petstore/mcp`.
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
-openapi-mcp-gateway \
+uv run openapi-mcp-gateway \
     --spec https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json \
     --name github \
     --auth-type bearer \
@@ -69,7 +68,7 @@ The gateway runs its own OAuth server so each MCP client authenticates as its ow
 
 ```bash
 export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
-openapi-mcp-gateway \
+uv run openapi-mcp-gateway \
     --spec https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml \
     --name asana \
     --auth-type oauth2 \
@@ -84,7 +83,7 @@ When the gateway holds its own credentials and shares one upstream token across 
 
 ```bash
 export SVC_CLIENT_ID="..." SVC_CLIENT_SECRET="..."
-openapi-mcp-gateway \
+uv run openapi-mcp-gateway \
     --spec ./service-api.json \
     --name svc \
     --auth-type oauth2 \
@@ -99,9 +98,9 @@ Mix public, bearer, and OAuth2 services in a single config. Each server is mount
 
 ```yaml
 # servers.yml
-host: "0.0.0.0"
+host: "127.0.0.1"
 port: 8000
-url: http://localhost:8000   # public base URL for OAuth callbacks
+url: http://127.0.0.1:8000   # public base URL for OAuth callbacks
 
 servers:
   - name: petstore
@@ -128,12 +127,12 @@ servers:
 ```bash
 export GITHUB_TOKEN="ghp_..."
 export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
-openapi-mcp-gateway --config servers.yml
+uv run openapi-mcp-gateway --config servers.yml
 ```
 
-Runnable variants of this multi-server setup live in [`examples/`](examples/): [`multi-server.yml`](examples/multi-server.yml), [`asana.yml`](examples/asana.yml), [`github.yml`](examples/github.yml), [`petstore.yml`](examples/petstore.yml). Each YAML lists its prerequisites at the top.
+Runnable variants live in [`examples/`](examples/); each YAML lists prerequisites at the top.
 
-`${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`. Override `auth.authorization_url`, `auth.token_url`, or `auth.scopes` when the spec is incomplete.
+`${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`; override with `auth.authorization_url` / `auth.token_url` / `auth.scopes` when the spec is incomplete.
 
 ### 6. Local Desktop Client (stdio)
 
@@ -143,8 +142,14 @@ For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
 {
   "mcpServers": {
     "petstore": {
-      "command": "openapi-mcp-gateway",
-      "args": ["--spec", "/abs/path/to/openapi.json", "--transport", "stdio"]
+      "command": "uv",
+      "args": [
+        "run",
+        "--project", "/abs/path/to/your/project",
+        "openapi-mcp-gateway",
+        "--spec", "/abs/path/to/openapi.json",
+        "--transport", "stdio"
+      ]
     }
   }
 }
@@ -152,7 +157,7 @@ For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
 
 ## Configuration
 
-Run `openapi-mcp-gateway --help` for the CLI reference. The [Quick Start](#quick-start) examples cover most setups; the full field reference is below.
+Run `uv run openapi-mcp-gateway --help` for the CLI reference. The [Quick Start](#quick-start) examples cover most setups; the full field reference is below.
 
 When values appear in more than one place, the rule is **defaults < YAML (`--config`) < CLI flags < `Gateway.run(...)` kwargs**, and a layer only overrides what it actually sets. Sub-trees (`logging`, per-server `auth`) merge field-by-field; the `servers` list is replaced wholesale.
 
@@ -204,25 +209,7 @@ policy:
   deny:  ["GET /repos/*/actions/secrets*"]
 ```
 
-Or mark operations directly in the spec and enable `marked_only`:
-
-```yaml
-# openapi.yml
-paths:
-  /users:
-    get:
-      operationId: listUsers
-      x-mcp-integration:
-        expose:
-          tool: {}
-```
-```yaml
-# servers.yml
-policy:
-  marked_only: true
-```
-
-Filters apply in order: `marked_only`, then `allow`, then `deny`.
+Operations can also be opted in from the spec side with `x-mcp-integration: {expose: {tool: {}}}` plus `policy.marked_only: true`. Filters apply in order: `marked_only`, then `allow`, then `deny`.
 
 ### Dynamic Exposure
 
@@ -295,11 +282,14 @@ def health():
 Gateway.from_fastapi(app, name="myapp").run()
 ```
 
-Auth is auto-detected from the app's `securitySchemes`. If the gateway and the app share an OAuth realm, the MCP client's `Authorization` header passes through verbatim; for `client_credentials` schemes the gateway mints upstream tokens from its own credentials. Mix and match by passing an explicit `auth=AuthConfig(...)` to `Gateway.from_fastapi`.
+Auth is auto-detected from the app's `securitySchemes`. Override by passing an explicit `auth=AuthConfig(...)` to `Gateway.from_fastapi`.
 
-Got routes you can't decorate at definition (third-party app, `include_router` from another package)? Use `mark_tool(func)` to attach the same metadata imperatively.
+<details>
+<summary>How auth works for the FastAPI integration</summary>
 
-To mount the MCP routes onto an existing FastAPI app instead of running standalone, use `Gateway.mount(app)`.
+Because the gateway runs in-process and routes through `httpx.ASGITransport`, gateway and upstream share the same OAuth audience, so the MCP client's `Authorization` header passes through verbatim (`auth.flow: passthrough`, set automatically for this integration only). For `client_credentials` schemes the gateway mints upstream tokens from its own credentials instead.
+
+</details>
 
 ## License
 
