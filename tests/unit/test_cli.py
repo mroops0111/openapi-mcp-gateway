@@ -251,7 +251,7 @@ class TestConfigPrecedence:
         assert config.port == 7777
 
     def test_cli_log_format_does_not_blow_away_yaml_log_level(self, tmp_path):
-        """Sub-tree merge: ``--log-format`` only sets ``logging.format``, leaves YAML ``logging.level`` intact."""
+        """Sub-tree merge keeps YAML ``logging.level`` intact when the CLI only touches ``logging.format``."""
         yaml_path = self._yaml_with_port(
             tmp_path,
             logging={'level': 'WARNING', 'format': 'text'},

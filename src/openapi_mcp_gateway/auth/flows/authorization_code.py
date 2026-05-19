@@ -377,7 +377,11 @@ class AuthorizationCodeProvider:
         )
 
     async def _request_upstream_token(self, request_data: dict[str, typing.Any]) -> tuple[str, str | None, int]:
-        """POST ``request_data`` to ``upstream_token_url`` and return ``(access, refresh | None, expires_in)``."""
+        """POST ``request_data`` to ``upstream_token_url``.
+
+        Returns ``(access_token, refresh_token | None, expires_in)``,
+        raising ``HTTPException`` when the upstream rejects the exchange.
+        """
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 self.upstream_token_url,

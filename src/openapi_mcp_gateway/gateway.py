@@ -166,8 +166,8 @@ class Gateway:
         """Serve over ``uvicorn`` (HTTP/SSE) or stdio (single-server only).
 
         ``transport`` / ``host`` / ``port`` only override ``self._config`` when explicitly set,
-        matching the precedence used by the CLI and YAML loader: non-None wins, otherwise the
-        layered config value (which already accounts for ``--config`` and Pydantic defaults) stands.
+        matching the precedence used by the CLI and YAML loader: non-None wins,
+        otherwise the layered config value (which already accounts for ``--config`` and Pydantic defaults) stands.
         """
         transport = transport if transport is not None else self._config.transport
         host = host if host is not None else self._config.host

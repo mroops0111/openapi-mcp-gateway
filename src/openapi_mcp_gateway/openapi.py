@@ -120,7 +120,11 @@ def _resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:
 
 
 def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
-    """Recursively merge ``override`` into ``base``; ``required`` lists are concatenated and deduped instead of overwritten."""
+    """Recursively merge ``override`` into ``base``.
+
+    ``required`` lists are concatenated and deduped instead of overwritten,
+    so ``allOf`` chains accumulate every required property along the way.
+    """
     result = base.copy()
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
@@ -133,7 +137,11 @@ def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) ->
 
 
 def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
-    """Expand a JSON Schema fragment: resolve ``$ref``, merge ``allOf``, recurse into ``oneOf`` / ``anyOf``."""
+    """Expand a JSON Schema fragment in place.
+
+    Resolves ``$ref``, flattens ``allOf`` via ``_deep_merge``,
+    and recurses into ``properties`` / ``items`` / ``oneOf`` / ``anyOf``.
+    """
     if '$ref' in schema:
         resolved = _resolve_ref(raw, schema['$ref'])
         return _expand_schema(raw, resolved)
@@ -175,7 +183,11 @@ def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str 
 
 
 def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPISpec:
-    """Parse a decoded OpenAPI mapping into models. ``source`` is only used to resolve relative ``servers[].url`` values."""
+    """Parse a decoded OpenAPI mapping into ``OpenAPISpec`` and ``OperationInfo`` models.
+
+    ``source`` is only used to resolve relative ``servers[].url`` values per OpenAPI 3.0 §4.7.5,
+    so pass the original URL or path the document was loaded from when it matters.
+    """
     info = raw.get('info', {})
     servers = _resolve_relative_servers(raw.get('servers', []), source)
     security_schemes = raw.get('components', {}).get('securitySchemes', {})

@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 
+from openapi_mcp_gateway.auth.detector import DetectedOAuthFlow
 from openapi_mcp_gateway.fastapi import (
     ToolMetadata,
     collect_marked_routes,
     filter_marked_operations,
     get_tool_metadata,
+    infer_auth_from_declared_flows,
     mcp_tool,
     override_with_metadata,
 )
@@ -158,3 +160,26 @@ def test_get_tool_metadata_returns_none_for_undecorated():
         return None
 
     assert get_tool_metadata(handler) is None
+
+
+class TestInferAuthFromDeclaredFlows:
+    """``infer_auth_from_declared_flows`` defaults FastAPI integration to passthrough.
+
+    The gateway is mounted onto the same app it exposes,
+    so gateway and upstream share the OAuth audience.
+    Forwarding the MCP client's ``Authorization`` header verbatim does not violate RFC 8707.
+    For third-party APIs the user passes an explicit ``auth=AuthConfig(...)`` instead.
+    """
+
+    def test_no_declared_flows_defaults_to_none(self):
+        """Apps without any declared OAuth flow do not need authentication wiring."""
+        config = infer_auth_from_declared_flows([])
+        assert config.type == 'none'
+        assert config.flow is None
+
+    def test_declared_flows_default_to_explicit_passthrough(self):
+        """Declared flows opt into passthrough explicitly, not via a silent factory fallback."""
+        declared = [DetectedOAuthFlow(flow_type='authorization_code', token_url='https://x/token')]
+        config = infer_auth_from_declared_flows(declared)
+        assert config.type == 'oauth2'
+        assert config.flow == 'passthrough'

@@ -220,20 +220,26 @@ class TestBuildOAuthFlow:
                 mount_path='/srv',
             )
 
-    def test_authorization_code_without_creds_falls_back_to_passthrough(self):
-        """Auto-detected authorization_code without client credentials switches to passthrough."""
+    def test_authorization_code_without_creds_raises(self):
+        """Auto-detected authorization_code without client credentials fails fast.
+
+        Previously the resolver silently fell back to passthrough,
+        which forwards the MCP client's token to a third-party upstream.
+        That violates RFC 8707 audience binding,
+        the "confused deputy" pattern the MCP authorization spec forbids.
+
+        Users who genuinely want passthrough must set ``auth.flow='passthrough'`` explicitly,
+        to acknowledge the shared-audience requirement.
+        """
         entry = _entry(AuthConfig(type='oauth2'))
-        setup = build_oauth_flow(
-            entry=entry,
-            spec=_spec_with_authorization_code(),
-            store=MemoryTokenStore(),
-            gateway_url='http://localhost:8000',
-            mount_path='/srv',
-        )
-        assert isinstance(setup.resolver, PassthroughAuthResolver)
-        assert setup.provider is None
-        assert setup.settings is None
-        assert setup.on_shutdown is None
+        with pytest.raises(ValueError, match='client_id/client_secret'):
+            build_oauth_flow(
+                entry=entry,
+                spec=_spec_with_authorization_code(),
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                mount_path='/srv',
+            )
 
     def test_explicit_authorization_code_without_creds_raises(self):
         """Forcing ``flow='authorization_code'`` without credentials still fails fast."""
