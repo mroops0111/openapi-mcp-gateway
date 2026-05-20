@@ -1,6 +1,6 @@
 [project]
 name = "openapi-mcp-gateway"
-version = "0.2.0"
+version = "0.3.0"
 description = "Turn any OpenAPI specification into a Model Context Protocol (MCP) server with a single command."
 authors = [
     {name = "Yun-Tai Yang"},
@@ -21,26 +21,26 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
-    "mcp[cli]>=1.25.0",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "httpx>=0.28.0",
-    "pyyaml>=6.0.0",
+    "fastapi>=0.136.0",
+    "uvicorn[standard]>=0.47.0",
+    "mcp[cli]>=1.27.0",
+    "pydantic>=2.13.0",
+    "pydantic-settings>=2.14.0",
+    "httpx>=0.28.1",
+    "pyyaml>=6.0.3",
     "inflection>=0.5.1",
-    "click>=8.0.0",
+    "click>=8.4.0",
 ]
 
 [project.optional-dependencies]
-redis = ["redis>=6.2.0"]
+redis = ["redis>=7.4.0"]
 dev = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=1.0.0",
-    "fakeredis>=2.26.0",
-    "httpx>=0.28.0",
-    "basedpyright>=1.20.0",
-    "ruff>=0.8.0",
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.3.0",
+    "fakeredis>=2.35.0",
+    "httpx>=0.28.1",
+    "basedpyright>=1.39.0",
+    "ruff>=0.15.0",
 ]
 
 [project.scripts]
