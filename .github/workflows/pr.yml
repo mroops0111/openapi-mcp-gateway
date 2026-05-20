@@ -1,0 +1,78 @@
+name: PR
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.pull_request.title || '';
+            const match = title.match(/^([a-zA-Z]+)(\([^)]*\))?(!)?:/);
+            if (!match) {
+              core.info(`Title "${title}" has no conventional prefix, skipping`);
+              return;
+            }
+            const [, type, , bang] = match;
+            const labels = new Set();
+            if (bang) labels.add('breaking');
+            switch (type.toLowerCase()) {
+              case 'feat':
+              case 'feature':
+                labels.add('feature');
+                break;
+              case 'fix':
+                labels.add('bug');
+                break;
+              case 'docs':
+                labels.add('documentation');
+                break;
+              case 'enhance':
+              case 'enhancement':
+                labels.add('enhancement');
+                break;
+            }
+            if (labels.size === 0) {
+              core.info(`Type "${type}" has no label mapping`);
+              return;
+            }
+            const colors = {
+              breaking: 'B60205',
+              feature: '0E8A16',
+              bug: 'D73A4A',
+              documentation: '0075CA',
+              enhancement: 'A2EEEF',
+            };
+            for (const name of labels) {
+              try {
+                await github.rest.issues.getLabel({
+                  ...context.repo,
+                  name,
+                });
+              } catch (e) {
+                if (e.status === 404) {
+                  await github.rest.issues.createLabel({
+                    ...context.repo,
+                    name,
+                    color: colors[name] || 'EDEDED',
+                  });
+                  core.info(`Created missing label "${name}"`);
+                } else {
+                  throw e;
+                }
+              }
+            }
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: [...labels],
+            });
+            core.info(`Applied labels: ${[...labels].join(', ')}`);
