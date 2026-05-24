@@ -608,7 +608,9 @@ class TestErrorResult:
 
     async def test_text_error_body_no_structured_content(self, mock_upstream):
         """A non-JSON error body leaves ``structuredContent`` as ``None`` and surfaces the text only."""
-        mock_upstream(lambda _request: httpx.Response(500, text='internal boom', headers={'content-type': 'text/plain'}))
+        mock_upstream(
+            lambda _request: httpx.Response(500, text='internal boom', headers={'content-type': 'text/plain'})
+        )
         generator, mcp = self._generator()
         generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/9')])
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')

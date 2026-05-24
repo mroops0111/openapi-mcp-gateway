@@ -250,9 +250,7 @@ class TestDynamicExposureEndToEnd:
         described = json.loads(await tools['get_operation'].fn(name='list_pets', ctx=_stub_context()))
         assert described['input_schema']['properties']['limit']['type'] == 'integer'
 
-        result = await tools['call_operation'].fn(
-            name='list_pets', arguments={'limit': 5}, ctx=_stub_context()
-        )
+        result = await tools['call_operation'].fn(name='list_pets', arguments={'limit': 5}, ctx=_stub_context())
         assert captured['method'] == 'GET'
         assert 'limit=5' in captured['url']
         assert result.isError is False

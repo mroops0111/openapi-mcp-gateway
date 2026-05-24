@@ -196,9 +196,7 @@ def _build_http_error_result(exception: httpx.HTTPStatusError) -> CallToolResult
     body_text = response.text
     structured_content = _parse_json_object(body_text, response.headers.get('content-type', ''))
     request = exception.request
-    message = (
-        f'Upstream {request.method} {request.url} returned {response.status_code} {response.reason_phrase}:\n{body_text}'
-    )
+    message = f'Upstream {request.method} {request.url} returned {response.status_code} {response.reason_phrase}:\n{body_text}'
     return CallToolResult(
         content=[TextContent(type='text', text=message)],
         structuredContent=structured_content,
