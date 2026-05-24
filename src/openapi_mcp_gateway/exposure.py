@@ -10,6 +10,7 @@ import httpx
 import inflection
 import pydantic
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from .auth.resolver import AuthResolver, NullAuthResolver
 from .client import APIClient
@@ -99,6 +100,33 @@ def derive_description(operation: OperationInfo) -> str:
     return operation.description or operation.summary or f'{operation.method.upper()} {operation.path}'
 
 
+def derive_title(operation: OperationInfo) -> str | None:
+    """Return the MCP tool title for ``operation``, or ``None`` to omit the field.
+
+    Uses OpenAPI ``summary`` when present.
+    """
+    return operation.summary or None
+
+
+def derive_annotations(operation: OperationInfo) -> ToolAnnotations:
+    """Derive MCP ``ToolAnnotations`` for ``operation`` from its HTTP method.
+
+    ``GET`` is read-only and idempotent,
+    ``PUT`` / ``PATCH`` / ``DELETE`` are idempotent,
+    ``DELETE`` is additionally destructive,
+    and every tool is open-world.
+    ``title`` mirrors ``Tool.title`` for clients still reading the legacy annotations field.
+    """
+    method = operation.method.lower()
+    return ToolAnnotations(
+        title=operation.summary or None,
+        readOnlyHint=(method == 'get') or None,
+        destructiveHint=(method == 'delete') or None,
+        idempotentHint=(method in {'get', 'put', 'patch', 'delete'}) or None,
+        openWorldHint=True,
+    )
+
+
 def build_input_schema(operation: OperationInfo) -> dict[str, typing.Any]:
     """Build the JSON Schema describing ``operation`` inputs.
 
@@ -125,6 +153,75 @@ def build_input_schema(operation: OperationInfo) -> dict[str, typing.Any]:
     return schema
 
 
+def _build_success_result(payload: typing.Any) -> CallToolResult:
+    """Wrap an upstream success body as a ``CallToolResult``.
+
+    Object-shaped JSON also lands in ``structuredContent``;
+    lists and scalars stay text-only since ``structuredContent`` is object-typed in the MCP spec.
+    """
+    text = json.dumps(payload, indent=2, ensure_ascii=False)
+    structured_content = payload if isinstance(payload, dict) else None
+    return CallToolResult(
+        content=[TextContent(type='text', text=text)],
+        structuredContent=structured_content,
+        isError=False,
+    )
+
+
+def _parse_json_object(text: str, content_type: str) -> dict[str, typing.Any] | None:
+    """Decode ``text`` as a JSON object when ``content_type`` declares JSON.
+
+    Returns ``None`` when the content type is not JSON,
+    the body is empty,
+    the body is not valid JSON,
+    or the parsed value is not an object.
+    """
+    if 'application/json' not in content_type or not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _build_http_error_result(exception: httpx.HTTPStatusError) -> CallToolResult:
+    """Wrap an upstream non-2xx as an ``isError`` ``CallToolResult``.
+
+    Object-shaped JSON error bodies also land in ``structuredContent``,
+    so the client retains structured access to fields like error codes or rate-limit hints.
+    ``outputSchema`` does not apply when ``isError`` is true.
+    """
+    response = exception.response
+    body_text = response.text
+    structured_content = _parse_json_object(body_text, response.headers.get('content-type', ''))
+    request = exception.request
+    message = (
+        f'Upstream {request.method} {request.url} returned {response.status_code} {response.reason_phrase}:\n{body_text}'
+    )
+    return CallToolResult(
+        content=[TextContent(type='text', text=message)],
+        structuredContent=structured_content,
+        isError=True,
+    )
+
+
+def _build_network_error_result(exception: httpx.RequestError) -> CallToolResult:
+    """Wrap an httpx transport failure (connect, timeout, DNS, etc.) as an ``isError`` result.
+
+    No ``response`` is available,
+    so ``structuredContent`` stays ``None``,
+    and the message surfaces the exception type for diagnosis.
+    """
+    request = exception.request
+    message = f'Upstream {request.method} {request.url} failed: {type(exception).__name__}: {exception}'
+    return CallToolResult(
+        content=[TextContent(type='text', text=message)],
+        structuredContent=None,
+        isError=True,
+    )
+
+
 def _build_tool_closure(
     method: str,
     path: str,
@@ -133,14 +230,14 @@ def _build_tool_closure(
     header_params: list[ParameterInfo],
     body_params: list[ParameterInfo],
     binding: UpstreamBinding,
-) -> typing.Callable[..., typing.Awaitable[str]]:
+) -> typing.Callable[..., typing.Awaitable[CallToolResult]]:
     """Build the async callable that issues one upstream request per invocation."""
     path_param_by_pname = {_sanitize_name(p.name): p for p in path_params}
     query_param_by_pname = {_sanitize_name(p.name): p for p in query_params}
     header_param_by_pname = {_sanitize_name(p.name): p for p in header_params}
     body_param_by_pname = {_sanitize_name(p.name): p for p in body_params}
 
-    async def tool_function(**kwargs: typing.Any) -> str:
+    async def tool_function(**kwargs: typing.Any) -> CallToolResult:
         ctx: Context = kwargs.pop('ctx')
         await ctx.report_progress(0, 1, f'Sending request to {method.upper()} {path} ...')
 
@@ -176,15 +273,22 @@ def _build_tool_closure(
             timeout=binding.timeout,
             transport=binding.transport,
         ) as client:
-            result = await client.request(
-                method,
-                resolved_path,
-                params=query_args or None,
-                data=body or None,
-            )
+            try:
+                result = await client.request(
+                    method,
+                    resolved_path,
+                    params=query_args or None,
+                    data=body or None,
+                )
+            except httpx.HTTPStatusError as exception:
+                await ctx.report_progress(1, 1, 'Request completed (upstream error)')
+                return _build_http_error_result(exception)
+            except httpx.RequestError as exception:
+                await ctx.report_progress(1, 1, 'Request failed (network error)')
+                return _build_network_error_result(exception)
 
         await ctx.report_progress(1, 1, 'Request completed')
-        return json.dumps(result, indent=2, ensure_ascii=False)
+        return _build_success_result(result)
 
     return tool_function
 
@@ -293,7 +397,14 @@ class ToolGenerator:
             tool_function = build_tool_function(operation, self.binding)
             name = derive_tool_name(operation)
             description = derive_description(operation)
-            self.mcp.tool(name=name, description=description)(tool_function)
+            title = derive_title(operation)
+            annotations = derive_annotations(operation)
+            self.mcp.tool(
+                name=name,
+                title=title,
+                description=description,
+                annotations=annotations,
+            )(tool_function)
             logger.debug('Tool registered: %s ← %s %s', name, operation.method.upper(), operation.path)
         logger.info('Registered %d MCP tool(s) on server "%s"', len(operations), self.mcp.name)
 
@@ -304,7 +415,7 @@ class MetaToolEntry:
 
     description: str
     input_schema: dict[str, typing.Any]
-    callable_: typing.Callable[..., typing.Awaitable[str]]
+    callable_: typing.Callable[..., typing.Awaitable[CallToolResult]]
 
 
 _LIST_OPERATIONS_DESCRIPTION = (
@@ -377,7 +488,7 @@ class MetaToolGenerator:
             )
 
         @self.mcp.tool(name='call_operation', description=_CALL_OPERATION_DESCRIPTION)
-        async def call_operation(name: str, arguments: dict[str, typing.Any], ctx: Context) -> str:
+        async def call_operation(name: str, arguments: dict[str, typing.Any], ctx: Context) -> CallToolResult:
             entry = registry.get(name)
             if entry is None:
                 raise _unknown_operation(name)

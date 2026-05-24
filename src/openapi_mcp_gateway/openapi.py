@@ -199,7 +199,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
         if not isinstance(path_item, dict):
             continue
 
-        for method in ('get', 'post', 'put', 'patch', 'delete', 'head', 'options'):
+        for method in ('get', 'post', 'put', 'patch', 'delete'):
             operation = path_item.get(method)
             if not operation or not isinstance(operation, dict):
                 continue
