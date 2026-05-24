@@ -6,7 +6,14 @@ import httpx
 import pytest
 from mcp.server.fastmcp import Context, FastMCP
 
-from openapi_mcp_gateway.exposure import MetaToolGenerator, ToolGenerator, UpstreamBinding, _sanitize_name
+from openapi_mcp_gateway.exposure import (
+    MetaToolGenerator,
+    ToolGenerator,
+    UpstreamBinding,
+    _sanitize_name,
+    derive_annotations,
+    derive_title,
+)
 from openapi_mcp_gateway.openapi import OperationInfo, ParameterInfo
 
 
@@ -393,10 +400,12 @@ class TestCallOperation:
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'call_operation')
 
-        result_str = await tool.fn(name='get_pet_by_id', arguments={'petId': 7}, ctx=_stub_context())
+        result = await tool.fn(name='get_pet_by_id', arguments={'petId': 7}, ctx=_stub_context())
         assert captured['method'] == 'GET'
         assert captured['url'].endswith('/pets/7')
-        assert json.loads(result_str) == {'id': 7, 'name': 'rex'}
+        assert result.isError is False
+        assert result.structuredContent == {'id': 7, 'name': 'rex'}
+        assert json.loads(result.content[0].text) == {'id': 7, 'name': 'rex'}
 
     async def test_unknown_raises(self):
         """An unknown name raises ``ValueError`` without contacting upstream."""
@@ -437,3 +446,193 @@ class TestCallOperation:
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'call_operation')
         await tool.fn(name='get_thing', arguments={'enterprise_team': 'acme'}, ctx=_stub_context())
         assert 'enterprise-team=acme' in captured['url']
+
+
+class TestDeriveTitle:
+    """``derive_title`` mirrors OpenAPI ``summary`` and omits the field when absent."""
+
+    def test_summary_becomes_title(self):
+        """``summary`` is used as the human-readable display name."""
+        operation = OperationInfo(operation_id='listPets', method='get', path='/pets', summary='List all pets')
+        assert derive_title(operation) == 'List all pets'
+
+    def test_empty_summary_returns_none(self):
+        """An empty ``summary`` returns ``None`` so the field is omitted from the tool."""
+        operation = OperationInfo(operation_id='listPets', method='get', path='/pets', summary='')
+        assert derive_title(operation) is None
+
+
+class TestDeriveAnnotations:
+    """``derive_annotations`` maps HTTP methods to ``readOnly`` / ``idempotent`` / ``destructive`` hints."""
+
+    def _operation(self, method: str, summary: str = '') -> OperationInfo:
+        """Build a minimal operation with only the method (and optional ``summary``) varying."""
+        return OperationInfo(operation_id='op', method=method, path='/r', summary=summary)
+
+    def test_get_is_read_only_and_idempotent(self):
+        """``GET`` is safe and idempotent; never destructive."""
+        annotations = derive_annotations(self._operation('get'))
+        assert annotations.readOnlyHint is True
+        assert annotations.idempotentHint is True
+        assert annotations.destructiveHint is None
+        assert annotations.openWorldHint is True
+
+    def test_summary_mirrored_to_annotations_title(self):
+        """``summary`` is also surfaced on ``ToolAnnotations.title`` for legacy clients."""
+        annotations = derive_annotations(self._operation('get', summary='List pets'))
+        assert annotations.title == 'List pets'
+
+    def test_empty_summary_omits_annotations_title(self):
+        """No ``summary`` means no ``ToolAnnotations.title`` field."""
+        annotations = derive_annotations(self._operation('get'))
+        assert annotations.title is None
+
+    def test_put_idempotent_not_destructive(self):
+        """``PUT`` is idempotent without being read-only or destructive."""
+        annotations = derive_annotations(self._operation('put'))
+        assert annotations.readOnlyHint is None
+        assert annotations.idempotentHint is True
+        assert annotations.destructiveHint is None
+
+    def test_patch_idempotent_not_destructive(self):
+        """``PATCH`` is idempotent without being destructive."""
+        annotations = derive_annotations(self._operation('patch'))
+        assert annotations.idempotentHint is True
+        assert annotations.destructiveHint is None
+
+    def test_delete_destructive_and_idempotent(self):
+        """``DELETE`` is destructive and idempotent."""
+        annotations = derive_annotations(self._operation('delete'))
+        assert annotations.destructiveHint is True
+        assert annotations.idempotentHint is True
+        assert annotations.readOnlyHint is None
+
+    def test_post_neither_idempotent_nor_destructive(self):
+        """``POST`` carries no idempotency or destructiveness guarantees."""
+        annotations = derive_annotations(self._operation('post'))
+        assert annotations.readOnlyHint is None
+        assert annotations.idempotentHint is None
+        assert annotations.destructiveHint is None
+        assert annotations.openWorldHint is True
+
+
+class TestToolRegistrationMetadata:
+    """Registered tools advertise ``title`` and ``annotations`` derived from the spec."""
+
+    def _generator(self) -> tuple[ToolGenerator, FastMCP]:
+        """Build a fresh generator + FastMCP pair for each test."""
+        mcp = FastMCP('test')
+        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
+
+    def test_tool_advertises_title_and_annotations(self):
+        """Registered tool carries ``title`` from ``summary`` and ``annotations`` from method."""
+        generator, mcp = self._generator()
+        operation = OperationInfo(
+            operation_id='list_pets',
+            method='get',
+            path='/pets',
+            summary='List pets',
+        )
+        generator.register([operation])
+        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'list_pets')
+        annotations = tool.annotations
+        assert annotations is not None
+        assert tool.title == 'List pets'
+        assert annotations.title == 'List pets'
+        assert annotations.readOnlyHint is True
+        assert annotations.idempotentHint is True
+        assert annotations.openWorldHint is True
+
+
+class TestStructuredContent:
+    """Successful responses populate ``structuredContent`` for object bodies and leave it ``None`` otherwise."""
+
+    def _generator(self) -> tuple[ToolGenerator, FastMCP]:
+        """Build a fresh generator + FastMCP pair for each test."""
+        mcp = FastMCP('test')
+        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
+
+    async def test_dict_body_populates_structured_content(self, mock_upstream):
+        """A JSON object response lands in both ``content[0].text`` and ``structuredContent``."""
+        mock_upstream(lambda _request: httpx.Response(200, json={'id': 7, 'name': 'rex'}))
+        generator, mcp = self._generator()
+        generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/7')])
+        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
+
+        result = await tool.run({}, context=_stub_context())
+        assert result.isError is False
+        assert result.structuredContent == {'id': 7, 'name': 'rex'}
+        assert json.loads(result.content[0].text) == {'id': 7, 'name': 'rex'}
+
+    async def test_list_body_omits_structured_content(self, mock_upstream):
+        """JSON arrays stay text-only since ``structuredContent`` is object-typed in the MCP spec."""
+        mock_upstream(lambda _request: httpx.Response(200, json=[{'id': 1}]))
+        generator, mcp = self._generator()
+        generator.register([OperationInfo(operation_id='list_pets', method='get', path='/pets')])
+        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'list_pets')
+
+        result = await tool.run({}, context=_stub_context())
+        assert result.isError is False
+        assert result.structuredContent is None
+        assert json.loads(result.content[0].text) == [{'id': 1}]
+
+
+class TestErrorResult:
+    """Upstream non-2xx returns an ``isError`` result with the parsed error body when JSON-shaped."""
+
+    def _generator(self) -> tuple[ToolGenerator, FastMCP]:
+        """Build a fresh generator + FastMCP pair for each test."""
+        mcp = FastMCP('test')
+        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
+
+    async def test_json_error_body_in_structured_content(self, mock_upstream):
+        """A JSON error body populates ``structuredContent`` and the text contains the status line."""
+        mock_upstream(
+            lambda _request: httpx.Response(
+                404,
+                json={'message': 'Not Found', 'documentation_url': 'https://api.example.com/docs'},
+            )
+        )
+        generator, mcp = self._generator()
+        generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/9')])
+        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
+
+        result = await tool.run({}, context=_stub_context())
+        assert result.isError is True
+        assert result.structuredContent == {
+            'message': 'Not Found',
+            'documentation_url': 'https://api.example.com/docs',
+        }
+        assert '404' in result.content[0].text
+        assert 'Not Found' in result.content[0].text
+
+    async def test_text_error_body_no_structured_content(self, mock_upstream):
+        """A non-JSON error body leaves ``structuredContent`` as ``None`` and surfaces the text only."""
+        mock_upstream(
+            lambda _request: httpx.Response(500, text='internal boom', headers={'content-type': 'text/plain'})
+        )
+        generator, mcp = self._generator()
+        generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/9')])
+        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
+
+        result = await tool.run({}, context=_stub_context())
+        assert result.isError is True
+        assert result.structuredContent is None
+        assert 'internal boom' in result.content[0].text
+
+    async def test_network_error_wrapped_as_iserror(self, mock_upstream):
+        """A transport failure (connect, timeout, DNS) becomes an ``isError`` result with the exception type."""
+
+        def boom(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError('connection refused', request=request)
+
+        mock_upstream(boom)
+        generator, mcp = self._generator()
+        generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/9')])
+        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
+
+        result = await tool.run({}, context=_stub_context())
+        assert result.isError is True
+        assert result.structuredContent is None
+        assert 'ConnectError' in result.content[0].text
+        assert 'connection refused' in result.content[0].text

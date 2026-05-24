@@ -207,7 +207,8 @@ class TestEndToEndToolInvocation:
         assert 'limit=5' in captured['url']
         assert captured['url'].startswith('https://petstore.example.com/v1/pets')
 
-        assert json.loads(result) == [{'id': 1, 'name': 'fido'}]
+        assert result.isError is False
+        assert json.loads(result.content[0].text) == [{'id': 1, 'name': 'fido'}]
 
 
 class TestDynamicExposureEndToEnd:
@@ -249,12 +250,11 @@ class TestDynamicExposureEndToEnd:
         described = json.loads(await tools['get_operation'].fn(name='list_pets', ctx=_stub_context()))
         assert described['input_schema']['properties']['limit']['type'] == 'integer'
 
-        result = json.loads(
-            await tools['call_operation'].fn(name='list_pets', arguments={'limit': 5}, ctx=_stub_context())
-        )
+        result = await tools['call_operation'].fn(name='list_pets', arguments={'limit': 5}, ctx=_stub_context())
         assert captured['method'] == 'GET'
         assert 'limit=5' in captured['url']
-        assert result == [{'id': 1, 'name': 'fido'}]
+        assert result.isError is False
+        assert json.loads(result.content[0].text) == [{'id': 1, 'name': 'fido'}]
 
 
 def _write_client_credentials_spec(tmp_path: pathlib.Path) -> pathlib.Path:
