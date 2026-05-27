@@ -1,8 +1,10 @@
 import dataclasses
+import functools
 import inspect
 import json
 import keyword
 import logging
+import operator
 import re
 import typing
 
@@ -41,10 +43,10 @@ def _schema_to_python_type(schema: dict[str, typing.Any]) -> typing.Any:
     """
     variants = schema.get('oneOf') or schema.get('anyOf')
     if variants:
-        types = tuple(_schema_to_python_type(variant) for variant in variants)
+        types = [_schema_to_python_type(variant) for variant in variants]
         if len(types) == 1:
             return types[0]
-        return typing.Union[types]  # type: ignore[valid-type]
+        return functools.reduce(operator.or_, types)
 
     schema_type = schema.get('type')
     if schema_type is None:

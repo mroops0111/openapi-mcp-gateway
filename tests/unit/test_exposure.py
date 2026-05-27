@@ -1,5 +1,6 @@
 import inspect
 import json
+import types
 import typing
 
 import httpx
@@ -72,7 +73,7 @@ class TestSchemaToPythonType:
     def test_anyof_yields_union(self):
         """``anyOf`` variants are resolved into a Union."""
         result = _schema_to_python_type({'anyOf': [{'type': 'string'}, {'type': 'integer'}]})
-        assert typing.get_origin(result) is typing.Union
+        assert isinstance(result, types.UnionType)
         assert set(typing.get_args(result)) == {str, int}
 
     def test_array_of_oneof_objects_is_not_list_of_strings(self):
