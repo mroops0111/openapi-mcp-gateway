@@ -34,8 +34,21 @@ def _sanitize_name(name: str) -> str:
 
 
 def _schema_to_python_type(schema: dict[str, typing.Any]) -> typing.Any:
-    """Map a JSON Schema fragment to a Python type annotation."""
-    schema_type = schema.get('type', 'string')
+    """Map a JSON Schema fragment to a Python type annotation.
+
+    Resolves ``oneOf`` / ``anyOf`` first since union fragments often omit ``type``.
+    A fragment with neither resolves to ``typing.Any``.
+    """
+    variants = schema.get('oneOf') or schema.get('anyOf')
+    if variants:
+        types = tuple(_schema_to_python_type(variant) for variant in variants)
+        if len(types) == 1:
+            return types[0]
+        return typing.Union[types]  # type: ignore[valid-type]
+
+    schema_type = schema.get('type')
+    if schema_type is None:
+        return typing.Any
 
     if schema_type == 'string':
         return str
