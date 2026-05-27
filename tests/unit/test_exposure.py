@@ -1,5 +1,6 @@
 import inspect
 import json
+import types
 import typing
 
 import httpx
@@ -11,6 +12,7 @@ from openapi_mcp_gateway.exposure import (
     ToolGenerator,
     UpstreamBinding,
     _sanitize_name,
+    _schema_to_python_type,
     derive_annotations,
     derive_title,
 )
@@ -58,6 +60,39 @@ class TestSanitizeName:
         assert _sanitize_name('async') == 'async_'
         assert _sanitize_name('class') == 'class_'
         assert _sanitize_name('from') == 'from_'
+
+
+class TestSchemaToPythonType:
+    """Conversion of JSON Schema fragments into Python type annotations."""
+
+    def test_missing_type_falls_back_to_any(self):
+        """A fragment with no ``type`` resolves to ``Any``, not ``str``."""
+        assert _schema_to_python_type({'format': 'date-time'}) is typing.Any
+        assert _schema_to_python_type({}) is typing.Any
+
+    def test_anyof_yields_union(self):
+        """``anyOf`` variants are resolved into a Union."""
+        result = _schema_to_python_type({'anyOf': [{'type': 'string'}, {'type': 'integer'}]})
+        assert isinstance(result, types.UnionType)
+        assert set(typing.get_args(result)) == {str, int}
+
+    def test_array_of_oneof_objects_is_not_list_of_strings(self):
+        """Regression: arrays whose items are a ``oneOf`` of objects used to map to ``list[str]``,
+        because the ``oneOf`` fragment omits a top-level ``type``,
+        so the old ``'string'`` default collapsed items to ``str``.
+        """
+        schema = {
+            'type': 'array',
+            'items': {
+                'oneOf': [
+                    {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['a']}}},
+                    {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['b']}}},
+                ],
+            },
+        }
+        result = _schema_to_python_type(schema)
+        assert typing.get_origin(result) is list
+        assert typing.get_args(result)[0] is not str
 
 
 class TestToolGeneration:
