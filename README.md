@@ -211,6 +211,48 @@ policy:
 
 Operations can also be opted in from the spec side with `x-mcp-integration: {expose: {tool: {}}}` plus `policy.marked_only: true`. Filters apply in order: `marked_only`, then `allow`, then `deny`.
 
+### Resource Exposure
+
+`GET` operations that return addressable, read-only data are a better fit for the MCP **resource** primitive than for a tool. Most MCP clients do not auto-load resources into the LLM context, so promoting catalog-style endpoints to resources saves tokens without losing reachability.
+
+Opt in per operation with `x-mcp-integration.expose.resource`:
+
+```yaml
+paths:
+  /pets/{petId}:
+    get:
+      operationId: getPet
+      description: Returns one pet record by id.
+      x-mcp-integration:
+        expose:
+          resource:
+            name: pet                      # optional; defaults to operationId
+            description: One pet by id.    # optional; defaults to OpenAPI description/summary
+            mime_type: application/json    # optional; defaults to application/json
+            # uri_template: petstore://v2/pets/{petId}  # optional override; must start with "<server>://"
+```
+
+The gateway registers `petstore://pets/{petId}` as an MCP resource template (URI scheme defaults to the server's `name`). Path placeholders pass through to the URI template; the upstream HTTP call shape is identical to the tool path, so auth and base URL behave the same.
+
+By default declaring `expose.resource` **replaces** the tool for that operation. To keep both surfaces, also declare `expose.tool`:
+
+```yaml
+x-mcp-integration:
+  expose:
+    tool: {}
+    resource: {}
+```
+
+The first cut is read-only: `resources/list`, `resources/templates/list`, `resources/read`. Subscriptions are not implemented because REST has no native push.
+
+Eligibility is strict and validated at startup. The gateway refuses to start when `expose.resource` is declared on:
+
+- a non-`GET` method (resources are read-only),
+- a `GET` with required `query` / `header` / `body` parameters (URI templates only carry path parameters),
+- an `uri_template` override that does not start with `<server_name>://`.
+
+Optional query / header parameters on a resource-exposed `GET` are silently dropped from the resource surface (resources have no input arguments beyond URI variables).
+
 ### Dynamic Exposure
 
 For APIs with hundreds of operations (GitHub, Stripe, etc.), registering every operation as its own MCP tool can blow the LLM's context window before the agent does anything. Flip the server to `exposure: dynamic` and the client sees three meta-tools instead:

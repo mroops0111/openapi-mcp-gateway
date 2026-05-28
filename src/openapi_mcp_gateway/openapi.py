@@ -32,10 +32,24 @@ class ToolOverride(pydantic.BaseModel):
     description: str | None = None
 
 
+class ResourceOverride(pydantic.BaseModel):
+    """Spec-author overrides for the MCP resource generated from an operation.
+
+    ``uri_template`` overrides the auto-derived URI when set,
+    and must start with ``{server_name}://`` so resources stay scoped to the owning server.
+    """
+
+    name: str | None = None
+    description: str | None = None
+    mime_type: str | None = None
+    uri_template: str | None = None
+
+
 class Expose(pydantic.BaseModel):
     """Which MCP primitives an operation is exposed as."""
 
     tool: ToolOverride | None = None
+    resource: ResourceOverride | None = None
 
 
 class McpIntegration(pydantic.BaseModel):
@@ -62,6 +76,12 @@ class OperationInfo(pydantic.BaseModel):
         """True iff ``x-mcp-integration.expose.tool`` is present."""
         expose = self.x_mcp_integration.expose
         return expose is not None and expose.tool is not None
+
+    @property
+    def resource_exposed(self) -> bool:
+        """True iff ``x-mcp-integration.expose.resource`` is present."""
+        expose = self.x_mcp_integration.expose
+        return expose is not None and expose.resource is not None
 
 
 class OpenAPISpec(pydantic.BaseModel):
