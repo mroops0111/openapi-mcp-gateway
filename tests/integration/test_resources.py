@@ -9,6 +9,19 @@ from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig, ServerConfig
 
 
+class _StubContext:
+    """No-op MCP context used when invoking generated resource read functions end-to-end."""
+
+    async def report_progress(self, *_args, **_kwargs):
+        """Match the ``Context`` protocol; do nothing."""
+        return None
+
+
+def _stub_context() -> Context:
+    """Return a ``Context``-typed stub suitable for invoking resource read functions directly."""
+    return typing.cast(Context, _StubContext())
+
+
 def _spec_with_resource_optin() -> dict:
     """OpenAPI spec exercising both kinds of resource exposure plus a regular tool.
 
@@ -222,11 +235,7 @@ class TestResourceUpstreamCall:
         template = mcp._resource_manager._templates['petstore://pets/{petId}']
         raw_fn = template.fn.raw_function
 
-        class _Ctx:
-            async def report_progress(self, *_args, **_kwargs):
-                return None
-
-        text = await raw_fn(petId='42', ctx=typing.cast(Context, _Ctx()))
+        text = await raw_fn(petId='42', ctx=_stub_context())
         assert captured['method'] == 'GET'
         assert captured['url'].startswith('https://petstore.example.com/v1/pets/42')
         assert '"id": 42' in text

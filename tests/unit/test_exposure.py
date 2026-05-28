@@ -11,11 +11,10 @@ from openapi_mcp_gateway.exposure import (
     MetaToolGenerator,
     ToolGenerator,
     UpstreamBinding,
-    _sanitize_name,
-    _schema_to_python_type,
-    derive_annotations,
-    derive_title,
+    derive_tool_annotations,
+    derive_tool_title,
 )
+from openapi_mcp_gateway.exposure._shared import _sanitize_name, _schema_to_python_type
 from openapi_mcp_gateway.openapi import OperationInfo, ParameterInfo
 
 
@@ -483,22 +482,22 @@ class TestCallOperation:
         assert 'enterprise-team=acme' in captured['url']
 
 
-class TestDeriveTitle:
-    """``derive_title`` mirrors OpenAPI ``summary`` and omits the field when absent."""
+class TestDeriveToolTitle:
+    """``derive_tool_title`` mirrors OpenAPI ``summary`` and omits the field when absent."""
 
     def test_summary_becomes_title(self):
         """``summary`` is used as the human-readable display name."""
         operation = OperationInfo(operation_id='listPets', method='get', path='/pets', summary='List all pets')
-        assert derive_title(operation) == 'List all pets'
+        assert derive_tool_title(operation) == 'List all pets'
 
     def test_empty_summary_returns_none(self):
         """An empty ``summary`` returns ``None`` so the field is omitted from the tool."""
         operation = OperationInfo(operation_id='listPets', method='get', path='/pets', summary='')
-        assert derive_title(operation) is None
+        assert derive_tool_title(operation) is None
 
 
-class TestDeriveAnnotations:
-    """``derive_annotations`` maps HTTP methods to ``readOnly`` / ``idempotent`` / ``destructive`` hints."""
+class TestDeriveToolAnnotations:
+    """``derive_tool_annotations`` maps HTTP methods to ``readOnly`` / ``idempotent`` / ``destructive`` hints."""
 
     def _operation(self, method: str, summary: str = '') -> OperationInfo:
         """Build a minimal operation with only the method (and optional ``summary``) varying."""
@@ -506,7 +505,7 @@ class TestDeriveAnnotations:
 
     def test_get_is_read_only_and_idempotent(self):
         """``GET`` is safe and idempotent; never destructive."""
-        annotations = derive_annotations(self._operation('get'))
+        annotations = derive_tool_annotations(self._operation('get'))
         assert annotations.readOnlyHint is True
         assert annotations.idempotentHint is True
         assert annotations.destructiveHint is None
@@ -514,37 +513,37 @@ class TestDeriveAnnotations:
 
     def test_summary_mirrored_to_annotations_title(self):
         """``summary`` is also surfaced on ``ToolAnnotations.title`` for legacy clients."""
-        annotations = derive_annotations(self._operation('get', summary='List pets'))
+        annotations = derive_tool_annotations(self._operation('get', summary='List pets'))
         assert annotations.title == 'List pets'
 
     def test_empty_summary_omits_annotations_title(self):
         """No ``summary`` means no ``ToolAnnotations.title`` field."""
-        annotations = derive_annotations(self._operation('get'))
+        annotations = derive_tool_annotations(self._operation('get'))
         assert annotations.title is None
 
     def test_put_idempotent_not_destructive(self):
         """``PUT`` is idempotent without being read-only or destructive."""
-        annotations = derive_annotations(self._operation('put'))
+        annotations = derive_tool_annotations(self._operation('put'))
         assert annotations.readOnlyHint is None
         assert annotations.idempotentHint is True
         assert annotations.destructiveHint is None
 
     def test_patch_idempotent_not_destructive(self):
         """``PATCH`` is idempotent without being destructive."""
-        annotations = derive_annotations(self._operation('patch'))
+        annotations = derive_tool_annotations(self._operation('patch'))
         assert annotations.idempotentHint is True
         assert annotations.destructiveHint is None
 
     def test_delete_destructive_and_idempotent(self):
         """``DELETE`` is destructive and idempotent."""
-        annotations = derive_annotations(self._operation('delete'))
+        annotations = derive_tool_annotations(self._operation('delete'))
         assert annotations.destructiveHint is True
         assert annotations.idempotentHint is True
         assert annotations.readOnlyHint is None
 
     def test_post_neither_idempotent_nor_destructive(self):
         """``POST`` carries no idempotency or destructiveness guarantees."""
-        annotations = derive_annotations(self._operation('post'))
+        annotations = derive_tool_annotations(self._operation('post'))
         assert annotations.readOnlyHint is None
         assert annotations.idempotentHint is None
         assert annotations.destructiveHint is None

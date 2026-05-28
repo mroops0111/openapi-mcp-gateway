@@ -7,11 +7,12 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from openapi_mcp_gateway.exposure import (
     ResourceGenerator,
+    ToolGenerator,
     UpstreamBinding,
     build_resource_read_function,
-    derive_resource_description,
+    derive_description,
+    derive_name,
     derive_resource_mime_type,
-    derive_resource_name,
     derive_resource_uri,
 )
 from openapi_mcp_gateway.gateway import (
@@ -29,22 +30,40 @@ from openapi_mcp_gateway.openapi import (
 
 
 class _StubContext:
-    """No-op MCP context for direct invocation of template-resource read fns in tests."""
+    """No-op MCP context for direct invocation of template-resource read functions in tests."""
 
     async def report_progress(self, *_args, **_kwargs):
+        """Match the ``Context`` protocol; do nothing."""
         return None
 
 
 def _stub_context() -> Context:
+    """Return a ``Context``-typed stub suitable for invoking resource read functions directly."""
     return typing.cast(Context, _StubContext())
 
 
 def _expose_resource(**kwargs) -> McpIntegration:
+    """Build an ``x-mcp-integration`` payload that opts an operation into resource exposure only."""
     return McpIntegration(expose=Expose(resource=ResourceOverride(**kwargs)))
 
 
 def _expose_tool_and_resource() -> McpIntegration:
+    """Build an ``x-mcp-integration`` payload that opts an operation into both tool and resource exposure."""
     return McpIntegration(expose=Expose(tool=ToolOverride(), resource=ResourceOverride()))
+
+
+def _resource_override_name(operation: OperationInfo) -> str | None:
+    """Pull ``expose.resource.name`` off ``operation`` (or ``None``), for passing to :func:`derive_name`."""
+    expose = operation.x_mcp_integration.expose
+    override = expose.resource if expose else None
+    return override.name if override else None
+
+
+def _resource_override_description(operation: OperationInfo) -> str | None:
+    """Pull ``expose.resource.description`` off ``operation`` (or ``None``), for passing to :func:`derive_description`."""
+    expose = operation.x_mcp_integration.expose
+    override = expose.resource if expose else None
+    return override.description if override else None
 
 
 class TestResourceUriDerivation:
@@ -94,35 +113,35 @@ class TestResourceUriDerivation:
         assert derive_resource_uri('petstore', operation) == 'petstore://v2/pets/{petId}'
 
 
-class TestResourceNameDerivation:
-    """``derive_resource_name`` mirrors the tool-name derivation pattern."""
+class TestDeriveNameWithResourceOverride:
+    """``derive_name`` honors the resource-side override and falls back to the underscored ``operationId``."""
 
     def test_default_from_operation_id(self):
-        """The default name is the underscored, sanitised ``operationId``."""
+        """With no override, the name is the underscored, sanitised ``operationId``."""
         operation = OperationInfo(
             operation_id='getPet',
             method='get',
             path='/pets/{petId}',
             x_mcp_integration=_expose_resource(),
         )
-        assert derive_resource_name(operation) == 'get_pet'
+        assert derive_name(operation, _resource_override_name(operation)) == 'get_pet'
 
     def test_override_wins(self):
-        """An explicit ``name`` override replaces the default."""
+        """An explicit ``name`` override on the resource opt-in replaces the default."""
         operation = OperationInfo(
             operation_id='getPet',
             method='get',
             path='/pets/{petId}',
             x_mcp_integration=_expose_resource(name='pet'),
         )
-        assert derive_resource_name(operation) == 'pet'
+        assert derive_name(operation, _resource_override_name(operation)) == 'pet'
 
 
-class TestResourceDescriptionDerivation:
-    """``derive_resource_description`` falls back through description / summary / method+path."""
+class TestDeriveDescriptionWithResourceOverride:
+    """``derive_description`` falls back through description / summary / ``METHOD /path`` when no override is set."""
 
     def test_default_from_description(self):
-        """The OpenAPI ``description`` is used when set."""
+        """The OpenAPI ``description`` is used when set and the override is absent."""
         operation = OperationInfo(
             operation_id='getPet',
             method='get',
@@ -130,7 +149,7 @@ class TestResourceDescriptionDerivation:
             description='Fetch one pet.',
             x_mcp_integration=_expose_resource(),
         )
-        assert derive_resource_description(operation) == 'Fetch one pet.'
+        assert derive_description(operation, _resource_override_description(operation)) == 'Fetch one pet.'
 
     def test_fallback_to_method_path(self):
         """Without description or summary, fall back to ``METHOD /path``."""
@@ -140,10 +159,10 @@ class TestResourceDescriptionDerivation:
             path='/pets/{petId}',
             x_mcp_integration=_expose_resource(),
         )
-        assert derive_resource_description(operation) == 'GET /pets/{petId}'
+        assert derive_description(operation, _resource_override_description(operation)) == 'GET /pets/{petId}'
 
     def test_override_wins(self):
-        """An explicit ``description`` override replaces the default."""
+        """An explicit ``description`` override on the resource opt-in replaces the default."""
         operation = OperationInfo(
             operation_id='getPet',
             method='get',
@@ -151,7 +170,7 @@ class TestResourceDescriptionDerivation:
             description='Fetch one pet.',
             x_mcp_integration=_expose_resource(description='Custom blurb.'),
         )
-        assert derive_resource_description(operation) == 'Custom blurb.'
+        assert derive_description(operation, _resource_override_description(operation)) == 'Custom blurb.'
 
 
 class TestResourceMimeType:
@@ -527,8 +546,6 @@ class TestDualExposureRegistration:
 
     async def test_op_appears_as_tool_and_resource(self):
         """``ToolGenerator`` and ``ResourceGenerator`` cooperate on the same FastMCP instance."""
-        from openapi_mcp_gateway.exposure import ToolGenerator
-
         mcp = FastMCP('test')
         binding = UpstreamBinding(base_url='https://api.example.com')
         op = OperationInfo(
