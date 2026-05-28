@@ -1,14 +1,3 @@
-"""Tool exposure for the ``tool`` MCP primitive.
-
-Two strategies share this module since both operate on the same primitive type:
-
-- **Static** (:class:`ToolGenerator`): one MCP tool per operation.
-  Default behavior, suitable when the operation count fits in the LLM's context window.
-- **Dynamic** (:class:`MetaToolGenerator`): three meta-tools (``list_operations`` /
-  ``get_operation`` / ``call_operation``) backed by a registry,
-  for specs with hundreds of operations whose static tool list would overflow the context window.
-"""
-
 import dataclasses
 import inspect
 import json

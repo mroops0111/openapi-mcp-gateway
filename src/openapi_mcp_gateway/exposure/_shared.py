@@ -1,9 +1,3 @@
-"""Shared internals used by every exposure strategy.
-
-Identifier sanitising, JSON Schema to Python type mapping, parameter bucketing,
-and the override-aware ``derive_name`` / ``derive_description`` helpers all live here.
-"""
-
 import dataclasses
 import functools
 import keyword

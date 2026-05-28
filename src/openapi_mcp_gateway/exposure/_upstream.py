@@ -1,9 +1,3 @@
-"""The async callable that issues one upstream HTTP request per invocation,
-plus the ``CallToolResult`` builders that wrap success and error responses.
-
-Shared by every exposure strategy on both ``tool`` and ``resource`` primitives.
-"""
-
 import json
 import typing
 

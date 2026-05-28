@@ -1,10 +1,3 @@
-"""Resource exposure for the ``resource`` MCP primitive.
-
-Only static exposure is supported today (:class:`ResourceGenerator`):
-GET operations opted in via ``x-mcp-integration.expose.resource`` are registered with FastMCP
-as either concrete resources (no path parameters) or resource templates (with path parameters).
-"""
-
 import inspect
 import logging
 import typing
