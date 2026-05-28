@@ -130,19 +130,6 @@ def _unknown_operation_error(name: str) -> ValueError:
     return ValueError(f'Unknown operation: {name!r}. Use list_operations to see available names.')
 
 
-@dataclasses.dataclass
-class _MetaToolEntry:
-    """One operation indexed by the dynamic-exposure registry.
-
-    Internal to :class:`MetaToolGenerator`,
-    consumers interact with operations through the three meta-tools, not this dataclass.
-    """
-
-    description: str
-    input_schema: dict[str, typing.Any]
-    callable_: typing.Callable[..., typing.Awaitable[CallToolResult]]
-
-
 def build_tool_function(
     operation: OperationInfo,
     binding: UpstreamBinding,
@@ -164,6 +151,19 @@ def build_tool_function(
     upstream_callable.__signature__ = signature
     upstream_callable.__annotations__ = annotations
     return upstream_callable
+
+
+@dataclasses.dataclass
+class _MetaToolEntry:
+    """One operation indexed by the dynamic-exposure registry.
+
+    Internal to :class:`MetaToolGenerator`,
+    consumers interact with operations through the three meta-tools, not this dataclass.
+    """
+
+    description: str
+    input_schema: dict[str, typing.Any]
+    callable_: typing.Callable[..., typing.Awaitable[CallToolResult]]
 
 
 class ToolGenerator:

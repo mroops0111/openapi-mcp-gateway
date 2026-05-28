@@ -54,29 +54,6 @@ def derive_resource_uri(server_name: str, operation: OperationInfo) -> str:
     return f'{server_name}://{path}'
 
 
-class _NullContext:
-    """Stand-in ``Context`` for **concrete** resource reads only.
-
-    Concrete vs template registration in FastMCP turns on the read function's parameter list (``server.py:594-597``).
-    Any parameter including ``ctx`` forces template registration.
-    A no-path-param GET that wants to surface under ``resources/list`` therefore cannot declare ``ctx``,
-    so the shared upstream closure runs against this shim instead.
-    Template resources keep the real injected ``Context`` (see :func:`build_resource_read_function`).
-
-    ``report_progress`` is a no-op and ``request_context`` is ``None``.
-    ``PassthroughAuthResolver`` is the only ctx-aware resolver,
-    and it gracefully returns ``{}`` against the null shim.
-    Contextvar-based resolvers (``authorization_code``, ``client_credentials``) read identity off the surrounding ASGI scope,
-    not ``ctx``,
-    so they are unaffected either way.
-    """
-
-    request_context = None
-
-    async def report_progress(self, *_args: typing.Any, **_kwargs: typing.Any) -> None:
-        return None
-
-
 def _extract_text_from_result(result: CallToolResult) -> str:
     """Pull the text body off ``result``, narrowing ``content[0]`` to ``TextContent``."""
     first_block = result.content[0] if result.content else None
@@ -147,6 +124,29 @@ def build_resource_read_function(operation: OperationInfo, binding: UpstreamBind
     read_function.__signature__ = signature
     read_function.__annotations__ = annotations
     return read_function
+
+
+class _NullContext:
+    """Stand-in ``Context`` for **concrete** resource reads only.
+
+    Concrete vs template registration in FastMCP turns on the read function's parameter list (``server.py:594-597``).
+    Any parameter including ``ctx`` forces template registration.
+    A no-path-param GET that wants to surface under ``resources/list`` therefore cannot declare ``ctx``,
+    so the shared upstream closure runs against this shim instead.
+    Template resources keep the real injected ``Context`` (see :func:`build_resource_read_function`).
+
+    ``report_progress`` is a no-op and ``request_context`` is ``None``.
+    ``PassthroughAuthResolver`` is the only ctx-aware resolver,
+    and it gracefully returns ``{}`` against the null shim.
+    Contextvar-based resolvers (``authorization_code``, ``client_credentials``) read identity off the surrounding ASGI scope,
+    not ``ctx``,
+    so they are unaffected either way.
+    """
+
+    request_context = None
+
+    async def report_progress(self, *_args: typing.Any, **_kwargs: typing.Any) -> None:
+        return None
 
 
 class ResourceGenerator:
