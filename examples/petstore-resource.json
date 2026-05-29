@@ -6,7 +6,7 @@
     "description": "Variant of the public Swagger Petstore spec with two operations opted into MCP resource exposure via `x-mcp-integration.expose.resource`."
   },
   "servers": [
-    {"url": "https://petstore3.swagger.io/api/v3"}
+    {"url": "https://petstore.swagger.io/v2"}
   ],
   "paths": {
     "/pet/findByStatus": {
