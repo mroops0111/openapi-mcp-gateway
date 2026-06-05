@@ -23,7 +23,7 @@ from .auth.resolver import (
     PassthroughAuthResolver,
     StaticAuthResolver,
 )
-from .exposure import MetaToolGenerator, ToolGenerator, UpstreamBinding
+from .exposure import MetaToolGenerator, ResourceGenerator, ToolGenerator, UpstreamBinding
 from .fastapi import (
     collect_marked_routes,
     filter_marked_operations,
@@ -55,6 +55,65 @@ def _compose_with_passthrough(
     if not forward_incoming_headers:
         return base
     return CompositeAuthResolver([PassthroughAuthResolver(forward_incoming_headers), base])
+
+
+def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -> None:
+    """Reject misconfigured ``expose.resource`` opt-ins at startup.
+
+    Mirrors Phase 0's removal of the silent passthrough fallback.
+    Misconfig fails fast with an explicit error rather than silently degrading to a tool.
+    Optional query / header / body params are allowed but are dropped from the resource surface.
+    Only required non-path parameters are a hard error.
+    """
+    if operation.method.lower() != 'get':
+        raise ValueError(
+            f'Server "{server_name}": operation "{operation.operation_id}" declares '
+            f'x-mcp-integration.expose.resource but method is {operation.method.upper()}. '
+            'Resources are read-only; declare expose.tool instead, or remove the resource declaration.'
+        )
+
+    required_non_path = [f'{p.location}:{p.name}' for p in operation.parameters if p.required and p.location != 'path']
+    if required_non_path:
+        raise ValueError(
+            f'Server "{server_name}": operation "{operation.operation_id}" declares '
+            f'x-mcp-integration.expose.resource but has required non-path parameter(s) {required_non_path}. '
+            'URI templates can only carry path parameters. Make these optional, or expose as a tool.'
+        )
+
+    override = operation.x_mcp_integration.expose.resource if operation.x_mcp_integration.expose else None
+    if override and override.uri_template and not override.uri_template.startswith(f'{server_name}://'):
+        raise ValueError(
+            f'Server "{server_name}": operation "{operation.operation_id}".expose.resource.uri_template '
+            f'must start with "{server_name}://" (got "{override.uri_template}").'
+        )
+
+
+def _partition_resource_operations(
+    operations: list[OperationInfo],
+    server_name: str,
+) -> tuple[list[OperationInfo], list[OperationInfo]]:
+    """Split ``operations`` into ``(resource_ops, tool_ops)`` based on opt-in flags.
+
+    Rules:
+
+    - No ``expose.*`` declared, or only ``expose.tool``: tool only (current default).
+    - Only ``expose.resource``: resource only (replaces tool).
+    - Both ``expose.tool`` and ``expose.resource``: registered in BOTH lists.
+
+    Resource-exposed operations are validated by ``_validate_resource_eligibility`` first,
+    which raises ``ValueError`` on any misconfig.
+    """
+    resource_ops: list[OperationInfo] = []
+    tool_ops: list[OperationInfo] = []
+    for operation in operations:
+        if operation.resource_exposed:
+            _validate_resource_eligibility(operation, server_name)
+            resource_ops.append(operation)
+            if operation.tool_exposed:
+                tool_ops.append(operation)
+        else:
+            tool_ops.append(operation)
+    return resource_ops, tool_ops
 
 
 @dataclasses.dataclass
@@ -328,8 +387,28 @@ class Gateway:
             timeout=server_config.timeout,
             transport=transport,
         )
-        generator_cls = MetaToolGenerator if server_config.exposure == 'dynamic' else ToolGenerator
-        generator_cls(mcp=mcp, binding=binding).register(operations)
+        resource_count = 0
+        if server_config.exposure == 'dynamic':
+            resource_optins = [op.operation_id for op in operations if op.resource_exposed]
+            if resource_optins:
+                logger.warning(
+                    'Server "%s": dynamic exposure mode ignores x-mcp-integration.expose.resource declarations '
+                    'on %d operation(s) (%s). '
+                    'The meta-tools surface every operation uniformly.',
+                    server_config.name,
+                    len(resource_optins),
+                    ', '.join(resource_optins[:5]) + ('...' if len(resource_optins) > 5 else ''),
+                )
+            MetaToolGenerator(mcp=mcp, binding=binding).register(operations)
+            tool_count = len(operations)
+        else:
+            resource_ops, tool_ops = _partition_resource_operations(operations, server_config.name)
+            if resource_ops:
+                ResourceGenerator(mcp=mcp, binding=binding, server_name=server_config.name).register(resource_ops)
+            if tool_ops:
+                ToolGenerator(mcp=mcp, binding=binding).register(tool_ops)
+            resource_count = len(resource_ops)
+            tool_count = len(tool_ops)
 
         self._servers.append(
             _ServerBundle(
@@ -342,11 +421,12 @@ class Gateway:
             )
         )
         logger.info(
-            'Registered server "%s": mount=%s base_url=%s tools=%d auth=%s resolver=%s',
+            'Registered server "%s": mount=%s base_url=%s tools=%d resources=%d auth=%s resolver=%s',
             server_config.name,
             server_config.mount_path,
             base_url,
-            len(operations),
+            tool_count,
+            resource_count,
             server_config.auth.type,
             type(auth_resolver).__name__,
         )
