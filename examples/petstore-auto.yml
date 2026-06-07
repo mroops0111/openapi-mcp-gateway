@@ -1,0 +1,21 @@
+# Petstore3 spec with mode=auto: resource exposure with zero spec edits.
+#
+# `mode: auto` runs every operation through resource eligibility at startup:
+# GETs with no required query / header / body parameters become MCP resources;
+# everything else stays a tool.
+#
+# Result on the vanilla Petstore3 spec:
+#   - 13 tools (POST / PUT / DELETE + GETs with required search arguments)
+#   - 3 concrete resources (GET /store/inventory, /user/login, /user/logout)
+#   - 3 resource templates (GET /pet/{petId}, /store/order/{orderId}, /user/{username})
+#
+# Usage: openapi-mcp-gateway --config examples/petstore-auto.yml
+
+host: "127.0.0.1"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: petstore
+    spec: https://petstore3.swagger.io/api/v3/openapi.json
+    mode: auto

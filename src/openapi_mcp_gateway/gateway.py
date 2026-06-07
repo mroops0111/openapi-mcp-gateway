@@ -57,27 +57,44 @@ def _compose_with_passthrough(
     return CompositeAuthResolver([PassthroughAuthResolver(forward_incoming_headers), base])
 
 
-def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -> None:
-    """Reject misconfigured ``expose.resource`` opt-ins at startup.
+def _resource_ineligibility_reason(operation: OperationInfo) -> tuple[str, str] | None:
+    """Single source of truth for "can this operation be exposed as an MCP resource?".
 
-    Mirrors Phase 0's removal of the silent passthrough fallback.
-    Misconfig fails fast with an explicit error rather than silently degrading to a tool.
-    Optional query / header / body params are allowed but are dropped from the resource surface.
-    Only required non-path parameters are a hard error.
+    Returns ``None`` when eligible.
+    Otherwise returns ``(reason, actionable_hint)`` for inclusion in error messages.
+    Eligibility rules: method must be ``GET`` and the operation must not require any non-path parameter.
     """
     if operation.method.lower() != 'get':
-        raise ValueError(
-            f'Server "{server_name}": operation "{operation.operation_id}" declares '
-            f'x-mcp-integration.expose.resource but method is {operation.method.upper()}. '
-            'Resources are read-only; declare expose.tool instead, or remove the resource declaration.'
+        return (
+            f'method is {operation.method.upper()}',
+            'Resources are read-only; declare expose.tool instead, or remove the resource declaration.',
         )
-
     required_non_path = [f'{p.location}:{p.name}' for p in operation.parameters if p.required and p.location != 'path']
     if required_non_path:
+        return (
+            f'has required non-path parameter(s) {required_non_path}',
+            'URI templates can only carry path parameters. Make these optional, or expose as a tool.',
+        )
+    return None
+
+
+def _is_eligible_for_auto_resource(operation: OperationInfo) -> bool:
+    """``True`` when ``operation`` qualifies for auto-promotion to a resource under ``mode=auto``."""
+    return _resource_ineligibility_reason(operation) is None
+
+
+def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -> None:
+    """Reject misconfigured explicit ``expose.resource`` opt-ins at startup with a fail-fast ``ValueError``.
+
+    Mirrors Phase 0's removal of the silent passthrough fallback.
+    Optional query / header / body parameters are allowed but are dropped from the resource surface.
+    """
+    ineligibility = _resource_ineligibility_reason(operation)
+    if ineligibility is not None:
+        reason, hint = ineligibility
         raise ValueError(
             f'Server "{server_name}": operation "{operation.operation_id}" declares '
-            f'x-mcp-integration.expose.resource but has required non-path parameter(s) {required_non_path}. '
-            'URI templates can only carry path parameters. Make these optional, or expose as a tool.'
+            f'x-mcp-integration.expose.resource but {reason}. {hint}'
         )
 
     override = operation.x_mcp_integration.expose.resource if operation.x_mcp_integration.expose else None
@@ -91,22 +108,33 @@ def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -
 def _partition_resource_operations(
     operations: list[OperationInfo],
     server_name: str,
+    mode: typing.Literal['tool_only', 'auto'] = 'tool_only',
 ) -> tuple[list[OperationInfo], list[OperationInfo]]:
-    """Split ``operations`` into ``(resource_ops, tool_ops)`` based on opt-in flags.
+    """Split ``operations`` into ``(resource_ops, tool_ops)`` based on the server mode and per-op opt-ins.
 
     Rules:
 
-    - No ``expose.*`` declared, or only ``expose.tool``: tool only (current default).
-    - Only ``expose.resource``: resource only (replaces tool).
-    - Both ``expose.tool`` and ``expose.resource``: registered in BOTH lists.
+    - ``mode='tool_only'`` (default): every operation is a tool.
+      ``x-mcp-integration.expose.resource`` declarations are ignored.
+    - ``mode='auto'``: GET operations passing :func:`_is_eligible_for_auto_resource` are promoted to resources.
+      ``x-mcp-integration.expose.resource`` declarations are still honored as explicit opt-ins.
+      ``x-mcp-integration.expose.tool`` declarations on otherwise-eligible GETs keep them as tools
+      (explicit tool opt-in beats implicit resource promotion).
+      Declaring both ``expose.tool`` and ``expose.resource`` registers the op in both lists.
 
-    Resource-exposed operations are validated by ``_validate_resource_eligibility`` first,
+    Resource-promoted operations are validated by :func:`_validate_resource_eligibility`,
     which raises ``ValueError`` on any misconfig.
     """
+    if mode == 'tool_only':
+        return [], list(operations)
+
     resource_ops: list[OperationInfo] = []
     tool_ops: list[OperationInfo] = []
     for operation in operations:
-        if operation.resource_exposed:
+        is_resource = operation.resource_exposed or (
+            not operation.tool_exposed and _is_eligible_for_auto_resource(operation)
+        )
+        if is_resource:
             _validate_resource_eligibility(operation, server_name)
             resource_ops.append(operation)
             if operation.tool_exposed:
@@ -399,10 +427,16 @@ class Gateway:
                     len(resource_optins),
                     ', '.join(resource_optins[:5]) + ('...' if len(resource_optins) > 5 else ''),
                 )
+            if server_config.mode == 'auto':
+                logger.warning(
+                    'Server "%s": dynamic exposure overrides mode=auto. '
+                    'The meta-tools surface every operation uniformly, so resource promotion is skipped.',
+                    server_config.name,
+                )
             MetaToolGenerator(mcp=mcp, binding=binding).register(operations)
             tool_count = len(operations)
         else:
-            resource_ops, tool_ops = _partition_resource_operations(operations, server_config.name)
+            resource_ops, tool_ops = _partition_resource_operations(operations, server_config.name, server_config.mode)
             if resource_ops:
                 ResourceGenerator(mcp=mcp, binding=binding, server_name=server_config.name).register(resource_ops)
             if tool_ops:
