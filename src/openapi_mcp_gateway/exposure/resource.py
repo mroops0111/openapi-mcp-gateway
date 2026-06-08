@@ -127,20 +127,12 @@ def build_resource_read_function(operation: OperationInfo, binding: UpstreamBind
 
 
 class _NullContext:
-    """Stand-in ``Context`` for **concrete** resource reads only.
+    """Stand-in ``Context`` for concrete (no-path-param) resource reads.
 
-    Concrete vs template registration in FastMCP turns on the read function's parameter list (``server.py:594-597``).
-    Any parameter including ``ctx`` forces template registration.
-    A no-path-param GET that wants to surface under ``resources/list`` therefore cannot declare ``ctx``,
-    so the shared upstream closure runs against this shim instead.
-    Template resources keep the real injected ``Context`` (see :func:`build_resource_read_function`).
-
-    ``report_progress`` is a no-op and ``request_context`` is ``None``.
-    ``PassthroughAuthResolver`` is the only ctx-aware resolver,
-    and it gracefully returns ``{}`` against the null shim.
-    Contextvar-based resolvers (``authorization_code``, ``client_credentials``) read identity off the surrounding ASGI scope,
-    not ``ctx``,
-    so they are unaffected either way.
+    FastMCP registers a resource as concrete only when the read function takes no parameters,
+    so concrete reads cannot declare ``ctx``.
+    This shim feeds the shared upstream closure a context-shaped object that no-ops on progress reporting
+    and returns no header data for auth resolution.
     """
 
     request_context = None
@@ -150,12 +142,10 @@ class _NullContext:
 
 
 class ResourceGenerator:
-    """Static exposure: register one MCP resource per eligible GET operation.
+    """Register one MCP resource per ``OperationInfo`` in the input list.
 
-    Eligibility is validated upstream by ``_partition_resource_operations`` (gateway side),
-    so this generator assumes every input operation is GET-only with no required non-path parameters.
-    The URI template's placeholders are sanitised Python identifiers matching the read function's signature,
-    so FastMCP's regex match succeeds.
+    Inputs are assumed to be GET operations with no required non-path parameters;
+    URI placeholders are sanitised to valid Python identifiers so FastMCP's template regex matches.
     """
 
     def __init__(self, mcp: FastMCP, binding: UpstreamBinding, server_name: str):

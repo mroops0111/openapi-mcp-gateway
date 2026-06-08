@@ -6,6 +6,7 @@ import pytest
 from mcp.server.fastmcp import Context
 
 from openapi_mcp_gateway.gateway import Gateway
+from openapi_mcp_gateway.openapi import Expose, McpIntegration, ResourceOverride
 from openapi_mcp_gateway.settings import GatewayConfig, ServerConfig
 
 
@@ -266,3 +267,71 @@ class TestResourceUpstreamCall:
         assert captured['method'] == 'GET'
         assert captured['url'].startswith('https://petstore.example.com/v1/pets/42')
         assert '"id": 42' in text
+
+
+def _vanilla_spec() -> dict:
+    """Vanilla spec without any ``x-mcp-integration`` declarations, for YAML-override tests."""
+    return {
+        'openapi': '3.0.0',
+        'info': {'title': 'Petstore', 'version': '1.0.0'},
+        'servers': [{'url': 'https://petstore.example.com/v1'}],
+        'paths': {
+            '/pets/{petId}': {
+                'get': {
+                    'operationId': 'getPet',
+                    'parameters': [
+                        {'name': 'petId', 'in': 'path', 'required': True, 'schema': {'type': 'string'}},
+                    ],
+                    'responses': {'200': {'description': 'ok'}},
+                },
+            },
+        },
+    }
+
+
+class TestYamlOverrideEndToEnd:
+    """``ServerConfig.operations`` injects per-op ``x-mcp-integration`` overrides without touching the spec."""
+
+    async def test_yaml_override_renames_auto_promoted_resource(self, tmp_path):
+        """YAML ``operations.<id>.expose.resource.name`` renames the resource registered by ``mode='auto'``."""
+        spec_path = _write_spec(tmp_path, _vanilla_spec())
+        gateway = Gateway.from_config(
+            GatewayConfig(
+                servers=[
+                    ServerConfig(
+                        name='petstore',
+                        spec=str(spec_path),
+                        mode='auto',
+                        operations={
+                            'getPet': McpIntegration(
+                                expose=Expose(resource=ResourceOverride(name='pet', mime_type='application/json')),
+                            ),
+                        },
+                    )
+                ]
+            )
+        )
+        templates = await gateway._servers[0].mcp.list_resource_templates()
+        names = {template.name for template in templates}
+        assert 'pet' in names
+
+    def test_unknown_operation_id_in_yaml_aborts(self, tmp_path):
+        """A YAML override targeting an op that the spec does not expose fails ``Gateway.from_config``."""
+        spec_path = _write_spec(tmp_path, _vanilla_spec())
+        with pytest.raises(ValueError, match='not_a_real_op'):
+            Gateway.from_config(
+                GatewayConfig(
+                    servers=[
+                        ServerConfig(
+                            name='petstore',
+                            spec=str(spec_path),
+                            mode='auto',
+                            operations={
+                                'not_a_real_op': McpIntegration(
+                                    expose=Expose(resource=ResourceOverride(name='ghost')),
+                                ),
+                            },
+                        )
+                    ]
+                )
+            )

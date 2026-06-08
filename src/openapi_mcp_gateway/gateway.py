@@ -31,7 +31,7 @@ from .fastapi import (
     override_with_metadata,
     warn_on_mixed_security_schemes,
 )
-from .openapi import OpenAPISpec, OperationInfo, load_spec, parse_spec
+from .openapi import McpIntegration, OpenAPISpec, OperationInfo, load_spec, parse_spec
 from .policy import filter_operations
 from .settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
 from .stores import create_store
@@ -57,19 +57,21 @@ def _compose_with_passthrough(
     return CompositeAuthResolver([PassthroughAuthResolver(forward_incoming_headers), base])
 
 
-def _resource_ineligibility_reason(operation: OperationInfo) -> tuple[str, str] | None:
-    """Single source of truth for "can this operation be exposed as an MCP resource?".
+def _resource_eligibility_problem(operation: OperationInfo) -> tuple[str, str] | None:
+    """Return ``None`` if ``operation`` can be exposed as an MCP resource, else ``(reason, hint)``.
 
-    Returns ``None`` when eligible.
-    Otherwise returns ``(reason, actionable_hint)`` for inclusion in error messages.
-    Eligibility rules: method must be ``GET`` and the operation must not require any non-path parameter.
+    Eligibility: method is ``GET`` and no required parameter outside the path.
     """
     if operation.method.lower() != 'get':
         return (
             f'method is {operation.method.upper()}',
             'Resources are read-only; declare expose.tool instead, or remove the resource declaration.',
         )
-    required_non_path = [f'{p.location}:{p.name}' for p in operation.parameters if p.required and p.location != 'path']
+    required_non_path = [
+        f'{parameter.location}:{parameter.name}'
+        for parameter in operation.parameters
+        if parameter.required and parameter.location != 'path'
+    ]
     if required_non_path:
         return (
             f'has required non-path parameter(s) {required_non_path}',
@@ -78,18 +80,13 @@ def _resource_ineligibility_reason(operation: OperationInfo) -> tuple[str, str] 
     return None
 
 
-def _is_eligible_for_auto_resource(operation: OperationInfo) -> bool:
-    """``True`` when ``operation`` qualifies for auto-promotion to a resource under ``mode=auto``."""
-    return _resource_ineligibility_reason(operation) is None
-
-
 def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -> None:
-    """Reject misconfigured explicit ``expose.resource`` opt-ins at startup with a fail-fast ``ValueError``.
+    """Raise ``ValueError`` when an explicit ``expose.resource`` opt-in cannot be honored.
 
-    Mirrors Phase 0's removal of the silent passthrough fallback.
-    Optional query / header / body parameters are allowed but are dropped from the resource surface.
+    Covers both the basic eligibility rules and the ``uri_template`` scheme override
+    that only spec-side opt-ins can carry.
     """
-    ineligibility = _resource_ineligibility_reason(operation)
+    ineligibility = _resource_eligibility_problem(operation)
     if ineligibility is not None:
         reason, hint = ineligibility
         raise ValueError(
@@ -105,43 +102,63 @@ def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -
         )
 
 
-def _partition_resource_operations(
+def _apply_yaml_overrides(
+    operations: list[OperationInfo],
+    yaml_overrides: dict[str, McpIntegration],
+    server_name: str,
+) -> list[OperationInfo]:
+    """Return ``operations`` with the YAML-side ``operations.<id>`` override applied to each match.
+
+    Each override fully replaces the spec-side ``x-mcp-integration`` for that operation;
+    no merging is attempted.
+    Raises ``ValueError`` if an ``operation_id`` in ``yaml_overrides`` is not exposed by this server.
+    """
+    if not yaml_overrides:
+        return operations
+    unmatched = set(yaml_overrides) - {operation.operation_id for operation in operations}
+    if unmatched:
+        raise ValueError(
+            f'Server "{server_name}": YAML operations override targets unknown operation_id(s) {sorted(unmatched)!r}; '
+            'check the spec or your allow / deny / marked_only policy.'
+        )
+    return [
+        operation.model_copy(update={'x_mcp_integration': yaml_overrides[operation.operation_id]})
+        if operation.operation_id in yaml_overrides
+        else operation
+        for operation in operations
+    ]
+
+
+def _partition_operations(
     operations: list[OperationInfo],
     server_name: str,
     mode: typing.Literal['tool_only', 'auto'] = 'tool_only',
 ) -> tuple[list[OperationInfo], list[OperationInfo]]:
-    """Split ``operations`` into ``(resource_ops, tool_ops)`` based on the server mode and per-op opt-ins.
+    """Split ``operations`` into ``(resource_operations, tool_operations)`` based on ``mode`` and per-operation opt-ins.
 
-    Rules:
+    Under ``mode='tool_only'`` (default) every operation becomes a tool,
+    and ``x-mcp-integration.expose.resource`` declarations are ignored.
 
-    - ``mode='tool_only'`` (default): every operation is a tool.
-      ``x-mcp-integration.expose.resource`` declarations are ignored.
-    - ``mode='auto'``: GET operations passing :func:`_is_eligible_for_auto_resource` are promoted to resources.
-      ``x-mcp-integration.expose.resource`` declarations are still honored as explicit opt-ins.
-      ``x-mcp-integration.expose.tool`` declarations on otherwise-eligible GETs keep them as tools
-      (explicit tool opt-in beats implicit resource promotion).
-      Declaring both ``expose.tool`` and ``expose.resource`` registers the op in both lists.
-
-    Resource-promoted operations are validated by :func:`_validate_resource_eligibility`,
-    which raises ``ValueError`` on any misconfig.
+    Under ``mode='auto'`` an operation becomes a resource when it either declares ``expose.resource`` explicitly
+    or qualifies for auto-promotion (no ``expose.tool`` and the eligibility rules pass).
+    Declaring both ``expose.tool`` and ``expose.resource`` registers the operation in both lists.
     """
     if mode == 'tool_only':
         return [], list(operations)
 
-    resource_ops: list[OperationInfo] = []
-    tool_ops: list[OperationInfo] = []
+    resource_operations: list[OperationInfo] = []
+    tool_operations: list[OperationInfo] = []
     for operation in operations:
-        is_resource = operation.resource_exposed or (
-            not operation.tool_exposed and _is_eligible_for_auto_resource(operation)
-        )
-        if is_resource:
+        if operation.resource_exposed:
             _validate_resource_eligibility(operation, server_name)
-            resource_ops.append(operation)
+            resource_operations.append(operation)
             if operation.tool_exposed:
-                tool_ops.append(operation)
+                tool_operations.append(operation)
+        elif not operation.tool_exposed and _resource_eligibility_problem(operation) is None:
+            resource_operations.append(operation)
         else:
-            tool_ops.append(operation)
-    return resource_ops, tool_ops
+            tool_operations.append(operation)
+    return resource_operations, tool_operations
 
 
 @dataclasses.dataclass
@@ -334,6 +351,8 @@ class Gateway:
                 'Check your allow/deny rules or the OpenAPI spec.'
             )
 
+        operations = _apply_yaml_overrides(operations, server_config.operations, server_config.name)
+
         self._register_server_bundle(
             server_config=server_config,
             spec=spec,
@@ -436,7 +455,7 @@ class Gateway:
             MetaToolGenerator(mcp=mcp, binding=binding).register(operations)
             tool_count = len(operations)
         else:
-            resource_ops, tool_ops = _partition_resource_operations(operations, server_config.name, server_config.mode)
+            resource_ops, tool_ops = _partition_operations(operations, server_config.name, server_config.mode)
             if resource_ops:
                 ResourceGenerator(mcp=mcp, binding=binding, server_name=server_config.name).register(resource_ops)
             if tool_ops:

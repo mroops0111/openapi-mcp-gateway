@@ -196,6 +196,8 @@ When values appear in more than one place, the rule is **defaults < YAML (`--con
 | `policy.deny` | list |  | Exclude matching operations |
 | `timeout` | float | `90` | HTTP timeout in seconds |
 | `exposure` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`list_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand. |
+| `mode` | string | `tool_only` | `tool_only` forces every operation to a tool and ignores any `expose.resource` declaration. `auto` promotes eligible GETs (no required non-path parameter) to MCP resources; spec-side `expose.resource` opt-ins still apply as explicit overrides. |
+| `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation. Useful when you do not control the upstream spec. |
 
 </details>
 
@@ -252,6 +254,22 @@ Eligibility is strict and validated at startup. The gateway refuses to start whe
 - an `uri_template` override that does not start with `<server_name>://`.
 
 Optional query / header parameters on a resource-exposed `GET` are silently dropped from the resource surface (resources have no input arguments beyond URI variables).
+
+If you do not control the upstream spec, declare the same overrides from YAML:
+
+```yaml
+servers:
+  - name: petstore
+    spec: https://petstore3.swagger.io/api/v3/openapi.json
+    mode: auto
+    operations:
+      getPetById:
+        expose:
+          resource:
+            name: pet
+```
+
+The YAML override fully replaces (does not merge with) any spec-side `x-mcp-integration` on the same operation. A runnable example lives at [`examples/petstore-override.yml`](examples/petstore-override.yml).
 
 ### Dynamic Exposure
 

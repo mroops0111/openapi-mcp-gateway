@@ -6,6 +6,8 @@ import typing
 import pydantic
 import yaml
 
+from .openapi import McpIntegration
+
 
 def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Recursively merge ``override`` into ``base``; ``override`` wins for non-dict values.
@@ -137,6 +139,7 @@ class ServerConfig(pydantic.BaseModel):
     timeout: float = 90
     exposure: typing.Literal['static', 'dynamic'] = 'static'
     mode: typing.Literal['tool_only', 'auto'] = 'tool_only'
+    operations: dict[str, McpIntegration] = pydantic.Field(default_factory=dict)
 
     @pydantic.field_validator('name')
     @classmethod
