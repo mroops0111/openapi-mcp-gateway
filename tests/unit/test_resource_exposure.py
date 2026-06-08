@@ -470,14 +470,14 @@ class TestResourceEligibilityValidation:
 
 
 class TestPartitioning:
-    """``_partition_resource_operations`` slots each op into resource / tool / both."""
+    """``_partition_resource_operations`` slots each op into resource / tool / both based on ``mode``."""
 
-    def test_no_opt_in_goes_to_tools(self):
-        """An operation without any ``expose`` block stays a tool."""
+    def test_no_opt_in_under_auto_promotes_eligible_get(self):
+        """Under ``mode=auto``, an eligible GET with no opt-in is auto-promoted to a resource."""
         op = OperationInfo(operation_id='get_pet', method='get', path='/pets/{petId}')
-        resources, tools = _partition_resource_operations([op], 'petstore')
-        assert resources == []
-        assert tools == [op]
+        resources, tools = _partition_resource_operations([op], 'petstore', mode='auto')
+        assert resources == [op]
+        assert tools == []
 
     def test_resource_only_replaces_tool(self):
         """``expose.resource`` alone moves the op into the resource bucket only."""
@@ -488,7 +488,7 @@ class TestPartitioning:
             parameters=[ParameterInfo(name='petId', location='path', required=True)],
             x_mcp_integration=_expose_resource(),
         )
-        resources, tools = _partition_resource_operations([op], 'petstore')
+        resources, tools = _partition_resource_operations([op], 'petstore', mode='auto')
         assert resources == [op]
         assert tools == []
 
@@ -500,7 +500,7 @@ class TestPartitioning:
             path='/pets/{petId}',
             x_mcp_integration=McpIntegration(expose=Expose(tool=ToolOverride(name='fetch_pet'))),
         )
-        resources, tools = _partition_resource_operations([op], 'petstore')
+        resources, tools = _partition_resource_operations([op], 'petstore', mode='auto')
         assert resources == []
         assert tools == [op]
 
@@ -513,7 +513,7 @@ class TestPartitioning:
             parameters=[ParameterInfo(name='petId', location='path', required=True)],
             x_mcp_integration=_expose_tool_and_resource(),
         )
-        resources, tools = _partition_resource_operations([op], 'petstore')
+        resources, tools = _partition_resource_operations([op], 'petstore', mode='auto')
         assert resources == [op]
         assert tools == [op]
 
@@ -526,7 +526,7 @@ class TestPartitioning:
             x_mcp_integration=_expose_resource(),
         )
         with pytest.raises(ValueError, match='method is POST'):
-            _partition_resource_operations([op], 'petstore')
+            _partition_resource_operations([op], 'petstore', mode='auto')
 
     def test_required_query_resource_raises(self):
         """A required query param on a resource-exposed GET fails fast at partition time."""
@@ -538,7 +538,63 @@ class TestPartitioning:
             x_mcp_integration=_expose_resource(),
         )
         with pytest.raises(ValueError, match='required non-path parameter'):
-            _partition_resource_operations([op], 'petstore')
+            _partition_resource_operations([op], 'petstore', mode='auto')
+
+    def test_tool_only_ignores_resource_optin(self):
+        """Under ``mode=tool_only`` (the default), ``expose.resource`` declarations are ignored."""
+        op = OperationInfo(
+            operation_id='get_pet',
+            method='get',
+            path='/pets/{petId}',
+            parameters=[ParameterInfo(name='petId', location='path', required=True)],
+            x_mcp_integration=_expose_resource(),
+        )
+        resources, tools = _partition_resource_operations([op], 'petstore', mode='tool_only')
+        assert resources == []
+        assert tools == [op]
+
+    def test_default_mode_is_tool_only(self):
+        """Calling without ``mode`` keyword defaults to ``tool_only``."""
+        op = OperationInfo(
+            operation_id='get_pet',
+            method='get',
+            path='/pets/{petId}',
+            x_mcp_integration=_expose_resource(),
+        )
+        resources, tools = _partition_resource_operations([op], 'petstore')
+        assert resources == []
+        assert tools == [op]
+
+    def test_auto_skips_ineligible_get(self):
+        """Under ``mode=auto``, a GET with a required non-path parameter stays a tool."""
+        op = OperationInfo(
+            operation_id='find_pets',
+            method='get',
+            path='/pets',
+            parameters=[ParameterInfo(name='status', location='query', required=True)],
+        )
+        resources, tools = _partition_resource_operations([op], 'petstore', mode='auto')
+        assert resources == []
+        assert tools == [op]
+
+    def test_auto_skips_non_get(self):
+        """Under ``mode=auto``, a non-GET operation stays a tool."""
+        op = OperationInfo(operation_id='create_pet', method='post', path='/pets')
+        resources, tools = _partition_resource_operations([op], 'petstore', mode='auto')
+        assert resources == []
+        assert tools == [op]
+
+    def test_auto_respects_explicit_tool_optin(self):
+        """Under ``mode=auto``, an eligible GET with explicit ``expose.tool`` stays a tool (explicit beats implicit)."""
+        op = OperationInfo(
+            operation_id='get_pet',
+            method='get',
+            path='/pets/{petId}',
+            x_mcp_integration=McpIntegration(expose=Expose(tool=ToolOverride())),
+        )
+        resources, tools = _partition_resource_operations([op], 'petstore', mode='auto')
+        assert resources == []
+        assert tools == [op]
 
 
 class TestDualExposureRegistration:
@@ -555,7 +611,7 @@ class TestDualExposureRegistration:
             parameters=[ParameterInfo(name='petId', location='path', required=True, schema={'type': 'string'})],
             x_mcp_integration=_expose_tool_and_resource(),
         )
-        resources, tools = _partition_resource_operations([op], 'petstore')
+        resources, tools = _partition_resource_operations([op], 'petstore', mode='auto')
         ResourceGenerator(mcp=mcp, binding=binding, server_name='petstore').register(resources)
         ToolGenerator(mcp=mcp, binding=binding).register(tools)
 
