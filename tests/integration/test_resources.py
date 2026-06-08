@@ -23,11 +23,12 @@ def _stub_context() -> Context:
 
 
 def _spec_with_resource_optin() -> dict:
-    """OpenAPI spec exercising both kinds of resource exposure plus a regular tool.
+    """OpenAPI spec exercising both kinds of resource exposure plus eligibility edge cases.
 
-    - ``listPets`` (GET /pets): no opt-in, stays a tool.
-    - ``getPet`` (GET /pets/{petId}): templated resource.
-    - ``getInventory`` (GET /store/inventory): concrete resource (no path params).
+    - ``listPets`` (GET /pets, no opt-in, no required params): under ``mode=auto`` auto-promotes to a resource.
+    - ``findPets`` (GET /pets/find, no opt-in, required query): not eligible, stays a tool even under ``mode=auto``.
+    - ``getPet`` (GET /pets/{petId}, explicit ``expose.resource``): templated resource.
+    - ``getInventory`` (GET /store/inventory, explicit ``expose.resource``): concrete resource.
     """
     return {
         'openapi': '3.0.0',
@@ -38,6 +39,21 @@ def _spec_with_resource_optin() -> dict:
                 'get': {
                     'operationId': 'listPets',
                     'summary': 'List pets',
+                    'responses': {'200': {'description': 'ok'}},
+                },
+            },
+            '/pets/find': {
+                'get': {
+                    'operationId': 'findPets',
+                    'summary': 'Search pets by status',
+                    'parameters': [
+                        {
+                            'name': 'status',
+                            'in': 'query',
+                            'required': True,
+                            'schema': {'type': 'string'},
+                        },
+                    ],
                     'responses': {'200': {'description': 'ok'}},
                 },
             },
@@ -123,7 +139,9 @@ class TestResourceExposureEndToEnd:
     @pytest.fixture
     def gateway(self, tmp_path):
         spec_path = _write_spec(tmp_path, _spec_with_resource_optin())
-        return Gateway.from_config(GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path))]))
+        return Gateway.from_config(
+            GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path), mode='auto')])
+        )
 
     async def test_path_param_resource_listed_as_template(self, gateway):
         """A GET with a path param appears under ``resources/templates/list`` with the derived URI."""
@@ -140,12 +158,13 @@ class TestResourceExposureEndToEnd:
         assert 'petstore://store/inventory' in uris
 
     async def test_resources_excluded_from_tools(self, gateway):
-        """Opted-in GETs disappear from ``tools/list``; non-opted-in GET remains."""
+        """Under ``mode=auto``, every eligible GET (opt-in or not) leaves ``tools/list``; ineligible GETs stay."""
         mcp = gateway._servers[0].mcp
         tool_names = {t.name for t in mcp._tool_manager.list_tools()}
         assert 'get_pet' not in tool_names
         assert 'get_inventory' not in tool_names
-        assert 'list_pets' in tool_names
+        assert 'list_pets' not in tool_names
+        assert 'find_pets' in tool_names
 
     async def test_template_metadata_from_spec(self, gateway):
         """Description and mime type fall back to spec values when not overridden in the resource block."""
@@ -162,7 +181,9 @@ class TestDualExposureEndToEnd:
     @pytest.fixture
     def gateway(self, tmp_path):
         spec_path = _write_spec(tmp_path, _spec_with_dual_optin())
-        return Gateway.from_config(GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path))]))
+        return Gateway.from_config(
+            GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path), mode='auto')])
+        )
 
     async def test_tool_and_resource_both_present(self, gateway):
         """The operation surfaces as a tool (under its overridden name) AND as a resource template."""
@@ -181,7 +202,9 @@ class TestResourceMisconfigFailsFast:
         """A POST opted into ``expose.resource`` aborts ``Gateway.from_config`` with a clear error."""
         spec_path = _write_spec(tmp_path, _spec_with_misconfig_post_resource())
         with pytest.raises(ValueError, match='method is POST'):
-            Gateway.from_config(GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path))]))
+            Gateway.from_config(
+                GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path), mode='auto')])
+            )
 
 
 class TestResourceUpstreamCall:
@@ -202,7 +225,9 @@ class TestResourceUpstreamCall:
         mock_upstream(handler)
 
         spec_path = _write_spec(tmp_path, _spec_with_resource_optin())
-        gateway = Gateway.from_config(GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path))]))
+        gateway = Gateway.from_config(
+            GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path), mode='auto')])
+        )
         mcp = gateway._servers[0].mcp
         contents = list(await mcp.read_resource('petstore://store/inventory'))
         assert captured['url'].startswith('https://petstore.example.com/v1/store/inventory')
@@ -230,7 +255,9 @@ class TestResourceUpstreamCall:
         mock_upstream(handler)
 
         spec_path = _write_spec(tmp_path, _spec_with_resource_optin())
-        gateway = Gateway.from_config(GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path))]))
+        gateway = Gateway.from_config(
+            GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path), mode='auto')])
+        )
         mcp = gateway._servers[0].mcp
         template = mcp._resource_manager._templates['petstore://pets/{petId}']
         raw_fn = template.fn.raw_function
