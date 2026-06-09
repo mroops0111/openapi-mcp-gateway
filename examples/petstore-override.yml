@@ -18,6 +18,7 @@ transport: streamable-http
 servers:
   - name: petstore
     spec: https://petstore3.swagger.io/api/v3/openapi.json
+    base_url: https://petstore.swagger.io/v2  # v3 demo endpoint is flaky; v2 shares the same path templates
     mode: auto
     operations:
       getPetById:
