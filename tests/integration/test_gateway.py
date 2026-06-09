@@ -244,10 +244,10 @@ class TestDynamicExposureEndToEnd:
         mcp = dynamic_gateway._servers[0].mcp
         tools = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
 
-        listing = json.loads(await tools['list_operations'].fn(ctx=_stub_context()))
-        assert {entry['name'] for entry in listing} >= {'list_pets', 'get_pet_by_id'}
+        listing = (await tools['list_operations'].fn(ctx=_stub_context())).structuredContent
+        assert {entry['name'] for entry in listing['operations']} >= {'list_pets', 'get_pet_by_id'}
 
-        described = json.loads(await tools['get_operation'].fn(name='list_pets', ctx=_stub_context()))
+        described = (await tools['get_operation'].fn(name='list_pets', ctx=_stub_context())).structuredContent
         assert described['input_schema']['properties']['limit']['type'] == 'integer'
 
         result = await tools['call_operation'].fn(name='list_pets', arguments={'limit': 5}, ctx=_stub_context())

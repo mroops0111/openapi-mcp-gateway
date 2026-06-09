@@ -6,6 +6,8 @@ import typing
 import pydantic
 import yaml
 
+from .openapi import McpIntegration
+
 
 def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Recursively merge ``override`` into ``base``; ``override`` wins for non-dict values.
@@ -47,7 +49,11 @@ class AuthConfig(pydantic.BaseModel):
 
     ``token``, ``client_id``, and ``client_secret`` accept ``${ENV_VAR}``
     and ``${ENV_VAR:-default}`` substitution at resolve time.
+    Numeric OAuth credentials are coerced from int to str,
+    so unquoted YAML values still parse on providers that use numeric ``client_id`` (Asana, Facebook).
     """
+
+    model_config = pydantic.ConfigDict(coerce_numbers_to_str=True)
 
     type: typing.Literal['bearer', 'api_key', 'oauth2', 'none'] = 'none'
     token: str | None = None
@@ -137,6 +143,7 @@ class ServerConfig(pydantic.BaseModel):
     timeout: float = 90
     exposure: typing.Literal['static', 'dynamic'] = 'static'
     mode: typing.Literal['tool_only', 'auto'] = 'tool_only'
+    operations: dict[str, McpIntegration] = pydantic.Field(default_factory=dict)
 
     @pydantic.field_validator('name')
     @classmethod

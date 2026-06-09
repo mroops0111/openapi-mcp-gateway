@@ -1,0 +1,33 @@
+# Petstore3 spec with YAML-side per-operation overrides.
+#
+# Demonstrates `operations.<operation_id>` in the server config:
+# each entry mirrors the OpenAPI `x-mcp-integration` extension and fully replaces
+# any spec-side x-mcp-integration for that operation, with no need to fork the spec.
+#
+# Result against the vanilla Petstore3 spec:
+#   - getPetById       -> resource template `petstore://pet/{petId}` named `pet`
+#   - getInventory     -> concrete resource `petstore://store/inventory` named `inventory`
+#   - everything else  -> handled by `mode: auto` (eligible GETs auto-promote, the rest stay tools)
+#
+# Usage: openapi-mcp-gateway --config examples/petstore-override.yml
+
+host: "127.0.0.1"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: petstore
+    spec: https://petstore3.swagger.io/api/v3/openapi.json
+    base_url: https://petstore.swagger.io/v2  # v3 demo endpoint is flaky; v2 shares the same path templates
+    mode: auto
+    operations:
+      getPetById:
+        expose:
+          resource:
+            name: pet
+            mime_type: application/json
+      getInventory:
+        expose:
+          resource:
+            name: inventory
+            mime_type: application/json

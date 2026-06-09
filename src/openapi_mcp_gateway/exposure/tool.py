@@ -1,6 +1,5 @@
 import dataclasses
 import inspect
-import json
 import logging
 import typing
 
@@ -18,19 +17,21 @@ from ._shared import (
     derive_description,
     derive_name,
 )
-from ._upstream import _build_upstream_closure
+from ._upstream import _build_success_result, _build_upstream_closure
 
 
 logger = logging.getLogger(__name__)
 
 
 _LIST_OPERATIONS_DESCRIPTION = (
-    'List every operation available on this server as `{name, description}` entries. '
+    'List every operation available on this server. '
+    'Returns `{operations: [{name, description}, ...]}`. '
     'Call `get_operation(name)` next to fetch the input schema for one specific operation.'
 )
 
 _GET_OPERATION_DESCRIPTION = (
-    'Return the input schema for one operation as `{name, description, input_schema}`. '
+    'Return the input schema for one operation. '
+    'Returns `{name, description, input_schema}`. '
     'Use the JSON Schema to construct the `arguments` payload for `call_operation`.'
 )
 
@@ -227,18 +228,17 @@ class MetaToolGenerator:
         registry = self._registry
 
         @self.mcp.tool(name='list_operations', description=_LIST_OPERATIONS_DESCRIPTION)
-        async def list_operations(ctx: Context) -> str:
+        async def list_operations(ctx: Context) -> CallToolResult:
             entries = [{'name': name, 'description': entry.description} for name, entry in registry.items()]
-            return json.dumps(entries, ensure_ascii=False)
+            return _build_success_result({'operations': entries})
 
         @self.mcp.tool(name='get_operation', description=_GET_OPERATION_DESCRIPTION)
-        async def get_operation(name: str, ctx: Context) -> str:
+        async def get_operation(name: str, ctx: Context) -> CallToolResult:
             entry = registry.get(name)
             if entry is None:
                 raise _unknown_operation_error(name)
-            return json.dumps(
-                {'name': name, 'description': entry.description, 'input_schema': entry.input_schema},
-                ensure_ascii=False,
+            return _build_success_result(
+                {'name': name, 'description': entry.description, 'input_schema': entry.input_schema}
             )
 
         @self.mcp.tool(name='call_operation', description=_CALL_OPERATION_DESCRIPTION)

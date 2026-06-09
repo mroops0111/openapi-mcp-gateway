@@ -339,11 +339,13 @@ class TestListOperations:
         generator, mcp = _meta_generator()
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'list_operations')
-        payload = json.loads(await tool.fn(ctx=_stub_context()))
-        assert payload == [
-            {'name': 'list_pets', 'description': 'List all pets.'},
-            {'name': 'get_pet_by_id', 'description': 'Get one pet.'},
-        ]
+        payload = (await tool.fn(ctx=_stub_context())).structuredContent
+        assert payload == {
+            'operations': [
+                {'name': 'list_pets', 'description': 'List all pets.'},
+                {'name': 'get_pet_by_id', 'description': 'Get one pet.'},
+            ]
+        }
 
     async def test_falls_back_to_method_path_when_no_text(self):
         """An op without description or summary falls back to ``METHOD /path``."""
@@ -354,8 +356,8 @@ class TestListOperations:
             ]
         )
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'list_operations')
-        payload = json.loads(await tool.fn(ctx=_stub_context()))
-        assert payload == [{'name': 'ping', 'description': 'GET /ping'}]
+        payload = (await tool.fn(ctx=_stub_context())).structuredContent
+        assert payload == {'operations': [{'name': 'ping', 'description': 'GET /ping'}]}
 
 
 class TestGetOperation:
@@ -366,7 +368,7 @@ class TestGetOperation:
         generator, mcp = _meta_generator()
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = json.loads(await tool.fn(name='get_pet_by_id', ctx=_stub_context()))
+        payload = (await tool.fn(name='get_pet_by_id', ctx=_stub_context())).structuredContent
         assert payload['name'] == 'get_pet_by_id'
         assert payload['description'] == 'Get one pet.'
         schema = payload['input_schema']
@@ -387,7 +389,7 @@ class TestGetOperation:
         generator, mcp = _meta_generator()
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = json.loads(await tool.fn(name='list_pets', ctx=_stub_context()))
+        payload = (await tool.fn(name='list_pets', ctx=_stub_context())).structuredContent
         assert 'required' not in payload['input_schema']
 
     async def test_param_description_propagates(self):
@@ -412,7 +414,7 @@ class TestGetOperation:
             ]
         )
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = json.loads(await tool.fn(name='list_pets', ctx=_stub_context()))
+        payload = (await tool.fn(name='list_pets', ctx=_stub_context())).structuredContent
         assert payload['input_schema']['properties']['limit']['description'] == 'Max items.'
 
 

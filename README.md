@@ -16,10 +16,11 @@ uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 - **Multi-spec, multi-auth.** Mount GitHub, an OAuth2 SaaS, and your internal API in one process. Each `(server, user)` pair has its own token namespace, no cross-talk. Bearer, API key, OAuth2 `authorization_code` for end-user delegation, and `client_credentials` for service flows all coexist.
 - **FastAPI native, route-level.** Decorate individual routes with `@mcp_tool` to opt them in one by one, no whole-app exposure. Routes run in-process via `httpx.ASGITransport`, no extra network hop and no second spec to maintain.
 - **Dynamic exposure.** For specs with hundreds of operations that blow the LLM context window, flip a server to `exposure: dynamic` and the agent walks `list → get → call` meta-tools on demand.
+- **Resource auto-promotion.** Set `mode: auto` and the gateway promotes eligible GETs to MCP resources instead of tools, so the LLM's tool list stays small and addressable reads attach by URI on demand. Layer per-operation overrides from YAML when you do not own the upstream spec.
 - **Spec-compliant authorization.** Audience-bound tokens, no silent passthrough to third-party upstreams [[MCP Authorization Spec: Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction)].
 - **Pluggable token store.** Memory by default. Switch to Redis when you need to share state across replicas.
 
-Streamable HTTP, SSE, and stdio all supported on the same binary. Works with Claude Desktop, Cursor, Cline, or any other MCP client.
+Streamable HTTP, SSE, and stdio all supported on the same binary. Works with Claude Desktop, Cursor, or any other MCP client.
 
 ---
 
@@ -196,6 +197,8 @@ When values appear in more than one place, the rule is **defaults < YAML (`--con
 | `policy.deny` | list |  | Exclude matching operations |
 | `timeout` | float | `90` | HTTP timeout in seconds |
 | `exposure` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`list_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand. |
+| `mode` | string | `tool_only` | `tool_only` forces every operation to a tool and ignores any `expose.resource` declaration. `auto` promotes eligible GETs (no required non-path parameter) to MCP resources; spec-side `expose.resource` opt-ins still apply as explicit overrides. |
+| `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation. Useful when you do not control the upstream spec. |
 
 </details>
 
@@ -213,45 +216,56 @@ Operations can also be opted in from the spec side with `x-mcp-integration: {exp
 
 ### Resource Exposure
 
-`GET` operations that return addressable, read-only data are a better fit for the MCP **resource** primitive than for a tool. Most MCP clients do not auto-load resources into the LLM context, so promoting catalog-style endpoints to resources saves tokens without losing reachability.
+`GET` operations that return addressable read-only data are a better fit for the MCP **resource** primitive than for a tool. Most MCP clients do not auto-load resources into the LLM context, so promoting catalog-style endpoints to resources saves tokens without losing reachability.
 
-Opt in per operation with `x-mcp-integration.expose.resource`:
+The default `mode: tool_only` exposes every operation as a tool. Switch to `mode: auto` to auto-promote eligible GETs (no required `query` / `header` / `body` parameter) to MCP resources:
+
+```yaml
+servers:
+  - name: petstore
+    spec: https://petstore3.swagger.io/api/v3/openapi.json
+    mode: auto
+```
+
+That alone is enough for the common case. Against the vanilla Petstore3 spec it produces 13 tools, 3 concrete resources, and 3 resource templates with zero spec edits.
+
+For finer per-operation control (rename the resource, set a custom URI template, set a non-JSON MIME type), use the `operations` map in YAML:
+
+```yaml
+servers:
+  - name: petstore
+    spec: https://petstore3.swagger.io/api/v3/openapi.json
+    mode: auto
+    operations:
+      getPetById:
+        expose:
+          resource:
+            name: pet
+            mime_type: application/json
+      getInventory:
+        expose:
+          resource:
+            name: inventory
+```
+
+The `operations` keys are matched against `operationId` in the spec; an unknown id raises at startup so typos do not silently no-op. Each entry fully replaces (does not merge with) the spec-side `x-mcp-integration` for that operation. A runnable demo lives at [`examples/petstore-override.yml`](examples/petstore-override.yml).
+
+If you own the upstream spec, you can write the same opt-in inline with `x-mcp-integration.expose.resource`:
 
 ```yaml
 paths:
   /pets/{petId}:
     get:
       operationId: getPet
-      description: Returns one pet record by id.
       x-mcp-integration:
         expose:
           resource:
-            name: pet                      # optional; defaults to operationId
-            description: One pet by id.    # optional; defaults to OpenAPI description/summary
-            mime_type: application/json    # optional; defaults to application/json
+            name: pet
+            mime_type: application/json
             # uri_template: petstore://v2/pets/{petId}  # optional override; must start with "<server>://"
 ```
 
-The gateway registers `petstore://pets/{petId}` as an MCP resource template (URI scheme defaults to the server's `name`). Path placeholders pass through to the URI template; the upstream HTTP call shape is identical to the tool path, so auth and base URL behave the same.
-
-By default declaring `expose.resource` **replaces** the tool for that operation. To keep both surfaces, also declare `expose.tool`:
-
-```yaml
-x-mcp-integration:
-  expose:
-    tool: {}
-    resource: {}
-```
-
-The first cut is read-only: `resources/list`, `resources/templates/list`, `resources/read`. Subscriptions are not implemented because REST has no native push.
-
-Eligibility is strict and validated at startup. The gateway refuses to start when `expose.resource` is declared on:
-
-- a non-`GET` method (resources are read-only),
-- a `GET` with required `query` / `header` / `body` parameters (URI templates only carry path parameters),
-- an `uri_template` override that does not start with `<server_name>://`.
-
-Optional query / header parameters on a resource-exposed `GET` are silently dropped from the resource surface (resources have no input arguments beyond URI variables).
+Declaring both `expose.tool` and `expose.resource` registers the operation in both surfaces. Resource reads are validated at startup: non-`GET` methods, required non-path parameters, and `uri_template` overrides that do not start with `<server>://` all abort `Gateway.from_config` with a concrete error. Subscriptions are not implemented because REST has no native push.
 
 ### Dynamic Exposure
 
