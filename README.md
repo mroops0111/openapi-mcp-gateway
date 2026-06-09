@@ -20,7 +20,7 @@ uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 - **Spec-compliant authorization.** Audience-bound tokens, no silent passthrough to third-party upstreams [[MCP Authorization Spec: Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction)].
 - **Pluggable token store.** Memory by default. Switch to Redis when you need to share state across replicas.
 
-Streamable HTTP, SSE, and stdio all supported on the same binary. Works with Claude Desktop, Cursor, Cline, or any other MCP client.
+Streamable HTTP, SSE, and stdio all supported on the same binary. Works with Claude Desktop, Cursor, or any other MCP client.
 
 ---
 
