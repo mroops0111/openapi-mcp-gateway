@@ -19,7 +19,7 @@ uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 - **Resource auto-promotion.** Set `mode: auto` and eligible GETs register as MCP resources instead of tools, so the tool list stays small while reads remain addressable by URI. Layer per-operation overrides in YAML when you do not own the upstream spec.
 - **Spec-compliant authorization.** Audience-bound tokens, no silent passthrough to third-party upstreams [[MCP Authorization Spec: Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction)]. Tools emit protocol-native `title`, `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), and `structuredContent` so the agent reads structured error bodies without re-parsing text.
 - **Tool name and description overrides.** Rewrite ugly `operationId`s and empty descriptions in YAML when you do not own the upstream spec, no fork required.
-- **Pluggable token store.** Memory by default; switch to Redis when you need to share state across replicas.
+- **Pluggable token store.** Memory by default. Switch to Redis when you need to share state across replicas.
 
 Streamable HTTP, SSE, and stdio on the same binary. Works with Claude Desktop, Cursor, or any other MCP client.
 
@@ -46,9 +46,9 @@ Requires Python 3.11+.
 ### 1. Public API, No Auth
 
 ```bash
-# `uvx` runs the published package without installing it into your project;
-# swap in `uv run` once you've added the gateway as a dependency.
-uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
+# `uv run` assumes you ran `uv add openapi-mcp-gateway` (see Installation above).
+# To skip the install, swap in `uvx openapi-mcp-gateway` to run the published package directly.
+uv run openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
 ```
 
 Connect an MCP client to `http://127.0.0.1:8000/petstore/mcp`.
@@ -66,7 +66,7 @@ uv run openapi-mcp-gateway \
 
 ### 3. OAuth2, Per-User Delegation (`authorization_code`)
 
-The gateway runs its own OAuth server so each MCP client authenticates as its own end-user; tokens are minted per session.
+The gateway runs its own OAuth server so each MCP client authenticates as its own end-user, with tokens minted per session.
 
 ```bash
 export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
@@ -141,9 +141,9 @@ export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
 uv run openapi-mcp-gateway --config servers.yml
 ```
 
-Runnable variants live in [`examples/`](examples/); each YAML lists prerequisites at the top.
+Runnable variants live in [`examples/`](examples/). Each YAML lists its prerequisites at the top.
 
-`${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`; override with `auth.authorization_url` / `auth.token_url` / `auth.scopes` when the spec is incomplete.
+`${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`. Override with `auth.authorization_url` / `auth.token_url` / `auth.scopes` when the spec is incomplete.
 
 ### 6. Local Desktop Client (stdio)
 
@@ -168,9 +168,9 @@ For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
 
 ## Configuration
 
-Run `uv run openapi-mcp-gateway --help` for the CLI reference. The [Quick Start](#quick-start) examples cover most setups; the full field reference is below.
+Run `uv run openapi-mcp-gateway --help` for the CLI reference. The [Quick Start](#quick-start) examples cover most setups. The full field reference is below.
 
-When values appear in more than one place, the rule is **defaults < YAML (`--config`) < CLI flags < `Gateway.run(...)` kwargs**, and a layer only overrides what it actually sets. Sub-trees (`logging`, per-server `auth`) merge field-by-field; the `servers` list is replaced wholesale.
+Configuration merges in this order, with each layer overriding the previous: **defaults → YAML (`--config`) → CLI flags → `Gateway.run(...)` kwargs**. A layer only overrides the fields it actually sets, so `--log-level=DEBUG` won't reset `logging.format` from your YAML. Nested objects like `logging` and per-server `auth` merge field-by-field. The `servers` list is the exception, replaced wholesale rather than merged entry-by-entry.
 
 <details>
 <summary><b>Top-Level Fields</b></summary>
@@ -195,7 +195,7 @@ When values appear in more than one place, the rule is **defaults < YAML (`--con
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `name` | string | required | Unique identifier; mount path defaults to `/{name}` |
+| `name` | string | required | Unique identifier. Mount path defaults to `/{name}` |
 | `spec` | string | required | Path or URL to OpenAPI document (JSON or YAML) |
 | `base_url` | string | from spec | Override the upstream base URL |
 | `auth.type` | string | `none` | `none`, `bearer`, `api_key`, or `oauth2` |
@@ -207,7 +207,7 @@ When values appear in more than one place, the rule is **defaults < YAML (`--con
 | `policy.deny` | list |  | Exclude matching operations |
 | `timeout` | float | `90` | HTTP timeout in seconds |
 | `exposure` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`list_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand. |
-| `mode` | string | `tool_only` | `tool_only` forces every operation to a tool and ignores any `expose.resource` declaration. `auto` promotes eligible GETs (no required non-path parameter) to MCP resources; spec-side `expose.resource` opt-ins still apply as explicit overrides. |
+| `mode` | string | `tool_only` | `tool_only` forces every operation to a tool and ignores any `expose.resource` declaration. `auto` promotes eligible GETs (no required non-path parameter) to MCP resources, and spec-side `expose.resource` opt-ins still apply as explicit overrides. |
 | `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation. Useful when you do not control the upstream spec. |
 
 </details>
@@ -258,7 +258,7 @@ servers:
             name: inventory
 ```
 
-Keys are matched against `operationId`; an unknown id raises at startup so typos do not silently no-op. Each entry fully replaces (does not merge with) the spec-side `x-mcp-integration`. A runnable demo lives at [`examples/petstore-override.yml`](examples/petstore-override.yml).
+Keys are matched against `operationId`. An unknown id raises at startup so typos do not silently no-op. Each entry fully replaces (does not merge with) the spec-side `x-mcp-integration`. A runnable demo lives at [`examples/petstore-override.yml`](examples/petstore-override.yml).
 
 If you own the upstream spec, write the same opt-in inline with `x-mcp-integration.expose.resource`:
 
@@ -272,7 +272,7 @@ paths:
           resource:
             name: pet
             mime_type: application/json
-            # uri_template: petstore://v2/pets/{petId}  # optional override; must start with "<server>://"
+            # uri_template: petstore://v2/pets/{petId}  # optional override, must start with "<server>://"
 ```
 
 Declaring both `expose.tool` and `expose.resource` registers the operation on both surfaces. Resource declarations are validated at startup: non-`GET` methods, required non-path parameters, and `uri_template` values that do not start with `<server>://` abort `Gateway.from_config` with a concrete error. Subscriptions are not implemented because REST has no native push.
@@ -318,13 +318,13 @@ The three meta-tools:
 - `get_operation(name)` returns one operation's JSON Schema for input arguments.
 - `call_operation(name, arguments)` invokes that operation against the upstream.
 
-The LLM walks `list → get → call` to discover and invoke operations on demand. Auth, path templating, and per-operation request shape match static mode; only the surfacing changes.
+The LLM walks `list → get → call` to discover and invoke operations on demand. Auth, path templating, and per-operation request shape match static mode. Only the surfacing changes.
 
 `exposure` is per-server, so `/github/mcp` can run `dynamic` while `/petstore/mcp` runs `static` in the same process.
 
 ### Logging
 
-Configure via the `logging.*` YAML keys or via CLI flags (`--log-level`, `--log-format`, `--log-file`); `-v` and `-q` are shortcuts for `DEBUG` and `WARNING`. CLI flags override YAML field-by-field, following the precedence rule above.
+Configure via the `logging.*` YAML keys or via CLI flags (`--log-level`, `--log-format`, `--log-file`). `-v` and `-q` are shortcuts for `DEBUG` and `WARNING`. CLI flags override YAML field-by-field, following the precedence rule above.
 
 ## Python API
 
