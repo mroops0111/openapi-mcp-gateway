@@ -71,6 +71,18 @@ class TestAuthConfig:
         auth = AuthConfig(type='api_key', token='key123', api_key_header='X-Custom')
         assert auth.resolve_header_name() == 'X-Custom'
 
+    def test_numeric_client_id_coerced_to_string(self):
+        """Unquoted numeric ``client_id`` in YAML (Asana 18-digit, Facebook etc.) parses without raising."""
+        auth = AuthConfig.model_validate({'type': 'oauth2', 'client_id': 1214443090174193, 'client_secret': 'abc'})
+        assert auth.client_id == '1214443090174193'
+        assert isinstance(auth.client_id, str)
+
+    def test_numeric_token_coerced_to_string(self):
+        """Same coercion applies to ``token`` and ``client_secret`` for consistency."""
+        auth = AuthConfig.model_validate({'type': 'bearer', 'token': 99999})
+        assert auth.token == '99999'
+        assert isinstance(auth.token, str)
+
     def test_resolve_bearer_from_env(self, monkeypatch):
         """``${VAR}`` placeholders are resolved against the environment."""
         monkeypatch.setenv('TEST_TOKEN', 'env-token')

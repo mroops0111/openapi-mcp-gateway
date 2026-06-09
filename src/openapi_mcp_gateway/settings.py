@@ -49,7 +49,11 @@ class AuthConfig(pydantic.BaseModel):
 
     ``token``, ``client_id``, and ``client_secret`` accept ``${ENV_VAR}``
     and ``${ENV_VAR:-default}`` substitution at resolve time.
+    Numeric OAuth credentials are coerced from int to str,
+    so unquoted YAML values still parse on providers that use numeric ``client_id`` (Asana, Facebook).
     """
+
+    model_config = pydantic.ConfigDict(coerce_numbers_to_str=True)
 
     type: typing.Literal['bearer', 'api_key', 'oauth2', 'none'] = 'none'
     token: str | None = None
