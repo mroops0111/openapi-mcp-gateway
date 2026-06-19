@@ -76,10 +76,9 @@ def stderr_supports_color() -> bool:
 def setup(level: str = 'INFO', format: str = 'text', file: str | None = None) -> None:
     """Attach JSON or text handlers to the root logger for gateway processes.
 
-    Clears existing root handlers on each call. Third-party loggers under
-    ``uvicorn`` / ``mcp`` are stripped of duplicate handlers so records flow
-    through this configuration. stderr uses color only when it is a TTY and
-    ``NO_COLOR`` is unset.
+    Clears existing root handlers on each call.
+    Third-party loggers under ``uvicorn`` / ``mcp`` are stripped of duplicate handlers,
+    so records flow through this configuration. stderr uses color only when it is a TTY and ``NO_COLOR`` is unset.
     """
     is_json = format == 'json'
 
@@ -98,8 +97,8 @@ def setup(level: str = 'INFO', format: str = 'text', file: str | None = None) ->
     for h in handlers:
         root.addHandler(h)
 
-    # Strip third-party loggers' own handlers (uvicorn's column-aligned
-    # format, mcp's rich format) so they propagate up to our root.
+    # Strip third-party loggers' own handlers (uvicorn's column-aligned format,
+    # mcp's rich format) so they propagate up to our root.
     for name in list(logging.Logger.manager.loggerDict):
         if name.startswith(THIRD_PARTY_PREFIXES):
             lib = logging.getLogger(name)

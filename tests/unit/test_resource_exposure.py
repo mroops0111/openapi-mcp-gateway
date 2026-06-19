@@ -60,7 +60,9 @@ def _resource_override_name(operation: OperationInfo) -> str | None:
 
 
 def _resource_override_description(operation: OperationInfo) -> str | None:
-    """Pull ``expose.resource.description`` off ``operation`` (or ``None``), for passing to :func:`derive_description`."""
+    """Pull ``expose.resource.description`` off ``operation`` (or ``None``),
+    for passing to :func:`derive_description`.
+    """
     expose = operation.x_mcp_integration.expose
     override = expose.resource if expose else None
     return override.description if override else None
@@ -301,8 +303,7 @@ class TestResourceRead:
 
     Template reads (path params present) require an explicit ``ctx``.
     We pass a stub matching the existing tool-test pattern.
-    Concrete reads (no path params) take zero arguments,
-    driving the ``_NullContext`` fallback internally.
+    Concrete reads (no path params) take zero arguments, driving the ``_NullContext`` fallback internally.
     """
 
     async def test_path_param_substituted_on_read(self, mock_upstream):

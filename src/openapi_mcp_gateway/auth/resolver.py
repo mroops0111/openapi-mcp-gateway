@@ -9,9 +9,9 @@ from .token_source import TokenSource
 class AuthResolver(abc.ABC):
     """Strategy that produces the upstream HTTP headers for one MCP tool call.
 
-    The contract is header-shaped, not value-shaped: implementations return the
-    full set of headers (``Authorization``, ``X-API-Key``, ...) they want on the
-    upstream request, and ``ToolGenerator`` merges that dict in unchanged.
+    The contract is header-shaped, not value-shaped:
+    implementations return the full set of headers (``Authorization``, ``X-API-Key``, ...) they want on the request,
+    and ``ToolGenerator`` merges that dict in unchanged.
     """
 
     @abc.abstractmethod
@@ -29,8 +29,7 @@ class NullAuthResolver(AuthResolver):
 class StaticAuthResolver(AuthResolver):
     """Fixed credential header captured at construction time.
 
-    Used for ``bearer`` (``Authorization: Bearer ...``) and ``api_key``
-    (``<api_key_header>: ...``) configs.
+    Used for ``bearer`` (``Authorization: Bearer ...``) and ``api_key`` (``<api_key_header>: ...``) configs.
     """
 
     def __init__(self, header_value: str, header_name: str = 'Authorization') -> None:
@@ -58,8 +57,8 @@ class AuthorizationCodeAuthResolver(AuthResolver):
 class TokenSourceAuthResolver(AuthResolver):
     """Resolver that delegates to a ``TokenSource`` for dynamic bearer tokens.
 
-    Used by service-level OAuth flows (e.g. ``client_credentials``) where one
-    token is shared across all MCP clients and the gateway handles refreshes.
+    Used by service-level OAuth flows (e.g. ``client_credentials``) where one token is shared across all MCP clients,
+    and the gateway handles refreshes.
     """
 
     def __init__(self, token_source: TokenSource) -> None:
@@ -75,8 +74,7 @@ class TokenSourceAuthResolver(AuthResolver):
 class PassthroughAuthResolver(AuthResolver):
     """Forward selected headers from the live MCP request to the upstream call.
 
-    Used when the gateway and the upstream API share an OAuth realm,
-    typically the FastAPI in-process integration.
+    Used when the gateway and the upstream API share an OAuth realm, typically the FastAPI in-process integration.
     ``header_names`` lists which headers to copy verbatim (case-insensitive);
     the default forwards only ``Authorization``.
     """
@@ -105,9 +103,8 @@ class PassthroughAuthResolver(AuthResolver):
 class CompositeAuthResolver(AuthResolver):
     """Compose multiple resolvers; later resolvers override earlier ones on key collision.
 
-    Used to combine an incoming-header forwarder (e.g. ``PassthroughAuthResolver``
-    for ``X-API-Key`` or ``Cookie``) with a credential-minting resolver
-    (e.g. ``TokenSourceAuthResolver`` for ``client_credentials``).
+    Used to combine an incoming-header forwarder (e.g. ``PassthroughAuthResolver`` for ``X-API-Key`` or ``Cookie``),
+    with a credential-minting resolver (e.g. ``TokenSourceAuthResolver`` for ``client_credentials``).
     Place the resolver that should win for ``Authorization`` last.
     """
 

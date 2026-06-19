@@ -37,12 +37,11 @@ def mark_tool(
     """Imperative version of ``@mcp_tool`` for routes you cannot decorate at definition.
 
     Use when the route lives in code you do not own (third-party FastAPI app,
-    routes pulled in via ``include_router`` from another package, dynamically
-    registered endpoints) but you still want to expose it as an MCP tool.
+    routes pulled in via ``include_router`` from another package,
+    dynamically registered endpoints) but you still want to expose it as an MCP tool.
 
-    Equivalent to applying ``@mcp_tool(name=..., description=..., expose=...)``
-    to ``func`` after the fact. Returns ``func`` so it can be chained or used
-    inside a comprehension.
+    Equivalent to applying ``@mcp_tool(name=..., description=..., expose=...)`` to ``func`` after the fact.
+    Returns ``func`` so it can be chained or used inside a comprehension.
     """
     metadata = ToolMetadata(name=name, description=description, expose=expose)
     setattr(func, _TOOL_METADATA_ATTR, metadata)

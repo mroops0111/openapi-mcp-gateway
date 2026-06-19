@@ -16,8 +16,8 @@ _EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[2] / 'examples'
 def _smoke_credentials(monkeypatch):
     """Provide bogus credentials so OAuth/Bearer specs build without real env vars.
 
-    The smoke only lists tools; it never calls upstream APIs. Bogus values
-    are sufficient for ``${ENV_VAR}`` substitution and OAuth flow assembly.
+    The smoke only lists tools; it never calls upstream APIs.
+    Bogus values are sufficient for ``${ENV_VAR}`` substitution and OAuth flow assembly.
     """
     monkeypatch.setenv('ASANA_CLIENT_ID', 'smoke-test-client-id')
     monkeypatch.setenv('ASANA_CLIENT_SECRET', 'smoke-test-client-secret')
@@ -36,11 +36,9 @@ def _smoke_credentials(monkeypatch):
 async def test_example_config_lists_tools(config_name: str):
     """Each example YAML loads, builds a gateway, and exposes at least one tool per server.
 
-    The OpenAPI specs are fetched over HTTP (network required), and tool
-    invocation is intentionally not exercised, since that would require real
-    upstream credentials and defeat the point of a quick assembly smoke.
-    The test only verifies the MCP client can ``list_tools`` against every
-    server registered from the config.
+    The OpenAPI specs are fetched over HTTP (network required), and tool invocation is intentionally not exercised,
+    since that would require real upstream credentials and defeat the point of a quick assembly smoke.
+    The test only verifies the MCP client can ``list_tools`` against every server registered from the config.
     """
     config = GatewayConfig.from_yaml(_EXAMPLES_DIR / config_name)
     gateway = Gateway.from_config(config)

@@ -33,8 +33,8 @@ class TokenSource(abc.ABC):
 class ClientCredentialsTokenSource(TokenSource):
     """Fetch and cache an OAuth2 ``client_credentials`` token from an upstream IdP.
 
-    The token is fetched lazily on first ``get_token`` and cached until
-    ``refresh_skew_seconds`` before its declared expiry.
+    The token is fetched lazily on first ``get_token``,
+    and cached until ``refresh_skew_seconds`` before its declared expiry.
     Concurrent refreshes are de-duped through an internal ``asyncio.Lock``.
     """
 

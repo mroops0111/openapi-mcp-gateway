@@ -14,8 +14,8 @@ _CLONE_PATH = pathlib.Path(tempfile.gettempdir()) / 'openapi-mcp-gateway-smoke-f
 def fastapi_docs_src() -> pathlib.Path:
     """Clone fastapi/fastapi (depth=1) once per session and expose ``docs_src``.
 
-    Reuses the existing clone on subsequent runs. The clone path lives in the
-    OS temp dir so it is isolated from the project tree.
+    Reuses the existing clone on subsequent runs.
+    The clone path lives in the OS temp dir so it is isolated from the project tree.
     """
     if not (_CLONE_PATH / 'docs_src').exists():
         _CLONE_PATH.parent.mkdir(parents=True, exist_ok=True)

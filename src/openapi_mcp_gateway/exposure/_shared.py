@@ -111,7 +111,9 @@ def _split_by_location(
 def _iter_unique_sanitised_parameters(
     parameters: typing.Iterable[ParameterInfo],
 ) -> typing.Iterator[tuple[str, ParameterInfo]]:
-    """Yield ``(sanitised_name, parameter)`` for each parameter, skipping repeats of the same sanitised name."""
+    """Yield ``(sanitised_name, parameter)`` for each parameter,
+    skipping repeats of the same sanitised name.
+    """
     seen_parameter_names: set[str] = set()
     for parameter in parameters:
         parameter_name = _sanitize_name(parameter.name)
@@ -152,10 +154,8 @@ def derive_description(operation: OperationInfo, override_description: str | Non
 def build_input_schema(operation: OperationInfo) -> dict[str, typing.Any]:
     """Build the JSON Schema describing ``operation`` inputs.
 
-    Dedupes properties by sanitised name and only emits ``required``
-    when at least one parameter is required.
-    Used by the dynamic tool exposure to advertise per-operation input shapes
-    through the ``get_operation`` meta-tool.
+    Dedupes properties by sanitised name and only emits ``required`` when at least one parameter is required.
+    Used by the dynamic tool exposure to advertise per-operation input shapes through the ``get_operation`` meta-tool.
     """
     properties: dict[str, typing.Any] = {}
     required_property_names: list[str] = []
