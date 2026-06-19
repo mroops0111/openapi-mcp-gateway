@@ -3,6 +3,7 @@ import inspect
 import logging
 import typing
 
+import inflection
 import pydantic
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import CallToolResult, ToolAnnotations
@@ -77,6 +78,9 @@ def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, 
     Dedupes by sanitised identifier.
     """
     ordered_parameters = list(_iter_unique_sanitised_parameters(operation.parameters))
+    # Namespace nested model names by operationId, so two tools that expose a same-named body param
+    # get distinct generated classes in the resulting JSON Schema.
+    operation_name_prefix = inflection.camelize(operation.operation_id)
 
     annotations: dict[str, typing.Any] = {}
     signature_parameters: list[inspect.Parameter] = []
@@ -84,7 +88,9 @@ def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, 
     for parameter_name, parameter in ordered_parameters:
         if not parameter.required:
             continue
-        python_type = _schema_to_python_type(parameter.schema_)
+        python_type = _schema_to_python_type(
+            parameter.schema_, name_hint=f'{operation_name_prefix}{inflection.camelize(parameter_name)}'
+        )
         annotation = (
             typing.Annotated[python_type, pydantic.Field(description=parameter.description)]
             if parameter.description
@@ -107,7 +113,9 @@ def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, 
     for parameter_name, parameter in ordered_parameters:
         if parameter.required:
             continue
-        python_type = _schema_to_python_type(parameter.schema_)
+        python_type = _schema_to_python_type(
+            parameter.schema_, name_hint=f'{operation_name_prefix}{inflection.camelize(parameter_name)}'
+        )
         annotation = (
             typing.Annotated[python_type | None, pydantic.Field(description=parameter.description)]
             if parameter.description
