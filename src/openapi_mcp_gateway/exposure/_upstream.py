@@ -2,6 +2,7 @@ import json
 import typing
 
 import httpx
+import pydantic
 from mcp.server.fastmcp import Context
 from mcp.types import CallToolResult, TextContent
 
@@ -82,6 +83,23 @@ def _parameters_keyed_by_sanitised_name(parameters: list[ParameterInfo]) -> dict
     return {_sanitize_name(parameter.name): parameter for parameter in parameters}
 
 
+def _to_jsonable(value: typing.Any) -> typing.Any:
+    """Recursively convert pydantic models into plain JSON-serialisable structures.
+
+    ``_schema_to_python_type`` turns an object-shaped body parameter into a dynamic pydantic model,
+    so the value reaching here may be a model, a list of models, or a dict whose values are models.
+    httpx serialises the body with ``json.dumps``, which cannot encode a model, so each one is dumped first.
+    ``exclude_none`` mirrors the old behaviour, where an omitted optional field was absent rather than null.
+    """
+    if isinstance(value, pydantic.BaseModel):
+        return value.model_dump(mode='json', exclude_none=True)
+    if isinstance(value, dict):
+        return {key: _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_to_jsonable(item) for item in value]
+    return value
+
+
 def _kwargs_to_upstream_arguments(
     kwargs: dict[str, typing.Any],
     parameters_by_name: dict[str, ParameterInfo],
@@ -132,7 +150,7 @@ def _build_upstream_closure(
         header_arguments = {
             name: str(value) for name, value in _kwargs_to_upstream_arguments(kwargs, header_parameters_by_name).items()
         }
-        body_arguments = _kwargs_to_upstream_arguments(kwargs, body_parameters_by_name)
+        body_arguments = _to_jsonable(_kwargs_to_upstream_arguments(kwargs, body_parameters_by_name))
         request_headers: dict[str, str] = {**auth_headers, **header_arguments}
 
         async with APIClient(
