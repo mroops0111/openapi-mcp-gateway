@@ -83,8 +83,8 @@ def _resource_eligibility_problem(operation: OperationInfo) -> tuple[str, str] |
 def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -> None:
     """Raise ``ValueError`` when an explicit ``expose.resource`` opt-in cannot be honored.
 
-    Covers both the basic eligibility rules and the ``uri_template`` scheme override
-    that only spec-side opt-ins can carry.
+    Covers both the basic eligibility rules and the ``uri_template`` scheme override,
+    which only spec-side opt-ins can carry.
     """
     ineligibility = _resource_eligibility_problem(operation)
     if ineligibility is not None:
@@ -109,8 +109,7 @@ def _apply_yaml_overrides(
 ) -> list[OperationInfo]:
     """Return ``operations`` with the YAML-side ``operations.<id>`` override applied to each match.
 
-    Each override fully replaces the spec-side ``x-mcp-integration`` for that operation;
-    no merging is attempted.
+    Each override fully replaces the spec-side ``x-mcp-integration`` for that operation; no merging is attempted.
     Raises ``ValueError`` if an ``operation_id`` in ``yaml_overrides`` is not exposed by this server.
     """
     if not yaml_overrides:
@@ -139,7 +138,7 @@ def _partition_operations(
     Under ``mode='tool_only'`` (default) every operation becomes a tool,
     and ``x-mcp-integration.expose.resource`` declarations are ignored.
 
-    Under ``mode='auto'`` an operation becomes a resource when it either declares ``expose.resource`` explicitly
+    Under ``mode='auto'`` an operation becomes a resource when it either declares ``expose.resource`` explicitly,
     or qualifies for auto-promotion (no ``expose.tool`` and the eligibility rules pass).
     Declaring both ``expose.tool`` and ``expose.resource`` registers the operation in both lists.
     """
@@ -217,8 +216,7 @@ class Gateway:
     ) -> typing.Self:
         """Expose ``@mcp_tool``-decorated routes of ``app`` in-process via ``httpx.ASGITransport``.
 
-        Auth is auto-detected from the spec's ``securitySchemes``:
-        no scheme gives no auth,
+        Auth is auto-detected from the spec's ``securitySchemes``: no scheme gives no auth,
         ``client_credentials`` selects the service-token flow,
         ``authorization_code`` uses the full provider when ``client_id`` and ``client_secret`` are set,
         else it falls back to passthrough of the client's ``Authorization`` header.

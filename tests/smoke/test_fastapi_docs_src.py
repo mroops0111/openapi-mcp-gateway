@@ -1,14 +1,14 @@
 """Smoke against fastapi's official ``docs_src/`` tutorials.
 
-The intent is to verify that real-world FastAPI patterns assemble cleanly
-through ``Gateway.from_fastapi`` and produce at least one MCP tool. We
-deliberately do not pin to specific tutorial filenames (``tutorial001_py310``
-etc.); fastapi sometimes renames or removes those. Instead we glob the
-relevant category directory and pick the first importable module that
-exposes a ``FastAPI`` ``app``.
+The intent is to verify that real-world FastAPI patterns assemble cleanly through ``Gateway.from_fastapi``,
+and produce at least one MCP tool.
 
-Tutorial code is not modified, so we use the public ``mark_tool`` helper to
-attach exposure metadata after the fact, not the ``@mcp_tool`` decorator.
+We deliberately do not pin to specific tutorial filenames such as ``tutorial001_py310``,
+since fastapi sometimes renames or removes those. Instead we glob the relevant category directory,
+and pick the first importable module that exposes a ``FastAPI`` ``app``.
+
+Tutorial code is not modified, so we use the public ``mark_tool`` helper to attach exposure metadata after the fact,
+not the ``@mcp_tool`` decorator.
 """
 
 import importlib
@@ -31,9 +31,9 @@ _NO_AUTH_CATEGORIES = ('path_params', 'body', 'query_params_str_validations')
 def _import_first_app(docs_src: pathlib.Path, category: str) -> tuple[str, FastAPI] | None:
     """Return the first ``(module_path, app)`` under ``docs_src/<category>/`` that imports cleanly.
 
-    Modules that fail to import (missing optional deps, Python-version guards,
-    etc.) are silently skipped, since we only need one working example per
-    category for the smoke. Returns ``None`` if none import.
+    Modules that fail to import (missing optional deps, Python-version guards, etc.) are silently skipped,
+    since we only need one working example per category for the smoke.
+    Returns ``None`` if none import.
     """
     category_dir = docs_src / category
     if not category_dir.is_dir():
@@ -44,7 +44,8 @@ def _import_first_app(docs_src: pathlib.Path, category: str) -> tuple[str, FastA
             module = importlib.import_module(module_path)
         except (ImportError, SyntaxError):
             # Expected version-skew (tutorial pinned to a Python version we are not on,
-            # or an optional fastapi-extra dep is missing). Other failures surface.
+            # or an optional fastapi-extra dep is missing).
+            # Other failures surface.
             continue
         app = getattr(module, 'app', None)
         if isinstance(app, FastAPI):
@@ -55,8 +56,8 @@ def _import_first_app(docs_src: pathlib.Path, category: str) -> tuple[str, FastA
 def _import_app_matching(docs_src: pathlib.Path, category: str, needle: str) -> tuple[str, FastAPI] | None:
     """Like ``_import_first_app`` but only returns modules whose source contains ``needle``.
 
-    Used to pick out tutorials that exercise a specific security pattern
-    (``OAuth2PasswordBearer``, ``HTTPBasic``, etc.) without naming the file.
+    Used to pick out tutorials that exercise a specific security pattern (``OAuth2PasswordBearer``, ``HTTPBasic``,
+    etc.) without naming the file.
     """
     category_dir = docs_src / category
     if not category_dir.is_dir():
@@ -74,7 +75,8 @@ def _import_app_matching(docs_src: pathlib.Path, category: str, needle: str) -> 
             module = importlib.import_module(module_path)
         except (ImportError, SyntaxError):
             # Expected version-skew (tutorial pinned to a Python version we are not on,
-            # or an optional fastapi-extra dep is missing). Other failures surface.
+            # or an optional fastapi-extra dep is missing).
+            # Other failures surface.
             continue
         app = getattr(module, 'app', None)
         if isinstance(app, FastAPI):
@@ -85,10 +87,9 @@ def _import_app_matching(docs_src: pathlib.Path, category: str, needle: str) -> 
 def _mark_all_concrete_routes(app: FastAPI) -> int:
     """Mark every route whose endpoint is a regular function as an MCP tool.
 
-    Returns the number of routes marked. We do not filter on path or method,
-    since the goal is "whatever the tutorial defines, expose it". Lifespan
-    handlers and other non-endpoint routes (no ``endpoint`` attribute) are
-    skipped automatically.
+    Returns the number of routes marked.
+    We do not filter on path or method, since the goal is "whatever the tutorial defines, expose it".
+    Lifespan handlers and other non-endpoint routes (no ``endpoint`` attribute) are skipped automatically.
     """
     marked = 0
     for route in app.routes:
@@ -132,9 +133,8 @@ async def test_password_flow_tutorial_is_rejected(fastapi_docs_src: pathlib.Path
 async def test_http_basic_tutorial_assembles(fastapi_docs_src: pathlib.Path):
     """A security tutorial that uses ``HTTPBasic`` assembles cleanly under NullAuth.
 
-    The MCP transport used by this smoke does not carry HTTP headers,
-    so we only verify that the tool is discoverable; header passthrough
-    behaviour itself is covered by ``tests/integration/test_fastapi.py``.
+    The MCP transport used by this smoke does not carry HTTP headers, so we only verify that the tool is discoverable;
+    header passthrough behaviour itself is covered by ``tests/integration/test_fastapi.py``.
     """
     found = _import_app_matching(fastapi_docs_src, 'security', 'HTTPBasic')
     if found is None:

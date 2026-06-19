@@ -29,10 +29,8 @@ def _build_success_result(payload: typing.Any) -> CallToolResult:
 def _parse_json_object(text: str, content_type: str) -> dict[str, typing.Any] | None:
     """Decode ``text`` as a JSON object when ``content_type`` declares JSON.
 
-    Returns ``None`` when the content type is not JSON,
-    the body is empty,
-    the body is not valid JSON,
-    or the parsed value is not an object.
+    Returns ``None`` when the content type is not JSON, the body is empty,
+    the body is not valid JSON, or the parsed value is not an object.
     """
     if 'application/json' not in content_type or not text:
         return None
@@ -65,8 +63,7 @@ def _build_http_error_result(exception: httpx.HTTPStatusError) -> CallToolResult
 def _build_network_error_result(exception: httpx.RequestError) -> CallToolResult:
     """Wrap an httpx transport failure (connect, timeout, DNS, etc.) as an ``isError`` result.
 
-    No ``response`` is available,
-    so ``structuredContent`` stays ``None``,
+    No ``response`` is available, so ``structuredContent`` stays ``None``,
     and the message surfaces the exception type for diagnosis.
     """
     request = exception.request

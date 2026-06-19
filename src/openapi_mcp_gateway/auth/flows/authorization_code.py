@@ -36,8 +36,7 @@ class AuthorizationCodeProvider:
     """MCP OAuth server provider that fronts an upstream ``authorization_code`` API.
 
     Registers MCP clients, forwards browser authorization to the upstream IdP,
-    exchanges grants at ``upstream_token_url``, and keeps the MCP-to-upstream
-    token mappings inside ``store``.
+    exchanges grants at ``upstream_token_url``, and keeps the MCP-to-upstream token mappings inside ``store``.
     Each MCP access token corresponds to one user's upstream token.
     """
 
@@ -227,9 +226,8 @@ class AuthorizationCodeProvider:
     async def handle_upstream_callback(self, code: str, state: str) -> str:
         """Finish the browser redirect by swapping the upstream ``code`` for MCP auth artefacts.
 
-        Validates ``state``, exchanges tokens at ``upstream_token_url``,
-        persists the upstream credentials, builds an MCP authorization code,
-        and returns the client redirect URI.
+        Validates ``state``, exchanges tokens at ``upstream_token_url``, persists the upstream credentials,
+        builds an MCP authorization code, and returns the client redirect URI.
         """
         state_data = await self.store.get('mcp_auth_state', state)
         if not state_data:

@@ -53,10 +53,8 @@ def derive_tool_title(operation: OperationInfo) -> str | None:
 def derive_tool_annotations(operation: OperationInfo) -> ToolAnnotations:
     """Derive MCP ``ToolAnnotations`` for ``operation`` from its HTTP method.
 
-    ``GET`` is read-only and idempotent,
-    ``PUT`` / ``PATCH`` / ``DELETE`` are idempotent,
-    ``DELETE`` is additionally destructive,
-    and every tool is open-world.
+    ``GET`` is read-only and idempotent, ``PUT`` / ``PATCH`` / ``DELETE`` are idempotent,
+    ``DELETE`` is additionally destructive, and every tool is open-world.
     ``title`` mirrors ``Tool.title`` for clients still reading the legacy annotations field.
     """
     method = operation.method.lower()
@@ -72,8 +70,7 @@ def derive_tool_annotations(operation: OperationInfo) -> ToolAnnotations:
 def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, dict[str, typing.Any]]:
     """Build the ``inspect.Signature`` and annotations FastMCP reads to derive the tool input schema.
 
-    Parameter order is required parameters first,
-    then the framework-injected ``ctx``,
+    Parameter order is required parameters first, then the framework-injected ``ctx``,
     then optional parameters with ``default=None``.
     Dedupes by sanitised identifier.
     """
@@ -149,8 +146,7 @@ def build_tool_function(
 
     With ``attach_signature=True`` (the default),
     the returned callable carries an ``inspect.Signature`` and ``__annotations__`` so FastMCP can derive its input schema.
-    With ``attach_signature=False``,
-    returns the bare upstream closure for dispatch from a registry,
+    With ``attach_signature=False``, returns the bare upstream closure for dispatch from a registry,
     as used by :class:`MetaToolGenerator`.
     """
     upstream_callable = _build_upstream_closure(operation, binding)

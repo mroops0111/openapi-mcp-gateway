@@ -225,8 +225,7 @@ class TestBuildOAuthFlow:
 
         Previously the resolver silently fell back to passthrough,
         which forwards the MCP client's token to a third-party upstream.
-        That violates RFC 8707 audience binding,
-        the "confused deputy" pattern the MCP authorization spec forbids.
+        That violates RFC 8707 audience binding, the "confused deputy" pattern the MCP authorization spec forbids.
 
         Users who genuinely want passthrough must set ``auth.flow='passthrough'`` explicitly,
         to acknowledge the shared-audience requirement.

@@ -25,8 +25,7 @@ logger = logging.getLogger(__name__)
 def derive_resource_mime_type(operation: OperationInfo) -> str:
     """Return the MIME type for ``operation`` exposed as a resource.
 
-    Honors ``x-mcp-integration.expose.resource.mime_type`` when set,
-    otherwise defaults to ``application/json``.
+    Honors ``x-mcp-integration.expose.resource.mime_type`` when set, otherwise defaults to ``application/json``.
     """
     override = _get_override(operation, 'resource')
     if override and override.mime_type:
@@ -38,8 +37,7 @@ def derive_resource_uri(server_name: str, operation: OperationInfo) -> str:
     """Return the URI template for ``operation`` exposed as an MCP resource.
 
     Honors ``x-mcp-integration.expose.resource.uri_template`` verbatim when set.
-    Otherwise builds ``{server_name}://{path}``,
-    rewriting OpenAPI path placeholders into sanitised Python identifiers,
+    Otherwise builds ``{server_name}://{path}``, rewriting OpenAPI path placeholders into sanitised Python identifiers,
     so FastMCP's ``{(\\w+)}`` template regex matches.
     """
     override = _get_override(operation, 'resource')
@@ -92,8 +90,7 @@ def _build_resource_signature(
 def build_resource_read_function(operation: OperationInfo, binding: UpstreamBinding) -> typing.Callable:
     """Build the async read function for ``operation`` exposed as an MCP resource.
 
-    Reuses the upstream closure from the tool path,
-    so auth, path substitution, and error handling stay identical.
+    Reuses the upstream closure from the tool path, so auth, path substitution, and error handling stay identical.
     Signature is conditional on whether the operation has path parameters,
     which dictates how FastMCP registers the resource:
 
@@ -131,7 +128,7 @@ class _NullContext:
 
     FastMCP registers a resource as concrete only when the read function takes no parameters,
     so concrete reads cannot declare ``ctx``.
-    This shim feeds the shared upstream closure a context-shaped object that no-ops on progress reporting
+    This shim feeds the shared upstream closure a context-shaped object that no-ops on progress reporting,
     and returns no header data for auth resolution.
     """
 

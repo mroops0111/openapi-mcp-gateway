@@ -54,9 +54,9 @@ async def redis_store():
 def mock_upstream(monkeypatch):
     """Route every ``APIClient`` upstream request through ``httpx.MockTransport``.
 
-    Returns a one-shot installer ``mock_upstream(handler)``; subsequent
-    ``APIClient(...)`` constructions in this test will dispatch HTTP traffic to
-    ``handler`` instead of the real network.
+    Returns a one-shot installer ``mock_upstream(handler)``.
+    Subsequent ``APIClient(...)`` constructions in this test will dispatch HTTP traffic to ``handler``,
+    instead of the real network.
     """
 
     def install(handler: _HttpHandler) -> None:
