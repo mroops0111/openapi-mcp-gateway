@@ -34,9 +34,9 @@ class OAuthFlowContext:
 class OAuthFlowSetup:
     """Result of an ``OAuthFlowHandler.build`` call, consumed by ``Gateway``.
 
-    Only ``resolver`` is always set. ``provider`` and ``settings`` are populated
-    when the flow needs to act as an MCP-side OAuth server (currently only
-    ``authorization_code``).
+    Only ``resolver`` is always set.
+    ``provider`` and ``settings`` are populated when the flow needs to act as an MCP-side OAuth server,
+    currently only ``authorization_code``.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
@@ -49,8 +49,8 @@ class OAuthFlowSetup:
 class OAuthFlowHandler(abc.ABC):
     """Strategy describing how one OAuth flow wires upstream and MCP-side auth.
 
-    Subclasses live under ``auth/flows/`` and register themselves in
-    ``OAUTH_FLOW_HANDLERS`` so the factory can dispatch by ``flow_type``.
+    Subclasses live under ``auth/flows/`` and register themselves in ``OAUTH_FLOW_HANDLERS``,
+    so the factory can dispatch by ``flow_type``.
     """
 
     @abc.abstractmethod

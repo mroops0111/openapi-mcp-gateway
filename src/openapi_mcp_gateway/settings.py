@@ -47,8 +47,8 @@ def _resolve_env_var(value: str | None) -> str | None:
 class AuthConfig(pydantic.BaseModel):
     """Authentication for an upstream API.
 
-    ``token``, ``client_id``, and ``client_secret`` accept ``${ENV_VAR}``
-    and ``${ENV_VAR:-default}`` substitution at resolve time.
+    ``token``, ``client_id``,
+    and ``client_secret`` accept ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` substitution at resolve time.
     Numeric OAuth credentials are coerced from int to str,
     so unquoted YAML values still parse on providers that use numeric ``client_id`` (Asana, Facebook).
     """
@@ -250,9 +250,9 @@ def single_spec_layer(
 def build_gateway_config(*layers: dict[str, typing.Any]) -> GatewayConfig:
     """Compose layered partial-settings dicts (later wins) into a validated ``GatewayConfig``.
 
-    The contract for a *layer* is: a dict containing only the fields that source
-    actually supplies. Pydantic defaults form the implicit floor, so callers
-    never need to repeat them. Order encodes precedence; typical CLI use is::
+    The contract for a *layer* is: a dict containing only the fields that source actually supplies.
+    Pydantic defaults form the implicit floor, so callers never need to repeat them.
+    Order encodes precedence; typical CLI use is::
 
         build_gateway_config(yaml_layer, cli_layer)
 

@@ -8,11 +8,10 @@ from ..openapi import OpenAPISpec
 class DetectedOAuthFlow(pydantic.BaseModel):
     """Minimal OAuth2 flow metadata describing how the gateway should obtain tokens.
 
-    ``authorization_code`` and ``client_credentials`` come directly from the spec
-    via ``detect_oauth_flows``. ``passthrough`` is never produced from a spec;
-    the factory selects it as a fallback when ``authorization_code`` is declared
-    but the gateway lacks ``client_id`` / ``client_secret`` to act as an MCP-side
-    OAuth server.
+    ``authorization_code`` and ``client_credentials`` come directly from the spec via ``detect_oauth_flows``.
+    ``passthrough`` is never produced from a spec.
+    The factory selects it as a fallback when ``authorization_code`` is declared,
+    but the gateway lacks ``client_id`` / ``client_secret`` to act as an MCP-side OAuth server.
     """
 
     flow_type: typing.Literal['authorization_code', 'client_credentials', 'passthrough']

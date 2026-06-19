@@ -93,6 +93,66 @@ class TestSchemaToPythonType:
         assert typing.get_origin(result) is list
         assert typing.get_args(result)[0] is not str
 
+    def test_enum_yields_literal(self):
+        """``enum`` collapses to ``Literal`` so the allowed values appear inline instead of hiding behind ``str``."""
+        result = _schema_to_python_type({'type': 'string', 'enum': ['left', 'center', 'right']})
+        assert typing.get_origin(result) is typing.Literal
+        assert set(typing.get_args(result)) == {'left', 'center', 'right'}
+
+    def test_object_with_properties_yields_typed_model(self):
+        """An object with ``properties`` becomes a typed pydantic model rather than ``dict[str, Any]``.
+
+        Nested field descriptions and required-ness then survive into the generated JSON Schema.
+        """
+        import pydantic
+
+        schema = {
+            'type': 'object',
+            'required': ['street', 'city'],
+            'properties': {
+                'street': {'type': 'string', 'description': 'Street address.'},
+                'city': {'type': 'string', 'description': 'City name.'},
+                'country': {'type': 'string', 'description': 'ISO 3166-1 alpha-2 country code.'},
+            },
+        }
+        model_type = _schema_to_python_type(schema, name_hint='Address')
+        assert issubclass(model_type, pydantic.BaseModel)
+        json_schema = model_type.model_json_schema()
+        assert set(json_schema['required']) == {'street', 'city'}
+        assert json_schema['properties']['street']['description'] == 'Street address.'
+        assert json_schema['properties']['country']['description'] == 'ISO 3166-1 alpha-2 country code.'
+
+    def test_object_without_properties_falls_back_to_dict(self):
+        """An untyped ``object`` (no ``properties``) keeps the ``dict[str, Any]`` shape for free-form maps."""
+        result = _schema_to_python_type({'type': 'object'})
+        assert typing.get_origin(result) is dict
+        assert typing.get_args(result) == (str, typing.Any)
+
+    def test_nested_object_inside_array_preserves_descriptions(self):
+        """``array<object>`` recurses into each property and keeps the nested descriptions.
+
+        This is the common shape for list-valued request body parameters.
+        """
+        import pydantic
+
+        schema = {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'required': ['id'],
+                'properties': {
+                    'id': {'type': 'integer', 'description': 'Identifier.'},
+                    'name': {'type': 'string', 'description': 'Display name.'},
+                },
+            },
+        }
+        list_type = _schema_to_python_type(schema, name_hint='LineItems')
+        item_type = typing.get_args(list_type)[0]
+        assert issubclass(item_type, pydantic.BaseModel)
+        json_schema = item_type.model_json_schema()
+        assert json_schema['required'] == ['id']
+        assert json_schema['properties']['name']['description'] == 'Display name.'
+
 
 class TestToolGeneration:
     """End-to-end tool registration: name sanitisation flows through to the upstream call."""
@@ -611,6 +671,97 @@ class TestStructuredContent:
         assert result.isError is False
         assert result.structuredContent is None
         assert json.loads(result.content[0].text) == [{'id': 1}]
+
+
+class TestBodySerialization:
+    """Object-shaped body parameters reach the upstream as plain JSON, not pydantic models.
+
+    ``_schema_to_python_type`` turns an object body into a dynamic model for the LLM-facing schema,
+    but httpx cannot ``json.dumps`` a model instance, so the value is converted back before the call.
+    These tests pin that conversion.
+    """
+
+    def _generator(self) -> tuple[ToolGenerator, FastMCP]:
+        """Build a fresh generator + FastMCP pair for each test."""
+        mcp = FastMCP('test')
+        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
+
+    async def test_array_of_objects_body_serialised_to_json(self, mock_upstream):
+        """An ``array<object>`` body param is sent as a JSON array of plain dicts."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['body'] = json.loads(request.content)
+            return httpx.Response(200, json={'ok': True})
+
+        mock_upstream(handler)
+        generator, mcp = self._generator()
+        operation = OperationInfo(
+            operation_id='create_order',
+            method='post',
+            path='/orders',
+            parameters=[
+                ParameterInfo(
+                    name='line_items',
+                    location='body',
+                    required=True,
+                    schema={
+                        'type': 'array',
+                        'items': {
+                            'type': 'object',
+                            'required': ['id'],
+                            'properties': {
+                                'id': {'type': 'integer', 'description': 'Identifier.'},
+                                'name': {'type': 'string', 'description': 'Display name.'},
+                            },
+                        },
+                    },
+                ),
+            ],
+        )
+        generator.register([operation])
+        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'create_order')
+
+        result = await tool.run({'line_items': [{'id': 1, 'name': 'rex'}]}, context=_stub_context())
+        assert result.isError is False
+        assert captured['body'] == {'line_items': [{'id': 1, 'name': 'rex'}]}
+
+    async def test_object_body_omits_unset_optional_fields(self, mock_upstream):
+        """An optional nested field the caller omits stays absent rather than serialising as null."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['body'] = json.loads(request.content)
+            return httpx.Response(200, json={'ok': True})
+
+        mock_upstream(handler)
+        generator, mcp = self._generator()
+        operation = OperationInfo(
+            operation_id='create_doc',
+            method='post',
+            path='/docs',
+            parameters=[
+                ParameterInfo(
+                    name='meta',
+                    location='body',
+                    required=True,
+                    schema={
+                        'type': 'object',
+                        'required': ['title'],
+                        'properties': {
+                            'title': {'type': 'string', 'description': 'Title.'},
+                            'subtitle': {'type': 'string', 'description': 'Optional subtitle.'},
+                        },
+                    },
+                ),
+            ],
+        )
+        generator.register([operation])
+        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'create_doc')
+
+        result = await tool.run({'meta': {'title': 'hello'}}, context=_stub_context())
+        assert result.isError is False
+        assert captured['body'] == {'meta': {'title': 'hello'}}
 
 
 class TestErrorResult:

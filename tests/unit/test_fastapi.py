@@ -165,8 +165,7 @@ def test_get_tool_metadata_returns_none_for_undecorated():
 class TestInferAuthFromDeclaredFlows:
     """``infer_auth_from_declared_flows`` defaults FastAPI integration to passthrough.
 
-    The gateway is mounted onto the same app it exposes,
-    so gateway and upstream share the OAuth audience.
+    The gateway is mounted onto the same app it exposes, so gateway and upstream share the OAuth audience.
     Forwarding the MCP client's ``Authorization`` header verbatim does not violate RFC 8707.
     For third-party APIs the user passes an explicit ``auth=AuthConfig(...)`` instead.
     """

@@ -57,8 +57,7 @@ class APIClient:
     ) -> dict[str, typing.Any]:
         """Send ``method`` to ``path`` and return the decoded body.
 
-        Returns decoded JSON for ``application/json`` responses,
-        ``{'status': code}`` for empty 204 responses,
+        Returns decoded JSON for ``application/json`` responses, ``{'status': code}`` for empty 204 responses,
         or ``{'data': text}`` for any other media type.
         Raises ``httpx.HTTPStatusError`` on HTTP error status codes.
         """
