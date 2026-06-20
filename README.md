@@ -8,20 +8,23 @@
 
 Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, or expose an existing FastAPI app the same way. Multiple APIs in one process, each with its own mount path and auth.
 
+<p align="center">
+  <img src="architecture.png" alt="OpenAPI MCP Gateway architecture: MCP clients (Claude Desktop, Cursor, AI agents) connect over stdio / SSE / streamable-http to the gateway, which at startup ingests OpenAPI specs or FastAPI apps and exposes them as MCP tools, meta-tools, and resources, then per call authorizes with bearer / API key / OAuth2 and emits MCP-native output, calling upstream REST APIs over HTTP or an in-process FastAPI app over ASGI." width="100%">
+</p>
+
 ```bash
 uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 # Server live at http://127.0.0.1:8000/api/mcp
 ```
 
-- **Multi-spec, multi-auth.** Mount GitHub, an OAuth2 SaaS, and your internal API side-by-side. Bearer, API key, OAuth2 `authorization_code` (per-user delegation), and `client_credentials` (service flows) coexist, with each `(server, user)` pair scoped to its own token namespace.
-- **FastAPI native, route-level.** Decorate routes with `@mcp_tool` to opt in, no whole-app exposure. Calls run in-process via `httpx.ASGITransport`, no extra network hop and no second spec to maintain.
-- **Dynamic exposure.** For specs whose operation count would blow the LLM context window, set `exposure: dynamic` and the agent walks `list → get → call` meta-tools on demand.
-- **Resource auto-promotion.** Set `mode: auto` and eligible GETs register as MCP resources instead of tools, so the tool list stays small while reads remain addressable by URI. Layer per-operation overrides in YAML when you do not own the upstream spec.
-- **Spec-compliant authorization.** Audience-bound tokens, no silent passthrough to third-party upstreams [[MCP Authorization Spec: Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction)]. Tools emit protocol-native `title`, `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), and `structuredContent` so the agent reads structured error bodies without re-parsing text.
-- **Tool name and description overrides.** Rewrite ugly `operationId`s and empty descriptions in YAML when you do not own the upstream spec, no fork required.
-- **Pluggable token store.** Memory by default. Switch to Redis when you need to share state across replicas.
-
-Streamable HTTP, SSE, and stdio on the same binary. Works with Claude Desktop, Cursor, or any other MCP client.
+- **Multi-Spec, Multi-Auth.** Mount GitHub, an OAuth2 SaaS, and your internal API side by side, each with its own bearer / API key / OAuth2 auth and token namespace.
+- **FastAPI-Native.** Decorate routes with `@mcp_tool` to expose them in-process over ASGI, no extra hop and no second spec to maintain.
+- **Dynamic Exposure.** Front a huge spec with three `list → get → call` meta-tools instead of hundreds of schemas, so it never blows the LLM's context window.
+- **Resource Auto-Promotion.** Set `mode: auto` and eligible GETs register as MCP resources instead of tools, keeping the tool list small while reads stay addressable by URI.
+- **Spec-Compliant Authorization.** Audience-bound tokens with no silent passthrough to upstreams, plus protocol-native `annotations` and `structuredContent` on every tool.
+- **Tool Name and Description Overrides.** Rewrite ugly `operationId`s and empty descriptions in YAML, no fork required.
+- **Pluggable Token Store.** Memory by default, switch to Redis to share state across replicas.
+- **Every Transport.** Streamable HTTP, SSE, and stdio on the same binary, from Claude Desktop and Cursor to any other MCP client.
 
 ---
 
@@ -133,7 +136,7 @@ What this gives you at `http://127.0.0.1:8000`:
 
 - `/petstore/mcp`: 13 tools + 3 concrete resources + 3 resource templates, partitioned by `mode: auto` with no spec edits.
 - `/github/mcp`: three meta-tools (`list_operations`, `get_operation`, `call_operation`) fronting ~1,200 endpoints.
-- `/asana/mcp`: per-user OAuth2 against Asana's IdP, with tokens minted server-side per [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707).
+- `/asana/mcp`: per-user OAuth2 against Asana's IdP, with tokens minted server-side (see [Authorization](#authorization)).
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
@@ -165,6 +168,14 @@ For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
   }
 }
 ```
+
+## Authorization
+
+The gateway runs its own authorization server and mints upstream tokens server-side, so each MCP client authenticates as its own end-user and never handles a third-party credential directly. Tokens are audience-bound and scoped to their `(server, user)` pair, so a token minted for one upstream is never replayed against another.
+
+The gateway does not silently pass the MCP client's token through to third-party upstreams, in line with the MCP spec's [Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction). For `authorization_code` it mints per-user tokens against the upstream IdP per [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707), and for `client_credentials` it uses its own service credentials. The one exception is the FastAPI integration, which runs in-process at the same OAuth audience, so the client's `Authorization` header is forwarded verbatim (see [Expose Your FastAPI App as MCP Tools](#expose-your-fastapi-app-as-mcp-tools)).
+
+Tool results are spec-compliant too. Every tool carries a protocol-native `title`, `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), and `structuredContent`, so an agent can judge a tool before calling it and read structured error bodies without re-parsing text.
 
 ## Configuration
 
