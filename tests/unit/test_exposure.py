@@ -573,6 +573,15 @@ class TestDeriveToolAnnotations:
         assert annotations.destructiveHint is None
         assert annotations.openWorldHint is True
 
+    @pytest.mark.parametrize('method', ['head', 'options', 'trace'])
+    def test_safe_methods_are_read_only_and_idempotent(self, method):
+        """Safe OpenAPI methods carry read-only and idempotent hints."""
+        annotations = derive_tool_annotations(self._operation(method))
+        assert annotations.readOnlyHint is True
+        assert annotations.idempotentHint is True
+        assert annotations.destructiveHint is None
+        assert annotations.openWorldHint is True
+
     def test_summary_mirrored_to_annotations_title(self):
         """``summary`` is also surfaced on ``ToolAnnotations.title`` for legacy clients."""
         annotations = derive_tool_annotations(self._operation('get', summary='List pets'))

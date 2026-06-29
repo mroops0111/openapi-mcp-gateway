@@ -40,6 +40,8 @@ _CALL_OPERATION_DESCRIPTION = (
     'Invoke an operation by name with a JSON object of arguments. '
     'Argument keys must match the keys in `get_operation(name).input_schema.properties`.'
 )
+_READ_ONLY_HTTP_METHODS = {'get', 'head', 'options', 'trace'}
+_IDEMPOTENT_HTTP_METHODS = _READ_ONLY_HTTP_METHODS | {'put', 'patch', 'delete'}
 
 
 def derive_tool_title(operation: OperationInfo) -> str | None:
@@ -53,16 +55,17 @@ def derive_tool_title(operation: OperationInfo) -> str | None:
 def derive_tool_annotations(operation: OperationInfo) -> ToolAnnotations:
     """Derive MCP ``ToolAnnotations`` for ``operation`` from its HTTP method.
 
-    ``GET`` is read-only and idempotent, ``PUT`` / ``PATCH`` / ``DELETE`` are idempotent,
+    ``GET`` / ``HEAD`` / ``OPTIONS`` / ``TRACE`` are read-only and idempotent,
+    ``PUT`` / ``PATCH`` / ``DELETE`` are idempotent,
     ``DELETE`` is additionally destructive, and every tool is open-world.
     ``title`` mirrors ``Tool.title`` for clients still reading the legacy annotations field.
     """
     method = operation.method.lower()
     return ToolAnnotations(
         title=operation.summary or None,
-        readOnlyHint=(method == 'get') or None,
+        readOnlyHint=(method in _READ_ONLY_HTTP_METHODS) or None,
         destructiveHint=(method == 'delete') or None,
-        idempotentHint=(method in {'get', 'put', 'patch', 'delete'}) or None,
+        idempotentHint=(method in _IDEMPOTENT_HTTP_METHODS) or None,
         openWorldHint=True,
     )
 

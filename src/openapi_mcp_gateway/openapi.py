@@ -12,6 +12,10 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+_OPENAPI_HTTP_METHODS = ('get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace')
+_REQUEST_BODY_HTTP_METHODS = {'post', 'put', 'patch'}
+
+
 class ParameterInfo(pydantic.BaseModel):
     """One OpenAPI parameter (path, query, header, cookie, or body) with its schema."""
 
@@ -219,7 +223,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
         if not isinstance(path_item, dict):
             continue
 
-        for method in ('get', 'post', 'put', 'patch', 'delete'):
+        for method in _OPENAPI_HTTP_METHODS:
             operation = path_item.get(method)
             if not operation or not isinstance(operation, dict):
                 continue
@@ -253,7 +257,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
             request_body = operation.get('requestBody', {})
             if '$ref' in request_body:
                 request_body = _resolve_ref(raw, request_body['$ref'])
-            if request_body and method in ('post', 'put', 'patch'):
+            if request_body and method in _REQUEST_BODY_HTTP_METHODS:
                 content = request_body.get('content', {}).get('application/json', {})
                 schema = _expand_schema(raw, content.get('schema', {}))
 

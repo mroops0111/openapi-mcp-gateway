@@ -159,6 +159,27 @@ class TestParseSpec:
         assert 'createPetWithOwner' in ids
         assert 'adminListPets' in ids
 
+    def test_openapi_operation_methods(self):
+        """Valid OpenAPI operation methods beyond the common five are parsed."""
+        raw = {
+            'openapi': '3.0.0',
+            'info': {'title': 'Methods', 'version': '1.0'},
+            'paths': {
+                '/status': {
+                    'head': {'operationId': 'checkStatusHead', 'responses': {'200': {'description': 'OK'}}},
+                    'options': {'operationId': 'checkStatusOptions', 'responses': {'200': {'description': 'OK'}}},
+                    'trace': {'operationId': 'traceStatus', 'responses': {'200': {'description': 'OK'}}},
+                },
+            },
+        }
+        spec = parse_spec(raw)
+        methods_by_id = {operation.operation_id: operation.method for operation in spec.operations}
+        assert methods_by_id == {
+            'checkStatusHead': 'head',
+            'checkStatusOptions': 'options',
+            'traceStatus': 'trace',
+        }
+
     def test_param_dedup(self):
         """``listPets`` has ``limit`` at both path-level and operation-level, should dedup."""
         list_pets = next(op for op in self.spec.operations if op.operation_id == 'listPets')
