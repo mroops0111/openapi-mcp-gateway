@@ -67,6 +67,18 @@ uv run openapi-mcp-gateway \
     --auth-token '${GITHUB_TOKEN}'
 ```
 
+For an API-key header, use config so the header name is explicit:
+
+```yaml
+servers:
+  - name: xquik
+    spec: https://xquik.com/openapi.json
+    auth:
+      type: api_key
+      token: ${XQUIK_API_KEY}
+      api_key_header: x-api-key
+```
+
 ### 3. OAuth2, Per-User Delegation (`authorization_code`)
 
 The gateway runs its own OAuth server so each MCP client authenticates as its own end-user, with tokens minted per session.
