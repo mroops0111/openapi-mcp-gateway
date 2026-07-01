@@ -227,6 +227,77 @@ class TestParseSpec:
         """Top-level ``components.securitySchemes`` is exposed on the parsed spec."""
         assert 'oauth2' in self.spec.security_schemes
 
+    def test_xquik_openapi31_search_contract(self):
+        """OpenAPI 3.1 specs keep server, security, and query parameter details."""
+        raw = {
+            'openapi': '3.1.0',
+            'info': {'title': 'Xquik API', 'version': '1.0'},
+            'servers': [{'url': 'https://xquik.com'}],
+            'security': [{'apiKey': []}],
+            'components': {
+                'securitySchemes': {
+                    'apiKey': {
+                        'type': 'apiKey',
+                        'name': 'x-api-key',
+                        'in': 'header',
+                    }
+                }
+            },
+            'paths': {
+                '/api/v1/x/tweets/search': {
+                    'get': {
+                        'operationId': 'searchTweets',
+                        'summary': 'Search X posts',
+                        'tags': ['X'],
+                        'parameters': [
+                            {
+                                'name': 'q',
+                                'in': 'query',
+                                'required': True,
+                                'schema': {'type': 'string'},
+                            },
+                            {
+                                'name': 'queryType',
+                                'in': 'query',
+                                'schema': {
+                                    'type': 'string',
+                                    'enum': ['Latest', 'Top'],
+                                    'default': 'Latest',
+                                },
+                            },
+                            {
+                                'name': 'limit',
+                                'in': 'query',
+                                'schema': {
+                                    'type': 'integer',
+                                    'minimum': 1,
+                                    'maximum': 200,
+                                    'default': 20,
+                                },
+                            },
+                        ],
+                        'responses': {'200': {'description': 'Search results'}},
+                    }
+                }
+            },
+        }
+
+        spec = parse_spec(raw)
+        operation = next(op for op in spec.operations if op.operation_id == 'searchTweets')
+        params = {param.name: param for param in operation.parameters}
+
+        assert spec.title == 'Xquik API'
+        assert spec.default_base_url == 'https://xquik.com'
+        assert spec.security_schemes['apiKey']['name'] == 'x-api-key'
+        assert operation.method == 'get'
+        assert operation.path == '/api/v1/x/tweets/search'
+        assert operation.security == [{'apiKey': []}]
+        assert params['q'].required is True
+        assert params['queryType'].schema_['enum'] == ['Latest', 'Top']
+        assert params['queryType'].schema_['default'] == 'Latest'
+        assert params['limit'].schema_type == 'integer'
+        assert params['limit'].schema_['maximum'] == 200
+
 
 class TestRelativeServerResolution:
     """Resolution of relative ``servers[].url`` against the spec source URL."""
