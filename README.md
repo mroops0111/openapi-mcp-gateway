@@ -71,12 +71,12 @@ For an API-key header, use config so the header name is explicit:
 
 ```yaml
 servers:
-  - name: xquik
-    spec: https://xquik.com/openapi.json
+  - name: petstore
+    spec: https://petstore3.swagger.io/api/v3/openapi.json
     auth:
       type: api_key
-      token: ${XQUIK_API_KEY}
-      api_key_header: x-api-key
+      token: ${PETSTORE_API_KEY}
+      api_key_header: api_key
 ```
 
 ### 3. OAuth2, Per-User Delegation (`authorization_code`)
