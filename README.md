@@ -67,6 +67,18 @@ uv run openapi-mcp-gateway \
     --auth-token '${GITHUB_TOKEN}'
 ```
 
+For an API-key header, use config so the header name is explicit:
+
+```yaml
+servers:
+  - name: petstore
+    spec: https://petstore3.swagger.io/api/v3/openapi.json
+    auth:
+      type: api_key
+      token: ${PETSTORE_API_KEY}
+      api_key_header: api_key
+```
+
 ### 3. OAuth2, Per-User Delegation (`authorization_code`)
 
 The gateway runs its own OAuth server so each MCP client authenticates as its own end-user, with tokens minted per session.
