@@ -401,6 +401,29 @@ Because the gateway runs in-process and routes through `httpx.ASGITransport`, ga
 
 </details>
 
+### Embed in an Existing FastAPI App
+
+To serve MCP alongside your own routes, build a `Gateway` and mount it onto your app. `mount` attaches every MCP sub-app at its configured path and also registers the OAuth authorization-server and `.well-known` discovery routes those servers own, so an OAuth flow works end to end:
+
+```python
+from fastapi import FastAPI
+from openapi_mcp_gateway import Gateway, GatewayConfig, ServerConfig
+
+app = FastAPI()
+
+gateway = Gateway.from_config(
+    GatewayConfig(
+        url="https://your-app.example.com",  # public URL, used for discovery and redirect URLs
+        servers=[ServerConfig(name="petstore", spec="petstore.json")],
+    )
+)
+gateway.mount(app)  # mounts /petstore/mcp plus its OAuth and .well-known routes
+```
+
+Set `GatewayConfig.url` to the host app's public URL so discovery documents and OAuth redirect URLs point at the right origin.
+
+The upstream OAuth callback for a server named `<server>` is fixed at `/<server>/auth/callback`. Keep it clear of your app's own callback paths.
+
 ## License
 
 [MIT](LICENSE)

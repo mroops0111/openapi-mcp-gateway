@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from mcp.server.fastmcp import Context
 from starlette.testclient import TestClient
 
@@ -183,6 +184,42 @@ class TestWellKnownOAuth:
         """``OPTIONS`` on the metadata endpoint returns 200 for CORS preflight."""
         response = oauth_client.options('/.well-known/oauth-authorization-server/petstore')
         assert response.status_code == 200
+
+
+class TestMountEmbedding:
+    """``Gateway.mount`` wires OAuth and ``.well-known`` routes onto a host FastAPI app."""
+
+    @pytest.fixture
+    def oauth_gateway(self, petstore_json_path):
+        """Gateway whose petstore server uses OAuth2, ready to embed."""
+        config = GatewayConfig(
+            url='https://mcp.example.com',
+            servers=[
+                ServerConfig(
+                    name='petstore',
+                    spec=str(petstore_json_path),
+                    auth=AuthConfig(
+                        type='oauth2',
+                        client_id='test-client-id',
+                        client_secret='test-client-secret',
+                        authorization_url='https://auth.example.com/authorize',
+                        token_url='https://auth.example.com/token',
+                        scopes=['read'],
+                    ),
+                ),
+            ],
+        )
+        return Gateway.from_config(config)
+
+    def test_mount_registers_well_known_routes(self, oauth_gateway):
+        """``mount`` makes the host app serve the OAuth discovery metadata."""
+        host = FastAPI()
+        oauth_gateway.mount(host, transport='streamable-http')
+        client = TestClient(host)
+
+        response = client.get('/.well-known/oauth-authorization-server/petstore')
+        assert response.status_code == 200
+        assert response.json()['authorization_endpoint'].endswith('/authorize')
 
 
 class TestEndToEndToolInvocation:

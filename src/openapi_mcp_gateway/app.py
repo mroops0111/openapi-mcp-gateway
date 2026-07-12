@@ -68,8 +68,7 @@ def build_app(
         expose_headers=config.cors.expose_headers,
     )
 
-    _register_oauth_routes(app, servers)
-    _register_well_known_routes(app, servers)
+    register_auth_routes(app, servers)
     _register_health_route(app, servers)
 
     for handle in servers:
@@ -79,8 +78,13 @@ def build_app(
     return app
 
 
-def _register_oauth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
-    """Mount MCP-side OAuth endpoints and RFC 9728 protected-resource routes per server."""
+def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
+    """Register the OAuth and ``.well-known`` discovery routes an embedder needs for ``servers``.
+
+    ``mount`` adds these alongside the MCP sub-apps for a working OAuth flow.
+    Register before mounting, so the explicit OAuth paths win over each catch-all ``mount_path``.
+    """
+    # Per-server OAuth endpoints and RFC 9728 protected-resource routes.
     for handle in servers:
         if not handle.auth_provider or not handle.auth_settings:
             continue
@@ -117,9 +121,7 @@ def _register_oauth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                 name=route.name,
             )
 
-
-def _register_well_known_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
-    """Register RFC 8414 / 9728 ``.well-known`` discovery endpoints per server."""
+    # RFC 8414 / 9728 ``.well-known`` discovery endpoints, resolved per server name at request time.
     server_lookup: dict[str, _ServerBundle] = {h.name: h for h in servers}
 
     @app.get('/.well-known/oauth-authorization-server/{server_name}')
