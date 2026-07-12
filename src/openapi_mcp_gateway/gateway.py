@@ -13,7 +13,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.exceptions import HTTPException
 from starlette.responses import RedirectResponse
 
-from .app import _ServerBundle, build_app
+from .app import _ServerBundle, build_app, register_auth_routes
 from .auth.detector import detect_oauth_flows, detect_unsupported_oauth_flows
 from .auth.flows import AuthorizationCodeProvider, build_oauth_flow
 from .auth.resolver import (
@@ -302,8 +302,13 @@ class Gateway:
         )
 
     def mount(self, app: FastAPI, transport: str | None = None) -> None:
-        """Mount every registered MCP sub-app onto ``app`` at its configured path."""
+        """Mount every registered MCP sub-app onto ``app`` at its configured path.
+
+        Also registers the OAuth and ``.well-known`` discovery routes those servers own,
+        so an embedded gateway serves a complete OAuth flow.
+        """
         transport = transport if transport is not None else self._config.transport
+        register_auth_routes(app, self._servers)
         for handle in self._servers:
             mcp_app = handle.mcp.sse_app() if transport == 'sse' else handle.mcp.streamable_http_app()
             app.mount(handle.mount_path, mcp_app)

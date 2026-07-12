@@ -67,6 +67,18 @@ uv run openapi-mcp-gateway \
     --auth-token '${GITHUB_TOKEN}'
 ```
 
+For an API-key header, use config so the header name is explicit:
+
+```yaml
+servers:
+  - name: petstore
+    spec: https://petstore3.swagger.io/api/v3/openapi.json
+    auth:
+      type: api_key
+      token: ${PETSTORE_API_KEY}
+      api_key_header: api_key
+```
+
 ### 3. OAuth2, Per-User Delegation (`authorization_code`)
 
 The gateway runs its own OAuth server so each MCP client authenticates as its own end-user, with tokens minted per session.
@@ -388,6 +400,29 @@ Auth is auto-detected from the app's `securitySchemes`. Override by passing an e
 Because the gateway runs in-process and routes through `httpx.ASGITransport`, gateway and upstream share the same OAuth audience, so the MCP client's `Authorization` header passes through verbatim (`auth.flow: passthrough`, set automatically for this integration only). For `client_credentials` schemes the gateway mints upstream tokens from its own credentials instead.
 
 </details>
+
+### Embed in an Existing FastAPI App
+
+To serve MCP alongside your own routes, build a `Gateway` and mount it onto your app. `mount` attaches every MCP sub-app at its configured path and also registers the OAuth authorization-server and `.well-known` discovery routes those servers own, so an OAuth flow works end to end:
+
+```python
+from fastapi import FastAPI
+from openapi_mcp_gateway import Gateway, GatewayConfig, ServerConfig
+
+app = FastAPI()
+
+gateway = Gateway.from_config(
+    GatewayConfig(
+        url="https://your-app.example.com",  # public URL, used for discovery and redirect URLs
+        servers=[ServerConfig(name="petstore", spec="petstore.json")],
+    )
+)
+gateway.mount(app)  # mounts /petstore/mcp plus its OAuth and .well-known routes
+```
+
+Set `GatewayConfig.url` to the host app's public URL so discovery documents and OAuth redirect URLs point at the right origin.
+
+The upstream OAuth callback for a server named `<server>` is fixed at `/<server>/auth/callback`. Keep it clear of your app's own callback paths.
 
 ## License
 
