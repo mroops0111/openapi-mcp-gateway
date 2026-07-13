@@ -152,6 +152,51 @@ class TestFullOAuthLifecycle:
         assert await provider.load_refresh_token(mcp_client_info, new_token.refresh_token) is None
 
 
+class TestConfigurableTokenTtl:
+    """Custom access and refresh TTLs shape the MCP tokens the provider mints."""
+
+    async def test_issued_token_uses_custom_access_ttl(self, store, mcp_client_info):
+        """A provider built with a custom access TTL mints tokens expiring on that cadence."""
+        provider = AuthorizationCodeProvider(
+            store=store,
+            upstream_auth_url='https://auth.example.com/authorize',
+            upstream_token_url='https://auth.example.com/token',
+            client_id='gateway-client-id',
+            client_secret='gateway-client-secret',
+            callback_url='http://localhost:8000/petstore/auth/callback',
+            scopes=['read'],
+            prefix='petstore',
+            access_token_ttl=7200,
+            refresh_token_ttl=604800,
+        )
+        await provider.register_client(mcp_client_info)
+
+        params = AuthorizationParams(
+            state='state-ttl',
+            scopes=['read'],
+            redirect_uri=AnyHttpUrl('http://localhost:3000/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge-123',
+        )
+        await provider.authorize(mcp_client_info, params)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'access_token': 'upstream-access-token',
+            'refresh_token': 'upstream-refresh-token',
+            'expires_in': 3600,
+        }
+        with patch('httpx.AsyncClient.post', new_callable=AsyncMock, return_value=mock_response):
+            redirect = await provider.handle_upstream_callback('upstream-code', 'state-ttl')
+
+        mcp_auth_code = redirect.split('code=')[1].split('&')[0]
+        auth_code = await provider.load_authorization_code(mcp_client_info, mcp_auth_code)
+
+        token = await provider.exchange_authorization_code(mcp_client_info, auth_code)
+        assert token.expires_in == 7200
+
+
 class TestGetApiAccessToken:
     """``get_api_access_token`` resolves the upstream token from the active MCP context."""
 
