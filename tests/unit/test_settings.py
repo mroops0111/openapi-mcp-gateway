@@ -126,7 +126,7 @@ class TestAuthConfig:
     def test_mcp_token_ttl_rejects_non_positive(self, field):
         """A zero or negative TTL fails validation."""
         with pytest.raises(pydantic.ValidationError):
-            AuthConfig(type='oauth2', **{field: 0})
+            AuthConfig.model_validate({'type': 'oauth2', field: 0})
 
     def test_resolve_client_id_direct(self):
         """A literal ``client_id`` is returned verbatim."""

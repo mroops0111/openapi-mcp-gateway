@@ -354,12 +354,8 @@ class AuthorizationCodeProvider:
                 'mcp_refresh_token', mcp_refresh, 'api_refresh_token', api_refresh_token, ttl=refresh_ttl
             )
         # Pair access and refresh in both directions for revoke lookup.
-        await self.store.set_mapping(
-            'mcp_access_token', mcp_access, 'mcp_refresh_token', mcp_refresh, ttl=access_ttl
-        )
-        await self.store.set_mapping(
-            'mcp_refresh_token', mcp_refresh, 'mcp_access_token', mcp_access, ttl=refresh_ttl
-        )
+        await self.store.set_mapping('mcp_access_token', mcp_access, 'mcp_refresh_token', mcp_refresh, ttl=access_ttl)
+        await self.store.set_mapping('mcp_refresh_token', mcp_refresh, 'mcp_access_token', mcp_access, ttl=refresh_ttl)
 
         return OAuthToken(
             access_token=mcp_access,

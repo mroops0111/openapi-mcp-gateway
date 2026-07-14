@@ -192,6 +192,7 @@ class TestConfigurableTokenTtl:
 
         mcp_auth_code = redirect.split('code=')[1].split('&')[0]
         auth_code = await provider.load_authorization_code(mcp_client_info, mcp_auth_code)
+        assert auth_code is not None
 
         token = await provider.exchange_authorization_code(mcp_client_info, auth_code)
         assert token.expires_in == 7200

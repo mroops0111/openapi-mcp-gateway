@@ -203,6 +203,7 @@ class TestBuildOAuthFlow:
             gateway_url='http://localhost:8000',
             mount_path='/srv',
         )
+        assert setup.provider is not None
         assert setup.provider.access_token_ttl == 3600
         assert setup.provider.refresh_token_ttl == 86400
 
@@ -225,6 +226,7 @@ class TestBuildOAuthFlow:
             gateway_url='http://localhost:8000',
             mount_path='/srv',
         )
+        assert setup.provider is not None
         assert setup.provider.access_token_ttl == 7200
         assert setup.provider.refresh_token_ttl == 604800
 
