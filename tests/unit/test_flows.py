@@ -204,8 +204,8 @@ class TestBuildOAuthFlow:
             mount_path='/srv',
         )
         assert setup.provider is not None
-        assert setup.provider.access_token_ttl == 3600
-        assert setup.provider.refresh_token_ttl == 86400
+        assert setup.provider.mcp_access_token_ttl == 3600
+        assert setup.provider.mcp_refresh_token_ttl == 86400
 
     def test_authorization_code_honours_configured_token_ttls(self):
         """``mcp_access_token_ttl`` / ``mcp_refresh_token_ttl`` reach the provider."""
@@ -227,8 +227,8 @@ class TestBuildOAuthFlow:
             mount_path='/srv',
         )
         assert setup.provider is not None
-        assert setup.provider.access_token_ttl == 7200
-        assert setup.provider.refresh_token_ttl == 604800
+        assert setup.provider.mcp_access_token_ttl == 7200
+        assert setup.provider.mcp_refresh_token_ttl == 604800
 
     def test_client_credentials_returns_token_source_resolver(self):
         """client_credentials yields a TokenSourceAuthResolver and an on_shutdown hook."""

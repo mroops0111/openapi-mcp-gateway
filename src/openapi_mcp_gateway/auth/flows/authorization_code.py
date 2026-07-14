@@ -50,8 +50,8 @@ class AuthorizationCodeProvider:
         callback_url: str,
         scopes: list[str] | None = None,
         prefix: str = 'gateway',
-        access_token_ttl: int = MCP_ACCESS_TOKEN_TTL,
-        refresh_token_ttl: int = MCP_REFRESH_TOKEN_TTL,
+        mcp_access_token_ttl: int = MCP_ACCESS_TOKEN_TTL,
+        mcp_refresh_token_ttl: int = MCP_REFRESH_TOKEN_TTL,
     ) -> None:
         self.store = store
         self.upstream_auth_url = upstream_auth_url
@@ -61,8 +61,8 @@ class AuthorizationCodeProvider:
         self.callback_url = callback_url
         self.scopes = scopes or []
         self._prefix = prefix
-        self.access_token_ttl = access_token_ttl
-        self.refresh_token_ttl = refresh_token_ttl
+        self.mcp_access_token_ttl = mcp_access_token_ttl
+        self.mcp_refresh_token_ttl = mcp_refresh_token_ttl
 
     # MCP SDK OAuthAuthorizationServerProvider interface
 
@@ -314,8 +314,6 @@ class AuthorizationCodeProvider:
         mcp_access = f'mcp_{secrets.token_hex(32)}'
         mcp_refresh = f'mcp_refresh_{secrets.token_hex(32)}'
         now = int(time.time())
-        access_ttl = self.access_token_ttl
-        refresh_ttl = self.refresh_token_ttl
 
         await self.store.set(
             'mcp_access_token',
@@ -324,9 +322,9 @@ class AuthorizationCodeProvider:
                 'token': mcp_access,
                 'client_id': client_id,
                 'scopes': scopes,
-                'expires_at': now + access_ttl,
+                'expires_at': now + self.mcp_access_token_ttl,
             },
-            ttl=access_ttl,
+            ttl=self.mcp_access_token_ttl,
         )
 
         await self.store.set(
@@ -336,31 +334,35 @@ class AuthorizationCodeProvider:
                 'token': mcp_refresh,
                 'client_id': client_id,
                 'scopes': scopes,
-                'expires_at': now + refresh_ttl,
+                'expires_at': now + self.mcp_refresh_token_ttl,
             },
-            ttl=refresh_ttl,
+            ttl=self.mcp_refresh_token_ttl,
         )
 
         # mcp_access -> api_access drives tool calls.
         await self.store.set_mapping(
-            'mcp_access_token', mcp_access, 'api_access_token', api_access_token, ttl=access_ttl
+            'mcp_access_token', mcp_access, 'api_access_token', api_access_token, ttl=self.mcp_access_token_ttl
         )
         # mcp_refresh -> api_access keeps the upstream token reachable through the refresh chain.
         await self.store.set_mapping(
-            'mcp_refresh_token', mcp_refresh, 'api_access_token', api_access_token, ttl=refresh_ttl
+            'mcp_refresh_token', mcp_refresh, 'api_access_token', api_access_token, ttl=self.mcp_refresh_token_ttl
         )
         if api_refresh_token:
             await self.store.set_mapping(
-                'mcp_refresh_token', mcp_refresh, 'api_refresh_token', api_refresh_token, ttl=refresh_ttl
+                'mcp_refresh_token', mcp_refresh, 'api_refresh_token', api_refresh_token, ttl=self.mcp_refresh_token_ttl
             )
         # Pair access and refresh in both directions for revoke lookup.
-        await self.store.set_mapping('mcp_access_token', mcp_access, 'mcp_refresh_token', mcp_refresh, ttl=access_ttl)
-        await self.store.set_mapping('mcp_refresh_token', mcp_refresh, 'mcp_access_token', mcp_access, ttl=refresh_ttl)
+        await self.store.set_mapping(
+            'mcp_access_token', mcp_access, 'mcp_refresh_token', mcp_refresh, ttl=self.mcp_access_token_ttl
+        )
+        await self.store.set_mapping(
+            'mcp_refresh_token', mcp_refresh, 'mcp_access_token', mcp_access, ttl=self.mcp_refresh_token_ttl
+        )
 
         return OAuthToken(
             access_token=mcp_access,
             refresh_token=mcp_refresh,
-            expires_in=access_ttl,
+            expires_in=self.mcp_access_token_ttl,
         )
 
     async def _store_api_token(self, client_id: str, token: str, expires_in: int) -> None:
@@ -444,8 +446,8 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             callback_url=callback_url,
             scopes=entry.auth.scopes,
             prefix=entry.name,
-            access_token_ttl=entry.auth.mcp_access_token_ttl,
-            refresh_token_ttl=entry.auth.mcp_refresh_token_ttl,
+            mcp_access_token_ttl=entry.auth.mcp_access_token_ttl,
+            mcp_refresh_token_ttl=entry.auth.mcp_refresh_token_ttl,
         )
 
         server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')

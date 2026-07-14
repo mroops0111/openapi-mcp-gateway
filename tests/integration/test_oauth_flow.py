@@ -166,8 +166,8 @@ class TestConfigurableTokenTtl:
             callback_url='http://localhost:8000/petstore/auth/callback',
             scopes=['read'],
             prefix='petstore',
-            access_token_ttl=7200,
-            refresh_token_ttl=604800,
+            mcp_access_token_ttl=7200,
+            mcp_refresh_token_ttl=604800,
         )
         await provider.register_client(mcp_client_info)
 
