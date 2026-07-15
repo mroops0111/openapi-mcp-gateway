@@ -28,6 +28,8 @@ def provider(store):
         callback_url='http://localhost:8000/petstore/auth/callback',
         scopes=['read', 'write'],
         prefix='petstore',
+        mcp_access_token_ttl=3600,
+        mcp_refresh_token_ttl=86400,
     )
 
 

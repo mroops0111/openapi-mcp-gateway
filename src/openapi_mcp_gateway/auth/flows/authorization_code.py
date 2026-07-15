@@ -27,8 +27,6 @@ from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 logger = logging.getLogger(__name__)
 
 
-MCP_ACCESS_TOKEN_TTL = 3600  # 1 hour
-MCP_REFRESH_TOKEN_TTL = 86400  # 24 hours
 MCP_SCOPES = ['api']
 
 
@@ -50,8 +48,9 @@ class AuthorizationCodeProvider:
         callback_url: str,
         scopes: list[str] | None = None,
         prefix: str = 'gateway',
-        mcp_access_token_ttl: int = MCP_ACCESS_TOKEN_TTL,
-        mcp_refresh_token_ttl: int = MCP_REFRESH_TOKEN_TTL,
+        *,
+        mcp_access_token_ttl: int,
+        mcp_refresh_token_ttl: int,
     ) -> None:
         self.store = store
         self.upstream_auth_url = upstream_auth_url
