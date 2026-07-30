@@ -4,6 +4,7 @@ import typing
 import httpx
 import pytest
 from mcp.server.mcpserver import Context
+from mcp.types import InputRequiredResult
 
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import Expose, McpIntegration, ResourceOverride
@@ -230,7 +231,11 @@ class TestResourceUpstreamCall:
             GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path), mode='auto')])
         )
         mcp = gateway._servers[0].mcp
-        contents = list(await mcp.read_resource('petstore://store/inventory'))
+        result = await mcp.read_resource('petstore://store/inventory')
+        # mcp v2 widened read_resource to also return an InputRequiredResult (the MRTR interim
+        # result); this read never triggers one, so narrow to the resource-contents arm.
+        assert not isinstance(result, InputRequiredResult)
+        contents = list(result)
         assert captured['url'].startswith('https://petstore.example.com/v1/store/inventory')
         assert len(contents) == 1
         body = contents[0].content
