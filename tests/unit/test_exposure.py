@@ -5,7 +5,8 @@ import typing
 
 import httpx
 import pytest
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway.exposure import (
     MetaToolGenerator,
@@ -157,9 +158,9 @@ class TestSchemaToPythonType:
 class TestToolGeneration:
     """End-to-end tool registration: name sanitisation flows through to the upstream call."""
 
-    def _generator(self) -> tuple[ToolGenerator, FastMCP]:
-        """Build a fresh generator + FastMCP pair for each test."""
-        mcp = FastMCP('test')
+    def _generator(self) -> tuple[ToolGenerator, MCPServer]:
+        """Build a fresh generator + MCPServer pair for each test."""
+        mcp = MCPServer('test')
         return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
 
     def test_tool_name_with_slash_sanitized(self):
@@ -240,15 +241,15 @@ class TestToolGeneration:
 
 
 class TestGeneratedSignature:
-    """``build_tool_function`` builds the FastMCP-facing signature.
+    """``build_tool_function`` builds the MCPServer-facing signature.
 
     Required params come first, then the injected ``ctx``, then optional params,
     and parameter annotations are driven by the JSON Schema attached to each spec parameter.
     """
 
-    def _generator(self) -> tuple[ToolGenerator, FastMCP]:
-        """Fresh generator + FastMCP for each test."""
-        mcp = FastMCP('test')
+    def _generator(self) -> tuple[ToolGenerator, MCPServer]:
+        """Fresh generator + MCPServer for each test."""
+        mcp = MCPServer('test')
         return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
 
     def test_param_order_required_then_ctx_then_optional(self):
@@ -343,9 +344,9 @@ class TestGeneratedSignature:
         assert tool.fn.__annotations__['ids'] == list[int]
 
 
-def _meta_generator() -> tuple[MetaToolGenerator, FastMCP]:
-    """Build a fresh MetaToolGenerator + FastMCP pair for each test."""
-    mcp = FastMCP('test')
+def _meta_generator() -> tuple[MetaToolGenerator, MCPServer]:
+    """Build a fresh MetaToolGenerator + MCPServer pair for each test."""
+    mcp = MCPServer('test')
     return MetaToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
 
 
@@ -399,7 +400,7 @@ class TestListOperations:
         generator, mcp = _meta_generator()
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'list_operations')
-        payload = (await tool.fn(ctx=_stub_context())).structuredContent
+        payload = (await tool.fn(ctx=_stub_context())).structured_content
         assert payload == {
             'operations': [
                 {'name': 'list_pets', 'description': 'List all pets.'},
@@ -416,7 +417,7 @@ class TestListOperations:
             ]
         )
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'list_operations')
-        payload = (await tool.fn(ctx=_stub_context())).structuredContent
+        payload = (await tool.fn(ctx=_stub_context())).structured_content
         assert payload == {'operations': [{'name': 'ping', 'description': 'GET /ping'}]}
 
 
@@ -428,7 +429,7 @@ class TestGetOperation:
         generator, mcp = _meta_generator()
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = (await tool.fn(name='get_pet_by_id', ctx=_stub_context())).structuredContent
+        payload = (await tool.fn(name='get_pet_by_id', ctx=_stub_context())).structured_content
         assert payload['name'] == 'get_pet_by_id'
         assert payload['description'] == 'Get one pet.'
         schema = payload['input_schema']
@@ -437,7 +438,7 @@ class TestGetOperation:
         assert schema['required'] == ['petId']
 
     async def test_unknown_raises(self):
-        """An unknown name raises ``ValueError`` so FastMCP surfaces it as a tool error."""
+        """An unknown name raises ``ValueError`` so MCPServer surfaces it as a tool error."""
         generator, mcp = _meta_generator()
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
@@ -449,7 +450,7 @@ class TestGetOperation:
         generator, mcp = _meta_generator()
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = (await tool.fn(name='list_pets', ctx=_stub_context())).structuredContent
+        payload = (await tool.fn(name='list_pets', ctx=_stub_context())).structured_content
         assert 'required' not in payload['input_schema']
 
     async def test_param_description_propagates(self):
@@ -474,7 +475,7 @@ class TestGetOperation:
             ]
         )
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = (await tool.fn(name='list_pets', ctx=_stub_context())).structuredContent
+        payload = (await tool.fn(name='list_pets', ctx=_stub_context())).structured_content
         assert payload['input_schema']['properties']['limit']['description'] == 'Max items.'
 
 
@@ -499,8 +500,8 @@ class TestCallOperation:
         result = await tool.fn(name='get_pet_by_id', arguments={'petId': 7}, ctx=_stub_context())
         assert captured['method'] == 'GET'
         assert captured['url'].endswith('/pets/7')
-        assert result.isError is False
-        assert result.structuredContent == {'id': 7, 'name': 'rex'}
+        assert result.is_error is False
+        assert result.structured_content == {'id': 7, 'name': 'rex'}
         assert json.loads(result.content[0].text) == {'id': 7, 'name': 'rex'}
 
     async def test_unknown_raises(self):
@@ -568,10 +569,10 @@ class TestDeriveToolAnnotations:
     def test_get_is_read_only_and_idempotent(self):
         """``GET`` is safe and idempotent; never destructive."""
         annotations = derive_tool_annotations(self._operation('get'))
-        assert annotations.readOnlyHint is True
-        assert annotations.idempotentHint is True
-        assert annotations.destructiveHint is None
-        assert annotations.openWorldHint is True
+        assert annotations.read_only_hint is True
+        assert annotations.idempotent_hint is True
+        assert annotations.destructive_hint is None
+        assert annotations.open_world_hint is True
 
     def test_summary_mirrored_to_annotations_title(self):
         """``summary`` is also surfaced on ``ToolAnnotations.title`` for legacy clients."""
@@ -586,38 +587,38 @@ class TestDeriveToolAnnotations:
     def test_put_idempotent_not_destructive(self):
         """``PUT`` is idempotent without being read-only or destructive."""
         annotations = derive_tool_annotations(self._operation('put'))
-        assert annotations.readOnlyHint is None
-        assert annotations.idempotentHint is True
-        assert annotations.destructiveHint is None
+        assert annotations.read_only_hint is None
+        assert annotations.idempotent_hint is True
+        assert annotations.destructive_hint is None
 
     def test_patch_idempotent_not_destructive(self):
         """``PATCH`` is idempotent without being destructive."""
         annotations = derive_tool_annotations(self._operation('patch'))
-        assert annotations.idempotentHint is True
-        assert annotations.destructiveHint is None
+        assert annotations.idempotent_hint is True
+        assert annotations.destructive_hint is None
 
     def test_delete_destructive_and_idempotent(self):
         """``DELETE`` is destructive and idempotent."""
         annotations = derive_tool_annotations(self._operation('delete'))
-        assert annotations.destructiveHint is True
-        assert annotations.idempotentHint is True
-        assert annotations.readOnlyHint is None
+        assert annotations.destructive_hint is True
+        assert annotations.idempotent_hint is True
+        assert annotations.read_only_hint is None
 
     def test_post_neither_idempotent_nor_destructive(self):
         """``POST`` carries no idempotency or destructiveness guarantees."""
         annotations = derive_tool_annotations(self._operation('post'))
-        assert annotations.readOnlyHint is None
-        assert annotations.idempotentHint is None
-        assert annotations.destructiveHint is None
-        assert annotations.openWorldHint is True
+        assert annotations.read_only_hint is None
+        assert annotations.idempotent_hint is None
+        assert annotations.destructive_hint is None
+        assert annotations.open_world_hint is True
 
 
 class TestToolRegistrationMetadata:
     """Registered tools advertise ``title`` and ``annotations`` derived from the spec."""
 
-    def _generator(self) -> tuple[ToolGenerator, FastMCP]:
-        """Build a fresh generator + FastMCP pair for each test."""
-        mcp = FastMCP('test')
+    def _generator(self) -> tuple[ToolGenerator, MCPServer]:
+        """Build a fresh generator + MCPServer pair for each test."""
+        mcp = MCPServer('test')
         return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
 
     def test_tool_advertises_title_and_annotations(self):
@@ -635,17 +636,17 @@ class TestToolRegistrationMetadata:
         assert annotations is not None
         assert tool.title == 'List pets'
         assert annotations.title == 'List pets'
-        assert annotations.readOnlyHint is True
-        assert annotations.idempotentHint is True
-        assert annotations.openWorldHint is True
+        assert annotations.read_only_hint is True
+        assert annotations.idempotent_hint is True
+        assert annotations.open_world_hint is True
 
 
 class TestStructuredContent:
     """Successful responses populate ``structuredContent`` for object bodies and leave it ``None`` otherwise."""
 
-    def _generator(self) -> tuple[ToolGenerator, FastMCP]:
-        """Build a fresh generator + FastMCP pair for each test."""
-        mcp = FastMCP('test')
+    def _generator(self) -> tuple[ToolGenerator, MCPServer]:
+        """Build a fresh generator + MCPServer pair for each test."""
+        mcp = MCPServer('test')
         return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
 
     async def test_dict_body_populates_structured_content(self, mock_upstream):
@@ -656,8 +657,8 @@ class TestStructuredContent:
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
 
         result = await tool.run({}, context=_stub_context())
-        assert result.isError is False
-        assert result.structuredContent == {'id': 7, 'name': 'rex'}
+        assert result.is_error is False
+        assert result.structured_content == {'id': 7, 'name': 'rex'}
         assert json.loads(result.content[0].text) == {'id': 7, 'name': 'rex'}
 
     async def test_list_body_omits_structured_content(self, mock_upstream):
@@ -668,8 +669,8 @@ class TestStructuredContent:
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'list_pets')
 
         result = await tool.run({}, context=_stub_context())
-        assert result.isError is False
-        assert result.structuredContent is None
+        assert result.is_error is False
+        assert result.structured_content is None
         assert json.loads(result.content[0].text) == [{'id': 1}]
 
 
@@ -681,9 +682,9 @@ class TestBodySerialization:
     These tests pin that conversion.
     """
 
-    def _generator(self) -> tuple[ToolGenerator, FastMCP]:
-        """Build a fresh generator + FastMCP pair for each test."""
-        mcp = FastMCP('test')
+    def _generator(self) -> tuple[ToolGenerator, MCPServer]:
+        """Build a fresh generator + MCPServer pair for each test."""
+        mcp = MCPServer('test')
         return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
 
     async def test_array_of_objects_body_serialised_to_json(self, mock_upstream):
@@ -723,7 +724,7 @@ class TestBodySerialization:
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'create_order')
 
         result = await tool.run({'line_items': [{'id': 1, 'name': 'rex'}]}, context=_stub_context())
-        assert result.isError is False
+        assert result.is_error is False
         assert captured['body'] == {'line_items': [{'id': 1, 'name': 'rex'}]}
 
     async def test_object_body_omits_unset_optional_fields(self, mock_upstream):
@@ -760,16 +761,16 @@ class TestBodySerialization:
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'create_doc')
 
         result = await tool.run({'meta': {'title': 'hello'}}, context=_stub_context())
-        assert result.isError is False
+        assert result.is_error is False
         assert captured['body'] == {'meta': {'title': 'hello'}}
 
 
 class TestErrorResult:
     """Upstream non-2xx returns an ``isError`` result with the parsed error body when JSON-shaped."""
 
-    def _generator(self) -> tuple[ToolGenerator, FastMCP]:
-        """Build a fresh generator + FastMCP pair for each test."""
-        mcp = FastMCP('test')
+    def _generator(self) -> tuple[ToolGenerator, MCPServer]:
+        """Build a fresh generator + MCPServer pair for each test."""
+        mcp = MCPServer('test')
         return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
 
     async def test_json_error_body_in_structured_content(self, mock_upstream):
@@ -785,8 +786,8 @@ class TestErrorResult:
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
 
         result = await tool.run({}, context=_stub_context())
-        assert result.isError is True
-        assert result.structuredContent == {
+        assert result.is_error is True
+        assert result.structured_content == {
             'message': 'Not Found',
             'documentation_url': 'https://api.example.com/docs',
         }
@@ -803,8 +804,8 @@ class TestErrorResult:
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
 
         result = await tool.run({}, context=_stub_context())
-        assert result.isError is True
-        assert result.structuredContent is None
+        assert result.is_error is True
+        assert result.structured_content is None
         assert 'internal boom' in result.content[0].text
 
     async def test_network_error_wrapped_as_iserror(self, mock_upstream):
@@ -819,7 +820,7 @@ class TestErrorResult:
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
 
         result = await tool.run({}, context=_stub_context())
-        assert result.isError is True
-        assert result.structuredContent is None
+        assert result.is_error is True
+        assert result.structured_content is None
         assert 'ConnectError' in result.content[0].text
         assert 'connection refused' in result.content[0].text

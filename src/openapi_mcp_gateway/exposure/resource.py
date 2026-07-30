@@ -2,7 +2,8 @@ import inspect
 import logging
 import typing
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, TextContent
 
 from ..openapi import OperationInfo, ParameterInfo
@@ -38,7 +39,7 @@ def derive_resource_uri(server_name: str, operation: OperationInfo) -> str:
 
     Honors ``x-mcp-integration.expose.resource.uri_template`` verbatim when set.
     Otherwise builds ``{server_name}://{path}``, rewriting OpenAPI path placeholders into sanitised Python identifiers,
-    so FastMCP's ``{(\\w+)}`` template regex matches.
+    so MCPServer's ``{(\\w+)}`` template regex matches.
     """
     override = _get_override(operation, 'resource')
     if override and override.uri_template:
@@ -61,7 +62,7 @@ def _extract_text_from_result(result: CallToolResult) -> str:
 def _build_resource_signature(
     path_parameters: list[ParameterInfo],
 ) -> tuple[inspect.Signature, dict[str, typing.Any]]:
-    """Build the signature FastMCP introspects to decide concrete vs template registration.
+    """Build the signature MCPServer introspects to decide concrete vs template registration.
 
     With path parameters: ``(path_parameter_1, ..., ctx: Context) -> str`` (template).
     Without: empty signature (concrete resource).
@@ -92,13 +93,13 @@ def build_resource_read_function(operation: OperationInfo, binding: UpstreamBind
 
     Reuses the upstream closure from the tool path, so auth, path substitution, and error handling stay identical.
     Signature is conditional on whether the operation has path parameters,
-    which dictates how FastMCP registers the resource:
+    which dictates how MCPServer registers the resource:
 
     - **Has path parameters**: signature is ``(p1, p2, ..., ctx: Context)``.
-      FastMCP injects the real ``Context`` per call and registers as a **template**.
+      MCPServer injects the real ``Context`` per call and registers as a **template**.
       Future progress notifications, passthrough auth, and per-call logging all have a real ``ctx`` to work with.
     - **No path parameters**: empty signature.
-      FastMCP registers as a **concrete resource**, and a :class:`_NullContext` is supplied internally.
+      MCPServer registers as a **concrete resource**, and a :class:`_NullContext` is supplied internally.
       ``PassthroughAuthResolver`` will return ``{}`` for these,
       which is acceptable because no FastAPI-resource integration exists today.
 
@@ -113,7 +114,7 @@ def build_resource_read_function(operation: OperationInfo, binding: UpstreamBind
         context = kwargs.pop('ctx', null_context)
         result = await upstream_callable(ctx=context, **kwargs)
         text = _extract_text_from_result(result)
-        if result.isError:
+        if result.is_error:
             raise RuntimeError(text or 'Upstream error reading resource')
         return text
 
@@ -126,7 +127,7 @@ def build_resource_read_function(operation: OperationInfo, binding: UpstreamBind
 class _NullContext:
     """Stand-in ``Context`` for concrete (no-path-param) resource reads.
 
-    FastMCP registers a resource as concrete only when the read function takes no parameters,
+    MCPServer registers a resource as concrete only when the read function takes no parameters,
     so concrete reads cannot declare ``ctx``.
     This shim feeds the shared upstream closure a context-shaped object that no-ops on progress reporting,
     and returns no header data for auth resolution.
@@ -142,10 +143,10 @@ class ResourceGenerator:
     """Register one MCP resource per ``OperationInfo`` in the input list.
 
     Inputs are assumed to be GET operations with no required non-path parameters;
-    URI placeholders are sanitised to valid Python identifiers so FastMCP's template regex matches.
+    URI placeholders are sanitised to valid Python identifiers so MCPServer's template regex matches.
     """
 
-    def __init__(self, mcp: FastMCP, binding: UpstreamBinding, server_name: str):
+    def __init__(self, mcp: MCPServer, binding: UpstreamBinding, server_name: str):
         self.mcp = mcp
         self.binding = binding
         self.server_name = server_name

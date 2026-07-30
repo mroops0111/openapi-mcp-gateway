@@ -58,14 +58,18 @@ class TestClientRegistration:
         result = await provider.get_client('nonexistent')
         assert result is None
 
-    async def test_register_without_client_id_raises(self, provider):
-        """Registering a client with no ``client_id`` raises ``ValueError``."""
-        client = OAuthClientInformationFull(
-            client_id='',
-            redirect_uris=[AnyHttpUrl('http://localhost/cb')],
-        )
+    async def test_register_without_client_id_raises(self):
+        """A client with no ``client_id`` is rejected.
+
+        mcp v2 enforces this at ``OAuthClientInformationFull`` construction
+        (``ValidationError`` is a ``ValueError``), one layer earlier than the provider's
+        own registration check in earlier SDKs, so an invalid client can no longer be built.
+        """
         with pytest.raises(ValueError, match='client_id'):
-            await provider.register_client(client)
+            OAuthClientInformationFull(
+                client_id='',
+                redirect_uris=[AnyHttpUrl('http://localhost/cb')],
+            )
 
 
 class TestAuthorize:

@@ -3,7 +3,7 @@ import typing
 
 import httpx
 import pytest
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import Expose, McpIntegration, ResourceOverride
@@ -148,7 +148,7 @@ class TestResourceExposureEndToEnd:
         """A GET with a path param appears under ``resources/templates/list`` with the derived URI."""
         mcp = gateway._servers[0].mcp
         templates = await mcp.list_resource_templates()
-        uris = {t.uriTemplate for t in templates}
+        uris = {t.uri_template for t in templates}
         assert 'petstore://pets/{petId}' in uris
 
     async def test_no_path_param_resource_listed_as_concrete(self, gateway):
@@ -171,9 +171,9 @@ class TestResourceExposureEndToEnd:
         """Description and mime type fall back to spec values when not overridden in the resource block."""
         mcp = gateway._servers[0].mcp
         templates = await mcp.list_resource_templates()
-        template = next(t for t in templates if t.uriTemplate == 'petstore://pets/{petId}')
+        template = next(t for t in templates if t.uri_template == 'petstore://pets/{petId}')
         assert template.description == 'Returns a single pet record.'
-        assert template.mimeType == 'application/json'
+        assert template.mime_type == 'application/json'
 
 
 class TestDualExposureEndToEnd:
@@ -193,7 +193,7 @@ class TestDualExposureEndToEnd:
         assert 'fetch_pet' in tool_names
 
         templates = await mcp.list_resource_templates()
-        assert 'petstore://pets/{petId}' in {t.uriTemplate for t in templates}
+        assert 'petstore://pets/{petId}' in {t.uri_template for t in templates}
 
 
 class TestResourceMisconfigFailsFast:

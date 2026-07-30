@@ -23,8 +23,8 @@ uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 - **Resource Auto-Promotion.** Set `mode: auto` and eligible GETs register as MCP resources instead of tools, keeping the tool list small while reads stay addressable by URI.
 - **Spec-Compliant Authorization.** Audience-bound tokens with no silent passthrough to upstreams, plus protocol-native `annotations` and `structuredContent` on every tool.
 - **Tool Name and Description Overrides.** Rewrite ugly `operationId`s and empty descriptions in YAML, no fork required.
-- **Pluggable Token Store.** Memory by default, switch to Redis to share state across replicas.
-- **Every Transport.** Streamable HTTP, SSE, and stdio on the same binary, from Claude Desktop and Cursor to any other MCP client.
+- **Pluggable Token Store.** Memory by default, switch to Redis to share OAuth credential state across replicas. It holds OAuth tokens and client registrations, never MCP protocol sessions, so single-replica or non-OAuth deployments do not need it.
+- **Every Transport.** Streamable HTTP and stdio on the same binary, from Claude Desktop and Cursor to any other MCP client. SSE still works but is deprecated in the 2026-07-28 spec, so new deployments should choose streamable HTTP.
 
 ---
 
@@ -205,7 +205,7 @@ Configuration merges in this order, with each layer overriding the previous: **d
 | `host` | string | `0.0.0.0` | Bind address (`0.0.0.0` = all interfaces). Clients on the same machine usually open `http://localhost:{port}` or `http://127.0.0.1:{port}`. |
 | `port` | int | `8000` | Bind port |
 | `url` | string | *(empty)* | Public base URL for OAuth redirects and discovery. When unset: `http://localhost:{port}` if `host` is `0.0.0.0`, otherwise `http://{host}:{port}`. Override when your registered redirect URI uses another host (tunnel, reverse proxy, etc.). |
-| `transport` | string | `streamable-http` | `sse`, `streamable-http`, or `stdio` |
+| `transport` | string | `streamable-http` | `streamable-http`, `stdio`, or `sse` (deprecated) |
 | `store.type` | string | `memory` | `memory` or `redis` |
 | `store.redis_url` | string | `redis://localhost:6379` | Redis URL when `store.type: redis` |
 | `logging.level` | string | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |

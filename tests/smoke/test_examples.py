@@ -1,7 +1,7 @@
 import pathlib
 
 import pytest
-from mcp.shared.memory import create_connected_server_and_client_session
+from mcp import Client
 
 from openapi_mcp_gateway import Gateway, GatewayConfig
 
@@ -46,6 +46,6 @@ async def test_example_config_lists_tools(config_name: str):
     assert gateway._servers, f'config "{config_name}" registered no servers'
 
     for bundle in gateway._servers:
-        async with create_connected_server_and_client_session(bundle.mcp) as session:
+        async with Client(bundle.mcp) as session:
             listed = await session.list_tools()
             assert listed.tools, f'config "{config_name}" server "{bundle.name}" registered no tools'

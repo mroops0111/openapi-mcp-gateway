@@ -17,7 +17,7 @@ import pkgutil
 
 import pytest
 from fastapi import FastAPI
-from mcp.shared.memory import create_connected_server_and_client_session
+from mcp import Client
 
 from openapi_mcp_gateway import Gateway, mark_tool
 
@@ -113,7 +113,7 @@ async def test_no_auth_tutorial_assembles(fastapi_docs_src: pathlib.Path, catego
 
     gateway = Gateway.from_fastapi(app, name='smoke')
     bundle = gateway._servers[0]
-    async with create_connected_server_and_client_session(bundle.mcp) as session:
+    async with Client(bundle.mcp) as session:
         listed = await session.list_tools()
         assert listed.tools, f'{module_path} produced no MCP tools'
 
@@ -146,6 +146,6 @@ async def test_http_basic_tutorial_assembles(fastapi_docs_src: pathlib.Path):
 
     gateway = Gateway.from_fastapi(app, name='smoke')
     bundle = gateway._servers[0]
-    async with create_connected_server_and_client_session(bundle.mcp) as session:
+    async with Client(bundle.mcp) as session:
         listed = await session.list_tools()
         assert listed.tools

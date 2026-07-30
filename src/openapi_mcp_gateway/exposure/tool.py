@@ -5,7 +5,8 @@ import typing
 
 import inflection
 import pydantic
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, ToolAnnotations
 
 from ..openapi import OperationInfo
@@ -60,15 +61,15 @@ def derive_tool_annotations(operation: OperationInfo) -> ToolAnnotations:
     method = operation.method.lower()
     return ToolAnnotations(
         title=operation.summary or None,
-        readOnlyHint=(method == 'get') or None,
-        destructiveHint=(method == 'delete') or None,
-        idempotentHint=(method in {'get', 'put', 'patch', 'delete'}) or None,
-        openWorldHint=True,
+        read_only_hint=(method == 'get') or None,
+        destructive_hint=(method == 'delete') or None,
+        idempotent_hint=(method in {'get', 'put', 'patch', 'delete'}) or None,
+        open_world_hint=True,
     )
 
 
 def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, dict[str, typing.Any]]:
-    """Build the ``inspect.Signature`` and annotations FastMCP reads to derive the tool input schema.
+    """Build the ``inspect.Signature`` and annotations MCPServer reads to derive the tool input schema.
 
     Parameter order is required parameters first, then the framework-injected ``ctx``,
     then optional parameters with ``default=None``.
@@ -145,7 +146,7 @@ def build_tool_function(
     """Build the async callable for ``operation``.
 
     With ``attach_signature=True`` (the default),
-    the returned callable carries an ``inspect.Signature`` and ``__annotations__`` so FastMCP can derive its input schema.
+    the returned callable carries an ``inspect.Signature`` and ``__annotations__`` so MCPServer can derive its input schema.
     With ``attach_signature=False``, returns the bare upstream closure for dispatch from a registry,
     as used by :class:`MetaToolGenerator`.
     """
@@ -174,7 +175,7 @@ class _MetaToolEntry:
 class ToolGenerator:
     """Static exposure: register one MCP tool per operation onto ``mcp``."""
 
-    def __init__(self, mcp: FastMCP, binding: UpstreamBinding):
+    def __init__(self, mcp: MCPServer, binding: UpstreamBinding):
         self.mcp = mcp
         self.binding = binding
 
@@ -205,7 +206,7 @@ class MetaToolGenerator:
     so auth, path substitution, and request shape stay identical across modes.
     """
 
-    def __init__(self, mcp: FastMCP, binding: UpstreamBinding):
+    def __init__(self, mcp: MCPServer, binding: UpstreamBinding):
         self.mcp = mcp
         self.binding = binding
         self._registry: dict[str, _MetaToolEntry] = {}
