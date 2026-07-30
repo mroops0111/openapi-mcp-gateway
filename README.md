@@ -187,6 +187,8 @@ The gateway runs its own authorization server and mints upstream tokens server-s
 
 The gateway does not silently pass the MCP client's token through to third-party upstreams, in line with the MCP spec's [Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction). For `authorization_code` it mints per-user tokens against the upstream IdP per [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707), and for `client_credentials` it uses its own service credentials. The one exception is the FastAPI integration, which runs in-process at the same OAuth audience, so the client's `Authorization` header is forwarded verbatim (see [Expose Your FastAPI App as MCP Tools](#expose-your-fastapi-app-as-mcp-tools)).
 
+For `authorization_code`, the MCP access token lives 1 hour and the refresh token 24 hours by default. Each refresh issues a fresh refresh token, so the refresh TTL is the practical re-authorization cadence. A client that refreshes within it never has to sign in again, while one idle past it must re-authorize. Tune both per server with `auth.mcp_access_token_ttl` and `auth.mcp_refresh_token_ttl`.
+
 Tool results are spec-compliant too. Every tool carries a protocol-native `title`, `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), and `structuredContent`, so an agent can judge a tool before calling it and read structured error bodies without re-parsing text.
 
 ## Configuration
@@ -226,6 +228,8 @@ Configuration merges in this order, with each layer overriding the previous: **d
 | `auth.api_key_header` | string | `X-API-Key` | Header name for `api_key` |
 | `auth.client_id`, `auth.client_secret` | string |  | Required for `oauth2` |
 | `auth.scopes`, `auth.authorization_url`, `auth.token_url` |  | from spec | OAuth2 overrides when `securitySchemes` is incomplete |
+| `auth.mcp_access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints for `authorization_code` |
+| `auth.mcp_refresh_token_ttl` | int | `86400` | Lifetime in seconds of the MCP refresh token. This is the practical re-authorization cadence, since each refresh slides the window forward |
 | `policy.allow` | list |  | Only expose matching operations |
 | `policy.deny` | list |  | Exclude matching operations |
 | `timeout` | float | `90` | HTTP timeout in seconds |

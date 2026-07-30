@@ -26,3 +26,7 @@ servers:
         - profile
         - users:read
         - workspaces:read
+      # Optional: lifetimes of the MCP tokens the gateway mints, in seconds (defaults shown).
+      # The refresh TTL is the practical re-authorization cadence, since each refresh slides the window.
+      # mcp_access_token_ttl: 3600     # 1 hour
+      # mcp_refresh_token_ttl: 86400   # 24 hours

@@ -1,5 +1,6 @@
 import pathlib
 
+import pydantic
 import pytest
 import yaml
 
@@ -114,6 +115,18 @@ class TestAuthConfig:
         monkeypatch.setenv('CID', 'client-123')
         auth = AuthConfig(type='oauth2', client_id='${CID}')
         assert auth.resolve_client_id() == 'client-123'
+
+    def test_mcp_token_ttl_defaults(self):
+        """MCP token TTLs default to 1 hour access and 24 hours refresh."""
+        auth = AuthConfig(type='oauth2')
+        assert auth.mcp_access_token_ttl == 3600
+        assert auth.mcp_refresh_token_ttl == 86400
+
+    @pytest.mark.parametrize('field', ['mcp_access_token_ttl', 'mcp_refresh_token_ttl'])
+    def test_mcp_token_ttl_rejects_non_positive(self, field):
+        """A zero or negative TTL fails validation."""
+        with pytest.raises(pydantic.ValidationError):
+            AuthConfig.model_validate({'type': 'oauth2', field: 0})
 
     def test_resolve_client_id_direct(self):
         """A literal ``client_id`` is returned verbatim."""

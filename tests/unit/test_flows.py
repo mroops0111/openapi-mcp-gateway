@@ -191,6 +191,45 @@ class TestBuildOAuthFlow:
         assert setup.settings is not None
         assert setup.on_shutdown is None
 
+    def test_authorization_code_defaults_token_ttls(self):
+        """Without config overrides the provider keeps the built-in access and refresh TTLs."""
+        entry = _entry(
+            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', scopes=['api']),
+        )
+        setup = build_oauth_flow(
+            entry=entry,
+            spec=_spec_with_authorization_code(),
+            store=MemoryTokenStore(),
+            gateway_url='http://localhost:8000',
+            mount_path='/srv',
+        )
+        assert setup.provider is not None
+        assert setup.provider.mcp_access_token_ttl == 3600
+        assert setup.provider.mcp_refresh_token_ttl == 86400
+
+    def test_authorization_code_honours_configured_token_ttls(self):
+        """``mcp_access_token_ttl`` / ``mcp_refresh_token_ttl`` reach the provider."""
+        entry = _entry(
+            AuthConfig(
+                type='oauth2',
+                client_id='cid',
+                client_secret='sec',
+                scopes=['api'],
+                mcp_access_token_ttl=7200,
+                mcp_refresh_token_ttl=604800,
+            ),
+        )
+        setup = build_oauth_flow(
+            entry=entry,
+            spec=_spec_with_authorization_code(),
+            store=MemoryTokenStore(),
+            gateway_url='http://localhost:8000',
+            mount_path='/srv',
+        )
+        assert setup.provider is not None
+        assert setup.provider.mcp_access_token_ttl == 7200
+        assert setup.provider.mcp_refresh_token_ttl == 604800
+
     def test_client_credentials_returns_token_source_resolver(self):
         """client_credentials yields a TokenSourceAuthResolver and an on_shutdown hook."""
         entry = _entry(

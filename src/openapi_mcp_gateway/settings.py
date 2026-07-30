@@ -67,6 +67,12 @@ class AuthConfig(pydantic.BaseModel):
     scopes: list[str] = pydantic.Field(default_factory=list)
     flow: typing.Literal['authorization_code', 'client_credentials', 'passthrough'] | None = None
 
+    # Lifetimes of the MCP-side tokens the gateway mints for authorization_code, in seconds.
+    # The refresh TTL is the practical idle window, since each refresh issues a fresh refresh token,
+    # so a client refreshing within it slides forward and never re-authorizes.
+    mcp_access_token_ttl: int = pydantic.Field(default=3600, gt=0)
+    mcp_refresh_token_ttl: int = pydantic.Field(default=86400, gt=0)
+
     def resolve_header(self) -> str | None:
         """Return ``Bearer <token>`` for ``bearer``, the raw token for ``api_key``, or ``None`` otherwise."""
         token = _resolve_env_var(self.token)
