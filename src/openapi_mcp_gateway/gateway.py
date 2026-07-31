@@ -44,10 +44,8 @@ logger = logging.getLogger(__name__)
 _FASTAPI_BASE_URL = 'http://fastapi.local'
 _DEFAULT_FASTAPI_PASSTHROUGH_HEADERS: tuple[str, ...] = ('Authorization', 'X-API-Key')
 
-# These lists are static for a given spec, so a public freshness hint lets clients cache them.
-# That lifts prompt-cache hits (2026-07-28 CacheableResult, spec minor #5).
-# 'public' is safe because the listing is identical regardless of caller identity.
-# resources/read is omitted because those bodies proxy live upstream data.
+# The list and discover results are static for a running gateway,
+# so advertise a public freshness hint (2026-07-28 CacheableResult).
 _STATIC_CACHE_TTL_MS = 300_000
 _STATIC_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
     'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
@@ -67,7 +65,7 @@ def _warn_if_deprecated_transport(transport: str) -> None:
     if transport == 'sse':
         message = (
             "The 'sse' transport is deprecated and will be removed in a future release. "
-            "HTTP+SSE was reclassified as Deprecated in the MCP 2026-07-28 spec. "
+            'HTTP+SSE was reclassified as Deprecated in the MCP 2026-07-28 spec. '
             "Use 'streamable-http' instead."
         )
         warnings.warn(message, DeprecationWarning, stacklevel=2)
