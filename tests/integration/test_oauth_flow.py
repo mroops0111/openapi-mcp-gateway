@@ -61,9 +61,10 @@ class TestClientRegistration:
     async def test_register_without_client_id_raises(self):
         """A client with no ``client_id`` is rejected.
 
-        mcp v2 enforces this at ``OAuthClientInformationFull`` construction
-        (``ValidationError`` is a ``ValueError``), one layer earlier than the provider's
-        own registration check in earlier SDKs, so an invalid client can no longer be built.
+        mcp v2 enforces this at ``OAuthClientInformationFull`` construction,
+        where a ``ValidationError`` (itself a ``ValueError``) is raised.
+        That is one layer earlier than the provider's own registration check in earlier SDKs,
+        so an invalid client can no longer be built.
         """
         with pytest.raises(ValueError, match='client_id'):
             OAuthClientInformationFull(

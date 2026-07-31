@@ -23,8 +23,6 @@ from .stores.base import TokenStore
 logger = logging.getLogger(__name__)
 
 
-# mcp v2 moved transport security off the MCPServer constructor onto the ASGI-app factory methods.
-# DNS rebinding protection stays disabled to preserve pre-v2 behaviour; hardening it is tracked separately.
 _TRANSPORT_SECURITY = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
 
@@ -40,10 +38,11 @@ class _ServerBundle(typing.NamedTuple):
 
 
 def build_mcp_asgi_app(mcp: MCPServer, transport: str) -> typing.Any:
-    """Build the Starlette ASGI app for ``mcp`` under ``transport``, carrying the gateway's transport security.
+    """Build the Starlette ASGI app for ``mcp`` under ``transport``.
 
-    Centralises the ``sse`` vs ``streamable-http`` choice and the ``transport_security`` argument that
-    mcp v2 relocated from the ``MCPServer`` constructor onto these factory methods.
+    Centralises the ``sse`` vs ``streamable-http`` choice,
+    and the ``transport_security`` argument.
+    mcp v2 moved that argument off the ``MCPServer`` constructor onto these factory methods.
     """
     if transport == 'sse':
         return mcp.sse_app(transport_security=_TRANSPORT_SECURITY)

@@ -44,13 +44,10 @@ logger = logging.getLogger(__name__)
 _FASTAPI_BASE_URL = 'http://fastapi.local'
 _DEFAULT_FASTAPI_PASSTHROUGH_HEADERS: tuple[str, ...] = ('Authorization', 'X-API-Key')
 
-# tools/list, the resource listings, and server/discover are static for a given spec: they change
-# only when the gateway restarts with a different spec. A public, minutes-long freshness hint lets
-# clients cache them and skip re-listing on every turn, which lifts LLM prompt-cache hit rates
-# (2026-07-28 CacheableResult, spec minor #5). The list is identical regardless of caller identity,
-# so 'public' (shareable across auth contexts) is correct. resources/read is deliberately omitted:
-# those bodies proxy live upstream data, and mapping their upstream Cache-Control onto per-read
-# ttlMs is a separate, per-response concern tracked outside this change.
+# These lists are static for a given spec, so a public freshness hint lets clients cache them.
+# That lifts prompt-cache hits (2026-07-28 CacheableResult, spec minor #5).
+# 'public' is safe because the listing is identical regardless of caller identity.
+# resources/read is omitted because those bodies proxy live upstream data.
 _STATIC_CACHE_TTL_MS = 300_000
 _STATIC_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
     'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
@@ -63,13 +60,15 @@ _STATIC_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
 def _warn_if_deprecated_transport(transport: str) -> None:
     """Emit a deprecation warning when the caller selects the ``sse`` transport.
 
-    HTTP+SSE was reclassified as Deprecated in the 2026-07-28 spec. The gateway still serves it for
-    now, but steers callers to ``streamable-http`` and will remove it in a future release.
+    HTTP+SSE was reclassified as Deprecated in the 2026-07-28 spec.
+    The gateway still serves it for now,
+    but steers callers to ``streamable-http`` and will remove it in a future release.
     """
     if transport == 'sse':
         message = (
-            "The 'sse' transport is deprecated (HTTP+SSE was reclassified as Deprecated in the "
-            "MCP 2026-07-28 spec) and will be removed in a future release. Use 'streamable-http'."
+            "The 'sse' transport is deprecated and will be removed in a future release. "
+            "HTTP+SSE was reclassified as Deprecated in the MCP 2026-07-28 spec. "
+            "Use 'streamable-http' instead."
         )
         warnings.warn(message, DeprecationWarning, stacklevel=2)
         logger.warning(message)

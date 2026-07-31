@@ -252,7 +252,7 @@ class TestResourceReadFunctionSignature:
 
 
 class TestResourceGeneration:
-    """End-to-end resource registration on a MCPServer instance."""
+    """End-to-end resource registration on an MCPServer instance."""
 
     def _generator(self) -> tuple[ResourceGenerator, MCPServer]:
         mcp = MCPServer('test')
@@ -600,7 +600,7 @@ class TestPartitioning:
 
 
 class TestDualExposureRegistration:
-    """When both ``expose.tool`` and ``expose.resource`` are present, both end up on the MCPServer server."""
+    """When both ``expose.tool`` and ``expose.resource`` are present, both end up on the MCPServer."""
 
     async def test_op_appears_as_tool_and_resource(self):
         """``ToolGenerator`` and ``ResourceGenerator`` cooperate on the same MCPServer instance."""

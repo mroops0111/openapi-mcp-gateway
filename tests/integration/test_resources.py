@@ -232,8 +232,8 @@ class TestResourceUpstreamCall:
         )
         mcp = gateway._servers[0].mcp
         result = await mcp.read_resource('petstore://store/inventory')
-        # mcp v2 widened read_resource to also return an InputRequiredResult (the MRTR interim
-        # result); this read never triggers one, so narrow to the resource-contents arm.
+        # mcp v2 widened read_resource to also return an InputRequiredResult, the MRTR interim result.
+        # This read never triggers one, so narrow to the resource-contents arm.
         assert not isinstance(result, InputRequiredResult)
         contents = list(result)
         assert captured['url'].startswith('https://petstore.example.com/v1/store/inventory')

@@ -120,7 +120,7 @@ def _build_upstream_closure(
 
     Shared by every exposure mode.
     The callable accepts the sanitised parameter names as keyword arguments,
-    plus ``ctx`` for the FastMCP-injected :class:`Context`.
+    plus ``ctx`` for the MCPServer-injected :class:`Context`.
     """
     path_parameters, query_parameters, header_parameters, body_parameters = _split_by_location(operation.parameters)
     path_parameters_by_name = _parameters_keyed_by_sanitised_name(path_parameters)
