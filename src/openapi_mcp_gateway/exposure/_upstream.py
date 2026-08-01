@@ -112,6 +112,27 @@ def _kwargs_to_upstream_arguments(
     }
 
 
+# W3C trace-context keys the 2026-07-28 spec carries in a request's ``_meta`` (spec minor #2).
+# The gateway sits on the hop between the MCP client and the upstream API,
+# so forwarding these verbatim stitches that hop into one distributed trace.
+_TRACE_CONTEXT_META_KEYS = ('traceparent', 'tracestate', 'baggage')
+
+
+def _trace_context_headers(context: Context) -> dict[str, str]:
+    """Return the W3C trace-context headers to forward upstream, read from the request ``_meta``.
+
+    Returns an empty dict when there is no request context or no trace keys are present,
+    so a call that arrives without trace context forwards nothing.
+    """
+    try:
+        meta = context.request_context.meta
+    except (AttributeError, ValueError):
+        return {}
+    if not meta:
+        return {}
+    return {key: str(value) for key in _TRACE_CONTEXT_META_KEYS if (value := meta.get(key)) is not None}
+
+
 def _build_upstream_closure(
     operation: OperationInfo,
     binding: UpstreamBinding,
@@ -148,7 +169,11 @@ def _build_upstream_closure(
             name: str(value) for name, value in _kwargs_to_upstream_arguments(kwargs, header_parameters_by_name).items()
         }
         body_arguments = _to_jsonable(_kwargs_to_upstream_arguments(kwargs, body_parameters_by_name))
-        request_headers: dict[str, str] = {**auth_headers, **header_arguments}
+        request_headers: dict[str, str] = {
+            **_trace_context_headers(context),
+            **auth_headers,
+            **header_arguments,
+        }
 
         async with APIClient(
             base_url=binding.base_url,
