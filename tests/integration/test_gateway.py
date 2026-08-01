@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 from fastapi import FastAPI
-from mcp.server.fastmcp import Context
+from mcp import Client
+from mcp.server.mcpserver import Context
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.auth import token_source as token_source_module
@@ -244,7 +245,7 @@ class TestEndToEndToolInvocation:
         assert 'limit=5' in captured['url']
         assert captured['url'].startswith('https://petstore.example.com/v1/pets')
 
-        assert result.isError is False
+        assert result.is_error is False
         assert json.loads(result.content[0].text) == [{'id': 1, 'name': 'fido'}]
 
 
@@ -281,16 +282,16 @@ class TestDynamicExposureEndToEnd:
         mcp = dynamic_gateway._servers[0].mcp
         tools = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
 
-        listing = (await tools['list_operations'].fn(ctx=_stub_context())).structuredContent
+        listing = (await tools['list_operations'].fn(ctx=_stub_context())).structured_content
         assert {entry['name'] for entry in listing['operations']} >= {'list_pets', 'get_pet_by_id'}
 
-        described = (await tools['get_operation'].fn(name='list_pets', ctx=_stub_context())).structuredContent
+        described = (await tools['get_operation'].fn(name='list_pets', ctx=_stub_context())).structured_content
         assert described['input_schema']['properties']['limit']['type'] == 'integer'
 
         result = await tools['call_operation'].fn(name='list_pets', arguments={'limit': 5}, ctx=_stub_context())
         assert captured['method'] == 'GET'
         assert 'limit=5' in captured['url']
-        assert result.isError is False
+        assert result.is_error is False
         assert json.loads(result.content[0].text) == [{'id': 1, 'name': 'fido'}]
 
 
@@ -424,3 +425,43 @@ class TestClientCredentialsFlowEndToEnd:
         await tool.run({}, context=_stub_context())
 
         assert token_post_mock.await_count == 1
+
+
+class TestSpec20260728Adoption:
+    """2026-07-28 spec adoptions layered on the v2 SDK: cache hints, stable ordering, SSE deprecation."""
+
+    async def test_static_lists_carry_cache_hints(self, gateway):
+        """``tools/list`` advertises the gateway's public, minutes-long freshness hint."""
+        bundle = gateway._servers[0]
+        async with Client(bundle.mcp) as mcp_client:
+            result = await mcp_client.list_tools()
+        dumped = result.model_dump(by_alias=True)
+        assert dumped['ttlMs'] == 300_000
+        assert dumped['cacheScope'] == 'public'
+
+    def test_tool_registration_order_is_deterministic(self, petstore_json_path):
+        """Two gateways built from the same spec register tools in the same order."""
+
+        def tool_names() -> list[str]:
+            config = GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(petstore_json_path))])
+            mcp = Gateway.from_config(config)._servers[0].mcp
+            return [tool.name for tool in mcp._tool_manager.list_tools()]
+
+        first = tool_names()
+        assert first, 'petstore should register at least one tool'
+        assert first == tool_names()
+
+    def test_sse_transport_emits_deprecation_warning(self, gateway):
+        """Selecting the deprecated ``sse`` transport warns the caller."""
+        with pytest.warns(DeprecationWarning, match='sse'):
+            gateway.mount(FastAPI(), transport='sse')
+
+    def test_streamable_http_transport_does_not_warn(self, gateway, recwarn):
+        """The recommended ``streamable-http`` transport mounts without an SSE deprecation warning."""
+        gateway.mount(FastAPI(), transport='streamable-http')
+        sse_warnings = [
+            warning
+            for warning in recwarn
+            if issubclass(warning.category, DeprecationWarning) and 'sse' in str(warning.message)
+        ]
+        assert not sse_warnings

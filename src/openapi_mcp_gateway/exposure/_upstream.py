@@ -3,7 +3,7 @@ import typing
 
 import httpx
 import pydantic
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, TextContent
 
 from ..client import APIClient
@@ -21,8 +21,8 @@ def _build_success_result(payload: typing.Any) -> CallToolResult:
     structured_content = payload if isinstance(payload, dict) else None
     return CallToolResult(
         content=[TextContent(type='text', text=text)],
-        structuredContent=structured_content,
-        isError=False,
+        structured_content=structured_content,
+        is_error=False,
     )
 
 
@@ -55,8 +55,8 @@ def _build_http_error_result(exception: httpx.HTTPStatusError) -> CallToolResult
     message = f'Upstream {request.method} {request.url} returned {response.status_code} {response.reason_phrase}:\n{body_text}'
     return CallToolResult(
         content=[TextContent(type='text', text=message)],
-        structuredContent=structured_content,
-        isError=True,
+        structured_content=structured_content,
+        is_error=True,
     )
 
 
@@ -70,8 +70,8 @@ def _build_network_error_result(exception: httpx.RequestError) -> CallToolResult
     message = f'Upstream {request.method} {request.url} failed: {type(exception).__name__}: {exception}'
     return CallToolResult(
         content=[TextContent(type='text', text=message)],
-        structuredContent=None,
-        isError=True,
+        structured_content=None,
+        is_error=True,
     )
 
 
@@ -120,7 +120,7 @@ def _build_upstream_closure(
 
     Shared by every exposure mode.
     The callable accepts the sanitised parameter names as keyword arguments,
-    plus ``ctx`` for the FastMCP-injected :class:`Context`.
+    plus ``ctx`` for the MCPServer-injected :class:`Context`.
     """
     path_parameters, query_parameters, header_parameters, body_parameters = _split_by_location(operation.parameters)
     path_parameters_by_name = _parameters_keyed_by_sanitised_name(path_parameters)

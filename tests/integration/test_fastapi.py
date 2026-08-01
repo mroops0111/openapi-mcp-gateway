@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.security import APIKeyHeader, HTTPBasic, HTTPBasicCredentials, OAuth2AuthorizationCodeBearer
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway import Gateway, mcp_tool
 from openapi_mcp_gateway.auth import token_source as token_source_module
@@ -168,8 +168,8 @@ class TestGatewayFromFastapiToolCall:
         tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'lookup_user')
 
         result = await tool.run({'user_id': '42'}, context=_stub_context())
-        assert result.isError is False
-        assert result.structuredContent == {'user_id': '42', 'echo': 'ok'}
+        assert result.is_error is False
+        assert result.structured_content == {'user_id': '42', 'echo': 'ok'}
 
     async def test_passthrough_forwards_authorization_header(self):
         """Passthrough mode delivers the MCP client's Authorization header to the FastAPI route."""
@@ -193,7 +193,7 @@ class TestGatewayFromFastapiToolCall:
 
         ctx = _stub_context({'authorization': 'Bearer client-token'})
         result = await tool.run({}, context=ctx)
-        assert result.structuredContent == {'authorization': 'Bearer client-token'}
+        assert result.structured_content == {'authorization': 'Bearer client-token'}
 
     async def test_authorization_forwarded_under_null_auth(self):
         """HTTPBasic-style routes (no OpenAPI securityScheme) still receive Authorization."""
@@ -213,7 +213,7 @@ class TestGatewayFromFastapiToolCall:
 
         ctx = _stub_context({'authorization': 'Basic Zm9vOmJhcg=='})
         result = await tool.run({}, context=ctx)
-        assert result.structuredContent == {'username': 'foo'}
+        assert result.structured_content == {'username': 'foo'}
 
     async def test_x_api_key_forwarded_by_default(self):
         """``X-API-Key`` arrives at the FastAPI route without explicit configuration."""
@@ -233,7 +233,7 @@ class TestGatewayFromFastapiToolCall:
 
         ctx = _stub_context({'x-api-key': 'top-secret'})
         result = await tool.run({}, context=ctx)
-        assert result.structuredContent == {'api_key': 'top-secret'}
+        assert result.structured_content == {'api_key': 'top-secret'}
 
     async def test_resolver_authorization_wins_over_passthrough(self, monkeypatch):
         """In client_credentials mode the gateway-minted Authorization is not overwritten by the client's."""
@@ -284,7 +284,7 @@ class TestGatewayFromFastapiToolCall:
         # MCP client tries to send its own Authorization; gateway must use gateway-token instead.
         ctx = _stub_context({'authorization': 'Bearer client-token'})
         result = await tool.run({}, context=ctx)
-        assert result.structuredContent == {'authorization': 'Bearer gateway-token'}
+        assert result.structured_content == {'authorization': 'Bearer gateway-token'}
 
     async def test_extra_passthrough_header_via_kwarg(self):
         """Custom header names listed in ``passthrough_headers`` reach the upstream call."""
@@ -305,7 +305,7 @@ class TestGatewayFromFastapiToolCall:
 
         ctx = _stub_context({'x-tenant': 'acme-co'})
         result = await tool.run({}, context=ctx)
-        assert result.structuredContent == {'tenant': 'acme-co'}
+        assert result.structured_content == {'tenant': 'acme-co'}
 
     async def test_mixed_security_emits_warning(self, caplog):
         """Mixed security schemes across marked routes log a single startup warning."""

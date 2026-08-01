@@ -1,7 +1,7 @@
 import abc
 import typing
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from .token_source import TokenSource
 

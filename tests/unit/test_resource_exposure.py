@@ -3,7 +3,8 @@ import typing
 
 import httpx
 import pytest
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway.exposure import (
     ResourceGenerator,
@@ -69,7 +70,7 @@ def _resource_override_description(operation: OperationInfo) -> str | None:
 
 
 class TestResourceUriDerivation:
-    """``derive_resource_uri`` produces FastMCP-compatible URI templates."""
+    """``derive_resource_uri`` produces MCPServer-compatible URI templates."""
 
     def test_no_path_params(self):
         """A path with no params yields a concrete URI under the server scheme."""
@@ -93,7 +94,7 @@ class TestResourceUriDerivation:
         assert derive_resource_uri('petstore', operation) == 'petstore://pets/{petId}'
 
     def test_dashed_path_param_sanitized(self):
-        """A dashed placeholder is rewritten to a Python identifier so FastMCP's regex matches."""
+        """A dashed placeholder is rewritten to a Python identifier so MCPServer's regex matches."""
         operation = OperationInfo(
             operation_id='get_team',
             method='get',
@@ -200,10 +201,10 @@ class TestResourceMimeType:
 
 
 class TestResourceReadFunctionSignature:
-    """Signature shape drives FastMCP's concrete-vs-template registration.
+    """Signature shape drives MCPServer's concrete-vs-template registration.
 
     - GET with path params: signature is ``(p1, ..., ctx: Context)`` -> template registration,
-      and FastMCP injects a real ``Context`` at call time.
+      and MCPServer injects a real ``Context`` at call time.
     - GET without path params: empty signature -> concrete registration,
       and ``_NullContext`` is used internally.
     """
@@ -251,10 +252,10 @@ class TestResourceReadFunctionSignature:
 
 
 class TestResourceGeneration:
-    """End-to-end resource registration on a FastMCP instance."""
+    """End-to-end resource registration on an MCPServer instance."""
 
-    def _generator(self) -> tuple[ResourceGenerator, FastMCP]:
-        mcp = FastMCP('test')
+    def _generator(self) -> tuple[ResourceGenerator, MCPServer]:
+        mcp = MCPServer('test')
         return (
             ResourceGenerator(
                 mcp=mcp,
@@ -277,11 +278,11 @@ class TestResourceGeneration:
         )
         generator.register([operation])
         templates = await mcp.list_resource_templates()
-        uris = {t.uriTemplate for t in templates}
+        uris = {t.uri_template for t in templates}
         assert 'petstore://pets/{petId}' in uris
-        template = next(t for t in templates if t.uriTemplate == 'petstore://pets/{petId}')
+        template = next(t for t in templates if t.uri_template == 'petstore://pets/{petId}')
         assert template.description == 'Fetch one pet.'
-        assert template.mimeType == 'application/json'
+        assert template.mime_type == 'application/json'
 
     async def test_no_path_param_registered_as_concrete_resource(self):
         """A GET with no path params surfaces under ``resources/list`` as a concrete resource."""
@@ -599,11 +600,11 @@ class TestPartitioning:
 
 
 class TestDualExposureRegistration:
-    """When both ``expose.tool`` and ``expose.resource`` are present, both end up on the FastMCP server."""
+    """When both ``expose.tool`` and ``expose.resource`` are present, both end up on the MCPServer."""
 
     async def test_op_appears_as_tool_and_resource(self):
-        """``ToolGenerator`` and ``ResourceGenerator`` cooperate on the same FastMCP instance."""
-        mcp = FastMCP('test')
+        """``ToolGenerator`` and ``ResourceGenerator`` cooperate on the same MCPServer instance."""
+        mcp = MCPServer('test')
         binding = UpstreamBinding(base_url='https://api.example.com')
         op = OperationInfo(
             operation_id='getPet',
@@ -620,4 +621,4 @@ class TestDualExposureRegistration:
         assert 'get_pet' in tool_names
 
         templates = await mcp.list_resource_templates()
-        assert 'petstore://pets/{petId}' in {t.uriTemplate for t in templates}
+        assert 'petstore://pets/{petId}' in {t.uri_template for t in templates}

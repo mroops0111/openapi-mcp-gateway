@@ -11,6 +11,7 @@ from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
     AuthorizationParams,
+    IdentityAssertionParams,
     RefreshToken,
     TokenError,
     construct_redirect_uri,
@@ -223,6 +224,21 @@ class AuthorizationCodeProvider:
                 await self.store.delete('mcp_access_token', paired)
             await self.store.delete('mcp_refresh_token', token.token)
         logger.info('Revoked MCP %s token (prefix=%s)', kind, self._prefix)
+
+    async def exchange_identity_assertion(
+        self,
+        client: OAuthClientInformationFull,
+        params: IdentityAssertionParams,
+    ) -> OAuthToken:
+        """Decline the SEP-990 JWT-bearer identity-assertion grant.
+
+        The gateway brokers upstream credentials through the authorization-code flow only,
+        so it advertises no support for exchanging an ID-JAG for an access token.
+        """
+        raise TokenError(
+            error='unsupported_grant_type',
+            error_description='The JWT bearer grant is not supported by this authorization server',
+        )
 
     # Gateway-specific methods
 

@@ -3,17 +3,18 @@ import contextlib
 import dataclasses
 import logging
 import typing
+import warnings
 
 import httpx
 import uvicorn
 from fastapi import FastAPI
+from mcp.server import MCPServer
 from mcp.server.auth.settings import AuthSettings
-from mcp.server.fastmcp import FastMCP
-from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.caching import CacheableMethod, CacheHint
 from starlette.exceptions import HTTPException
 from starlette.responses import RedirectResponse
 
-from .app import _ServerBundle, build_app, register_auth_routes
+from .app import _ServerBundle, build_app, build_mcp_asgi_app, register_auth_routes
 from .auth.detector import detect_oauth_flows, detect_unsupported_oauth_flows
 from .auth.flows import AuthorizationCodeProvider, build_oauth_flow
 from .auth.resolver import (
@@ -42,6 +43,33 @@ logger = logging.getLogger(__name__)
 
 _FASTAPI_BASE_URL = 'http://fastapi.local'
 _DEFAULT_FASTAPI_PASSTHROUGH_HEADERS: tuple[str, ...] = ('Authorization', 'X-API-Key')
+
+# The list and discover results are static for a running gateway,
+# so advertise a public freshness hint (2026-07-28 CacheableResult).
+_STATIC_CACHE_TTL_MS = 300_000
+_STATIC_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
+    'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
+    'resources/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
+    'resources/templates/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
+    'server/discover': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
+}
+
+
+def _warn_if_deprecated_transport(transport: str) -> None:
+    """Emit a deprecation warning when the caller selects the ``sse`` transport.
+
+    HTTP+SSE was reclassified as Deprecated in the 2026-07-28 spec.
+    The gateway still serves it for now,
+    but steers callers to ``streamable-http`` and will remove it in a future release.
+    """
+    if transport == 'sse':
+        message = (
+            "The 'sse' transport is deprecated and will be removed in a future release. "
+            'HTTP+SSE was reclassified as Deprecated in the MCP 2026-07-28 spec. '
+            "Use 'streamable-http' instead."
+        )
+        warnings.warn(message, DeprecationWarning, stacklevel=2)
+        logger.warning(message)
 
 
 def _compose_with_passthrough(
@@ -162,7 +190,7 @@ def _partition_operations(
 
 @dataclasses.dataclass
 class _AppContext:
-    """Per-server lifespan context injected into FastMCP tool handlers."""
+    """Per-server lifespan context injected into MCPServer tool handlers."""
 
     auth_provider: AuthorizationCodeProvider | None = None
 
@@ -274,6 +302,7 @@ class Gateway:
         transport = transport if transport is not None else self._config.transport
         host = host if host is not None else self._config.host
         port = port if port is not None else self._config.port
+        _warn_if_deprecated_transport(transport)
 
         if transport == 'stdio':
             if len(self._servers) != 1:
@@ -308,10 +337,10 @@ class Gateway:
         so an embedded gateway serves a complete OAuth flow.
         """
         transport = transport if transport is not None else self._config.transport
+        _warn_if_deprecated_transport(transport)
         register_auth_routes(app, self._servers)
-        for handle in self._servers:
-            mcp_app = handle.mcp.sse_app() if transport == 'sse' else handle.mcp.streamable_http_app()
-            app.mount(handle.mount_path, mcp_app)
+        for bundle in self._servers:
+            app.mount(bundle.mount_path, build_mcp_asgi_app(bundle.mcp, transport))
 
     def _add_server_from_server_config(self, server_config: ServerConfig) -> None:
         logger.info('Loading server "%s" from spec=%s', server_config.name, server_config.spec)
@@ -427,7 +456,7 @@ class Gateway:
     ) -> None:
         base_resolver, auth_provider, auth_settings = self._resolve_auth(server_config, spec)
         auth_resolver = _compose_with_passthrough(base_resolver, forward_incoming_headers)
-        mcp = self._build_fastmcp(server_config.name, auth_provider, auth_settings)
+        mcp = self._build_mcp_server(server_config.name, auth_provider, auth_settings)
         if auth_provider is not None:
             self._register_oauth_callback(mcp, auth_provider)
 
@@ -524,28 +553,28 @@ class Gateway:
         return auth_resolver, auth_provider, auth_settings
 
     @staticmethod
-    def _build_fastmcp(
+    def _build_mcp_server(
         name: str,
         auth_provider: AuthorizationCodeProvider | None,
         auth_settings: AuthSettings | None,
-    ) -> FastMCP:
+    ) -> MCPServer:
         @contextlib.asynccontextmanager
-        async def lifespan(_app: FastMCP, _auth_provider=auth_provider):
+        async def lifespan(_app: MCPServer, _auth_provider=auth_provider):
             try:
                 yield _AppContext(auth_provider=_auth_provider)
             finally:
                 pass
 
-        return FastMCP(
+        return MCPServer(
             f'{name} (via OpenAPI MCP Gateway)',
             auth_server_provider=auth_provider,
             auth=auth_settings,
             lifespan=lifespan,
-            transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+            cache_hints=_STATIC_CACHE_HINTS,
         )
 
     @staticmethod
-    def _register_oauth_callback(mcp: FastMCP, auth_provider: AuthorizationCodeProvider) -> None:
+    def _register_oauth_callback(mcp: MCPServer, auth_provider: AuthorizationCodeProvider) -> None:
         _auth_provider = auth_provider
 
         @mcp.custom_route('/auth/callback', methods=['GET'])
