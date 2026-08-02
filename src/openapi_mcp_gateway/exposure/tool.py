@@ -188,12 +188,18 @@ class ToolGenerator:
             description = derive_description(operation, override.description if override else None)
             title = derive_tool_title(operation)
             annotations = derive_tool_annotations(operation)
-            self.mcp.tool(
+            registered = self.mcp._tool_manager.add_tool(
+                tool_function,
                 name=name,
                 title=title,
                 description=description,
                 annotations=annotations,
-            )(tool_function)
+            )
+            # The high-level registration derives the advertised input schema from the Python signature,
+            # which cannot carry OpenAPI keywords such as format, numeric bounds, pattern, enum, or composition.
+            # Overwrite it with the schema built straight from the operation, so the LLM sees the real contract.
+            # Argument validation still runs against the signature-derived types.
+            registered.parameters = build_input_schema(operation)
             logger.debug('Tool registered: %s ← %s %s', name, operation.method.upper(), operation.path)
         logger.info('Registered %d MCP tool(s) on server "%s"', len(operations), self.mcp.name)
 
