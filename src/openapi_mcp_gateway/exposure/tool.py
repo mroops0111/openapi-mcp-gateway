@@ -150,7 +150,7 @@ def build_tool_function(
     With ``attach_signature=False``, returns the bare upstream closure for dispatch from a registry,
     as used by :class:`MetaToolGenerator`.
     """
-    upstream_callable = _build_upstream_closure(operation, binding)
+    upstream_callable = _build_upstream_closure(operation, binding, validate_input=True)
     if not attach_signature:
         return upstream_callable
     signature, annotations = _build_tool_signature(operation)
@@ -188,12 +188,18 @@ class ToolGenerator:
             description = derive_description(operation, override.description if override else None)
             title = derive_tool_title(operation)
             annotations = derive_tool_annotations(operation)
-            self.mcp.tool(
+            registered = self.mcp._tool_manager.add_tool(
+                tool_function,
                 name=name,
                 title=title,
                 description=description,
                 annotations=annotations,
-            )(tool_function)
+            )
+            # The high-level registration derives the advertised input schema from the Python signature,
+            # which cannot carry OpenAPI keywords such as format, numeric bounds, pattern, enum, or composition.
+            # Overwrite it with the schema built straight from the operation, so the LLM sees the real contract.
+            # build_tool_function enforces this same schema before the upstream call, so display and validation match.
+            registered.parameters = build_input_schema(operation)
             logger.debug('Tool registered: %s ← %s %s', name, operation.method.upper(), operation.path)
         logger.info('Registered %d MCP tool(s) on server "%s"', len(operations), self.mcp.name)
 

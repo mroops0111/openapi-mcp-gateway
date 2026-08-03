@@ -3,12 +3,13 @@ import typing
 
 import httpx
 import pydantic
+from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, TextContent
 
 from ..client import APIClient
 from ..openapi import OperationInfo, ParameterInfo
-from ._shared import UpstreamBinding, _sanitize_name, _split_by_location
+from ._shared import UpstreamBinding, _sanitize_name, _split_by_location, build_input_schema
 
 
 def _build_success_result(payload: typing.Any) -> CallToolResult:
@@ -75,6 +76,31 @@ def _build_network_error_result(exception: httpx.RequestError) -> CallToolResult
     )
 
 
+def _build_validation_error_result(errors: list[ValidationError]) -> CallToolResult:
+    """Wrap input-schema validation failures as an ``is_error`` result, raised before any upstream call.
+
+    The validator runs against the same schema the tool advertises,
+    so what the client is shown is exactly what gets enforced.
+    The text carries a human-readable summary and ``structuredContent`` carries the same failures,
+    keyed by field path and violated keyword, for a client that parses errors programmatically.
+    """
+    details = [
+        {
+            'path': '/'.join(str(part) for part in error.path),
+            'keyword': str(error.validator),
+            'message': error.message,
+        }
+        for error in errors
+    ]
+    lines = [f'{detail["path"] or "(root)"}: {detail["message"]}' for detail in details]
+    message = 'Input does not satisfy the tool schema:\n' + '\n'.join(lines)
+    return CallToolResult(
+        content=[TextContent(type='text', text=message)],
+        structured_content={'errors': details},
+        is_error=True,
+    )
+
+
 def _parameters_keyed_by_sanitised_name(parameters: list[ParameterInfo]) -> dict[str, ParameterInfo]:
     """Build a lookup from sanitised parameter name to the original :class:`ParameterInfo`."""
     return {_sanitize_name(parameter.name): parameter for parameter in parameters}
@@ -136,12 +162,17 @@ def _trace_context_headers(context: Context) -> dict[str, str]:
 def _build_upstream_closure(
     operation: OperationInfo,
     binding: UpstreamBinding,
+    *,
+    validate_input: bool = False,
 ) -> typing.Callable[..., typing.Awaitable[CallToolResult]]:
     """Build the async callable that issues one upstream request per invocation.
 
     Shared by every exposure mode.
     The callable accepts the sanitised parameter names as keyword arguments,
     plus ``ctx`` for the MCPServer-injected :class:`Context`.
+
+    With ``validate_input`` the arguments are checked against the operation's advertised schema before any call,
+    so the constraints the client is shown are the constraints enforced.
     """
     path_parameters, query_parameters, header_parameters, body_parameters = _split_by_location(operation.parameters)
     path_parameters_by_name = _parameters_keyed_by_sanitised_name(path_parameters)
@@ -150,9 +181,19 @@ def _build_upstream_closure(
     body_parameters_by_name = _parameters_keyed_by_sanitised_name(body_parameters)
     method = operation.method
     path = operation.path
+    validator = (
+        Draft202012Validator(build_input_schema(operation), format_checker=FormatChecker()) if validate_input else None
+    )
 
     async def upstream_callable(**kwargs: typing.Any) -> CallToolResult:
         context: Context = kwargs.pop('ctx')
+
+        if validator is not None:
+            provided = _to_jsonable({name: value for name, value in kwargs.items() if value is not None})
+            errors = sorted(validator.iter_errors(provided), key=lambda error: list(error.path))
+            if errors:
+                return _build_validation_error_result(errors)
+
         await context.report_progress(0, 1, f'Sending request to {method.upper()} {path} ...')
 
         auth_headers = await binding.auth_resolver.resolve(context)

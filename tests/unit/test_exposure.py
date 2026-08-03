@@ -5,8 +5,10 @@ import typing
 
 import httpx
 import pytest
+from mcp import Client
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
+from mcp.types import CallToolResult, TextContent
 
 from openapi_mcp_gateway.exposure import (
     MetaToolGenerator,
@@ -824,3 +826,221 @@ class TestErrorResult:
         assert result.structured_content is None
         assert 'ConnectError' in result.content[0].text
         assert 'connection refused' in result.content[0].text
+
+
+class TestFaithfulInputSchema:
+    """The advertised tool input schema preserves OpenAPI keywords a Python signature cannot carry.
+
+    Static tools overwrite the signature-derived schema with ``build_input_schema``, so ``format``,
+    numeric bounds, ``pattern``, ``enum``, ``default``, composition, and nesting survive to the LLM.
+    """
+
+    def _schema_for(self, *parameters: ParameterInfo) -> dict:
+        """Register one operation carrying ``parameters`` and return its advertised input schema."""
+        mcp = MCPServer('test')
+        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com'))
+        operation = OperationInfo(operation_id='do_thing', method='post', path='/things', parameters=list(parameters))
+        generator.register([operation])
+        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'do_thing')
+        return tool.parameters
+
+    def test_string_format_preserved(self):
+        """A ``format`` keyword survives into the advertised schema."""
+        schema = self._schema_for(
+            ParameterInfo(name='email', location='query', required=True, schema={'type': 'string', 'format': 'email'})
+        )
+        assert schema['properties']['email']['format'] == 'email'
+
+    def test_numeric_bounds_preserved(self):
+        """``minimum`` and ``maximum`` survive into the advertised schema."""
+        schema = self._schema_for(
+            ParameterInfo(
+                name='limit', location='query', required=False, schema={'type': 'integer', 'minimum': 1, 'maximum': 100}
+            )
+        )
+        prop = schema['properties']['limit']
+        assert prop['minimum'] == 1
+        assert prop['maximum'] == 100
+
+    def test_pattern_preserved(self):
+        """A ``pattern`` keyword survives into the advertised schema."""
+        schema = self._schema_for(
+            ParameterInfo(
+                name='code', location='query', required=True, schema={'type': 'string', 'pattern': '^[A-Z]{3}$'}
+            )
+        )
+        assert schema['properties']['code']['pattern'] == '^[A-Z]{3}$'
+
+    def test_enum_preserved(self):
+        """An ``enum`` survives with its full value list."""
+        schema = self._schema_for(
+            ParameterInfo(
+                name='status', location='query', required=True, schema={'type': 'string', 'enum': ['open', 'closed']}
+            )
+        )
+        assert schema['properties']['status']['enum'] == ['open', 'closed']
+
+    def test_default_preserved(self):
+        """A ``default`` value survives into the advertised schema."""
+        schema = self._schema_for(
+            ParameterInfo(name='page', location='query', required=False, schema={'type': 'integer', 'default': 1})
+        )
+        assert schema['properties']['page']['default'] == 1
+
+    def test_nested_object_body_preserved(self):
+        """A nested object body keeps its properties, nested constraints, and required list."""
+        body = {
+            'type': 'object',
+            'properties': {'street': {'type': 'string'}, 'zip': {'type': 'string', 'pattern': r'\d{5}'}},
+            'required': ['street'],
+        }
+        schema = self._schema_for(ParameterInfo(name='address', location='body', required=True, schema=body))
+        prop = schema['properties']['address']
+        assert prop['type'] == 'object'
+        assert prop['properties']['zip']['pattern'] == r'\d{5}'
+        assert prop['required'] == ['street']
+
+    def test_array_items_preserved(self):
+        """An array item schema keeps its keywords."""
+        schema = self._schema_for(
+            ParameterInfo(
+                name='ids',
+                location='query',
+                required=False,
+                schema={'type': 'array', 'items': {'type': 'string', 'format': 'uuid'}},
+            )
+        )
+        prop = schema['properties']['ids']
+        assert prop['type'] == 'array'
+        assert prop['items']['format'] == 'uuid'
+
+    def test_composition_oneof_preserved(self):
+        """A ``oneOf`` composition survives verbatim."""
+        schema = self._schema_for(
+            ParameterInfo(
+                name='value',
+                location='query',
+                required=True,
+                schema={'oneOf': [{'type': 'string'}, {'type': 'integer'}]},
+            )
+        )
+        assert schema['properties']['value']['oneOf'] == [{'type': 'string'}, {'type': 'integer'}]
+
+    def test_required_and_optional_partition(self):
+        """Required parameters land in ``required``, optional ones stay out of it."""
+        schema = self._schema_for(
+            ParameterInfo(name='must', location='query', required=True, schema={'type': 'string'}),
+            ParameterInfo(name='maybe', location='query', required=False, schema={'type': 'string'}),
+        )
+        assert schema['required'] == ['must']
+        assert {'must', 'maybe'} <= set(schema['properties'])
+
+    def test_param_description_merged(self):
+        """A parameter-level description is carried onto its property schema."""
+        schema = self._schema_for(
+            ParameterInfo(
+                name='q', location='query', required=True, description='search query', schema={'type': 'string'}
+            )
+        )
+        assert schema['properties']['q']['description'] == 'search query'
+
+    async def test_faithful_schema_visible_to_client(self):
+        """The faithful schema reaches the client's tools/list, not just the internal Tool object."""
+        mcp = MCPServer('test')
+        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com'))
+        operation = OperationInfo(
+            operation_id='do_thing',
+            method='get',
+            path='/things',
+            parameters=[
+                ParameterInfo(
+                    name='email', location='query', required=True, schema={'type': 'string', 'format': 'email'}
+                )
+            ],
+        )
+        generator.register([operation])
+        async with Client(mcp) as client:
+            tool = next(tool for tool in (await client.list_tools()).tools if tool.name == 'do_thing')
+        assert tool.input_schema['properties']['email']['format'] == 'email'
+
+    async def test_validation_still_rejects_wrong_type(self):
+        """Faithful display does not weaken validation: a type mismatch is still rejected."""
+        mcp = MCPServer('test')
+        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com'))
+        operation = OperationInfo(
+            operation_id='do_thing',
+            method='get',
+            path='/things',
+            parameters=[ParameterInfo(name='count', location='query', required=True, schema={'type': 'integer'})],
+        )
+        generator.register([operation])
+        async with Client(mcp) as client:
+            result = await client.call_tool('do_thing', {'count': 'not-an-int'})
+        assert result.is_error
+
+
+class TestInputSchemaEnforcement:
+    """Advertised constraints are enforced before the upstream call, not merely displayed.
+
+    Validation runs against the same schema the tool advertises, so what the client is shown is
+    exactly what gets checked (bounds, pattern, and format that the signature types cannot carry).
+    """
+
+    def _register_single_param(self, mcp: MCPServer, name: str, param_schema: dict) -> None:
+        """Register a one-parameter ``do_thing`` tool carrying ``param_schema``."""
+        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com'))
+        operation = OperationInfo(
+            operation_id='do_thing',
+            method='get',
+            path='/things',
+            parameters=[ParameterInfo(name=name, location='query', required=True, schema=param_schema)],
+        )
+        generator.register([operation])
+
+    async def _call(self, mcp: MCPServer, arguments: dict) -> CallToolResult:
+        """Invoke ``do_thing`` through an in-memory client and return the tool result."""
+        async with Client(mcp) as client:
+            return await client.call_tool('do_thing', arguments)
+
+    async def test_maximum_enforced(self):
+        """A value above ``maximum`` is rejected even though its type is correct."""
+        mcp = MCPServer('test')
+        self._register_single_param(mcp, 'n', {'type': 'integer', 'minimum': 1, 'maximum': 10})
+        result = await self._call(mcp, {'n': 99})
+        assert result.is_error
+        message = result.content[0]
+        assert isinstance(message, TextContent)
+        assert 'maximum' in message.text
+        assert result.structured_content is not None
+        error = result.structured_content['errors'][0]
+        assert error['path'] == 'n'
+        assert error['keyword'] == 'maximum'
+
+    async def test_pattern_enforced(self):
+        """A string that fails ``pattern`` is rejected."""
+        mcp = MCPServer('test')
+        self._register_single_param(mcp, 'code', {'type': 'string', 'pattern': '^[A-Z]{3}$'})
+        result = await self._call(mcp, {'code': 'abc'})
+        assert result.is_error
+
+    async def test_format_enforced(self):
+        """A string that fails ``format`` is rejected once the format checker is on."""
+        mcp = MCPServer('test')
+        self._register_single_param(mcp, 'email', {'type': 'string', 'format': 'email'})
+        result = await self._call(mcp, {'email': 'not-an-email'})
+        assert result.is_error
+
+    async def test_valid_input_reaches_upstream(self, mock_upstream):
+        """An in-range value passes validation and the upstream call is made."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['hit'] = True
+            return httpx.Response(200, json={'ok': True})
+
+        mock_upstream(handler)
+        mcp = MCPServer('test')
+        self._register_single_param(mcp, 'n', {'type': 'integer', 'minimum': 1, 'maximum': 10})
+        result = await self._call(mcp, {'n': 5})
+        assert not result.is_error
+        assert captured.get('hit')
