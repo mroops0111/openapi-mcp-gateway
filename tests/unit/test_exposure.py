@@ -8,6 +8,7 @@ import pytest
 from mcp import Client
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
+from mcp.types import CallToolResult, TextContent
 
 from openapi_mcp_gateway.exposure import (
     MetaToolGenerator,
@@ -976,3 +977,66 @@ class TestFaithfulInputSchema:
         async with Client(mcp) as client:
             result = await client.call_tool('do_thing', {'count': 'not-an-int'})
         assert result.is_error
+
+
+class TestInputSchemaEnforcement:
+    """Advertised constraints are enforced before the upstream call, not merely displayed.
+
+    Validation runs against the same schema the tool advertises, so what the client is shown is
+    exactly what gets checked (bounds, pattern, and format that the signature types cannot carry).
+    """
+
+    def _register_single_param(self, mcp: MCPServer, name: str, param_schema: dict) -> None:
+        """Register a one-parameter ``do_thing`` tool carrying ``param_schema``."""
+        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com'))
+        operation = OperationInfo(
+            operation_id='do_thing',
+            method='get',
+            path='/things',
+            parameters=[ParameterInfo(name=name, location='query', required=True, schema=param_schema)],
+        )
+        generator.register([operation])
+
+    async def _call(self, mcp: MCPServer, arguments: dict) -> CallToolResult:
+        """Invoke ``do_thing`` through an in-memory client and return the tool result."""
+        async with Client(mcp) as client:
+            return await client.call_tool('do_thing', arguments)
+
+    async def test_maximum_enforced(self):
+        """A value above ``maximum`` is rejected even though its type is correct."""
+        mcp = MCPServer('test')
+        self._register_single_param(mcp, 'n', {'type': 'integer', 'minimum': 1, 'maximum': 10})
+        result = await self._call(mcp, {'n': 99})
+        assert result.is_error
+        message = result.content[0]
+        assert isinstance(message, TextContent)
+        assert 'maximum' in message.text
+
+    async def test_pattern_enforced(self):
+        """A string that fails ``pattern`` is rejected."""
+        mcp = MCPServer('test')
+        self._register_single_param(mcp, 'code', {'type': 'string', 'pattern': '^[A-Z]{3}$'})
+        result = await self._call(mcp, {'code': 'abc'})
+        assert result.is_error
+
+    async def test_format_enforced(self):
+        """A string that fails ``format`` is rejected once the format checker is on."""
+        mcp = MCPServer('test')
+        self._register_single_param(mcp, 'email', {'type': 'string', 'format': 'email'})
+        result = await self._call(mcp, {'email': 'not-an-email'})
+        assert result.is_error
+
+    async def test_valid_input_reaches_upstream(self, mock_upstream):
+        """An in-range value passes validation and the upstream call is made."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['hit'] = True
+            return httpx.Response(200, json={'ok': True})
+
+        mock_upstream(handler)
+        mcp = MCPServer('test')
+        self._register_single_param(mcp, 'n', {'type': 'integer', 'minimum': 1, 'maximum': 10})
+        result = await self._call(mcp, {'n': 5})
+        assert not result.is_error
+        assert captured.get('hit')
