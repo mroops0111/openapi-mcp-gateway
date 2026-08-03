@@ -81,10 +81,24 @@ def _build_validation_error_result(errors: list[ValidationError]) -> CallToolRes
 
     The validator runs against the same schema the tool advertises,
     so what the client is shown is exactly what gets enforced.
+    The text carries a human-readable summary and ``structuredContent`` carries the same failures,
+    keyed by field path and violated keyword, for a client that parses errors programmatically.
     """
-    lines = [f'{"/".join(str(part) for part in error.path) or "(root)"}: {error.message}' for error in errors]
+    details = [
+        {
+            'path': '/'.join(str(part) for part in error.path),
+            'keyword': str(error.validator),
+            'message': error.message,
+        }
+        for error in errors
+    ]
+    lines = [f'{detail["path"] or "(root)"}: {detail["message"]}' for detail in details]
     message = 'Input does not satisfy the tool schema:\n' + '\n'.join(lines)
-    return CallToolResult(content=[TextContent(type='text', text=message)], structured_content=None, is_error=True)
+    return CallToolResult(
+        content=[TextContent(type='text', text=message)],
+        structured_content={'errors': details},
+        is_error=True,
+    )
 
 
 def _parameters_keyed_by_sanitised_name(parameters: list[ParameterInfo]) -> dict[str, ParameterInfo]:

@@ -1011,6 +1011,10 @@ class TestInputSchemaEnforcement:
         message = result.content[0]
         assert isinstance(message, TextContent)
         assert 'maximum' in message.text
+        assert result.structured_content is not None
+        error = result.structured_content['errors'][0]
+        assert error['path'] == 'n'
+        assert error['keyword'] == 'maximum'
 
     async def test_pattern_enforced(self):
         """A string that fails ``pattern`` is rejected."""
