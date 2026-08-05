@@ -1,9 +1,9 @@
 from ._shared import (
-    UpstreamBinding,
     build_input_schema,
     derive_description,
     derive_name,
 )
+from ._upstream import UpstreamBinding
 from .resource import (
     ResourceGenerator,
     build_resource_read_function,

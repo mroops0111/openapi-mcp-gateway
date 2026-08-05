@@ -10,8 +10,8 @@ from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, ToolAnnotations
 
 from ..openapi import OperationInfo
+from ._shaping import shape_operation
 from ._shared import (
-    UpstreamBinding,
     _get_override,
     _iter_unique_sanitised_parameters,
     _schema_to_python_type,
@@ -19,7 +19,7 @@ from ._shared import (
     derive_description,
     derive_name,
 )
-from ._upstream import _build_success_result, _build_upstream_closure
+from ._upstream import UpstreamBinding, _build_success_result, _build_upstream_closure
 
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,23 @@ def derive_tool_annotations(operation: OperationInfo) -> ToolAnnotations:
         idempotent_hint=(method in {'get', 'put', 'patch', 'delete'}) or None,
         open_world_hint=True,
     )
+
+
+def merge_tool_annotations(
+    operation: OperationInfo,
+    override_annotations: dict[str, typing.Any] | None,
+) -> ToolAnnotations:
+    """Merge author ``annotations`` overrides over the method-derived ones, explicit values winning.
+
+    Dropping ``None`` on both sides lets an author flip a single hint,
+    for example marking a POST read-only, while inheriting every hint they did not set.
+    Override keys may be camelCase (``readOnlyHint``) or snake_case (``read_only_hint``).
+    """
+    derived = derive_tool_annotations(operation).model_dump(exclude_none=True)
+    if not override_annotations:
+        return ToolAnnotations.model_validate(derived)
+    override = ToolAnnotations.model_validate(override_annotations).model_dump(exclude_none=True)
+    return ToolAnnotations.model_validate({**derived, **override})
 
 
 def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, dict[str, typing.Any]]:
@@ -182,12 +199,15 @@ class ToolGenerator:
     def register(self, operations: list[OperationInfo]) -> None:
         """Declare one MCP tool per ``OperationInfo`` in ``operations``."""
         for operation in operations:
-            override = _get_override(operation, 'tool')
-            tool_function = build_tool_function(operation, self.binding)
-            name = derive_name(operation, override.name if override else None)
-            description = derive_description(operation, override.description if override else None)
-            title = derive_tool_title(operation)
-            annotations = derive_tool_annotations(operation)
+            # Shape once, then feed the shaped operation to every consumer (schema, signature, upstream),
+            # so hidden / default / description overrides stay consistent across all of them.
+            shaped_operation = shape_operation(operation)
+            tool_override = _get_override(shaped_operation, 'tool')
+            tool_function = build_tool_function(shaped_operation, self.binding)
+            name = derive_name(shaped_operation, tool_override.name if tool_override else None)
+            description = derive_description(shaped_operation, tool_override.description if tool_override else None)
+            title = derive_tool_title(shaped_operation)
+            annotations = merge_tool_annotations(shaped_operation, tool_override.annotations if tool_override else None)
             registered = self.mcp._tool_manager.add_tool(
                 tool_function,
                 name=name,
@@ -199,8 +219,8 @@ class ToolGenerator:
             # which cannot carry OpenAPI keywords such as format, numeric bounds, pattern, enum, or composition.
             # Overwrite it with the schema built straight from the operation, so the LLM sees the real contract.
             # build_tool_function enforces this same schema before the upstream call, so display and validation match.
-            registered.parameters = build_input_schema(operation)
-            logger.debug('Tool registered: %s ← %s %s', name, operation.method.upper(), operation.path)
+            registered.parameters = build_input_schema(shaped_operation)
+            logger.debug('Tool registered: %s ← %s %s', name, shaped_operation.method.upper(), shaped_operation.path)
         logger.info('Registered %d MCP tool(s) on server "%s"', len(operations), self.mcp.name)
 
 
@@ -220,14 +240,19 @@ class MetaToolGenerator:
     def register(self, operations: list[OperationInfo]) -> None:
         """Populate the registry from ``operations`` and bind the three meta-tools."""
         for operation in operations:
-            override = _get_override(operation, 'tool')
-            name = derive_name(operation, override.name if override else None)
+            # Same shaping as the static path, so a dynamic operation exposes the identical surface.
+            # Meta-tools carry no per-operation annotations, so annotation overrides do not apply here.
+            shaped_operation = shape_operation(operation)
+            tool_override = _get_override(shaped_operation, 'tool')
+            name = derive_name(shaped_operation, tool_override.name if tool_override else None)
             self._registry[name] = _MetaToolEntry(
-                description=derive_description(operation, override.description if override else None),
-                input_schema=build_input_schema(operation),
-                callable_=build_tool_function(operation, self.binding, attach_signature=False),
+                description=derive_description(shaped_operation, tool_override.description if tool_override else None),
+                input_schema=build_input_schema(shaped_operation),
+                callable_=build_tool_function(shaped_operation, self.binding, attach_signature=False),
             )
-            logger.debug('Dynamic operation indexed: %s ← %s %s', name, operation.method.upper(), operation.path)
+            logger.debug(
+                'Dynamic operation indexed: %s ← %s %s', name, shaped_operation.method.upper(), shaped_operation.path
+            )
         self._bind_meta_tools()
         logger.info(
             'Registered %d operation(s) behind dynamic meta-tools on server "%s"',

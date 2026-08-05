@@ -93,7 +93,7 @@ def _resource_eligibility_problem(operation: OperationInfo) -> tuple[str, str] |
     if operation.method.lower() != 'get':
         return (
             f'method is {operation.method.upper()}',
-            'Resources are read-only; declare expose.tool instead, or remove the resource declaration.',
+            'Resources are read-only. Declare tool instead, or remove the resource declaration.',
         )
     required_non_path = [
         f'{parameter.location}:{parameter.name}'
@@ -109,7 +109,7 @@ def _resource_eligibility_problem(operation: OperationInfo) -> tuple[str, str] |
 
 
 def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -> None:
-    """Raise ``ValueError`` when an explicit ``expose.resource`` opt-in cannot be honored.
+    """Raise ``ValueError`` when an explicit ``resource`` opt-in cannot be honored.
 
     Covers both the basic eligibility rules and the ``uri_template`` scheme override,
     which only spec-side opt-ins can carry.
@@ -119,13 +119,13 @@ def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -
         reason, hint = ineligibility
         raise ValueError(
             f'Server "{server_name}": operation "{operation.operation_id}" declares '
-            f'x-mcp-integration.expose.resource but {reason}. {hint}'
+            f'x-mcp-integration.resource but {reason}. {hint}'
         )
 
-    override = operation.x_mcp_integration.expose.resource if operation.x_mcp_integration.expose else None
+    override = operation.x_mcp_integration.resource
     if override and override.uri_template and not override.uri_template.startswith(f'{server_name}://'):
         raise ValueError(
-            f'Server "{server_name}": operation "{operation.operation_id}".expose.resource.uri_template '
+            f'Server "{server_name}": operation "{operation.operation_id}".resource.uri_template '
             f'must start with "{server_name}://" (got "{override.uri_template}").'
         )
 
@@ -164,11 +164,11 @@ def _partition_operations(
     """Split ``operations`` into ``(resource_operations, tool_operations)`` based on ``mode`` and per-operation opt-ins.
 
     Under ``mode='tool_only'`` (default) every operation becomes a tool,
-    and ``x-mcp-integration.expose.resource`` declarations are ignored.
+    and ``x-mcp-integration.resource`` declarations are ignored.
 
-    Under ``mode='auto'`` an operation becomes a resource when it either declares ``expose.resource`` explicitly,
-    or qualifies for auto-promotion (no ``expose.tool`` and the eligibility rules pass).
-    Declaring both ``expose.tool`` and ``expose.resource`` registers the operation in both lists.
+    Under ``mode='auto'`` an operation becomes a resource when it either declares ``resource`` explicitly,
+    or qualifies for auto-promotion (no ``tool`` and the eligibility rules pass).
+    Declaring both ``tool`` and ``resource`` registers the operation in both lists.
     """
     if mode == 'tool_only':
         return [], list(operations)
@@ -471,7 +471,7 @@ class Gateway:
             resource_optins = [op.operation_id for op in operations if op.resource_exposed]
             if resource_optins:
                 logger.warning(
-                    'Server "%s": dynamic exposure mode ignores x-mcp-integration.expose.resource declarations '
+                    'Server "%s": dynamic exposure mode ignores x-mcp-integration.resource declarations '
                     'on %d operation(s) (%s). '
                     'The meta-tools surface every operation uniformly.',
                     server_config.name,

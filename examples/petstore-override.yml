@@ -22,12 +22,10 @@ servers:
     mode: auto
     operations:
       getPetById:
-        expose:
-          resource:
-            name: pet
-            mime_type: application/json
+        resource:
+          name: pet
+          mime_type: application/json
       getInventory:
-        expose:
-          resource:
-            name: inventory
-            mime_type: application/json
+        resource:
+          name: inventory
+          mime_type: application/json

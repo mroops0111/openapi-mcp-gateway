@@ -1,12 +1,12 @@
 import pytest
 
-from openapi_mcp_gateway.openapi import Expose, McpIntegration, OperationInfo, ToolOverride
+from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ToolOverride
 from openapi_mcp_gateway.policy import filter_operations, matches_pattern
 
 
 def _operation(operation_id: str, method: str = 'get', path: str = '/test', mcp_marker: bool = False) -> OperationInfo:
     """Build a minimal ``OperationInfo`` for pattern/filter tests."""
-    integration = McpIntegration(expose=Expose(tool=ToolOverride())) if mcp_marker else McpIntegration()
+    integration = McpIntegration(tool=ToolOverride()) if mcp_marker else McpIntegration()
     return OperationInfo(
         operation_id=operation_id,
         method=method,

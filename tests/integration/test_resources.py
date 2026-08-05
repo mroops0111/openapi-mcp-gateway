@@ -7,7 +7,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import InputRequiredResult
 
 from openapi_mcp_gateway.gateway import Gateway
-from openapi_mcp_gateway.openapi import Expose, McpIntegration, ResourceOverride
+from openapi_mcp_gateway.openapi import McpIntegration, ResourceOverride
 from openapi_mcp_gateway.settings import GatewayConfig, ServerConfig
 
 
@@ -73,11 +73,9 @@ def _spec_with_resource_optin() -> dict:
                         },
                     ],
                     'x-mcp-integration': {
-                        'expose': {
-                            'resource': {
-                                'name': 'pet',
-                                'mime_type': 'application/json',
-                            },
+                        'resource': {
+                            'name': 'pet',
+                            'mime_type': 'application/json',
                         },
                     },
                     'responses': {'200': {'description': 'ok'}},
@@ -88,11 +86,9 @@ def _spec_with_resource_optin() -> dict:
                     'operationId': 'getInventory',
                     'summary': 'Aggregate inventory snapshot',
                     'x-mcp-integration': {
-                        'expose': {
-                            'resource': {
-                                'name': 'inventory',
-                                'mime_type': 'application/json',
-                            },
+                        'resource': {
+                            'name': 'inventory',
+                            'mime_type': 'application/json',
                         },
                     },
                     'responses': {'200': {'description': 'ok'}},
@@ -105,7 +101,7 @@ def _spec_with_resource_optin() -> dict:
 def _spec_with_dual_optin() -> dict:
     """Spec where ``getPet`` declares both ``expose.tool`` and ``expose.resource``."""
     spec = _spec_with_resource_optin()
-    spec['paths']['/pets/{petId}']['get']['x-mcp-integration']['expose']['tool'] = {
+    spec['paths']['/pets/{petId}']['get']['x-mcp-integration']['tool'] = {
         'name': 'fetch_pet',
     }
     return spec
@@ -121,7 +117,7 @@ def _spec_with_misconfig_post_resource() -> dict:
             '/pets': {
                 'post': {
                     'operationId': 'createPet',
-                    'x-mcp-integration': {'expose': {'resource': {}}},
+                    'x-mcp-integration': {'resource': {}},
                     'responses': {'201': {'description': 'created'}},
                 },
             },
@@ -309,7 +305,7 @@ class TestYamlOverrideEndToEnd:
                         mode='auto',
                         operations={
                             'getPet': McpIntegration(
-                                expose=Expose(resource=ResourceOverride(name='pet', mime_type='application/json')),
+                                resource=ResourceOverride(name='pet', mime_type='application/json'),
                             ),
                         },
                     )
@@ -333,7 +329,7 @@ class TestYamlOverrideEndToEnd:
                             mode='auto',
                             operations={
                                 'not_a_real_op': McpIntegration(
-                                    expose=Expose(resource=ResourceOverride(name='ghost')),
+                                    resource=ResourceOverride(name='ghost'),
                                 ),
                             },
                         )

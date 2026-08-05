@@ -34,3 +34,6 @@ docs/
 
 # MacOS
 .DS_Store
+
+# coverage artifacts
+.coverage

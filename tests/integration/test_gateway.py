@@ -8,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from mcp import Client
 from mcp.server.mcpserver import Context
-from mcp.types import RequestParamsMeta
+from mcp.types import RequestParamsMeta, TextContent
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.auth import token_source as token_source_module
@@ -514,3 +514,93 @@ class TestTraceContextPropagation:
         assert 'traceparent' not in headers
         assert 'tracestate' not in headers
         assert 'baggage' not in headers
+
+
+class TestMovieShapingExample:
+    """The examples/movie-shaping.yml config loads and shapes the TMDB surface as documented."""
+
+    @pytest.fixture
+    def movie_gateway(self, monkeypatch):
+        """Build the gateway from the checked-in movie-shaping example."""
+        monkeypatch.setenv('TMDB_TOKEN', 'test-token')
+        repo_root = pathlib.Path(__file__).resolve().parents[2]
+        monkeypatch.chdir(repo_root)  # the config resolves its spec path relative to the working directory
+        config = GatewayConfig.from_yaml(repo_root / 'examples' / 'movie-shaping.yml')
+        return Gateway.from_config(config)
+
+    async def test_discover_movies_surface_and_bridge(self, movie_gateway, mock_upstream):
+        """The model sees only ``sort`` and ``page``, and the defaults, rename, and value-map reach the upstream."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(
+                200,
+                json={
+                    'page': 1,
+                    'results': [
+                        {
+                            'title': 'Dune',
+                            'overview': 'Paul Atreides ...',
+                            'release_date': '2021-10-22',
+                            'vote_average': 8.0,
+                            'poster_path': '/x.jpg',
+                        }
+                    ],
+                },
+            )
+
+        mock_upstream(handler)
+        bundle = movie_gateway._servers[0]
+        async with Client(bundle.mcp) as client:
+            tool = next(tool for tool in (await client.list_tools()).tools if tool.name == 'discover_movies')
+            assert set(tool.input_schema['properties']) == {'sort', 'page'}
+            result = await client.call_tool('discover_movies', {})
+
+        assert captured['params']['sort_by'] == 'popularity.desc'  # default 'popular', renamed and value-mapped
+        assert captured['params']['page'] == '1'  # x-mcp default sent when omitted
+        assert captured['params']['include_adult'] == 'false'  # injected safety default
+        assert captured['params']['language'] == 'en-US'  # injected locale
+        content = result.content[0]
+        assert isinstance(content, TextContent)
+        assert json.loads(content.text) == [
+            {'title': 'Dune', 'overview': 'Paul Atreides ...', 'release_date': '2021-10-22', 'rating': 8.0}
+        ]
+
+    async def test_get_movie_details_injects_and_trims(self, movie_gateway, mock_upstream):
+        """The model supplies only ``movie_id``, hidden query defaults are injected, and the body is trimmed."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['url'] = str(request.url)
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(
+                200,
+                json={
+                    'id': 550,
+                    'title': 'Fight Club',
+                    'overview': 'A ticking-time-bomb insomniac ...',
+                    'release_date': '1999-10-15',
+                    'vote_average': 8.4,
+                    'budget': 63000000,
+                    'credits': {'cast': [{'name': 'Edward Norton'}, {'name': 'Brad Pitt'}]},
+                },
+            )
+
+        mock_upstream(handler)
+        bundle = movie_gateway._servers[0]
+        async with Client(bundle.mcp) as client:
+            tool = next(tool for tool in (await client.list_tools()).tools if tool.name == 'get_movie_details')
+            assert set(tool.input_schema['properties']) == {'movie_id'}
+            result = await client.call_tool('get_movie_details', {'movie_id': 550})
+
+        assert '/movie/550' in captured['url']
+        assert captured['params']['append_to_response'] == 'credits'
+        assert captured['params']['language'] == 'en-US'
+        assert result.structured_content == {
+            'title': 'Fight Club',
+            'overview': 'A ticking-time-bomb insomniac ...',
+            'release_date': '1999-10-15',
+            'rating': 8.4,
+            'cast': ['Edward Norton', 'Brad Pitt'],
+        }

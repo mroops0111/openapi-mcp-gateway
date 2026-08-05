@@ -9,7 +9,7 @@
 Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, or expose an existing FastAPI app the same way. Multiple APIs in one process, each with its own mount path and auth.
 
 <p align="center">
-  <img src="architecture.png" alt="OpenAPI MCP Gateway architecture: MCP clients (Claude Desktop, Cursor, AI agents) connect over stdio / SSE / streamable-http to the gateway, which at startup ingests OpenAPI specs or FastAPI apps and exposes them as MCP tools, meta-tools, and resources, then per call authorizes with bearer / API key / OAuth2 and emits MCP-native output, calling upstream REST APIs over HTTP or an in-process FastAPI app over ASGI." width="100%">
+  <img src="architecture.png" alt="OpenAPI MCP Gateway architecture: MCP clients (Claude Desktop, Cursor, AI agents) connect over stdio / SSE / streamable-http to the gateway, which at startup ingests OpenAPI specs or FastAPI apps and exposes them as MCP tools, meta-tools, and resources, then per call authorizes with bearer / API key / OAuth2, shapes the request and response with JSONata, and emits MCP-native output, calling upstream REST APIs over HTTP or an in-process FastAPI app over ASGI." width="100%">
 </p>
 
 ```bash
@@ -23,6 +23,7 @@ uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 - **Resource Auto-Promotion.** Set `mode: auto` and eligible GETs register as MCP resources instead of tools, keeping the tool list small while reads stay addressable by URI.
 - **Spec-Compliant Authorization.** Audience-bound tokens with no silent passthrough to upstreams, plus protocol-native `annotations` and `structuredContent` on every tool.
 - **Tool Name and Description Overrides.** Rewrite ugly `operationId`s and empty descriptions in YAML, no fork required.
+- **Tool Shaping.** Declare a friendly input schema and rewrite the request and response with JSONata, turning a raw endpoint with a filter DSL and a bloated envelope into a clean two-argument tool.
 - **Pluggable Token Store.** Memory by default, switch to Redis to share OAuth credential state across replicas. It holds OAuth tokens and client registrations, never MCP protocol sessions, so single-replica or non-OAuth deployments do not need it.
 - **Every Transport.** Streamable HTTP and stdio on the same binary, from Claude Desktop and Cursor to any other MCP client. SSE still works but is deprecated in the 2026-07-28 spec, so new deployments should choose streamable HTTP.
 
@@ -234,7 +235,7 @@ Configuration merges in this order, with each layer overriding the previous: **d
 | `policy.deny` | list |  | Exclude matching operations |
 | `timeout` | float | `90` | HTTP timeout in seconds |
 | `exposure` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`list_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand. |
-| `mode` | string | `tool_only` | `tool_only` forces every operation to a tool and ignores any `expose.resource` declaration. `auto` promotes eligible GETs (no required non-path parameter) to MCP resources, and spec-side `expose.resource` opt-ins still apply as explicit overrides. |
+| `mode` | string | `tool_only` | `tool_only` forces every operation to a tool and ignores any `resource` declaration. `auto` promotes eligible GETs (no required non-path parameter) to MCP resources, and spec-side `resource` opt-ins still apply as explicit overrides. |
 | `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation. Useful when you do not control the upstream spec. |
 
 </details>
@@ -249,7 +250,7 @@ policy:
   deny:  ["GET /repos/*/actions/secrets*"]
 ```
 
-Operations can also be opted in from the spec side with `x-mcp-integration: {expose: {tool: {}}}` plus `policy.marked_only: true`. Filters apply in order: `marked_only`, then `allow`, then `deny`.
+Operations can also be opted in from the spec side with `x-mcp-integration: {tool: {}}` plus `policy.marked_only: true`. Filters apply in order: `marked_only`, then `allow`, then `deny`.
 
 ### Resource Exposure
 
@@ -275,19 +276,17 @@ servers:
     mode: auto
     operations:
       getPetById:
-        expose:
-          resource:
-            name: pet
-            mime_type: application/json
+        resource:
+          name: pet
+          mime_type: application/json
       getInventory:
-        expose:
-          resource:
-            name: inventory
+        resource:
+          name: inventory
 ```
 
 Keys are matched against `operationId`. An unknown id raises at startup so typos do not silently no-op. Each entry fully replaces (does not merge with) the spec-side `x-mcp-integration`. A runnable demo lives at [`examples/petstore-override.yml`](examples/petstore-override.yml).
 
-If you own the upstream spec, write the same opt-in inline with `x-mcp-integration.expose.resource`:
+If you own the upstream spec, write the same opt-in inline with `x-mcp-integration.resource`:
 
 ```yaml
 paths:
@@ -295,14 +294,13 @@ paths:
     get:
       operationId: getPet
       x-mcp-integration:
-        expose:
-          resource:
-            name: pet
-            mime_type: application/json
-            # uri_template: petstore://v2/pets/{petId}  # optional override, must start with "<server>://"
+        resource:
+          name: pet
+          mime_type: application/json
+          # uri_template: petstore://v2/pets/{petId}  # optional override, must start with "<server>://"
 ```
 
-Declaring both `expose.tool` and `expose.resource` registers the operation on both surfaces. Resource declarations are validated at startup: non-`GET` methods, required non-path parameters, and `uri_template` values that do not start with `<server>://` abort `Gateway.from_config` with a concrete error. Subscriptions are not implemented because REST has no native push.
+Declaring both `tool` and `resource` registers the operation on both surfaces. Resource declarations are validated at startup: non-`GET` methods, required non-path parameters, and `uri_template` values that do not start with `<server>://` abort `Gateway.from_config` with a concrete error. Subscriptions are not implemented because REST has no native push.
 
 ### Tool Name and Description Overrides
 
@@ -314,16 +312,94 @@ servers:
     spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
     operations:
       pulls/list-files:
-        expose:
-          tool:
-            name: list_pull_request_files
-            description: |
-              List files changed in a pull request. Returns up to 3000 files,
-              each with status (added / modified / removed), patch text, and
-              line counts.
+        tool:
+          name: list_pull_request_files
+          description: |
+            List files changed in a pull request. Returns up to 3000 files,
+            each with status (added / modified / removed), patch text, and
+            line counts.
 ```
 
-If you own the upstream spec, the inline form is `x-mcp-integration.expose.tool` on the operation.
+If you own the upstream spec, the inline form is `x-mcp-integration.tool` on the operation.
+
+### Tool Shaping
+
+A raw operation rarely makes a good tool. It may take a cryptic filter DSL, expose a dozen knobs the model should never touch, and wrap the few useful fields in a large envelope. `x-mcp-integration.tool` reshapes an operation on both sides without forking the spec, pairing a declarative input layer with [JSONata](https://jsonata.org/) expressions for the value transforms. Three keys work together.
+
+- **`params` and `strategy`**: declare what the model sees.
+- **`request`**: a JSONata expression that maps the friendly arguments onto the upstream request.
+- **`response`**: a JSONata expression that reshapes the upstream body before it reaches the client.
+
+#### Input Schema
+
+`strategy` decides how `params` relates to the spec and is mandatory whenever `params` is set. Each `params` entry is then a JSON Schema fragment plus two flags.
+
+- **`strategy`**:
+  - **`merge`**: tweaks the operation's existing parameters and keeps the rest visible, so a parameter the spec does not define is an error.
+  - **`replace`**: makes the declared entries the whole schema and drops every spec parameter, so it needs a `request` to route the friendly arguments upstream.
+- **`type`**: one of `string`, `integer`, `number`, `boolean`, `array`, `object`, alongside the usual JSON Schema keywords (`enum`, `default`, `description`, `format`, `minimum`, `items`, and so on).
+- **`required`**: lifts the parameter into the schema's required list.
+- **`hidden`**: removes a spec parameter from the surface.
+
+<details>
+<summary><b><code>merge</code> Example</b></summary>
+
+```yaml
+operations:
+  searchIssues:
+    tool:
+      strategy: merge
+      params:
+        internal_flag: { hidden: true }
+        per_page: { default: 30 }
+        sort: { description: "One of comments, created, updated." }
+```
+
+</details>
+
+<details>
+<summary><b><code>replace</code> Example</b></summary>
+
+```yaml
+operations:
+  discover_movies:
+    tool:
+      strategy: replace
+      params:
+        sort:
+          type: string
+          enum: [popular, top_rated, newest]
+          default: popular
+        page:
+          type: integer
+          default: 1
+      request: |
+        {
+          "sort_by": $lookup(
+            {"popular": "popularity.desc", "top_rated": "vote_average.desc", "newest": "primary_release_date.desc"},
+            sort
+          ),
+          "page": page,
+          "include_adult": false,
+          "language": "en-US"
+        }
+      response: |
+        [results.{ "title": title, "overview": overview, "rating": vote_average }]
+```
+
+The model sees only `sort` and `page`. `request` maps them onto the raw query and injects the locale and safety flags, and `response` trims each result. `$lookup` translates a friendly enum into the raw value, and the surrounding `[ ... ]` keeps the result a list even for a single match.
+
+</details>
+
+#### Request and Response
+
+`request` builds the entire upstream request, and `response` transforms a successful body. Both are optional and independent.
+
+- **Routing**: a key that names a path placeholder fills the path, and the rest become query parameters for a body-less method or the JSON body otherwise.
+- **Passthrough**: to forward the incoming arguments and change only a few, merge them with `$merge([$, { ... }])`.
+- **Errors**: a broken expression is rejected at startup, and a runtime failure returns an `isError` result naming the side that broke.
+
+A runnable end-to-end example lives at [`examples/movie-shaping.yml`](examples/movie-shaping.yml).
 
 ### Dynamic Exposure
 
@@ -399,7 +475,7 @@ Gateway.from_fastapi(app, name="myapp").run()
 Auth is auto-detected from the app's `securitySchemes`. Override by passing an explicit `auth=AuthConfig(...)` to `Gateway.from_fastapi`.
 
 <details>
-<summary>How auth works for the FastAPI integration</summary>
+<summary><b>How auth works for the FastAPI integration</b></summary>
 
 Because the gateway runs in-process and routes through `httpx.ASGITransport`, gateway and upstream share the same OAuth audience, so the MCP client's `Authorization` header passes through verbatim (`auth.flow: passthrough`, set automatically for this integration only). For `client_credentials` schemes the gateway mints upstream tokens from its own credentials instead.
 

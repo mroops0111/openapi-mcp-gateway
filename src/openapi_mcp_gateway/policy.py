@@ -25,7 +25,7 @@ def filter_operations(
 ) -> list[OperationInfo]:
     """Apply ``marked_only``, ``allow``, and ``deny`` rules in that order.
 
-    ``marked_only`` keeps only operations exposed via ``x-mcp-integration.expose.tool``.
+    ``marked_only`` keeps only operations exposed via ``x-mcp-integration.tool``.
     """
     result = operations
 
