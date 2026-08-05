@@ -24,8 +24,8 @@ servers:
     operations:
       discover_movies:
         tool:
-          strategy: replace                # the declared params are the whole surface
-          params:                          # this is the whole LLM-facing input schema
+          strategy: replace  # the declared params are the whole surface
+          params:  # this is the whole LLM-facing input schema
             sort:
               type: string
               enum: [popular, top_rated, newest]
@@ -48,8 +48,7 @@ servers:
               "include_adult": false,
               "language": "en-US"
             }
-          # The [ ... ] array constructor keeps the result a list even when a single movie matches.
-          response: |
+          response: |  # the [ ... ] wrapper keeps a list even when a single movie matches
             [results.{
               "title": title,
               "overview": overview,
