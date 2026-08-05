@@ -1,7 +1,7 @@
 import pytest
 
 from openapi_mcp_gateway.gateway import _apply_yaml_overrides
-from openapi_mcp_gateway.openapi import Expose, McpIntegration, OperationInfo, ResourceOverride, ToolOverride
+from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ResourceOverride, ToolOverride
 
 
 def _operation(operation_id: str, integration: McpIntegration | None = None) -> OperationInfo:
@@ -26,39 +26,39 @@ class TestApplyYamlOverrides:
     def test_single_override_applied(self):
         """A YAML override for one op replaces its ``x_mcp_integration``."""
         operations = [_operation('get_pet'), _operation('list_pets')]
-        override = McpIntegration(expose=Expose(resource=ResourceOverride(name='pet')))
+        override = McpIntegration(resource=ResourceOverride(name='pet'))
         result = _apply_yaml_overrides(operations, {'get_pet': override}, 'petstore')
         assert result[0].x_mcp_integration is override
         assert result[1].x_mcp_integration is operations[1].x_mcp_integration
 
     def test_replace_does_not_merge_with_spec(self):
         """YAML override fully replaces spec-side ``x_mcp_integration`` (no merge)."""
-        spec_side = McpIntegration(expose=Expose(tool=ToolOverride(name='spec_name')))
+        spec_side = McpIntegration(tool=ToolOverride(name='spec_name'))
         operations = [_operation('get_pet', spec_side)]
-        yaml_side = McpIntegration(expose=Expose(resource=ResourceOverride(name='yaml_name')))
+        yaml_side = McpIntegration(resource=ResourceOverride(name='yaml_name'))
         result = _apply_yaml_overrides(operations, {'get_pet': yaml_side}, 'petstore')
         # YAML wins: resource present, original spec-side tool override gone.
-        expose = result[0].x_mcp_integration.expose
-        assert expose is not None
-        assert expose.tool is None
-        assert expose.resource is not None
-        assert expose.resource.name == 'yaml_name'
+        integration = result[0].x_mcp_integration
+        assert integration.tool is None
+        assert integration.resource is not None
+        assert integration.resource.name == 'yaml_name'
 
     def test_multiple_overrides_applied(self):
         """Several overrides apply to their respective ops; unmentioned ops untouched."""
         operations = [_operation('a'), _operation('b'), _operation('c')]
         overrides = {
-            'a': McpIntegration(expose=Expose(resource=ResourceOverride(name='alpha'))),
-            'c': McpIntegration(expose=Expose(tool=ToolOverride(name='gamma'))),
+            'a': McpIntegration(resource=ResourceOverride(name='alpha')),
+            'c': McpIntegration(tool=ToolOverride(name='gamma')),
         }
         result = _apply_yaml_overrides(operations, overrides, 'srv')
-        first_expose = result[0].x_mcp_integration.expose
-        assert first_expose is not None and first_expose.resource is not None
-        assert first_expose.resource.name == 'alpha'
-        assert result[1].x_mcp_integration.expose is None
-        third_expose = result[2].x_mcp_integration.expose
-        assert third_expose is not None and third_expose.tool is not None
-        assert third_expose.tool.name == 'gamma'
+        first = result[0].x_mcp_integration
+        assert first.resource is not None
+        assert first.resource.name == 'alpha'
+        assert result[1].x_mcp_integration.tool is None
+        assert result[1].x_mcp_integration.resource is None
+        third = result[2].x_mcp_integration
+        assert third.tool is not None
+        assert third.tool.name == 'gamma'
 
     def test_unmatched_operation_id_raises(self):
         """Override that names an op not present in the server's spec aborts with a clear ``ValueError``."""
@@ -78,6 +78,6 @@ class TestApplyYamlOverrides:
         """The helper returns a new list and does not mutate the input ``OperationInfo`` instances."""
         operations = [_operation('get_pet')]
         original_integration = operations[0].x_mcp_integration
-        override = McpIntegration(expose=Expose(resource=ResourceOverride(name='pet')))
+        override = McpIntegration(resource=ResourceOverride(name='pet'))
         _apply_yaml_overrides(operations, {'get_pet': override}, 'petstore')
         assert operations[0].x_mcp_integration is original_integration

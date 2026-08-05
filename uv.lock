@@ -384,6 +384,15 @@ wheels = [
 ]
 
 [[package]]
+name = "jsonata-python"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/6a/b756e10939f584b0629c301bb4aa0e79f94163ac3b0083c788b8ee78c708/jsonata_python-0.7.0.tar.gz", hash = "sha256:2cf788147a0d444cb9d7d81c58da9991607280d6a5d0f06bd2dd212a59fdcb16", size = 368727, upload-time = "2026-07-05T00:44:15.238Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/03/30/17eaf4576916556875fc961002cb67d0b404abc3345ab2bb13f1496654a2/jsonata_python-0.7.0-py3-none-any.whl", hash = "sha256:85b8dd2adf9c17a67494892ef04bc191ba2156598daae4465eec30ffd1559238", size = 87399, upload-time = "2026-07-05T00:44:13.885Z" },
+]
+
+[[package]]
 name = "jsonschema"
 version = "4.26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -500,6 +509,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "inflection" },
+    { name = "jsonata-python" },
     { name = "jsonschema" },
     { name = "mcp", extra = ["cli"] },
     { name = "pydantic" },
@@ -530,6 +540,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.1" },
     { name = "inflection", specifier = ">=0.5.1" },
+    { name = "jsonata-python", specifier = ">=0.7.0" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=2.0.0" },
     { name = "pydantic", specifier = ">=2.13.0" },

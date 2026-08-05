@@ -1,5 +1,5 @@
 {
-  "version": "2.13",
+  "version": "2.15",
   "children": [
     {
       "type": "frame",
@@ -469,7 +469,7 @@
                           "id": "BoxAm",
                           "name": "Subtitle",
                           "fill": "#6B6863",
-                          "content": "OpenAPI ⇄ MCP · many APIs, one process",
+                          "content": "OpenAPI → MCP · many APIs, one process",
                           "fontFamily": "Inter",
                           "fontSize": 14,
                           "fontWeight": "normal"
@@ -927,6 +927,144 @@
                           "fontFamily": "Inter",
                           "fontSize": 12,
                           "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Wha9k",
+                  "name": "Request Response Shaping",
+                  "width": "fill_container",
+                  "fill": "#F7F4EF",
+                  "cornerRadius": 12,
+                  "stroke": "#E0DACE",
+                  "strokeWidth": 1,
+                  "gap": 10,
+                  "padding": [
+                    12,
+                    16
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "EeNDm",
+                      "name": "Out Icon",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "arrow-left-right",
+                      "library": "lucide",
+                      "fill": "#8A9A8E"
+                    },
+                    {
+                      "type": "text",
+                      "id": "iauIB",
+                      "name": "Out Label",
+                      "fill": "#2D2D2B",
+                      "content": "Request / Response Shaping",
+                      "fontFamily": "Inter",
+                      "fontSize": 14,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "M5l0B",
+                      "name": "title",
+                      "fill": "#F3EFE8",
+                      "cornerRadius": 999,
+                      "stroke": "#E0DACE",
+                      "strokeWidth": 1,
+                      "padding": [
+                        5,
+                        10
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "jEo1E",
+                          "name": "PT",
+                          "fill": "#6B6863",
+                          "content": "strategy",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 14,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "XM2Fd",
+                      "name": "annotations",
+                      "fill": "#F3EFE8",
+                      "cornerRadius": 999,
+                      "stroke": "#E0DACE",
+                      "strokeWidth": 1,
+                      "padding": [
+                        5,
+                        10
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "XpVfN",
+                          "name": "PT",
+                          "fill": "#6B6863",
+                          "content": "params",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 14,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "a8mD8",
+                      "name": "structuredContent",
+                      "fill": "#F3EFE8",
+                      "cornerRadius": 999,
+                      "stroke": "#E0DACE",
+                      "strokeWidth": 1,
+                      "padding": [
+                        5,
+                        10
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "UTl2O",
+                          "name": "PT",
+                          "fill": "#6B6863",
+                          "content": "request",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 14,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "GNtdH",
+                      "name": "response",
+                      "fill": "#F3EFE8",
+                      "cornerRadius": 999,
+                      "stroke": "#E0DACE",
+                      "strokeWidth": 1,
+                      "padding": [
+                        5,
+                        10
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "TP4pt",
+                          "name": "PT",
+                          "fill": "#6B6863",
+                          "content": "response",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 14,
+                          "fontWeight": "500"
                         }
                       ]
                     }
@@ -1497,5 +1635,6 @@
         }
       ]
     }
-  ]
+  ],
+  "fileToken": "6127669a-606c-4cc8-b10a-ba2aedc46433"
 }

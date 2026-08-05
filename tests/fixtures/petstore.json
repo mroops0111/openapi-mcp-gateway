@@ -241,11 +241,9 @@
         "operationId": "adminListPets",
         "summary": "Admin list pets",
         "x-mcp-integration": {
-          "expose": {
-            "tool": {
-              "name": "listAdminPets",
-              "description": "List pets visible only to admin users."
-            }
+          "tool": {
+            "name": "listAdminPets",
+            "description": "List pets visible only to admin users."
           }
         },
         "responses": {

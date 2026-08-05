@@ -1,11 +1,10 @@
-import os
 import pathlib
-import re
 import typing
 
 import pydantic
 import yaml
 
+from .env import resolve_env_var
 from .openapi import McpIntegration
 
 
@@ -25,23 +24,9 @@ def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) ->
     return result
 
 
-def _resolve_env_var(value: str | None) -> str | None:
-    """Substitute ``${VAR}`` or ``${VAR:-default}`` when ``value`` is a lone reference,
-    otherwise pass it through unchanged.
-
-    Returns ``None`` if the variable is unset and no default is given.
-    """
-    if value is None:
-        return None
-    match = re.fullmatch(r'\$\{(\w+)(?::-(.*))?\}', value)
-    if not match:
-        return value
-    env_value = os.environ.get(match.group(1))
-    if env_value is not None:
-        return env_value
-    if match.group(2) is not None:
-        return match.group(2)
-    return None
+# The resolver moved to the leaf ``env`` module so exposure/ can reuse it without importing settings.
+# Kept as a private alias here so AuthConfig's existing call sites need no change.
+_resolve_env_var = resolve_env_var
 
 
 class AuthConfig(pydantic.BaseModel):

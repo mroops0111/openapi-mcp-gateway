@@ -8,7 +8,6 @@ from mcp.types import CallToolResult, TextContent
 
 from ..openapi import OperationInfo, ParameterInfo
 from ._shared import (
-    UpstreamBinding,
     _get_override,
     _iter_unique_sanitised_parameters,
     _sanitize_name,
@@ -17,7 +16,7 @@ from ._shared import (
     derive_description,
     derive_name,
 )
-from ._upstream import _build_upstream_closure
+from ._upstream import UpstreamBinding, _build_upstream_closure
 
 
 logger = logging.getLogger(__name__)

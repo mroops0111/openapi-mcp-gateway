@@ -31,6 +31,7 @@ dependencies = [
     "inflection>=0.5.1",
     "click>=8.4.0",
     "jsonschema>=4.26.0",
+    "jsonata-python>=0.7.0",
 ]
 
 [project.optional-dependencies]
