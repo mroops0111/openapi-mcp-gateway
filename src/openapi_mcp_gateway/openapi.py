@@ -21,15 +21,66 @@ class ParameterInfo(pydantic.BaseModel):
     description: str = ''
     schema_type: str = 'string'
     schema_: dict[str, typing.Any] = pydantic.Field(default_factory=dict, alias='schema')
+    # Set by shape_operation from a ParamOverride default.
+    # Marks a default the author wants sent upstream even when the LLM omits the parameter.
+    # The LLM never sees this flag.
+    send_default: bool = False
 
     model_config = pydantic.ConfigDict(populate_by_name=True)
 
 
+class ParamOverride(pydantic.BaseModel):
+    """One LLM-facing parameter from ``x-mcp-integration.tool.params.<name>``, keyed by the friendly name.
+
+    Every key other than the two meta-flags is a JSON Schema keyword
+    (``type``, ``enum``, ``format``, ``default``, ``description``, ``minimum`` and so on),
+    describing the value exactly as it appears in the tool's advertised input schema.
+
+    How the entry is applied depends on ``ToolOverride.strategy``.
+    An entry carrying a ``type`` declares the parameter's schema, either replacing a matching
+    spec parameter's schema or introducing a brand-new friendly parameter.
+    An entry without a ``type`` tweaks a matching spec parameter through ``default`` or ``description``.
+
+    ``required`` lifts the parameter into the schema's required list.
+    ``hidden`` removes a spec parameter from the surface.
+    """
+
+    hidden: bool = False
+    required: bool = False
+
+    model_config = pydantic.ConfigDict(extra='allow')
+
+    @property
+    def schema_fragment(self) -> dict[str, typing.Any]:
+        """The JSON Schema keywords declared for this parameter (everything but the meta-flags)."""
+        return dict(self.__pydantic_extra__ or {})
+
+    @property
+    def declares_schema(self) -> bool:
+        """True when the entry declares a friendly parameter, detected by the presence of ``type``."""
+        return 'type' in self.schema_fragment
+
+
 class ToolOverride(pydantic.BaseModel):
-    """Spec-author overrides for the MCP tool generated from an operation."""
+    """Spec-author overrides for the MCP tool generated from an operation.
+
+    ``params`` shapes the LLM-facing input schema, and ``strategy`` says how it relates to the spec.
+    With ``merge`` the entries tweak existing spec parameters and the rest stay visible.
+    With ``replace`` the entries are the whole surface and every undeclared spec parameter is dropped.
+    ``strategy`` is required whenever ``params`` is set.
+
+    ``request`` and ``response`` are JSONata expressions that transform the values,
+    ``request`` mapping the friendly arguments into the upstream request,
+    and ``response`` mapping the upstream response into what the client sees.
+    """
 
     name: str | None = None
     description: str | None = None
+    annotations: dict[str, typing.Any] | None = None
+    params: dict[str, ParamOverride] = pydantic.Field(default_factory=dict)
+    strategy: typing.Literal['merge', 'replace'] | None = None
+    request: str | None = None
+    response: str | None = None
 
 
 class ResourceOverride(pydantic.BaseModel):
@@ -45,17 +96,15 @@ class ResourceOverride(pydantic.BaseModel):
     uri_template: str | None = None
 
 
-class Expose(pydantic.BaseModel):
-    """Which MCP primitives an operation is exposed as."""
+class McpIntegration(pydantic.BaseModel):
+    """Parsed ``x-mcp-integration`` operation extension.
+
+    ``tool`` and ``resource`` each opt the operation into that MCP primitive.
+    An operation may declare both.
+    """
 
     tool: ToolOverride | None = None
     resource: ResourceOverride | None = None
-
-
-class McpIntegration(pydantic.BaseModel):
-    """Parsed ``x-mcp-integration`` operation extension."""
-
-    expose: Expose | None = None
 
 
 class OperationInfo(pydantic.BaseModel):
@@ -73,15 +122,13 @@ class OperationInfo(pydantic.BaseModel):
 
     @property
     def tool_exposed(self) -> bool:
-        """True iff ``x-mcp-integration.expose.tool`` is present."""
-        expose = self.x_mcp_integration.expose
-        return expose is not None and expose.tool is not None
+        """True iff ``x-mcp-integration.tool`` is present."""
+        return self.x_mcp_integration.tool is not None
 
     @property
     def resource_exposed(self) -> bool:
-        """True iff ``x-mcp-integration.expose.resource`` is present."""
-        expose = self.x_mcp_integration.expose
-        return expose is not None and expose.resource is not None
+        """True iff ``x-mcp-integration.resource`` is present."""
+        return self.x_mcp_integration.resource is not None
 
 
 class OpenAPISpec(pydantic.BaseModel):

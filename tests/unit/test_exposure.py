@@ -17,8 +17,16 @@ from openapi_mcp_gateway.exposure import (
     derive_tool_annotations,
     derive_tool_title,
 )
+from openapi_mcp_gateway.exposure._shaping import shape_operation
 from openapi_mcp_gateway.exposure._shared import _sanitize_name, _schema_to_python_type
-from openapi_mcp_gateway.openapi import OperationInfo, ParameterInfo
+from openapi_mcp_gateway.exposure.tool import merge_tool_annotations
+from openapi_mcp_gateway.openapi import (
+    McpIntegration,
+    OperationInfo,
+    ParameterInfo,
+    ParamOverride,
+    ToolOverride,
+)
 
 
 class _StubContext:
@@ -1044,3 +1052,608 @@ class TestInputSchemaEnforcement:
         result = await self._call(mcp, {'n': 5})
         assert not result.is_error
         assert captured.get('hit')
+
+
+def _shaped_op(
+    parameters: list[ParameterInfo],
+    *,
+    params: dict | None = None,
+    annotations: dict | None = None,
+    request: str | None = None,
+    response: str | None = None,
+    strategy: typing.Literal['merge', 'replace'] | None = None,
+    method: str = 'get',
+    path: str = '/things',
+    operation_id: str = 'do_thing',
+    summary: str = '',
+) -> OperationInfo:
+    """Build an operation whose ``x-mcp-integration.tool`` carries the given overrides.
+
+    When ``params`` is set and ``strategy`` is not, it defaults to ``replace`` if any entry declares
+    a ``type``, else ``merge``, so tests that only care about the override still read cleanly.
+    """
+    if params and strategy is None:
+        strategy = 'replace' if any('type' in cfg for cfg in params.values()) else 'merge'
+    tool = ToolOverride(
+        params={name: ParamOverride(**cfg) for name, cfg in (params or {}).items()},
+        annotations=annotations,
+        strategy=strategy,
+        request=request,
+        response=response,
+    )
+    return OperationInfo(
+        operation_id=operation_id,
+        method=method,
+        path=path,
+        summary=summary,
+        parameters=parameters,
+        x_mcp_integration=McpIntegration(tool=tool),
+    )
+
+
+def _register(operation: OperationInfo):
+    """Register ``operation`` as a static tool and return the registered Tool named ``do_thing``."""
+    mcp = MCPServer('test')
+    ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')).register([operation])
+    return next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'do_thing')
+
+
+class TestShapeOperation:
+    """shape_operation applies the schema-side param overrides purely, returning a shaped copy."""
+
+    def test_hidden_removes_param(self):
+        """``hidden`` drops the parameter from the LLM surface."""
+        op = _shaped_op(
+            [ParameterInfo(name='secret', location='query', required=True, schema={'type': 'string'})],
+            params={'secret': {'hidden': True}},
+        )
+        shaped = shape_operation(op)
+        assert [parameter.name for parameter in shaped.parameters] == []
+
+    def test_default_sets_schema_default_and_makes_optional(self):
+        """``default`` sets the schema default, flips required off, and marks the parameter for send-on-omit."""
+        op = _shaped_op(
+            [ParameterInfo(name='limit', location='query', required=True, schema={'type': 'integer'})],
+            params={'limit': {'default': 50}},
+        )
+        shaped = shape_operation(op)
+        assert shaped.parameters[0].schema_['default'] == 50
+        assert shaped.parameters[0].required is False
+        assert shaped.parameters[0].send_default is True
+
+    def test_description_override(self):
+        """``description`` replaces the parameter description."""
+        op = _shaped_op(
+            [ParameterInfo(name='q', location='query', required=True, description='old', schema={'type': 'string'})],
+            params={'q': {'description': 'new'}},
+        )
+        assert shape_operation(op).parameters[0].description == 'new'
+
+    def test_input_operation_not_mutated(self):
+        """Shaping is pure: the input operation and its parameter schema are untouched."""
+        op = _shaped_op(
+            [ParameterInfo(name='limit', location='query', required=True, schema={'type': 'integer'})],
+            params={'limit': {'default': 50}},
+        )
+        shape_operation(op)
+        assert op.parameters[0].required is True
+        assert 'default' not in op.parameters[0].schema_
+
+    def test_no_override_returns_same_operation(self):
+        """An operation with no param override is returned unchanged."""
+        op = OperationInfo(
+            operation_id='do_thing',
+            method='get',
+            path='/things',
+            parameters=[ParameterInfo(name='q', location='query', schema={'type': 'string'})],
+        )
+        assert shape_operation(op) is op
+
+
+class TestParamShapingSchema:
+    """Shaped overrides reach the advertised schema and Python signature of the registered tool."""
+
+    def test_hidden_absent_from_schema_and_signature(self):
+        """A hidden param is in neither the advertised schema nor the Python signature."""
+        op = _shaped_op(
+            [
+                ParameterInfo(name='secret', location='query', required=True, schema={'type': 'string'}),
+                ParameterInfo(name='visible', location='query', required=True, schema={'type': 'string'}),
+            ],
+            params={'secret': {'hidden': True}},
+        )
+        tool = _register(op)
+        assert 'secret' not in tool.parameters['properties']
+        assert 'secret' not in tool.parameters.get('required', [])
+        assert 'secret' not in inspect.signature(tool.fn).parameters
+        assert 'visible' in tool.parameters['properties']
+
+    def test_default_present_and_optional(self):
+        """A default override appears in the schema and drops out of ``required``."""
+        op = _shaped_op(
+            [ParameterInfo(name='limit', location='query', required=True, schema={'type': 'integer'})],
+            params={'limit': {'default': 50}},
+        )
+        tool = _register(op)
+        assert tool.parameters['properties']['limit']['default'] == 50
+        assert 'limit' not in tool.parameters.get('required', [])
+
+    def test_description_override_in_schema(self):
+        """A description override reaches the advertised property schema."""
+        op = _shaped_op(
+            [ParameterInfo(name='q', location='query', required=True, description='old', schema={'type': 'string'})],
+            params={'q': {'description': 'new'}},
+        )
+        assert _register(op).parameters['properties']['q']['description'] == 'new'
+
+
+class TestRequestTransform:
+    """A ``request`` JSONata expression builds the whole upstream request from the friendly arguments."""
+
+    async def test_injects_constant_into_query(self, mock_upstream):
+        """A literal in the expression is sent upstream though the LLM never supplied it."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op([], request='{"include_adult": false, "language": "en-US"}')
+        await _register(op).run({}, context=_stub_context())
+        assert captured['params']['include_adult'] == 'false'
+        assert captured['params']['language'] == 'en-US'
+
+    async def test_renames_friendly_argument(self, mock_upstream):
+        """The LLM supplies a friendly name, the expression sends it under the upstream name."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [ParameterInfo(name='query', location='query', required=True, schema={'type': 'string'})],
+            request='{"v[any_searchable][]": query}',
+        )
+        await _register(op).run({'query': 'hello'}, context=_stub_context())
+        assert captured['params']['v[any_searchable][]'] == 'hello'
+        assert 'query' not in captured['params']
+
+    async def test_maps_value_with_lookup(self, mock_upstream):
+        """A ``$lookup`` translates a friendly enum into the raw API value."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [
+                ParameterInfo(
+                    name='status',
+                    location='query',
+                    required=True,
+                    schema={'type': 'string', 'enum': ['open', 'closed', 'any']},
+                )
+            ],
+            request='{"op[status_id]": $lookup({"open": "o", "closed": "c", "any": "*"}, status)}',
+        )
+        await _register(op).run({'status': 'open'}, context=_stub_context())
+        assert captured['params']['op[status_id]'] == 'o'
+
+    async def test_routes_key_to_path(self, mock_upstream):
+        """An output key that names a path placeholder fills the URL path."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['path'] = request.url.path
+            return httpx.Response(200, json={})
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [ParameterInfo(name='movie_id', location='path', required=True, schema={'type': 'integer'})],
+            request='{"movie_id": movie_id, "language": "en-US"}',
+            path='/movie/{movie_id}',
+        )
+        await _register(op).run({'movie_id': 42}, context=_stub_context())
+        assert captured['path'] == '/movie/42'
+
+    async def test_routes_to_body_for_post(self, mock_upstream):
+        """For a body method, non-path keys become the JSON body."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['body'] = json.loads(request.content)
+            return httpx.Response(200, json={})
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [ParameterInfo(name='title', location='body', required=True, schema={'type': 'string'})],
+            request='{"name": title, "source": "gateway"}',
+            method='post',
+            path='/docs',
+        )
+        await _register(op).run({'title': 'hello'}, context=_stub_context())
+        assert captured['body'] == {'name': 'hello', 'source': 'gateway'}
+
+    async def test_null_value_dropped(self, mock_upstream):
+        """A key the expression sets to null leaves no trace upstream."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op([], request='{"kept": "yes", "dropped": null}')
+        await _register(op).run({}, context=_stub_context())
+        assert captured['params']['kept'] == 'yes'
+        assert 'dropped' not in captured['params']
+
+    async def test_fan_out_list_becomes_repeated_query(self, mock_upstream):
+        """A list value is sent as repeated same-key query params, as filter DSLs require."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['multi'] = request.url.params.multi_items()
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [ParameterInfo(name='query', location='query', required=True, schema={'type': 'string'})],
+            request='{"f[]": ["any_searchable", "status_id"], "v[any_searchable][]": query}',
+        )
+        await _register(op).run({'query': 'bug'}, context=_stub_context())
+        assert ('f[]', 'any_searchable') in captured['multi']
+        assert ('f[]', 'status_id') in captured['multi']
+        assert ('v[any_searchable][]', 'bug') in captured['multi']
+
+    async def test_omitted_argument_leaves_no_trace(self, mock_upstream):
+        """An omitted optional argument is absent from the expression input, so its key is dropped."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [ParameterInfo(name='page', location='query', required=False, schema={'type': 'integer'})],
+            request='{"page": page, "language": "en-US"}',
+        )
+        await _register(op).run({}, context=_stub_context())
+        assert 'page' not in captured['params']
+        assert captured['params']['language'] == 'en-US'
+
+    async def test_default_prefilled_before_transform(self, mock_upstream):
+        """An x-mcp default fills the argument before the expression runs, so the expression sees it."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [
+                ParameterInfo(
+                    name='sort',
+                    location='query',
+                    required=False,
+                    schema={'type': 'string', 'enum': ['popular', 'newest']},
+                )
+            ],
+            params={'sort': {'default': 'popular'}},
+            request='{"sort_by": $lookup({"popular": "popularity.desc", "newest": "primary_release_date.desc"}, sort)}',
+        )
+        await _register(op).run({}, context=_stub_context())
+        assert captured['params']['sort_by'] == 'popularity.desc'
+
+    async def test_evaluation_error_returns_is_error(self, mock_upstream):
+        """A failing request expression returns an ``isError`` result and never calls upstream."""
+        called: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            called['hit'] = True
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [ParameterInfo(name='name', location='query', required=True, schema={'type': 'string'})],
+            request='{"n": name + 1}',
+        )
+        result = await _register(op).run({'name': 'x'}, context=_stub_context())
+        assert result.is_error is True
+        message = result.content[0]
+        assert isinstance(message, TextContent)
+        assert 'request transform failed' in message.text
+        assert 'hit' not in called
+
+    def test_invalid_expression_fails_at_registration(self):
+        """A syntactically broken expression is rejected when the tool is built, not on first call."""
+        op = _shaped_op([], request='{ broken')
+        with pytest.raises(ValueError, match='Invalid JSONata'):
+            _register(op)
+
+
+class TestResponseTransform:
+    """A ``response`` JSONata expression reshapes a successful upstream body before it reaches the client."""
+
+    async def test_reshapes_object(self, mock_upstream):
+        """The expression rebuilds the object, renaming and lifting nested fields."""
+        mock_upstream(
+            lambda _request: httpx.Response(200, json={'data': {'items': [1, 2]}, 'pagination': {'total': 100}})
+        )
+        op = _shaped_op([], response='{"items": data.items, "count": pagination.total}')
+        result = await _register(op).run({}, context=_stub_context())
+        assert result.structured_content == {'items': [1, 2], 'count': 100}
+
+    async def test_unwrap_via_path(self, mock_upstream):
+        """A bare path expression unwraps an envelope down to the inner object."""
+        mock_upstream(lambda _request: httpx.Response(200, json={'issue': {'id': 1, 'subject': 's'}}))
+        op = _shaped_op([], response='issue')
+        result = await _register(op).run({}, context=_stub_context())
+        assert result.structured_content == {'id': 1, 'subject': 's'}
+
+    async def test_array_projection(self, mock_upstream):
+        """Mapping over an array keeps only the chosen fields of each item."""
+        mock_upstream(
+            lambda _request: httpx.Response(
+                200,
+                json={'results': [{'title': 'A', 'vote_average': 7, 'x': 1}, {'title': 'B', 'vote_average': 8}]},
+            )
+        )
+        op = _shaped_op([], response='results.{"title": title, "rating": vote_average}')
+        result = await _register(op).run({}, context=_stub_context())
+        content = result.content[0]
+        assert isinstance(content, TextContent)
+        assert json.loads(content.text) == [{'title': 'A', 'rating': 7}, {'title': 'B', 'rating': 8}]
+
+    async def test_evaluation_error_returns_is_error(self, mock_upstream):
+        """A failing response expression returns an ``isError`` result."""
+        mock_upstream(lambda _request: httpx.Response(200, json={'total': 'not-a-number'}))
+        op = _shaped_op([], response='{"n": total + 1}')
+        result = await _register(op).run({}, context=_stub_context())
+        assert result.is_error is True
+        message = result.content[0]
+        assert isinstance(message, TextContent)
+        assert 'response transform failed' in message.text
+
+    def test_invalid_expression_fails_at_registration(self):
+        """A syntactically broken response expression is rejected at build time."""
+        op = _shaped_op([], response='results.{')
+        with pytest.raises(ValueError, match='Invalid JSONata'):
+            _register(op)
+
+
+class TestSendDefault:
+    """An x-mcp default reaches the upstream when the LLM omits it, without a request expression."""
+
+    async def test_default_sent_when_omitted(self, mock_upstream):
+        """An x-mcp default reaches the upstream when the LLM does not supply the parameter."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [ParameterInfo(name='limit', location='query', required=False, schema={'type': 'integer'})],
+            params={'limit': {'default': 10}},
+        )
+        await _register(op).run({}, context=_stub_context())
+        assert captured['params']['limit'] == '10'
+
+    async def test_llm_value_overrides_default(self, mock_upstream):
+        """A value the LLM supplies wins over the x-mcp default."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [ParameterInfo(name='limit', location='query', required=False, schema={'type': 'integer'})],
+            params={'limit': {'default': 10}},
+        )
+        await _register(op).run({'limit': 99}, context=_stub_context())
+        assert captured['params']['limit'] == '99'
+
+
+class TestMergeToolAnnotations:
+    """Author annotation overrides merge over the method-derived defaults, explicit winning."""
+
+    def test_none_override_equals_derived(self):
+        """No override returns exactly the method-derived annotations."""
+        op = _shaped_op([], method='get')
+        assert merge_tool_annotations(op, None) == derive_tool_annotations(op)
+
+    def test_post_can_be_marked_read_only(self):
+        """A POST can be flipped read-only while inheriting the other method-derived hints."""
+        op = _shaped_op([], method='post')
+        merged = merge_tool_annotations(op, {'readOnlyHint': True})
+        assert merged.read_only_hint is True
+        assert merged.open_world_hint is True
+
+    def test_get_can_be_downgraded(self):
+        """An explicit ``readOnlyHint: false`` wins over the GET default."""
+        op = _shaped_op([], method='get')
+        assert merge_tool_annotations(op, {'readOnlyHint': False}).read_only_hint is False
+
+    def test_snake_case_key_accepted(self):
+        """Override keys may be snake_case as well as camelCase."""
+        op = _shaped_op([], method='post')
+        assert merge_tool_annotations(op, {'read_only_hint': True}).read_only_hint is True
+
+
+class TestDynamicParamShaping:
+    """Dynamic (meta-tool) exposure applies the same shaping as the static path."""
+
+    async def test_get_operation_schema_omits_hidden(self):
+        """``get_operation`` advertises the shaped schema, without hidden params."""
+        op = _shaped_op(
+            [
+                ParameterInfo(name='secret', location='query', required=True, schema={'type': 'string'}),
+                ParameterInfo(name='visible', location='query', required=True, schema={'type': 'string'}),
+            ],
+            params={'secret': {'hidden': True}},
+        )
+        mcp = MCPServer('test')
+        MetaToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')).register([op])
+        get_operation = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'get_operation')
+        payload = (await get_operation.fn(name='do_thing', ctx=_stub_context())).structured_content
+        schema = payload['input_schema']
+        assert 'secret' not in schema['properties']
+        assert 'visible' in schema['properties']
+
+    async def test_request_transform_applies_in_dynamic_mode(self, mock_upstream):
+        """A request expression shapes the upstream call through the dynamic call_operation path too."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [
+                ParameterInfo(
+                    name='status', location='query', required=True, schema={'type': 'string', 'enum': ['open']}
+                )
+            ],
+            request='{"op[status_id]": $lookup({"open": "o"}, status)}',
+        )
+        mcp = MCPServer('test')
+        MetaToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')).register([op])
+        call_operation = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'call_operation')
+        await call_operation.fn(name='do_thing', arguments={'status': 'open'}, ctx=_stub_context())
+        assert captured['params']['op[status_id]'] == 'o'
+
+
+class TestParamDeclaration:
+    """Declared params (carrying a ``type``) rebuild the LLM input schema and drop the spec parameters."""
+
+    def test_declared_params_replace_spec_params(self):
+        """When params declare a schema, the tool advertises only the declared params, not the spec's."""
+        op = _shaped_op(
+            [ParameterInfo(name='sort_by', location='query', required=True, schema={'type': 'string'})],
+            params={
+                'sort': {'type': 'string', 'enum': ['popular', 'newest'], 'default': 'popular'},
+                'page': {'type': 'integer'},
+            },
+            request='{"sort_by": sort, "page": page}',
+        )
+        tool = _register(op)
+        props = tool.parameters['properties']
+        assert set(props) == {'sort', 'page'}
+        assert props['sort']['enum'] == ['popular', 'newest']
+        assert props['sort']['default'] == 'popular'
+        assert props['page']['type'] == 'integer'
+
+    def test_declared_required_flag(self):
+        """``required: true`` lifts a declared param into the schema's required list."""
+        op = _shaped_op(
+            [],
+            params={'movie_id': {'type': 'integer', 'required': True}},
+            request='{"movie_id": movie_id}',
+            path='/movie/{movie_id}',
+        )
+        assert _register(op).parameters['required'] == ['movie_id']
+
+    def test_declared_description_reaches_schema_and_signature(self):
+        """A declared param's description reaches the schema and the param appears on the signature."""
+        op = _shaped_op(
+            [],
+            params={'q': {'type': 'string', 'required': True, 'description': 'Search text.'}},
+            request='{"query": q}',
+        )
+        tool = _register(op)
+        assert tool.parameters['properties']['q']['description'] == 'Search text.'
+        assert 'q' in inspect.signature(tool.fn).parameters
+
+    async def test_declared_param_maps_through_request(self, mock_upstream):
+        """A declared friendly param reaches the upstream under the name the request expression gives it."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [ParameterInfo(name='sort_by', location='query', required=False, schema={'type': 'string'})],
+            params={'sort': {'type': 'string', 'enum': ['popular'], 'default': 'popular'}},
+            request='{"sort_by": $lookup({"popular": "popularity.desc"}, sort)}',
+        )
+        await _register(op).run({}, context=_stub_context())
+        assert captured['params']['sort_by'] == 'popularity.desc'
+        assert 'sort' not in captured['params']
+
+    def test_declared_without_request_fails_at_registration(self):
+        """Declaring params without a request expression is rejected at build time."""
+        op = _shaped_op([], params={'q': {'type': 'string'}})
+        with pytest.raises(ValueError, match='request expression'):
+            _register(op)
+
+
+class TestStrategy:
+    """``strategy`` explicitly chooses merge (layer onto spec) or replace (declare the whole surface)."""
+
+    def test_missing_strategy_raises(self):
+        """Setting params without a strategy is rejected at build time."""
+        op = OperationInfo(
+            operation_id='do_thing',
+            method='get',
+            path='/things',
+            parameters=[ParameterInfo(name='q', location='query', schema={'type': 'string'})],
+            x_mcp_integration=McpIntegration(tool=ToolOverride(params={'q': ParamOverride(hidden=True)})),
+        )
+        with pytest.raises(ValueError, match=r'tool\.strategy'):
+            shape_operation(op)
+
+    def test_merge_keeps_undeclared_spec_params(self):
+        """Under merge, a spec parameter the override does not mention stays visible."""
+        op = _shaped_op(
+            [
+                ParameterInfo(name='keep', location='query', required=True, schema={'type': 'string'}),
+                ParameterInfo(name='secret', location='query', required=True, schema={'type': 'string'}),
+            ],
+            params={'secret': {'hidden': True}},
+            strategy='merge',
+        )
+        assert [parameter.name for parameter in shape_operation(op).parameters] == ['keep']
+
+    def test_merge_rejects_unknown_param(self):
+        """Under merge, naming a parameter the spec does not define is rejected, pointing at replace."""
+        op = _shaped_op(
+            [ParameterInfo(name='keep', location='query', schema={'type': 'string'})],
+            params={'extra': {'type': 'string'}},
+            strategy='merge',
+        )
+        with pytest.raises(ValueError, match='replace'):
+            shape_operation(op)
+
+    def test_replace_drops_undeclared_spec_params(self):
+        """Under replace, every spec parameter the override does not declare is dropped."""
+        op = _shaped_op(
+            [ParameterInfo(name='raw', location='query', required=True, schema={'type': 'string'})],
+            params={'friendly': {'type': 'string'}},
+            strategy='replace',
+            request='{"raw": friendly}',
+        )
+        assert [parameter.name for parameter in shape_operation(op).parameters] == ['friendly']
+
+    def test_merge_overrides_matching_param_schema(self):
+        """Under merge, a typed entry replaces the matching spec parameter's schema."""
+        op = _shaped_op(
+            [ParameterInfo(name='sort', location='query', required=True, schema={'type': 'string'})],
+            params={'sort': {'type': 'string', 'enum': ['a', 'b']}},
+            strategy='merge',
+        )
+        shaped = shape_operation(op)
+        assert shaped.parameters[0].schema_['enum'] == ['a', 'b']

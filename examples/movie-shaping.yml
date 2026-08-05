@@ -1,0 +1,79 @@
+# The Movie Database (TMDB) shaped into a small, LLM-friendly tool surface.
+#
+# The gateway points at the raw upstream spec (examples/specs/movie-api.yaml) and never edits it.
+# The friendly interface lives entirely here. `params` declares what the model sees,
+# `request` maps those friendly arguments onto the raw TMDB query (injecting the locale and
+# adult-content flags the model never needs), and `response` trims the body down.
+#
+# Prerequisites:
+#   export TMDB_TOKEN="<your v4 read access token>"   # https://www.themoviedb.org/settings/api
+#
+# Usage (from the repo root): openapi-mcp-gateway --config examples/movie-shaping.yml
+
+host: "127.0.0.1"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: tmdb
+    spec: examples/specs/movie-api.yaml
+    base_url: https://api.themoviedb.org/3
+    auth:
+      type: bearer
+      token: ${TMDB_TOKEN}
+    operations:
+      discover_movies:
+        tool:
+          strategy: replace  # the declared params are the whole surface
+          params:  # this is the whole LLM-facing input schema
+            sort:
+              type: string
+              enum: [popular, top_rated, newest]
+              default: popular
+              description: Which movies to surface first.
+            page:
+              type: integer
+              default: 1
+          request: |
+            {
+              "sort_by": $lookup(
+                {
+                  "popular": "popularity.desc",
+                  "top_rated": "vote_average.desc",
+                  "newest": "primary_release_date.desc"
+                },
+                sort
+              ),
+              "page": page,
+              "include_adult": false,
+              "language": "en-US"
+            }
+          response: |  # the [ ... ] wrapper keeps a list even when a single movie matches
+            [results.{
+              "title": title,
+              "overview": overview,
+              "release_date": release_date,
+              "rating": vote_average
+            }]
+      get_movie_details:
+        tool:
+          strategy: replace
+          params:
+            movie_id:
+              type: integer
+              required: true
+              description: TMDB movie id.
+          request: |
+            {
+              "movie_id": movie_id,
+              "append_to_response": "credits",
+              "language": "en-US"
+            }
+          response: |
+            {
+              "title": title,
+              "overview": overview,
+              "release_date": release_date,
+              "rating": vote_average,
+              "cast": credits.cast.name
+            }

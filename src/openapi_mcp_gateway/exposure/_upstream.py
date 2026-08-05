@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import typing
 
@@ -7,9 +8,27 @@ from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, TextContent
 
+from ..auth.resolver import AuthResolver, NullAuthResolver
 from ..client import APIClient
 from ..openapi import OperationInfo, ParameterInfo
-from ._shared import UpstreamBinding, _sanitize_name, _split_by_location, build_input_schema
+from ._shared import _get_override, _sanitize_name, _split_by_location, build_input_schema
+from ._transform import TransformError, apply_transform, compile_expression
+
+
+# W3C trace-context keys the 2026-07-28 spec carries in a request's ``_meta`` (spec minor #2).
+# The gateway sits on the hop between the MCP client and the upstream API,
+# so forwarding these verbatim stitches that hop into one distributed trace.
+_TRACE_CONTEXT_META_KEYS = ('traceparent', 'tracestate', 'baggage')
+
+
+@dataclasses.dataclass(frozen=True)
+class UpstreamBinding:
+    """Per-server HTTP and auth context shared by every exposure strategy."""
+
+    base_url: str
+    auth_resolver: AuthResolver = dataclasses.field(default_factory=NullAuthResolver)
+    timeout: float = 90
+    transport: httpx.AsyncBaseTransport | None = None
 
 
 def _build_success_result(payload: typing.Any) -> CallToolResult:
@@ -101,6 +120,19 @@ def _build_validation_error_result(errors: list[ValidationError]) -> CallToolRes
     )
 
 
+def _build_transform_error_result(stage: str, error: TransformError) -> CallToolResult:
+    """Wrap a failed ``request`` or ``response`` JSONata evaluation as an ``is_error`` result.
+
+    ``stage`` is ``'request'`` or ``'response'``, so the client can tell which side of the call broke.
+    """
+    message = f'The {stage} transform failed: {error}'
+    return CallToolResult(
+        content=[TextContent(type='text', text=message)],
+        structured_content=None,
+        is_error=True,
+    )
+
+
 def _parameters_keyed_by_sanitised_name(parameters: list[ParameterInfo]) -> dict[str, ParameterInfo]:
     """Build a lookup from sanitised parameter name to the original :class:`ParameterInfo`."""
     return {_sanitize_name(parameter.name): parameter for parameter in parameters}
@@ -127,9 +159,10 @@ def _kwargs_to_upstream_arguments(
     kwargs: dict[str, typing.Any],
     parameters_by_name: dict[str, ParameterInfo],
 ) -> dict[str, typing.Any]:
-    """Pick non-``None`` ``kwargs`` matching ``parameters_by_name``, keyed by the original (un-sanitised) name.
+    """Pick non-``None`` ``kwargs`` matching ``parameters_by_name``, keyed by the original API name.
 
-    Used to assemble query / header / body argument dicts for the upstream HTTP call.
+    Used to assemble query / header / body argument dicts for the upstream HTTP call
+    when no ``request`` JSONata expression is set (the pass-through path).
     """
     return {
         parameter.name: kwargs[parameter_name]
@@ -138,10 +171,33 @@ def _kwargs_to_upstream_arguments(
     }
 
 
-# W3C trace-context keys the 2026-07-28 spec carries in a request's ``_meta`` (spec minor #2).
-# The gateway sits on the hop between the MCP client and the upstream API,
-# so forwarding these verbatim stitches that hop into one distributed trace.
-_TRACE_CONTEXT_META_KEYS = ('traceparent', 'tracestate', 'baggage')
+def _route_upstream_object(
+    upstream_object: dict[str, typing.Any],
+    path: str,
+    method: str,
+) -> tuple[str, dict[str, typing.Any], dict[str, typing.Any]]:
+    """Route a ``request`` JSONata result into ``(resolved_path, query_arguments, body_arguments)``.
+
+    A key that names a path-template placeholder fills the path.
+    Every other key becomes a query parameter for a body-less method (GET, DELETE, HEAD),
+    or a JSON body field otherwise.
+    ``None`` values are dropped, so an omitted friendly argument leaves no trace upstream.
+    """
+    resolved_path = path
+    query_arguments: dict[str, typing.Any] = {}
+    body_arguments: dict[str, typing.Any] = {}
+    method_has_body = method.lower() in ('post', 'put', 'patch')
+    for key, value in upstream_object.items():
+        if value is None:
+            continue
+        placeholder = '{' + key + '}'
+        if placeholder in resolved_path:
+            resolved_path = resolved_path.replace(placeholder, str(value))
+        elif method_has_body:
+            body_arguments[key] = value
+        else:
+            query_arguments[key] = value
+    return resolved_path, query_arguments, body_arguments
 
 
 def _trace_context_headers(context: Context) -> dict[str, str]:
@@ -173,14 +229,35 @@ def _build_upstream_closure(
 
     With ``validate_input`` the arguments are checked against the operation's advertised schema before any call,
     so the constraints the client is shown are the constraints enforced.
+
+    When the ``tool`` override carries a ``request`` JSONata expression it builds the whole upstream request,
+    otherwise the arguments pass through by location as declared in the spec.
+    A ``response`` JSONata expression reshapes a successful body before it reaches the client.
+    Both expressions are compiled once here, so a syntax error surfaces at startup.
     """
     path_parameters, query_parameters, header_parameters, body_parameters = _split_by_location(operation.parameters)
     path_parameters_by_name = _parameters_keyed_by_sanitised_name(path_parameters)
     query_parameters_by_name = _parameters_keyed_by_sanitised_name(query_parameters)
     header_parameters_by_name = _parameters_keyed_by_sanitised_name(header_parameters)
     body_parameters_by_name = _parameters_keyed_by_sanitised_name(body_parameters)
+    injected_defaults = {
+        _sanitize_name(parameter.name): parameter.schema_['default']
+        for parameter in operation.parameters
+        if parameter.send_default
+    }
     method = operation.method
     path = operation.path
+    tool_override = _get_override(operation, 'tool')
+    request_transform = (
+        compile_expression(tool_override.request, label=f'{operation.operation_id} request')
+        if tool_override and tool_override.request
+        else None
+    )
+    response_transform = (
+        compile_expression(tool_override.response, label=f'{operation.operation_id} response')
+        if tool_override and tool_override.response
+        else None
+    )
     validator = (
         Draft202012Validator(build_input_schema(operation), format_checker=FormatChecker()) if validate_input else None
     )
@@ -194,22 +271,37 @@ def _build_upstream_closure(
             if errors:
                 return _build_validation_error_result(errors)
 
+        # An x-mcp default is sent upstream only when the LLM omitted the parameter.
+        for sanitised_name, default_value in injected_defaults.items():
+            if kwargs.get(sanitised_name) is None:
+                kwargs[sanitised_name] = default_value
+
         await context.report_progress(0, 1, f'Sending request to {method.upper()} {path} ...')
 
         auth_headers = await binding.auth_resolver.resolve(context)
 
-        resolved_path = path
-        for parameter_name, parameter in path_parameters_by_name.items():
-            value = kwargs.get(parameter_name)
-            if value is None:
-                continue
-            resolved_path = resolved_path.replace(f'{{{parameter.name}}}', str(value))
+        if request_transform is not None:
+            arguments = _to_jsonable({name: value for name, value in kwargs.items() if value is not None})
+            try:
+                upstream_object = apply_transform(request_transform, arguments)
+            except TransformError as error:
+                return _build_transform_error_result('request', error)
+            resolved_path, query_arguments, body_arguments = _route_upstream_object(upstream_object or {}, path, method)
+            header_arguments: dict[str, str] = {}
+        else:
+            resolved_path = path
+            for parameter_name, parameter in path_parameters_by_name.items():
+                value = kwargs.get(parameter_name)
+                if value is None:
+                    continue
+                resolved_path = resolved_path.replace(f'{{{parameter.name}}}', str(value))
+            query_arguments = _kwargs_to_upstream_arguments(kwargs, query_parameters_by_name)
+            header_arguments = {
+                name: str(value)
+                for name, value in _kwargs_to_upstream_arguments(kwargs, header_parameters_by_name).items()
+            }
+            body_arguments = _to_jsonable(_kwargs_to_upstream_arguments(kwargs, body_parameters_by_name))
 
-        query_arguments = _kwargs_to_upstream_arguments(kwargs, query_parameters_by_name)
-        header_arguments = {
-            name: str(value) for name, value in _kwargs_to_upstream_arguments(kwargs, header_parameters_by_name).items()
-        }
-        body_arguments = _to_jsonable(_kwargs_to_upstream_arguments(kwargs, body_parameters_by_name))
         request_headers: dict[str, str] = {
             **_trace_context_headers(context),
             **auth_headers,
@@ -237,6 +329,12 @@ def _build_upstream_closure(
                 return _build_network_error_result(exception)
 
         await context.report_progress(1, 1, 'Request completed')
+
+        if response_transform is not None:
+            try:
+                result = apply_transform(response_transform, result)
+            except TransformError as error:
+                return _build_transform_error_result('response', error)
         return _build_success_result(result)
 
     return upstream_callable

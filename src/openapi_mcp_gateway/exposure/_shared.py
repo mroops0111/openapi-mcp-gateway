@@ -1,15 +1,12 @@
-import dataclasses
 import functools
 import keyword
 import operator
 import re
 import typing
 
-import httpx
 import inflection
 import pydantic
 
-from ..auth.resolver import AuthResolver, NullAuthResolver
 from ..openapi import OperationInfo, ParameterInfo
 
 
@@ -124,9 +121,8 @@ def _iter_unique_sanitised_parameters(
 
 
 def _get_override(operation: OperationInfo, kind: typing.Literal['tool', 'resource']) -> typing.Any:
-    """Return ``operation.x_mcp_integration.expose.<kind>`` or ``None`` when no override exists."""
-    expose = operation.x_mcp_integration.expose
-    return getattr(expose, kind) if expose else None
+    """Return ``operation.x_mcp_integration.<kind>`` or ``None`` when no override exists."""
+    return getattr(operation.x_mcp_integration, kind)
 
 
 def derive_name(operation: OperationInfo, override_name: str | None) -> str:
@@ -170,13 +166,3 @@ def build_input_schema(operation: OperationInfo) -> dict[str, typing.Any]:
     if required_property_names:
         schema['required'] = required_property_names
     return schema
-
-
-@dataclasses.dataclass(frozen=True)
-class UpstreamBinding:
-    """Per-server HTTP and auth context shared by every exposure strategy."""
-
-    base_url: str
-    auth_resolver: AuthResolver = dataclasses.field(default_factory=NullAuthResolver)
-    timeout: float = 90
-    transport: httpx.AsyncBaseTransport | None = None

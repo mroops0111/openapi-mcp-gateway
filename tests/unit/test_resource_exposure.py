@@ -21,7 +21,6 @@ from openapi_mcp_gateway.gateway import (
     _validate_resource_eligibility,
 )
 from openapi_mcp_gateway.openapi import (
-    Expose,
     McpIntegration,
     OperationInfo,
     ParameterInfo,
@@ -45,27 +44,25 @@ def _stub_context() -> Context:
 
 def _expose_resource(**kwargs) -> McpIntegration:
     """Build an ``x-mcp-integration`` payload that opts an operation into resource exposure only."""
-    return McpIntegration(expose=Expose(resource=ResourceOverride(**kwargs)))
+    return McpIntegration(resource=ResourceOverride(**kwargs))
 
 
 def _expose_tool_and_resource() -> McpIntegration:
     """Build an ``x-mcp-integration`` payload that opts an operation into both tool and resource exposure."""
-    return McpIntegration(expose=Expose(tool=ToolOverride(), resource=ResourceOverride()))
+    return McpIntegration(tool=ToolOverride(), resource=ResourceOverride())
 
 
 def _resource_override_name(operation: OperationInfo) -> str | None:
-    """Pull ``expose.resource.name`` off ``operation`` (or ``None``), for passing to :func:`derive_name`."""
-    expose = operation.x_mcp_integration.expose
-    override = expose.resource if expose else None
+    """Pull ``resource.name`` off ``operation`` (or ``None``), for passing to :func:`derive_name`."""
+    override = operation.x_mcp_integration.resource
     return override.name if override else None
 
 
 def _resource_override_description(operation: OperationInfo) -> str | None:
-    """Pull ``expose.resource.description`` off ``operation`` (or ``None``),
+    """Pull ``resource.description`` off ``operation`` (or ``None``),
     for passing to :func:`derive_description`.
     """
-    expose = operation.x_mcp_integration.expose
-    override = expose.resource if expose else None
+    override = operation.x_mcp_integration.resource
     return override.description if override else None
 
 
@@ -500,7 +497,7 @@ class TestPartitioning:
             operation_id='get_pet',
             method='get',
             path='/pets/{petId}',
-            x_mcp_integration=McpIntegration(expose=Expose(tool=ToolOverride(name='fetch_pet'))),
+            x_mcp_integration=McpIntegration(tool=ToolOverride(name='fetch_pet')),
         )
         resources, tools = _partition_operations([op], 'petstore', mode='auto')
         assert resources == []
@@ -592,7 +589,7 @@ class TestPartitioning:
             operation_id='get_pet',
             method='get',
             path='/pets/{petId}',
-            x_mcp_integration=McpIntegration(expose=Expose(tool=ToolOverride())),
+            x_mcp_integration=McpIntegration(tool=ToolOverride()),
         )
         resources, tools = _partition_operations([op], 'petstore', mode='auto')
         assert resources == []
