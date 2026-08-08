@@ -1,0 +1,11 @@
+{
+  "name": "shape-api",
+  "description": "Turn any API into clean MCP tools: find its OpenAPI spec, shape the operations, and emit a runnable openapi-mcp-gateway config.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Yun-Tai Yang"
+  },
+  "homepage": "https://github.com/mroops0111/openapi-mcp-gateway",
+  "license": "MIT",
+  "keywords": ["mcp", "openapi", "jsonata", "tool-shaping"]
+}

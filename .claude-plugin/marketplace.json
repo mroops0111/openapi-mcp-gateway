@@ -1,0 +1,18 @@
+{
+  "name": "openapi-mcp-gateway",
+  "owner": {
+    "name": "Yun-Tai Yang",
+    "url": "https://github.com/mroops0111/openapi-mcp-gateway"
+  },
+  "metadata": {
+    "description": "Skills for authoring and operating an OpenAPI MCP Gateway.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "shape-api",
+      "source": "./plugin",
+      "description": "Turn any API into clean MCP tools: find its OpenAPI spec, shape the operations, and emit a runnable gateway config."
+    }
+  ]
+}

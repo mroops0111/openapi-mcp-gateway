@@ -26,6 +26,8 @@ venv/
 docs/
 *.md
 !README.md
+# Plugin skills ship markdown that must be tracked
+!plugin/**/*.md
 
 # IDE
 .claude
