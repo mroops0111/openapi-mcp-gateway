@@ -23,7 +23,15 @@ else
   cp "$SRC" "$OUT"
 fi
 
-python3 - "$OUT" <<'PY'
+# Prefer an ephemeral uv environment so the YAML parser is always present;
+# fall back to system python3, which may lack PyYAML.
+if command -v uv >/dev/null 2>&1; then
+  PY=(uv run --quiet --with pyyaml python)
+else
+  PY=(python3)
+fi
+
+"${PY[@]}" - "$OUT" <<'PY'
 import json, sys
 
 path = sys.argv[1]
@@ -34,7 +42,7 @@ try:
     doc = json.loads(raw)
 except json.JSONDecodeError:
     try:
-        import yaml  # PyYAML is a common local dep; fall back gracefully.
+        import yaml
         doc = yaml.safe_load(raw)
     except Exception:
         print("WARN: could not parse as JSON, and PyYAML is unavailable.", file=sys.stderr)

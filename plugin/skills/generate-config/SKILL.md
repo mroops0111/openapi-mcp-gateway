@@ -47,9 +47,11 @@ Confirm the base URL and the auth style (`bearer`, `api_key`, or `oauth2`) befor
 
 Do not expose every operation. Map what the user wants to a short list of operations, and confirm the list before writing anything.
 
+Selection is done by a `policy` block, not by the `operations` map, and this trips people up. The tool surface is filtered by `policy.allow` and `policy.deny`, which are glob patterns matched against operation ids, or by `policy.marked_only`. The `operations` map only attaches overrides (name, description, shaping) to operations that already survived the policy, and it errors on an unknown id. So to expose just the chosen operations from a real multi-operation spec, set `policy.allow`. Without it, every operation in the spec becomes a tool, so pointing `spec` at a large upstream and listing three operations does not give three tools. When the spec is huge, a `policy.allow` glob or a synthesized minimal spec is how you keep the surface small.
+
 Then decide, per operation, how much reshaping it needs. Prefer the lightest option that gives a good tool, and honour the requested shaping level from the brief.
 
-- **Expose as-is.** If the raw operation already makes a clean tool, list it under `operations` with no `tool` block, or only a name and description override. This is the default, and the whole of `shaping: none`.
+- **Expose as-is.** If the raw operation already makes a clean tool, keep it in the surface via `policy.allow` and give it no `tool` block, or only a name and description override. This is the default, and the whole of `shaping: none`.
 - **Shape it.** Reach for shaping when the operation exposes parameters the model should not set, speaks in cryptic values, or returns a bloated envelope. Then:
   - **Hide what the model should not choose.** Pinned scopes, pagination internals, locale, and content flags become injected constants, not inputs.
   - **Expose only the friendly inputs**, with `enum` where the raw API takes cryptic values, and short `description`s.
@@ -62,11 +64,13 @@ JSONata idioms that carry most of the weight:
 - `[ results.{ ... } ]` forces a list, because a single-match projection unwraps to one object otherwise.
 - `$merge([$, { ... }])` passes most arguments through and overrides only a few, where `$` is the whole input.
 
+How the `request` result routes to the upstream call matters when you build it. A top-level key whose name matches a `{placeholder}` in the path fills that path segment. Of the rest, each key becomes a JSON body field for `POST` / `PUT` / `PATCH`, or a query parameter for `GET` / `DELETE`. A `null` value is dropped, so an omitted optional friendly argument leaves no trace upstream. To match an upstream that wants a wrapped body, like Redmine's `{"issue": {...}}`, nest the fields under that key in the `request` result, for example `{ "issue": { "subject": subject, "project_id": project_id } }`.
+
 Study `examples/movie-shaping.yml` in the repo as the canonical shaped config, and its raw spec in `examples/specs/movie-api.yaml`. Use the TMDB example as your golden reference when shaping is warranted.
 
 ## Stage 3: Emit and verify
 
-Write the config in the documented format, then verify it boots. A minimal server needs only `spec`, `base_url`, and `auth`; the `operations` block and any `tool` shaping are additive.
+Write the config in the documented format, then verify it boots. A minimal server needs only `spec`, `base_url`, and `auth`; the `policy`, `operations`, and any `tool` shaping are additive.
 
 ```yaml
 host: "127.0.0.1"
@@ -76,24 +80,35 @@ transport: streamable-http
 servers:
   - name: <server-name>
     spec: <url-or-local-path>
-    base_url: <upstream-base-url>
+    base_url: <upstream-base-url>          # required; a spec with a relative server needs the real host
     auth:
-      type: bearer
+      type: bearer                          # or api_key / oauth2 / none
       token: ${SOME_TOKEN}
-    operations:
-      <operation_id>:            # only list the operations you chose
-        tool:                    # optional: omit for an as-is passthrough
-          strategy: replace      # or merge
+    policy:                                 # the selector: which operations become tools
+      allow: ["<operation_id>", "..."]     # globs matched against operation ids; omit to expose all
+    operations:                             # overrides only, applied to operations the policy kept
+      <operation_id>:
+        tool:                               # optional: omit for an as-is passthrough
+          strategy: replace                 # or merge
           params:
             <friendly_param>:
               type: string
-              enum: [...]        # when the raw value is cryptic
+              enum: [...]                   # when the raw value is cryptic
               default: ...
               description: ...
           request: |
             { ... JSONata ... }
           response: |
             [ ... JSONata ... ]
+```
+
+For API-key auth with a custom header, name the header, since it defaults to `X-API-Key`:
+
+```yaml
+    auth:
+      type: api_key
+      token: ${SOME_TOKEN}
+      api_key_header: X-Redmine-API-Key
 ```
 
 Both JSONata expressions compile at gateway startup, so a broken expression fails the boot with a message naming the side that broke. Use that as your verifier:
