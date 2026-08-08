@@ -10,9 +10,9 @@
   },
   "plugins": [
     {
-      "name": "shape-api",
+      "name": "generate-gateway-config",
       "source": "./plugin",
-      "description": "Turn any API into clean MCP tools: find its OpenAPI spec, shape the operations, and emit a runnable gateway config."
+      "description": "Generate an openapi-mcp-gateway config from scratch: find an API's OpenAPI spec, select and optionally shape its operations, and emit a runnable config."
     }
   ]
 }
