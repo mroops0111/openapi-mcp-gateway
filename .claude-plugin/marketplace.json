@@ -10,9 +10,9 @@
   },
   "plugins": [
     {
-      "name": "generate-gateway-config",
+      "name": "openapi-mcp-gateway",
       "source": "./plugin",
-      "description": "Generate an openapi-mcp-gateway config from scratch: find an API's OpenAPI spec, select and optionally shape its operations, and emit a runnable config."
+      "description": "Skills for openapi-mcp-gateway. Ships generate-config, which authors a runnable config from an API's OpenAPI spec."
     }
   ]
 }

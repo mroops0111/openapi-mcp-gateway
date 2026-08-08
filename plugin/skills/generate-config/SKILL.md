@@ -1,5 +1,5 @@
 ---
-name: generate-gateway-config
+name: generate-config
 description: >-
   Generate an openapi-mcp-gateway config.yml from scratch for an API the user
   names or points to. Use when the user wants to expose a REST API (Redmine,
@@ -8,6 +8,8 @@ description: >-
   needs help writing or fixing a gateway config. Runs a three-stage pipeline:
   acquire an OpenAPI spec, select and optionally shape the operations, and emit
   a config that boots cleanly. Shaping is one optional capability, not required.
+argument-hint: "[api] [operations] [auth] [shaping]"
+allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/*)
 ---
 
 # Generate a Gateway Config
@@ -16,7 +18,18 @@ Your job is to hand the user a runnable `config.yml` for [openapi-mcp-gateway](h
 
 The output is a config. Shaping (`params` / `strategy` and JSONata) is one optional capability you reach for when an operation makes a poor tool as-is. A minimal config that just exposes the right operations, or only renames them, is a perfectly good result. Do not shape for its own sake.
 
-A request often names both the API and how much shaping is wanted, for example "generate a github config with only the issue endpoints, shaped for triage". Parse it into the three stages below, and keep the user in the loop between them. Do not silently guess a whole config end to end.
+## Reading the request
+
+The user may pass an opening brief as arguments, and `$ARGUMENTS` holds it verbatim, for example `github, only the issue endpoints, bearer, shape:light`. When it is present, parse out four things:
+
+- **api**: the API name or an OpenAPI spec URL or path.
+- **operations**: which endpoints, or in plain terms what the user wants to do.
+- **auth**: `bearer`, `api_key`, or `oauth2`.
+- **shaping**: how much to reshape, from `none` (expose as-is) through `light` to `full`.
+
+Treat every field as optional. Anything the brief does not pin down, infer a sensible default or ask, following the stages below. If there are no arguments, drive the whole thing from the user's message. Never block on a missing argument you can reasonably ask about.
+
+Then run the three stages, and keep the user in the loop between them. Do not silently guess a whole config end to end.
 
 ## Stage 1: Acquire the spec
 
@@ -26,17 +39,17 @@ Get a machine-readable OpenAPI spec before doing anything else. Try these in ord
 - **Find the official spec.** Search for the API's published OpenAPI or Swagger document. Many vendors host one (GitHub, Stripe, Asana). Prefer an official raw URL, since the gateway can read `spec:` straight from a URL.
 - **Synthesize from docs.** When no official spec exists (Redmine is a common case), build a minimal spec covering only the operations the user actually needs, from the API's HTML reference. Flag this as lower confidence and list every assumption (base URL, auth style, required parameters) for the user to confirm.
 
-Run `scripts/fetch_spec.sh <url-or-path>` to fetch and sanity-check a spec candidate.
+Run `${CLAUDE_SKILL_DIR}/scripts/fetch_spec.sh <url-or-path>` to fetch and sanity-check a spec candidate.
 
 Confirm the base URL and the auth style (`bearer`, `api_key`, or `oauth2`) before moving on. Never invent a token value. Reference it as an environment variable, for example `token: ${REDMINE_API_KEY}`.
 
 ## Stage 2: Select the operations, shape only where it helps
 
-Do not expose every operation. Ask the user what they want to do with the API in their own words, map that to a short list of operations, and confirm the list before writing anything.
+Do not expose every operation. Map what the user wants to a short list of operations, and confirm the list before writing anything.
 
-Then decide, per operation, how much reshaping it needs. Prefer the lightest option that gives a good tool.
+Then decide, per operation, how much reshaping it needs. Prefer the lightest option that gives a good tool, and honour the requested shaping level from the brief.
 
-- **Expose as-is.** If the raw operation already makes a clean tool, list it under `operations` with no `tool` block, or only a name and description override. This is the default.
+- **Expose as-is.** If the raw operation already makes a clean tool, list it under `operations` with no `tool` block, or only a name and description override. This is the default, and the whole of `shaping: none`.
 - **Shape it.** Reach for shaping when the operation exposes parameters the model should not set, speaks in cryptic values, or returns a bloated envelope. Then:
   - **Hide what the model should not choose.** Pinned scopes, pagination internals, locale, and content flags become injected constants, not inputs.
   - **Expose only the friendly inputs**, with `enum` where the raw API takes cryptic values, and short `description`s.
@@ -85,7 +98,7 @@ servers:
 
 Both JSONata expressions compile at gateway startup, so a broken expression fails the boot with a message naming the side that broke. Use that as your verifier:
 
-- Run `scripts/validate_config.sh <config.yml>` to boot the gateway against the config and report success or the compile error.
+- Run `${CLAUDE_SKILL_DIR}/scripts/validate_config.sh <config.yml>` to boot the gateway against the config and report success or the compile error.
 - On failure, read the named side (request or response), fix the JSONata, and re-run. Loop until it boots clean.
 
 Hand the finished config to the user with a one-line summary of each tool, the environment variables they must set, and the exact run command:
