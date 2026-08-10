@@ -429,6 +429,21 @@ The LLM walks `list → get → call` to discover and invoke operations on deman
 
 Configure via the `logging.*` YAML keys or via CLI flags (`--log-level`, `--log-format`, `--log-file`). `-v` and `-q` are shortcuts for `DEBUG` and `WARNING`. CLI flags override YAML field-by-field, following the precedence rule above.
 
+### Authoring Configs with AI
+
+`generate-config` is a companion Claude Code skill that writes a `config.yml` from a plain-language request, deriving the operations, auth, and shaping for you. This repo doubles as its plugin marketplace:
+
+```
+/plugin marketplace add mroops0111/openapi-mcp-gateway
+/plugin install openapi-mcp-gateway
+```
+
+Then, for example:
+
+```
+/generate-config connect our GitHub so my assistant can manage issues
+```
+
 ## Python API
 
 Use the gateway as a library:

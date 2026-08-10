@@ -1,76 +1,104 @@
 ---
 name: generate-config
 description: >-
-  Generate an openapi-mcp-gateway config.yml from scratch for an API the user
-  names or points to. Use when the user wants to expose a REST API (Redmine,
-  GitHub, an internal service, any OpenAPI backend) as MCP tools, asks to
-  "generate", "build", "connect", "integrate", or "wire up" an API as MCP, or
-  needs help writing or fixing a gateway config. Runs a three-stage pipeline:
-  acquire an OpenAPI spec, select and optionally shape the operations, and emit
-  a config that boots cleanly. Shaping is one optional capability, not required.
-argument-hint: "[api] [operations] [auth] [shaping]"
-allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/*)
+  Generate an openapi-mcp-gateway config.yml from scratch for an API the user names or points to.
+  Use when the user wants to expose a REST API (GitHub, Asana, an internal service, any OpenAPI backend) as MCP tools,
+  asks to "generate", "build", "connect", "integrate", or "wire up" an API as MCP,
+  or needs help writing or fixing a gateway config.
+  Runs a three-stage pipeline that acquires an OpenAPI spec, selects and optionally shapes the operations,
+  and emits a config that boots cleanly.
+argument-hint: "[what to connect, in plain words]"
+allowed-tools: Bash(uvx openapi-mcp-gateway *)
 ---
 
 # Generate a Gateway Config
 
-Your job is to hand the user a runnable `config.yml` for [openapi-mcp-gateway](https://github.com/mroops0111/openapi-mcp-gateway), starting from nothing more than an API they name or a spec they point at. The user may be non-technical, so you own the OpenAPI details and confirm intent in plain language.
+## Role
 
-The output is a config. Shaping (`params` / `strategy` and JSONata) is one optional capability you reach for when an operation makes a poor tool as-is. A minimal config that just exposes the right operations, or only renames them, is a perfectly good result. Do not shape for its own sake.
+[openapi-mcp-gateway](https://github.com/mroops0111/openapi-mcp-gateway) reads an OpenAPI spec at startup and exposes its operations as MCP tools, then calls the upstream REST API on each tool call. One config file can mount several servers.
 
-## Reading the request
+Your job is to hand the user a runnable `config.yml`, starting from nothing more than an API they name or a spec they point at. The user may be non-technical, so you own the OpenAPI details and confirm intent in plain language.
 
-The user may pass an opening brief as arguments, and `$ARGUMENTS` holds it verbatim, for example `github, only the issue endpoints, bearer, shape:light`. When it is present, parse out four things:
+Most of the work is choosing which operations to expose and how to authenticate. Reach for shaping (`params` / `strategy` and JSONata) only when a raw operation makes a poor tool. A config that exposes the right operations under the right auth, with no shaping, is a fine result.
 
-- **api**: the API name or an OpenAPI spec URL or path.
-- **operations**: which endpoints, or in plain terms what the user wants to do.
-- **auth**: `bearer`, `api_key`, or `oauth2`.
-- **shaping**: how much to reshape, from `none` (expose as-is) through `light` to `full`.
+## Config Model
 
-Treat every field as optional. Anything the brief does not pin down, infer a sensible default or ask, following the stages below. If there are no arguments, drive the whole thing from the user's message. Never block on a missing argument you can reasonably ask about.
+This skill carries the config keys you need. The Stage 2 guidance covers the `tool` block, and the Stage 3 skeleton shows the whole config shape. For the CLI flags and their allowed values, such as the transports and auth types, run:
 
-Then run the three stages, and keep the user in the loop between them. Do not silently guess a whole config end to end.
+```bash
+uvx openapi-mcp-gateway --help
+```
 
-## Stage 1: Acquire the spec
+Do not invent a key you have not seen in one of those.
 
-Get a machine-readable OpenAPI spec before doing anything else. Try these in order and tell the user which one succeeded and how confident you are.
+Follow these two rules:
 
-- **Given a URL or file.** If the user hands you an OpenAPI URL or a local path, fetch it and confirm it parses. Highest confidence.
-- **Find the official spec.** Search for the API's published OpenAPI or Swagger document. Many vendors host one (GitHub, Stripe, Asana). Prefer an official raw URL, since the gateway can read `spec:` straight from a URL.
-- **Synthesize from docs.** When no official spec exists (Redmine is a common case), build a minimal spec covering only the operations the user actually needs, from the API's HTML reference. Flag this as lower confidence and list every assumption (base URL, auth style, required parameters) for the user to confirm.
+- **Policy Selects, Operations Override.** The tool surface comes from the `policy` block, where `allow` and `deny` are globs over operation ids and `marked_only` keeps only marked operations. The `operations` map only attaches overrides to operations the policy already kept, and it errors on an unknown id. Set `policy.allow` to narrow a large spec, or every operation becomes a tool.
+- **Complete Spec, Lean Config.** Point `spec` at the full upstream document and never trim it. Narrow the surface with `policy.allow`, so the user can widen it later with a one-line change instead of re-acquiring the spec.
 
-Run `${CLAUDE_SKILL_DIR}/scripts/fetch_spec.sh <url-or-path>` to fetch and sanity-check a spec candidate.
+### Features by Scenario
 
-Confirm the base URL and the auth style (`bearer`, `api_key`, or `oauth2`) before moving on. Never invent a token value. Reference it as an environment variable, for example `token: ${REDMINE_API_KEY}`.
+Match features to the user's situation, do not reach for all of them.
 
-## Stage 2: Select the operations, shape only where it helps
+- **Local, Single User, One API (stdio).** A static token is enough, `bearer` or `api_key` with the provider's header, such as a GitHub personal access token. No OAuth. Expose a handful of operations with `policy.allow`.
+- **A Huge Spec of Hundreds of Operations.** Prefer dynamic exposure, which fronts the spec with a few meta-tools, over listing every operation, so the tool list never floods the model. Still scope it with `policy.allow`.
+- **A Messy API That Makes Poor Tools.** Shape it. Hide the knobs the model should not set, and trim the response.
+- **Multiple Users, or a Provider That Mandates It.** Use `oauth2`, so each user signs in with their own credentials.
 
-Do not expose every operation. Map what the user wants to a short list of operations, and confirm the list before writing anything.
+## Process
 
-Selection is done by a `policy` block, not by the `operations` map, and this trips people up. The tool surface is filtered by `policy.allow` and `policy.deny`, which are glob patterns matched against operation ids, or by `policy.marked_only`. The `operations` map only attaches overrides (name, description, shaping) to operations that already survived the policy, and it errors on an unknown id. So to expose just the chosen operations from a real multi-operation spec, set `policy.allow`. Without it, every operation in the spec becomes a tool, so pointing `spec` at a large upstream and listing three operations does not give three tools. When the spec is huge, a `policy.allow` glob or a synthesized minimal spec is how you keep the surface small.
+Read the request, then run the three stages in order, keeping the user in the loop between them. Do not silently guess a whole config end to end.
 
-Then decide, per operation, how much reshaping it needs. Prefer the lightest option that gives a good tool, and honour the requested shaping level from the brief.
+### Reading the Request
 
-- **Expose as-is.** If the raw operation already makes a clean tool, keep it in the surface via `policy.allow` and give it no `tool` block, or only a name and description override. This is the default, and the whole of `shaping: none`.
-- **Shape it.** Reach for shaping when the operation exposes parameters the model should not set, speaks in cryptic values, or returns a bloated envelope. Then:
-  - **Hide what the model should not choose.** Pinned scopes, pagination internals, locale, and content flags become injected constants, not inputs.
-  - **Expose only the friendly inputs**, with `enum` where the raw API takes cryptic values, and short `description`s.
-  - **Pick a strategy.** `replace` declares the params as the whole input schema and drops the spec's parameters, for a full reshape. `merge` layers onto the spec and keeps the rest, for a light touch. Naming a parameter the spec does not define is a startup error, so keep merged names honest.
-  - **Write the JSONata.** `request` maps the friendly arguments onto the upstream request. `response` trims and renames the body.
+The user gives a plain-language request, held verbatim in `$ARGUMENTS`, for example `connect our Github so my assistant can manage issues`. They are usually non-technical, so do not expect them to name auth types, operations, or shaping. Take two things from the request, the API (a name, a URL, or a spec) and the intent (what they want to do).
 
-JSONata idioms that carry most of the weight:
+Derive the rest yourself, do not ask for it in jargon.
+
+- **Auth**: you determine this from the spec, not by asking the user to name a type. You read the security schemes in Stage 1, then tell the user in plain words which credential they need and where to get it.
+- **Operations**: you select these from the intent in Stage 2.
+- **Shaping**: your own judgment, applied where an operation makes a poor tool. The user never asks for a shaping level.
+
+Ask the user only for what you genuinely cannot derive, such as the host of a self-hosted API or which operations to include. Ask in plain language, offer concrete options, and mark the one you recommend. Prefer an interactive menu when the host provides one, which in Claude Code is the `AskUserQuestion` tool. When no such tool is available, list the options in your reply and let the user pick. Never block on something you can reasonably ask about.
+
+### Stage 1: Acquire the Spec
+
+Get a machine-readable OpenAPI spec first. Work down this ladder, stop at the first tier that yields a usable spec, and never skip to a lower tier because it is easier. Tell the user which tier it came from and how confident you are.
+
+1. **User-Provided Spec.** If the user hands you an OpenAPI URL or a local path, use it. Fetch it and confirm it parses. Highest confidence, and it short-circuits the search below.
+2. **Official Spec.** Search for the vendor's own published OpenAPI or Swagger document (GitHub, Stripe, and Asana each host one). Prefer an official raw URL, since the gateway reads `spec:` straight from a URL. This is the preferred source when the user gave none.
+3. **Third-Party Spec.** Only when there is no official spec, look for a well-maintained community spec (a GitHub repo, SwaggerHub). Prefer one that names the upstream version it targets and shows signs of being tested against a live instance. Point `spec:` at its raw URL, or vendor a copy. Tell the user it is community-maintained and unofficial, and always pair it with a `policy.allow` (see Stage 2) so an unvetted spec cannot widen the tool surface past what you intend.
+4. **Synthesize from Docs.** The last resort, only when no official or usable third-party spec exists (some self-hosted or internal APIs). Build a minimal spec covering just the operations the user needs, from the API's HTML reference. Flag it as lower confidence and list every assumption (base URL, auth style, required parameters) for the user to confirm.
+
+Fetch the spec candidate yourself and confirm it parses as OpenAPI before you rely on it.
+
+Once you have the spec, read its security schemes to fix the auth type and any header name, and confirm the base URL, before moving on. Never invent a token value. Reference it as an environment variable, for example `token: ${GITHUB_TOKEN}`.
+
+### Stage 2: Select and Shape the Operations
+
+Do not expose every operation. Turn the intent into a short list of operations, confirm it with the user, then set `policy.allow` to those operation ids.
+
+Then decide, per operation, how much reshaping it needs. Prefer the lightest option that gives a good tool.
+
+- **Expose As-Is.** If the raw operation already makes a clean tool, keep it in the surface via `policy.allow` and give it no `tool` block, or only a name and description override. This is the default, and the whole of `shaping: none`.
+- **Shape It.** Reach for shaping when the operation exposes parameters the model should not set, speaks in cryptic values, or returns a bloated envelope. Pick the lightest mechanism that fixes it, not `replace` every time.
+  - **Pin a Constant** the model should never set, like `format=json`. Use `merge` with `{hidden: true, default: <value>}`. The value is injected upstream and the parameter leaves the schema, with no `request` needed.
+  - **Default an Optional Input.** Use `merge` with `{default: <value>}`, which is sent upstream when the model omits the parameter.
+  - **Rename an Input or Map a Friendly Enum.** Use `merge` with `params` and a `request` `$lookup`. Both `request` and `response` compose with `merge`, not only with `replace`. Naming a parameter the spec does not define is a startup error, so keep merged names honest.
+  - **Trim or Rename the Response.** Use a `response` expression alone, which works with any strategy, including no `params` at all.
+  - **Fully Reshape the Input, or Wrap the Body.** Use `replace`, which drops the spec's parameters so you declare a fresh set of friendly params, then a `request` expression routes them upstream. Naming a param the spec never defined is fine here, the must-match rule only applies to `merge`.
+
+The JSONata idioms you will use most:
 
 - `$lookup(table, key)` maps a friendly enum onto the raw API value, for example `popular` to `popularity.desc`.
 - `[ results.{ ... } ]` forces a list, because a single-match projection unwraps to one object otherwise.
 - `$merge([$, { ... }])` passes most arguments through and overrides only a few, where `$` is the whole input.
 
-How the `request` result routes to the upstream call matters when you build it. A top-level key whose name matches a `{placeholder}` in the path fills that path segment. Of the rest, each key becomes a JSON body field for `POST` / `PUT` / `PATCH`, or a query parameter for `GET` / `DELETE`. A `null` value is dropped, so an omitted optional friendly argument leaves no trace upstream. To match an upstream that wants a wrapped body, like Redmine's `{"issue": {...}}`, nest the fields under that key in the `request` result, for example `{ "issue": { "subject": subject, "project_id": project_id } }`.
+The `request` result routes to the upstream call by its top-level keys. A key whose name matches a `{placeholder}` in the path fills that path segment. Of the rest, each key becomes a JSON body field for `POST` / `PUT` / `PATCH`, or a query parameter for `GET` / `DELETE`. A `null` value is dropped, so an omitted optional friendly argument leaves no trace upstream. To match an upstream that wants a wrapped body, such as `{"issue": {...}}`, nest the fields under that key in the `request` result, for example `{ "issue": { "subject": subject, "project_id": project_id } }`.
 
-Study `examples/movie-shaping.yml` in the repo as the canonical shaped config, and its raw spec in `examples/specs/movie-api.yaml`. Use the TMDB example as your golden reference when shaping is warranted.
+### Stage 3: Emit and Verify
 
-## Stage 3: Emit and verify
-
-Write the config in the documented format, then verify it boots. A minimal server needs only `spec`, `base_url`, and `auth`; the `policy`, `operations`, and any `tool` shaping are additive.
+Write the config in the documented format in the user's working directory, then verify it boots. A minimal server needs only `spec`, `base_url`, and `auth`. The `policy`, `operations`, and any `tool` shaping are additive.
 
 ```yaml
 host: "127.0.0.1"
@@ -80,20 +108,20 @@ transport: streamable-http
 servers:
   - name: <server-name>
     spec: <url-or-local-path>
-    base_url: <upstream-base-url>          # required; a spec with a relative server needs the real host
+    base_url: <upstream-base-url> # required, a spec with a relative server needs the real host
     auth:
-      type: bearer                          # or api_key / oauth2 / none
+      type: bearer # or api_key / oauth2 / none
       token: ${SOME_TOKEN}
-    policy:                                 # the selector: which operations become tools
-      allow: ["<operation_id>", "..."]     # globs matched against operation ids; omit to expose all
-    operations:                             # overrides only, applied to operations the policy kept
+    policy: # the selector for which operations become tools
+      allow: ["<operation_id>", "..."] # globs matched against operation ids, omit to expose all
+    operations: # overrides only, applied to operations the policy kept
       <operation_id>:
-        tool:                               # optional: omit for an as-is passthrough
-          strategy: replace                 # or merge
+        tool: # optional, omit for an as-is passthrough
+          strategy: replace # or merge
           params:
             <friendly_param>:
               type: string
-              enum: [...]                   # when the raw value is cryptic
+              enum: [...] # when the raw value is cryptic
               default: ...
               description: ...
           request: |
@@ -108,22 +136,24 @@ For API-key auth with a custom header, name the header, since it defaults to `X-
     auth:
       type: api_key
       token: ${SOME_TOKEN}
-      api_key_header: X-Redmine-API-Key
+      api_key_header: X-Acme-Api-Key
 ```
 
-Both JSONata expressions compile at gateway startup, so a broken expression fails the boot with a message naming the side that broke. Use that as your verifier:
+Both JSONata expressions compile when the gateway loads the config, so a broken expression fails validation with a message naming the side that broke. Validate with:
 
-- Run `${CLAUDE_SKILL_DIR}/scripts/validate_config.sh <config.yml>` to boot the gateway against the config and report success or the compile error.
-- On failure, read the named side (request or response), fix the JSONata, and re-run. Loop until it boots clean.
+```bash
+uvx openapi-mcp-gateway --config <config.yml> --dry-run
+```
+
+It loads every spec, applies the policy, and compiles the shaping, then exits without serving and prints a summary of what would run. Exit 0 means the config is valid. On failure, read the named side (request or response), fix the JSONata, and re-run until it validates clean.
 
 Hand the finished config to the user with a one-line summary of each tool, the environment variables they must set, and the exact run command:
 
 ```bash
-uv add openapi-mcp-gateway
-uv run openapi-mcp-gateway --config <their-config>.yml
+uvx openapi-mcp-gateway --config <their-config>.yml
 ```
 
-## Boundaries
+## Notes
 
 - You produce a config only. You do not start a long-running server for the user, and you do not wire the gateway into their Claude Code. The gateway is a neutral runtime the user points any MCP client at.
 - When confidence is low (a synthesized spec, a guessed auth style), say so plainly and list what needs human confirmation. A wrong assumption should surface, not hide.

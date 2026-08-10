@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Skills for authoring and operating an OpenAPI MCP Gateway.",
-    "version": "0.1.0"
+    "version": "0.6.0"
   },
   "plugins": [
     {
       "name": "openapi-mcp-gateway",
       "source": "./plugin",
-      "description": "Skills for openapi-mcp-gateway. Ships generate-config, which authors a runnable config from an API's OpenAPI spec."
+      "description": "Find or generate an openapi-mcp-gateway config for any API. Acquire its OpenAPI spec, scope operations with policy, and shape tools with JSONata."
     }
   ]
 }
