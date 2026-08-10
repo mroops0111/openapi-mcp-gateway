@@ -224,11 +224,12 @@ def _type_names(type_value: typing.Any) -> set[str]:
     return set()
 
 
-def _scalar_type(type_value: typing.Any) -> str:
-    """Reduce a possibly-array ``type`` to one representative string, ignoring ``null``.
+def _primary_type(type_value: typing.Any) -> str:
+    """Reduce a possibly-array JSON Schema ``type`` to one representative string, ignoring ``null``.
 
-    OpenAPI 3.1 allows ``type: ["integer", "null"]``. The scalar ``schema_type`` used as a fallback
-    keeps one non-null member, and the full array stays available on the parameter's ``schema``.
+    OpenAPI 3.1 allows ``type: ["integer", "null"]``.
+    The single ``schema_type`` fallback keeps one non-null member,
+    and the full array stays available on the parameter's ``schema``.
     """
     if isinstance(type_value, list):
         non_null = [entry for entry in type_value if entry != 'null']
@@ -239,9 +240,9 @@ def _scalar_type(type_value: typing.Any) -> str:
 def _normalize_nullable(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Rewrite an OpenAPI 3.0 ``nullable`` flag into the JSON Schema 2020-12 union form.
 
-    ``{type: "X", nullable: true}`` becomes ``{type: ["X", "null"]}``, and ``nullable``, which
-    2020-12 does not define, is dropped. A 3.1 ``type: ["X", "null"]`` is already correct and is
-    left as is.
+    ``{type: "X", nullable: true}`` becomes ``{type: ["X", "null"]}``,
+    and the ``nullable`` keyword, which 2020-12 does not define, is dropped.
+    A 3.1 ``type: ["X", "null"]`` is already correct and is left as is.
     """
     if 'nullable' not in schema:
         return schema
@@ -283,11 +284,12 @@ def _normalize_example(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     return result
 
 
-def _sanitize_dialect(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+def _normalize_to_2020_12(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Rewrite OpenAPI 3.0 keywords into their JSON Schema 2020-12 equivalents.
 
-    MCP advertises tool input schemas as 2020-12, which strict clients validate, so a 3.0 construct
-    left in place fails the call. A 3.1 schema is already 2020-12 and passes through unchanged.
+    MCP advertises tool input schemas as 2020-12, which strict clients validate.
+    A 3.0 construct left in place fails the call.
+    A 3.1 schema is already 2020-12 and passes through unchanged.
     """
     return _normalize_example(_normalize_exclusive_bounds(_normalize_nullable(schema)))
 
@@ -325,7 +327,7 @@ def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) ->
     if 'anyOf' in result:
         result['anyOf'] = [_expand_schema(raw, item) for item in result['anyOf']]
 
-    return _sanitize_dialect(result)
+    return _normalize_to_2020_12(result)
 
 
 def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str | None) -> list[dict[str, typing.Any]]:
@@ -385,7 +387,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                         location=param.get('in', 'query'),
                         required=param.get('required', False),
                         description=param.get('description', ''),
-                        schema_type=_scalar_type(param_schema.get('type', 'string')),
+                        schema_type=_primary_type(param_schema.get('type', 'string')),
                         schema=param_schema,
                     )
                 )
@@ -406,7 +408,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                                 location='body',
                                 required=prop_name in required_props,
                                 description=prop_schema.get('description', ''),
-                                schema_type=_scalar_type(prop_schema.get('type', 'string')),
+                                schema_type=_primary_type(prop_schema.get('type', 'string')),
                                 schema=prop_schema,
                             )
                         )
