@@ -214,19 +214,6 @@ def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) ->
     return result
 
 
-def _type_names(type_value: typing.Any) -> set[str]:
-    """Return the type names in a JSON Schema ``type``.
-
-    OpenAPI 3.0 writes ``type`` as one string, 3.1 writes it as a list of strings.
-    Reading both into a set lets the recursion below match either form.
-    """
-    if isinstance(type_value, str):
-        return {type_value}
-    if isinstance(type_value, list):
-        return {entry for entry in type_value if isinstance(entry, str)}
-    return set()
-
-
 def _normalize_nullable(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Rewrite an OpenAPI 3.0 ``nullable`` flag into the JSON Schema 2020-12 union form.
 
@@ -276,12 +263,23 @@ def _normalize_to_2020_12(schema: dict[str, typing.Any]) -> dict[str, typing.Any
     return _normalize_exclusive_bounds(_normalize_nullable(schema))
 
 
-def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
-    """Expand a JSON Schema fragment in place.
+# JSON Schema keywords whose value is a single nested schema.
+_SUBSCHEMA_KEYS = ('items', 'not', 'additionalProperties', 'propertyNames', 'contains', 'if', 'then', 'else')
+# Keywords whose value is a list of nested schemas.
+# ``allOf`` is absent here because it is flattened separately, not recursed in place.
+_SUBSCHEMA_LIST_KEYS = ('oneOf', 'anyOf', 'prefixItems')
+# Keywords whose value maps a name to a nested schema.
+_SUBSCHEMA_MAP_KEYS = ('properties', 'patternProperties', 'dependentSchemas')
 
-    Resolves ``$ref``, flattens ``allOf`` via ``_deep_merge``,
-    recurses into ``properties`` / ``items`` / ``additionalProperties`` / ``oneOf`` / ``anyOf``,
-    and rewrites OpenAPI 3.0 keywords into their JSON Schema 2020-12 equivalents.
+
+def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Expand a JSON Schema fragment into the form the gateway advertises.
+
+    Resolves ``$ref`` and flattens ``allOf`` via ``_deep_merge``,
+    then recurses into every nested-schema keyword so a construct buried at any depth is expanded too,
+    and finally rewrites OpenAPI 3.0 keywords into their JSON Schema 2020-12 equivalents.
+    Recursion keys off each keyword's presence rather than off ``type``,
+    since ``type`` is optional and a fragment may carry ``properties`` or ``items`` without declaring it.
     """
     if '$ref' in schema:
         resolved = _resolve_ref(raw, schema['$ref'])
@@ -290,25 +288,21 @@ def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) ->
     if 'allOf' in schema:
         merged: dict[str, typing.Any] = {}
         for sub in schema['allOf']:
-            expanded = _expand_schema(raw, sub)
-            merged = _deep_merge(merged, expanded)
+            merged = _deep_merge(merged, _expand_schema(raw, sub))
         return merged
 
     result = schema.copy()
-
-    type_names = _type_names(result.get('type'))
-    if 'object' in type_names and result.get('properties'):
-        result['properties'] = {k: _expand_schema(raw, v) for k, v in result['properties'].items()}
-    elif 'array' in type_names and result.get('items'):
-        result['items'] = _expand_schema(raw, result['items'])
-
-    if isinstance(result.get('additionalProperties'), dict):
-        result['additionalProperties'] = _expand_schema(raw, result['additionalProperties'])
-    if 'oneOf' in result:
-        result['oneOf'] = [_expand_schema(raw, item) for item in result['oneOf']]
-    if 'anyOf' in result:
-        result['anyOf'] = [_expand_schema(raw, item) for item in result['anyOf']]
-
+    for key in _SUBSCHEMA_KEYS:
+        if isinstance(result.get(key), dict):
+            result[key] = _expand_schema(raw, result[key])
+    for key in _SUBSCHEMA_LIST_KEYS:
+        if isinstance(result.get(key), list):
+            result[key] = [_expand_schema(raw, item) if isinstance(item, dict) else item for item in result[key]]
+    for key in _SUBSCHEMA_MAP_KEYS:
+        if isinstance(result.get(key), dict):
+            result[key] = {
+                name: _expand_schema(raw, sub) if isinstance(sub, dict) else sub for name, sub in result[key].items()
+            }
     return _normalize_to_2020_12(result)
 
 

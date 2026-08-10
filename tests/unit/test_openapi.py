@@ -200,6 +200,40 @@ class TestExclusiveBounds:
         assert result == {'type': 'integer', 'exclusiveMaximum': 10}
 
 
+class TestDeepNormalization:
+    """A 3.0 construct buried inside any nested-schema keyword is still normalized, so it never reaches a client as 400."""
+
+    def test_properties_without_type_still_recurses(self):
+        """A fragment with ``properties`` but no ``type`` is a common shape and must still normalize its fields."""
+        result = _expand_schema({}, {'properties': {'inner': {'type': 'string', 'nullable': True}}})
+        assert result['properties']['inner'] == {'type': ['string', 'null']}
+
+    def test_items_without_array_type_still_recurses(self):
+        """An ``items`` fragment normalizes even when the parent omits ``type: array``."""
+        result = _expand_schema({}, {'items': {'type': 'integer', 'nullable': True}})
+        assert result['items'] == {'type': ['integer', 'null']}
+
+    def test_additional_properties_value_recurses(self):
+        """A map's value schema, declared through ``additionalProperties``, is normalized too."""
+        result = _expand_schema({}, {'type': 'object', 'additionalProperties': {'type': 'integer', 'nullable': True}})
+        assert result['additionalProperties'] == {'type': ['integer', 'null']}
+
+    def test_pattern_properties_value_recurses(self):
+        """A ``patternProperties`` value schema is normalized like any other nested schema."""
+        result = _expand_schema({}, {'patternProperties': {'^x-': {'type': 'string', 'nullable': True}}})
+        assert result['patternProperties']['^x-'] == {'type': ['string', 'null']}
+
+    def test_prefix_items_recurse(self):
+        """Each ``prefixItems`` entry, the 2020-12 tuple form, is normalized in place."""
+        result = _expand_schema({}, {'prefixItems': [{'type': 'string', 'nullable': True}]})
+        assert result['prefixItems'] == [{'type': ['string', 'null']}]
+
+    def test_not_recurses(self):
+        """A schema nested under ``not`` is normalized so it stays valid 2020-12."""
+        result = _expand_schema({}, {'not': {'type': 'string', 'nullable': True}})
+        assert result['not'] == {'type': ['string', 'null']}
+
+
 class TestParseSpec:
     """End-to-end ``parse_spec`` against the petstore fixture."""
 
