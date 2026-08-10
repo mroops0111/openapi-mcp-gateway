@@ -110,6 +110,12 @@ class TestSchemaToPythonType:
         assert typing.get_origin(result) is typing.Literal
         assert set(typing.get_args(result)) == {'left', 'center', 'right'}
 
+    def test_nullable_list_type_becomes_optional(self):
+        """A 2020-12 array ``type`` like ``["integer", "null"]`` maps to ``int | None``."""
+        result = _schema_to_python_type({'type': ['integer', 'null']})
+        assert isinstance(result, types.UnionType)
+        assert set(typing.get_args(result)) == {int, type(None)}
+
     def test_object_with_properties_yields_typed_model(self):
         """An object with ``properties`` becomes a typed pydantic model rather than ``dict[str, Any]``.
 

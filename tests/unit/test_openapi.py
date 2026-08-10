@@ -135,6 +135,54 @@ class TestExpandSchema:
         assert 'color' in result['properties']
 
 
+class TestNullable:
+    """OpenAPI 3.0 ``nullable`` and 3.1 array ``type`` both normalize to the 2020-12 union form."""
+
+    def test_v30_nullable_becomes_union(self):
+        """A 3.0 ``{type, nullable: true}`` becomes ``type: [..., "null"]`` and drops ``nullable``."""
+        assert _expand_schema({}, {'type': 'string', 'nullable': True}) == {'type': ['string', 'null']}
+
+    def test_v30_nullable_false_is_dropped(self):
+        """``nullable: false`` is not a 2020-12 keyword, so it is dropped without touching ``type``."""
+        assert _expand_schema({}, {'type': 'string', 'nullable': False}) == {'type': 'string'}
+
+    def test_v31_array_type_is_left_as_is(self):
+        """A 3.1 array ``type`` is already canonical and passes through unchanged."""
+        assert _expand_schema({}, {'type': ['integer', 'null']}) == {'type': ['integer', 'null']}
+
+    def test_nullable_object_recurses_into_properties(self):
+        """A nullable object still expands its properties, then normalizes its own type."""
+        result = _expand_schema(
+            {},
+            {'type': 'object', 'nullable': True, 'properties': {'inner': {'type': 'string', 'nullable': True}}},
+        )
+        assert result['type'] == ['object', 'null']
+        assert result['properties']['inner'] == {'type': ['string', 'null']}
+
+    def test_parse_spec_handles_both_dialects(self):
+        """A spec mixing both nullable dialects parses without error, with a scalar schema_type."""
+        raw = {
+            'openapi': '3.1.0',
+            'info': {'title': 't', 'version': '1'},
+            'paths': {
+                '/items': {
+                    'get': {
+                        'operationId': 'listItems',
+                        'parameters': [
+                            {'name': 'status', 'in': 'query', 'schema': {'type': 'string', 'nullable': True}},
+                            {'name': 'count', 'in': 'query', 'schema': {'type': ['integer', 'null']}},
+                        ],
+                    }
+                }
+            },
+        }
+        by_name = {p.name: p for p in parse_spec(raw).operations[0].parameters}
+        assert by_name['status'].schema_type == 'string'
+        assert by_name['status'].schema_ == {'type': ['string', 'null']}
+        assert by_name['count'].schema_type == 'integer'
+        assert by_name['count'].schema_ == {'type': ['integer', 'null']}
+
+
 class TestParseSpec:
     """End-to-end ``parse_spec`` against the petstore fixture."""
 

@@ -56,6 +56,16 @@ def _schema_to_python_type(
         return typing.Literal[tuple(enum_values)]
 
     schema_type = schema.get('type')
+    if isinstance(schema_type, list):
+        member_types = [
+            type(None) if member == 'null' else _schema_to_python_type({**schema, 'type': member}, name_hint=name_hint)
+            for member in schema_type
+        ]
+        deduped: list[typing.Any] = []
+        for member_type in member_types:
+            if member_type not in deduped:
+                deduped.append(member_type)
+        return deduped[0] if len(deduped) == 1 else functools.reduce(operator.or_, deduped)
     if schema_type is None:
         return typing.Any
     if schema_type == 'string':

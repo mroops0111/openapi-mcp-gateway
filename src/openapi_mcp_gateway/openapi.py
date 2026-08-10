@@ -215,11 +215,52 @@ def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) ->
     return result
 
 
+def _type_names(type_value: typing.Any) -> set[str]:
+    """Return the type names in a JSON Schema ``type``, which is a string or a list of strings."""
+    if isinstance(type_value, str):
+        return {type_value}
+    if isinstance(type_value, list):
+        return {entry for entry in type_value if isinstance(entry, str)}
+    return set()
+
+
+def _scalar_type(type_value: typing.Any) -> str:
+    """Reduce a possibly-array ``type`` to one representative string, ignoring ``null``.
+
+    OpenAPI 3.1 allows ``type: ["integer", "null"]``. The scalar ``schema_type`` used as a fallback
+    keeps one non-null member, and the full array stays available on the parameter's ``schema``.
+    """
+    if isinstance(type_value, list):
+        non_null = [entry for entry in type_value if entry != 'null']
+        return non_null[0] if non_null else 'string'
+    return type_value if isinstance(type_value, str) else 'string'
+
+
+def _normalize_nullable(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Rewrite an OpenAPI 3.0 ``nullable`` flag into the JSON Schema 2020-12 union form.
+
+    ``{type: "X", nullable: true}`` becomes ``{type: ["X", "null"]}``, and ``nullable``, which
+    2020-12 does not define, is dropped. A 3.1 ``type: ["X", "null"]`` is already correct and is
+    left as is.
+    """
+    if 'nullable' not in schema:
+        return schema
+    result = {key: value for key, value in schema.items() if key != 'nullable'}
+    if schema['nullable']:
+        type_value = result.get('type')
+        if isinstance(type_value, str):
+            result['type'] = [type_value, 'null']
+        elif isinstance(type_value, list) and 'null' not in type_value:
+            result['type'] = [*type_value, 'null']
+    return result
+
+
 def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Expand a JSON Schema fragment in place.
 
     Resolves ``$ref``, flattens ``allOf`` via ``_deep_merge``,
-    and recurses into ``properties`` / ``items`` / ``oneOf`` / ``anyOf``.
+    recurses into ``properties`` / ``items`` / ``oneOf`` / ``anyOf``,
+    and normalizes OpenAPI 3.0 ``nullable`` into the 2020-12 union type.
     """
     if '$ref' in schema:
         resolved = _resolve_ref(raw, schema['$ref'])
@@ -234,9 +275,10 @@ def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) ->
 
     result = schema.copy()
 
-    if result.get('type') == 'object' and result.get('properties'):
+    type_names = _type_names(result.get('type'))
+    if 'object' in type_names and result.get('properties'):
         result['properties'] = {k: _expand_schema(raw, v) for k, v in result['properties'].items()}
-    elif result.get('type') == 'array' and result.get('items'):
+    elif 'array' in type_names and result.get('items'):
         result['items'] = _expand_schema(raw, result['items'])
 
     if 'oneOf' in result:
@@ -244,7 +286,7 @@ def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) ->
     if 'anyOf' in result:
         result['anyOf'] = [_expand_schema(raw, item) for item in result['anyOf']]
 
-    return result
+    return _normalize_nullable(result)
 
 
 def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str | None) -> list[dict[str, typing.Any]]:
@@ -304,7 +346,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                         location=param.get('in', 'query'),
                         required=param.get('required', False),
                         description=param.get('description', ''),
-                        schema_type=param_schema.get('type', 'string'),
+                        schema_type=_scalar_type(param_schema.get('type', 'string')),
                         schema=param_schema,
                     )
                 )
@@ -325,7 +367,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                                 location='body',
                                 required=prop_name in required_props,
                                 description=prop_schema.get('description', ''),
-                                schema_type=prop_schema.get('type', 'string'),
+                                schema_type=_scalar_type(prop_schema.get('type', 'string')),
                                 schema=prop_schema,
                             )
                         )
