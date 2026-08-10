@@ -32,7 +32,7 @@ from .fastapi import (
     override_with_metadata,
     warn_on_mixed_security_schemes,
 )
-from .openapi import McpIntegration, OpenAPISpec, OperationInfo, load_spec, parse_spec
+from .openapi import ExposedTool, McpIntegration, OpenAPISpec, OperationInfo, load_spec, parse_spec
 from .policy import filter_operations
 from .settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
 from .stores import create_store
@@ -195,6 +195,13 @@ class _AppContext:
     auth_provider: AuthorizationCodeProvider | None = None
 
 
+def _auth_summary(auth: AuthConfig) -> str:
+    """A short human label for a server's auth, naming the header for api_key."""
+    if auth.type == 'api_key':
+        return f'api_key (header {auth.api_key_header})'
+    return auth.type
+
+
 class Gateway:
     """Expose several OpenAPI backends as MCP servers in one process.
 
@@ -286,6 +293,10 @@ class Gateway:
             exposure=exposure,
         )
         self._add_server_from_server_config(server_config=server_config)
+
+    def describe_servers(self) -> tuple[_ServerBundle, ...]:
+        """Return the registered server bundles, for a dry-run summary of what would be served."""
+        return tuple(self._servers)
 
     def run(
         self,
@@ -466,7 +477,8 @@ class Gateway:
             timeout=server_config.timeout,
             transport=transport,
         )
-        resource_count = 0
+        exposed_tools: list[ExposedTool] = []
+        resource_names: list[str] = []
         if server_config.exposure == 'dynamic':
             resource_optins = [op.operation_id for op in operations if op.resource_exposed]
             if resource_optins:
@@ -484,16 +496,15 @@ class Gateway:
                     'The meta-tools surface every operation uniformly, so resource promotion is skipped.',
                     server_config.name,
                 )
-            MetaToolGenerator(mcp=mcp, binding=binding).register(operations)
-            tool_count = len(operations)
+            exposed_tools = MetaToolGenerator(mcp=mcp, binding=binding).register(operations)
         else:
             resource_ops, tool_ops = _partition_operations(operations, server_config.name, server_config.mode)
             if resource_ops:
-                ResourceGenerator(mcp=mcp, binding=binding, server_name=server_config.name).register(resource_ops)
+                resource_names = ResourceGenerator(mcp=mcp, binding=binding, server_name=server_config.name).register(
+                    resource_ops
+                )
             if tool_ops:
-                ToolGenerator(mcp=mcp, binding=binding).register(tool_ops)
-            resource_count = len(resource_ops)
-            tool_count = len(tool_ops)
+                exposed_tools = ToolGenerator(mcp=mcp, binding=binding).register(tool_ops)
 
         self._servers.append(
             _ServerBundle(
@@ -503,6 +514,11 @@ class Gateway:
                 spec=spec,
                 auth_provider=auth_provider,
                 auth_settings=auth_settings,
+                base_url=base_url,
+                auth_summary=_auth_summary(server_config.auth),
+                exposure=server_config.exposure,
+                tools=tuple(exposed_tools),
+                resource_names=tuple(resource_names),
             )
         )
         logger.info(
@@ -510,8 +526,8 @@ class Gateway:
             server_config.name,
             server_config.mount_path,
             base_url,
-            tool_count,
-            resource_count,
+            len(exposed_tools),
+            len(resource_names),
             server_config.auth.type,
             type(auth_resolver).__name__,
         )

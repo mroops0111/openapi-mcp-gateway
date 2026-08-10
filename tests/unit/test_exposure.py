@@ -19,7 +19,7 @@ from openapi_mcp_gateway.exposure import (
 )
 from openapi_mcp_gateway.exposure._shaping import shape_operation
 from openapi_mcp_gateway.exposure._shared import _sanitize_name, _schema_to_python_type
-from openapi_mcp_gateway.exposure.tool import merge_tool_annotations
+from openapi_mcp_gateway.exposure.tool import _shaping_label, merge_tool_annotations
 from openapi_mcp_gateway.openapi import (
     McpIntegration,
     OperationInfo,
@@ -1185,6 +1185,72 @@ class TestParamShapingSchema:
             params={'q': {'description': 'new'}},
         )
         assert _register(op).parameters['properties']['q']['description'] == 'new'
+
+
+class TestHiddenParameterInjection:
+    """A hidden parameter with a default is injected upstream while staying out of the LLM surface."""
+
+    def test_hidden_with_default_is_kept_but_not_visible(self):
+        """The parameter stays for upstream assembly, marked send_default and not visible."""
+        operation = _shaped_op(
+            [ParameterInfo(name='format', location='path', required=True, schema={'type': 'string'})],
+            params={'format': {'hidden': True, 'default': 'json'}},
+            strategy='merge',
+            path='/issues.{format}',
+        )
+        shaped_operation = shape_operation(operation)
+        format_parameter = next(parameter for parameter in shaped_operation.parameters if parameter.name == 'format')
+        assert format_parameter.visible is False
+        assert format_parameter.send_default is True
+        assert 'format' not in _register(operation).parameters['properties']
+
+    async def test_hidden_default_fills_the_upstream_path(self, mock_upstream):
+        """The default fills the path placeholder even though the LLM never supplies the parameter."""
+        captured_request: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured_request['path'] = request.url.path
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        operation = _shaped_op(
+            [ParameterInfo(name='format', location='path', required=True, schema={'type': 'string'})],
+            params={'format': {'hidden': True, 'default': 'json'}},
+            strategy='merge',
+            path='/issues.{format}',
+        )
+        await _register(operation).run({}, context=_stub_context())
+        assert captured_request['path'] == '/issues.json'
+
+    def test_hidden_required_path_parameter_without_default_raises(self):
+        """Hiding a required path parameter with no default and no request cannot fill the path."""
+        operation = _shaped_op(
+            [ParameterInfo(name='format', location='path', required=True, schema={'type': 'string'})],
+            params={'format': {'hidden': True}},
+            strategy='merge',
+            path='/issues.{format}',
+        )
+        with pytest.raises(ValueError, match='nothing to fill'):
+            shape_operation(operation)
+
+
+class TestShapingLabel:
+    """``_shaping_label`` summarises a tool override for the dry-run output."""
+
+    def test_no_override_is_passthrough(self):
+        """No override reshapes nothing, so the label is passthrough."""
+        assert _shaping_label(None) == 'passthrough'
+
+    def test_strategy_and_transforms_are_listed(self):
+        """Strategy, request, and response each appear in the label."""
+        override = ToolOverride.model_validate(
+            {'strategy': 'replace', 'params': {'x': {'type': 'string'}}, 'request': '{}', 'response': 'r'}
+        )
+        assert _shaping_label(override) == 'replace, request, response'
+
+    def test_name_only_override_is_passthrough(self):
+        """An override that only renames does not reshape the call."""
+        assert _shaping_label(ToolOverride(name='foo')) == 'passthrough'
 
 
 class TestRequestTransform:

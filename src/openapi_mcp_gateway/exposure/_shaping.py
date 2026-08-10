@@ -1,4 +1,5 @@
 import logging
+import re
 
 from ..openapi import OperationInfo, ParameterInfo, ParamOverride
 from ._shared import _get_override
@@ -90,16 +91,36 @@ def shape_operation(operation: OperationInfo) -> OperationInfo:
             'Use strategy "replace" to declare a new friendly surface.'
         )
 
-    visible_parameters: list[ParameterInfo] = []
+    kept_parameters: list[ParameterInfo] = []
     for parameter in shaped_operation.parameters:
         param_override = params.get(parameter.name)
         if param_override is None:
-            visible_parameters.append(parameter)
-            continue
-        if param_override.hidden:
+            kept_parameters.append(parameter)
             continue
         _apply_tweak(parameter, param_override)
-        visible_parameters.append(parameter)
+        if param_override.hidden:
+            # A hidden parameter is kept only if it has a default to inject upstream,
+            # staying out of the schema but still filling its slot. Otherwise drop it.
+            if parameter.send_default:
+                parameter.visible = False
+                kept_parameters.append(parameter)
+            continue
+        kept_parameters.append(parameter)
 
-    shaped_operation.parameters = visible_parameters
+    if not tool_override.request:
+        kept_path_parameter_names = {parameter.name for parameter in kept_parameters if parameter.location == 'path'}
+        unfilled_path_placeholders = [
+            placeholder_name
+            for placeholder_name in re.findall(r'{(\w+)}', operation.path)
+            if placeholder_name not in kept_path_parameter_names
+        ]
+        if unfilled_path_placeholders:
+            raise ValueError(
+                f'Operation "{operation.operation_id}" has path parameter(s) {unfilled_path_placeholders} '
+                'that shaping left with nothing to fill them, '
+                'no visible parameter, no default, and no tool.request. '
+                'Give each a default, keep it visible, or add a tool.request that supplies it.'
+            )
+
+    shaped_operation.parameters = kept_parameters
     return shaped_operation

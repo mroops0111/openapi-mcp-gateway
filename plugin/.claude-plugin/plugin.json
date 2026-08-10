@@ -1,0 +1,11 @@
+{
+  "name": "openapi-mcp-gateway",
+  "description": "Find or generate an openapi-mcp-gateway config for any API. Acquire its OpenAPI spec, scope operations with policy, and shape tools with JSONata.",
+  "version": "0.6.1",
+  "author": {
+    "name": "Yun-Tai Yang"
+  },
+  "homepage": "https://github.com/mroops0111/openapi-mcp-gateway",
+  "license": "MIT",
+  "keywords": ["mcp", "openapi", "config", "jsonata"]
+}

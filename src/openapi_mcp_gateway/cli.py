@@ -5,7 +5,8 @@ import click
 
 from .gateway import Gateway
 from .logger import FORMATS, LEVELS, setup
-from .settings import AuthConfig, build_gateway_config, single_spec_layer, yaml_layer
+from .openapi import ExposedTool
+from .settings import AuthConfig, GatewayConfig, build_gateway_config, single_spec_layer, yaml_layer
 
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,16 @@ logger = logging.getLogger(__name__)
     'config_path',
     type=click.Path(exists=True),
     default=None,
-    help='Path to a YAML config file with multiple servers.',
+    help=(
+        'Path to a YAML config file with multiple servers. See the README Configuration section '
+        'for the full schema (policy, operations, and tool shaping).'
+    ),
+)
+@click.option(
+    '--dry-run',
+    is_flag=True,
+    default=False,
+    help='Validate the config (load specs, apply policy, compile shaping) and exit without serving.',
 )
 @click.option('--name', type=str, default='api', help='Server name when using --spec (default: api).')
 @click.option('--base-url', type=str, default=None, help='Override the upstream API base URL.')
@@ -108,6 +118,7 @@ logger = logging.getLogger(__name__)
 def main(
     spec: str | None,
     config_path: str | None,
+    dry_run: bool,
     name: str,
     base_url: str | None,
     transport: typing.Literal['sse', 'streamable-http', 'stdio'] | None,
@@ -160,6 +171,10 @@ def main(
     \b
     Verbose JSON logs written to a file:
         openapi-mcp-gateway --spec petstore.json -v --log-format json --log-file gateway.log
+
+    \b
+    Validate a config without serving (CI or an editor check):
+        openapi-mcp-gateway --config servers.yml --dry-run
     """
     if not spec and not config_path:
         raise click.UsageError('Either --spec or --config is required.')
@@ -207,6 +222,16 @@ def main(
         config.port,
         len(config.servers),
     )
+
+    if dry_run:
+        try:
+            gateway = Gateway.from_config(config)
+        except Exception as error:
+            click.secho('✗ Invalid', fg='red', bold=True, err=True)
+            click.echo(f'  {error}', err=True)
+            raise SystemExit(1) from error
+        _echo_dry_run_summary(gateway, config)
+        return
 
     gateway = Gateway.from_config(config)
     gateway.run()
@@ -301,6 +326,47 @@ def _cli_layer(
         layer['logging'] = log_layer
 
     return layer
+
+
+def _dry_run_kv(label: str, value: str) -> None:
+    """Print one aligned, dim-labelled key/value line in the dry-run summary."""
+    click.echo(f'    {click.style(f"{label:<9}", dim=True)}  {value}')
+
+
+def _dry_run_tool_table(tools: tuple[ExposedTool, ...]) -> None:
+    """Print a server's tools as an aligned table with a dim header row."""
+    name_width = max([len('NAME'), *(len(tool.name) for tool in tools)])
+    method_width = max([len('METHOD'), *(len(tool.method) for tool in tools)])
+    path_width = max([len('PATH'), *(len(tool.path) for tool in tools)])
+    header = f'      {"NAME":<{name_width}}  {"METHOD":<{method_width}}  {"PATH":<{path_width}}  SHAPING'
+    click.secho(header, dim=True)
+    for tool in tools:
+        click.echo(
+            f'      {tool.name:<{name_width}}  {tool.method.upper():<{method_width}}  '
+            f'{tool.path:<{path_width}}  {tool.shaping}'
+        )
+
+
+def _echo_dry_run_summary(gateway: Gateway, config: GatewayConfig) -> None:
+    """Print a structured, human-readable summary of what the config would serve."""
+    servers = gateway.describe_servers()
+    total_tools = sum(len(server.tools) for server in servers)
+    total_resources = sum(len(server.resource_names) for server in servers)
+    counts = f'{len(servers)} server(s), {total_tools} tool(s), {total_resources} resource(s)'
+    click.echo(f'{click.style("✓ Valid", fg="green", bold=True)}   {click.style(counts, dim=True)}')
+    for server in servers:
+        click.echo('')
+        click.secho(f'  {server.name}', bold=True)
+        _dry_run_kv('mount', server.mount_path)
+        _dry_run_kv('transport', config.transport)
+        _dry_run_kv('base url', server.base_url)
+        _dry_run_kv('auth', server.auth_summary)
+        _dry_run_kv('exposure', server.exposure)
+        if server.tools:
+            _dry_run_kv('tools', str(len(server.tools)))
+            _dry_run_tool_table(server.tools)
+        if server.resource_names:
+            _dry_run_kv('resources', ', '.join(server.resource_names))
 
 
 if __name__ == '__main__':

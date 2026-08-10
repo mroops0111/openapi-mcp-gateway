@@ -25,8 +25,20 @@ class ParameterInfo(pydantic.BaseModel):
     # Marks a default the author wants sent upstream even when the LLM omits the parameter.
     # The LLM never sees this flag.
     send_default: bool = False
+    # Set False by shape_operation for a hidden-but-defaulted parameter,
+    # which is kept for upstream assembly and default injection but omitted from the schema.
+    visible: bool = True
 
     model_config = pydantic.ConfigDict(populate_by_name=True)
+
+
+class ExposedTool(typing.NamedTuple):
+    """One tool a server exposes, with a compact label of how it is shaped."""
+
+    name: str
+    method: str
+    path: str
+    shaping: str
 
 
 class ParamOverride(pydantic.BaseModel):

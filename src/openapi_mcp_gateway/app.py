@@ -15,7 +15,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .auth.flows import AuthorizationCodeProvider
-from .openapi import OpenAPISpec
+from .openapi import ExposedTool, OpenAPISpec
 from .settings import GatewayConfig
 from .stores.base import TokenStore
 
@@ -35,6 +35,12 @@ class _ServerBundle(typing.NamedTuple):
     spec: OpenAPISpec
     auth_provider: AuthorizationCodeProvider | None
     auth_settings: AuthSettings | None = None
+    # Captured at registration for the --dry-run summary.
+    base_url: str = ''
+    auth_summary: str = 'none'
+    exposure: str = 'static'
+    tools: tuple[ExposedTool, ...] = ()
+    resource_names: tuple[str, ...] = ()
 
 
 def build_mcp_asgi_app(mcp: MCPServer, transport: str) -> typing.Any:

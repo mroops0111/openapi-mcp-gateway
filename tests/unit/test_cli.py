@@ -271,3 +271,36 @@ class TestConfigPrecedence:
         assert config.host == '0.0.0.0'
         assert config.port == 8000
         assert config.transport == 'streamable-http'
+
+
+class TestDryRun:
+    """``--dry-run`` validates the config and exits without serving."""
+
+    def test_help_lists_dry_run(self):
+        """``--help`` advertises the ``--dry-run`` flag."""
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ['--help'])
+        assert result.exit_code == 0
+        assert '--dry-run' in result.output
+
+    def test_dry_run_does_not_serve(self):
+        """``--dry-run`` builds the gateway but never calls ``Gateway.run``."""
+        result, gateway_run = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run')
+        assert result.exit_code == 0, result.output
+        assert 'Valid' in result.output
+        gateway_run.assert_not_called()
+
+    def test_without_dry_run_serves(self):
+        """Without ``--dry-run`` the CLI proceeds to ``Gateway.run``."""
+        result, gateway_run = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets')
+        assert result.exit_code == 0, result.output
+        gateway_run.assert_called_once()
+
+    def test_dry_run_summary_lists_server_details(self):
+        """The summary names the server and prints its mount, auth, and exposure."""
+        result, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run')
+        assert result.exit_code == 0, result.output
+        assert 'pets' in result.output
+        assert 'mount' in result.output
+        assert 'auth' in result.output
+        assert 'exposure' in result.output
