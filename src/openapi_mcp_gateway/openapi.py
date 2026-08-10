@@ -216,7 +216,11 @@ def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) ->
 
 
 def _type_names(type_value: typing.Any) -> set[str]:
-    """Return the type names in a JSON Schema ``type``, which is a string or a list of strings."""
+    """Return the type names in a JSON Schema ``type``.
+
+    OpenAPI 3.0 writes ``type`` as one string, 3.1 writes it as a list of strings.
+    Reading both into a set lets the recursion below match either form.
+    """
     if isinstance(type_value, str):
         return {type_value}
     if isinstance(type_value, list):
@@ -227,8 +231,9 @@ def _type_names(type_value: typing.Any) -> set[str]:
 def _primary_type(type_value: typing.Any) -> str:
     """Reduce a possibly-array JSON Schema ``type`` to one representative string, ignoring ``null``.
 
-    OpenAPI 3.1 allows ``type: ["integer", "null"]``.
-    The single ``schema_type`` fallback keeps one non-null member,
+    OpenAPI 3.0 gives one string, so this is a no-op there.
+    OpenAPI 3.1 may give a list like ``["integer", "null"]``.
+    Only one string fits the ``schema_type`` fallback field, so this keeps one non-null member,
     and the full array stays available on the parameter's ``schema``.
     """
     if isinstance(type_value, list):
@@ -260,7 +265,8 @@ def _normalize_exclusive_bounds(schema: dict[str, typing.Any]) -> dict[str, typi
     """Rewrite OpenAPI 3.0 boolean ``exclusiveMinimum`` and ``exclusiveMaximum`` into 2020-12 numbers.
 
     In 3.0 a ``true`` flag pairs with ``minimum`` or ``maximum`` to mark the bound as exclusive.
-    In 2020-12 the exclusive keyword holds the number itself, so the paired bound folds into it.
+    In 2020-12, which 3.1 already uses, the exclusive keyword holds the number itself,
+    so the paired bound folds into it.
     A ``false`` flag only marks an inclusive bound, so it is dropped and the bound stays.
     """
     result = schema
@@ -275,15 +281,6 @@ def _normalize_exclusive_bounds(schema: dict[str, typing.Any]) -> dict[str, typi
     return result
 
 
-def _normalize_example(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
-    """Move an OpenAPI ``example`` into the 2020-12 ``examples`` array, the keyword 2020-12 defines."""
-    if 'example' not in schema:
-        return schema
-    result = {key: value for key, value in schema.items() if key != 'example'}
-    result.setdefault('examples', [schema['example']])
-    return result
-
-
 def _normalize_to_2020_12(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Rewrite OpenAPI 3.0 keywords into their JSON Schema 2020-12 equivalents.
 
@@ -291,7 +288,7 @@ def _normalize_to_2020_12(schema: dict[str, typing.Any]) -> dict[str, typing.Any
     A 3.0 construct left in place fails the call.
     A 3.1 schema is already 2020-12 and passes through unchanged.
     """
-    return _normalize_example(_normalize_exclusive_bounds(_normalize_nullable(schema)))
+    return _normalize_exclusive_bounds(_normalize_nullable(schema))
 
 
 def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
