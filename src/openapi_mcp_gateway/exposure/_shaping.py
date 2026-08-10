@@ -108,9 +108,7 @@ def shape_operation(operation: OperationInfo) -> OperationInfo:
         kept_parameters.append(parameter)
 
     if not tool_override.request:
-        kept_path_parameter_names = {
-            parameter.name for parameter in kept_parameters if parameter.location == 'path'
-        }
+        kept_path_parameter_names = {parameter.name for parameter in kept_parameters if parameter.location == 'path'}
         unfilled_path_placeholders = [
             placeholder_name
             for placeholder_name in re.findall(r'{(\w+)}', operation.path)

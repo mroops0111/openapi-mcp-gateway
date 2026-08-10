@@ -500,9 +500,9 @@ class Gateway:
         else:
             resource_ops, tool_ops = _partition_operations(operations, server_config.name, server_config.mode)
             if resource_ops:
-                resource_names = ResourceGenerator(
-                    mcp=mcp, binding=binding, server_name=server_config.name
-                ).register(resource_ops)
+                resource_names = ResourceGenerator(mcp=mcp, binding=binding, server_name=server_config.name).register(
+                    resource_ops
+                )
             if tool_ops:
                 exposed_tools = ToolGenerator(mcp=mcp, binding=binding).register(tool_ops)
 

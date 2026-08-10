@@ -1199,9 +1199,7 @@ class TestHiddenParameterInjection:
             path='/issues.{format}',
         )
         shaped_operation = shape_operation(operation)
-        format_parameter = next(
-            parameter for parameter in shaped_operation.parameters if parameter.name == 'format'
-        )
+        format_parameter = next(parameter for parameter in shaped_operation.parameters if parameter.name == 'format')
         assert format_parameter.visible is False
         assert format_parameter.send_default is True
         assert 'format' not in _register(operation).parameters['properties']
@@ -1245,7 +1243,9 @@ class TestShapingLabel:
 
     def test_strategy_and_transforms_are_listed(self):
         """Strategy, request, and response each appear in the label."""
-        override = ToolOverride(strategy='replace', params={'x': {'type': 'string'}}, request='{}', response='r')
+        override = ToolOverride.model_validate(
+            {'strategy': 'replace', 'params': {'x': {'type': 'string'}}, 'request': '{}', 'response': 'r'}
+        )
         assert _shaping_label(override) == 'replace, request, response'
 
     def test_name_only_override_is_passthrough(self):
