@@ -19,7 +19,6 @@ class ParameterInfo(pydantic.BaseModel):
     location: typing.Literal['path', 'query', 'header', 'cookie', 'body']
     required: bool = False
     description: str = ''
-    schema_type: str = 'string'
     schema_: dict[str, typing.Any] = pydantic.Field(default_factory=dict, alias='schema')
     # Set by shape_operation from a ParamOverride default.
     # Marks a default the author wants sent upstream even when the LLM omits the parameter.
@@ -215,11 +214,72 @@ def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) ->
     return result
 
 
-def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
-    """Expand a JSON Schema fragment in place.
+def _normalize_nullable(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Rewrite an OpenAPI 3.0 ``nullable`` flag into the JSON Schema 2020-12 union form.
 
-    Resolves ``$ref``, flattens ``allOf`` via ``_deep_merge``,
-    and recurses into ``properties`` / ``items`` / ``oneOf`` / ``anyOf``.
+    ``{type: "X", nullable: true}`` becomes ``{type: ["X", "null"]}``,
+    and the ``nullable`` keyword, which 2020-12 does not define, is dropped.
+    A 3.1 ``type: ["X", "null"]`` is already correct and is left as is.
+    """
+    if 'nullable' not in schema:
+        return schema
+    result = {key: value for key, value in schema.items() if key != 'nullable'}
+    if schema['nullable']:
+        type_value = result.get('type')
+        if isinstance(type_value, str):
+            result['type'] = [type_value, 'null']
+        elif isinstance(type_value, list) and 'null' not in type_value:
+            result['type'] = [*type_value, 'null']
+    return result
+
+
+def _normalize_exclusive_bounds(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Rewrite OpenAPI 3.0 boolean ``exclusiveMinimum`` and ``exclusiveMaximum`` into 2020-12 numbers.
+
+    In 3.0 a ``true`` flag pairs with ``minimum`` or ``maximum`` to mark the bound as exclusive.
+    In 2020-12, which 3.1 already uses, the exclusive keyword holds the number itself,
+    so the paired bound folds into it.
+    A ``false`` flag only marks an inclusive bound, so it is dropped and the bound stays.
+    """
+    result = schema
+    for exclusive_key, bound_key in (('exclusiveMinimum', 'minimum'), ('exclusiveMaximum', 'maximum')):
+        if isinstance(result.get(exclusive_key), bool):
+            if result is schema:
+                result = dict(schema)
+            if result[exclusive_key] and bound_key in result:
+                result[exclusive_key] = result.pop(bound_key)
+            else:
+                del result[exclusive_key]
+    return result
+
+
+def _normalize_to_2020_12(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Rewrite OpenAPI 3.0 keywords into their JSON Schema 2020-12 equivalents.
+
+    MCP advertises tool input schemas as 2020-12, which strict clients validate.
+    A 3.0 construct left in place fails the call.
+    A 3.1 schema is already 2020-12 and passes through unchanged.
+    """
+    return _normalize_exclusive_bounds(_normalize_nullable(schema))
+
+
+# JSON Schema keywords whose value is a single nested schema.
+_SUBSCHEMA_KEYS = ('items', 'not', 'additionalProperties', 'propertyNames', 'contains', 'if', 'then', 'else')
+# Keywords whose value is a list of nested schemas.
+# ``allOf`` is absent here because it is flattened separately, not recursed in place.
+_SUBSCHEMA_LIST_KEYS = ('oneOf', 'anyOf', 'prefixItems')
+# Keywords whose value maps a name to a nested schema.
+_SUBSCHEMA_MAP_KEYS = ('properties', 'patternProperties', 'dependentSchemas')
+
+
+def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Expand a JSON Schema fragment into the form the gateway advertises.
+
+    Resolves ``$ref`` and flattens ``allOf`` via ``_deep_merge``,
+    then recurses into every nested-schema keyword so a construct buried at any depth is expanded too,
+    and finally rewrites OpenAPI 3.0 keywords into their JSON Schema 2020-12 equivalents.
+    Recursion keys off each keyword's presence rather than off ``type``,
+    since ``type`` is optional and a fragment may carry ``properties`` or ``items`` without declaring it.
     """
     if '$ref' in schema:
         resolved = _resolve_ref(raw, schema['$ref'])
@@ -228,23 +288,22 @@ def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) ->
     if 'allOf' in schema:
         merged: dict[str, typing.Any] = {}
         for sub in schema['allOf']:
-            expanded = _expand_schema(raw, sub)
-            merged = _deep_merge(merged, expanded)
+            merged = _deep_merge(merged, _expand_schema(raw, sub))
         return merged
 
     result = schema.copy()
-
-    if result.get('type') == 'object' and result.get('properties'):
-        result['properties'] = {k: _expand_schema(raw, v) for k, v in result['properties'].items()}
-    elif result.get('type') == 'array' and result.get('items'):
-        result['items'] = _expand_schema(raw, result['items'])
-
-    if 'oneOf' in result:
-        result['oneOf'] = [_expand_schema(raw, item) for item in result['oneOf']]
-    if 'anyOf' in result:
-        result['anyOf'] = [_expand_schema(raw, item) for item in result['anyOf']]
-
-    return result
+    for key in _SUBSCHEMA_KEYS:
+        if isinstance(result.get(key), dict):
+            result[key] = _expand_schema(raw, result[key])
+    for key in _SUBSCHEMA_LIST_KEYS:
+        if isinstance(result.get(key), list):
+            result[key] = [_expand_schema(raw, item) if isinstance(item, dict) else item for item in result[key]]
+    for key in _SUBSCHEMA_MAP_KEYS:
+        if isinstance(result.get(key), dict):
+            result[key] = {
+                name: _expand_schema(raw, sub) if isinstance(sub, dict) else sub for name, sub in result[key].items()
+            }
+    return _normalize_to_2020_12(result)
 
 
 def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str | None) -> list[dict[str, typing.Any]]:
@@ -304,7 +363,6 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                         location=param.get('in', 'query'),
                         required=param.get('required', False),
                         description=param.get('description', ''),
-                        schema_type=param_schema.get('type', 'string'),
                         schema=param_schema,
                     )
                 )
@@ -325,7 +383,6 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                                 location='body',
                                 required=prop_name in required_props,
                                 description=prop_schema.get('description', ''),
-                                schema_type=prop_schema.get('type', 'string'),
                                 schema=prop_schema,
                             )
                         )
