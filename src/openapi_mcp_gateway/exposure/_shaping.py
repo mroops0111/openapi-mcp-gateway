@@ -21,7 +21,6 @@ def _declared_parameter(name: str, param_override: ParamOverride) -> ParameterIn
         location='query',
         required=param_override.required,
         description=fragment.get('description', ''),
-        schema_type=fragment.get('type', 'string'),
         schema=fragment,
         send_default='default' in fragment,
     )
@@ -36,7 +35,6 @@ def _apply_tweak(parameter: ParameterInfo, param_override: ParamOverride) -> Non
     fragment = param_override.schema_fragment
     if param_override.declares_schema:
         parameter.schema_ = fragment
-        parameter.schema_type = fragment.get('type', parameter.schema_type)
         parameter.required = param_override.required
         parameter.send_default = 'default' in fragment
     elif 'default' in fragment:

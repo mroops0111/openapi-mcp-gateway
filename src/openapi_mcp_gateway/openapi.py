@@ -19,7 +19,6 @@ class ParameterInfo(pydantic.BaseModel):
     location: typing.Literal['path', 'query', 'header', 'cookie', 'body']
     required: bool = False
     description: str = ''
-    schema_type: str = 'string'
     schema_: dict[str, typing.Any] = pydantic.Field(default_factory=dict, alias='schema')
     # Set by shape_operation from a ParamOverride default.
     # Marks a default the author wants sent upstream even when the LLM omits the parameter.
@@ -228,20 +227,6 @@ def _type_names(type_value: typing.Any) -> set[str]:
     return set()
 
 
-def _primary_type(type_value: typing.Any) -> str:
-    """Reduce a possibly-array JSON Schema ``type`` to one representative string, ignoring ``null``.
-
-    OpenAPI 3.0 gives one string, so this is a no-op there.
-    OpenAPI 3.1 may give a list like ``["integer", "null"]``.
-    Only one string fits the ``schema_type`` fallback field, so this keeps one non-null member,
-    and the full array stays available on the parameter's ``schema``.
-    """
-    if isinstance(type_value, list):
-        non_null = [entry for entry in type_value if entry != 'null']
-        return non_null[0] if non_null else 'string'
-    return type_value if isinstance(type_value, str) else 'string'
-
-
 def _normalize_nullable(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Rewrite an OpenAPI 3.0 ``nullable`` flag into the JSON Schema 2020-12 union form.
 
@@ -384,7 +369,6 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                         location=param.get('in', 'query'),
                         required=param.get('required', False),
                         description=param.get('description', ''),
-                        schema_type=_primary_type(param_schema.get('type', 'string')),
                         schema=param_schema,
                     )
                 )
@@ -405,7 +389,6 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                                 location='body',
                                 required=prop_name in required_props,
                                 description=prop_schema.get('description', ''),
-                                schema_type=_primary_type(prop_schema.get('type', 'string')),
                                 schema=prop_schema,
                             )
                         )

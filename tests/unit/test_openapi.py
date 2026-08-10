@@ -160,7 +160,7 @@ class TestNullable:
         assert result['properties']['inner'] == {'type': ['string', 'null']}
 
     def test_parse_spec_handles_both_dialects(self):
-        """A spec mixing both nullable dialects parses without error, with a scalar schema_type."""
+        """A spec mixing both nullable dialects parses into the 2020-12 union form."""
         raw = {
             'openapi': '3.1.0',
             'info': {'title': 't', 'version': '1'},
@@ -177,9 +177,7 @@ class TestNullable:
             },
         }
         by_name = {p.name: p for p in parse_spec(raw).operations[0].parameters}
-        assert by_name['status'].schema_type == 'string'
         assert by_name['status'].schema_ == {'type': ['string', 'null']}
-        assert by_name['count'].schema_type == 'integer'
         assert by_name['count'].schema_ == {'type': ['integer', 'null']}
 
 
@@ -237,7 +235,7 @@ class TestParseSpec:
         list_pets = next(op for op in self.spec.operations if op.operation_id == 'listPets')
         limit = next(param for param in list_pets.parameters if param.name == 'limit')
         assert limit.location == 'query'
-        assert limit.schema_type == 'integer'
+        assert limit.schema_.get('type') == 'integer'
 
     def test_request_body_expanded(self):
         """``createPet`` body schema becomes individual body params with required flags."""

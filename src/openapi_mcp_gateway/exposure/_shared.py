@@ -168,7 +168,7 @@ def build_input_schema(operation: OperationInfo) -> dict[str, typing.Any]:
     for parameter_name, parameter in _iter_unique_sanitised_parameters(operation.parameters):
         if not parameter.visible:
             continue
-        property_schema = dict(parameter.schema_) if parameter.schema_ else {'type': parameter.schema_type}
+        property_schema = dict(parameter.schema_) if parameter.schema_ else {'type': 'string'}
         if parameter.description and 'description' not in property_schema:
             property_schema['description'] = parameter.description
         properties[parameter_name] = property_schema
