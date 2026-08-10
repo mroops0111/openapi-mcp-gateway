@@ -255,12 +255,49 @@ def _normalize_nullable(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     return result
 
 
+def _normalize_exclusive_bounds(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Rewrite OpenAPI 3.0 boolean ``exclusiveMinimum`` and ``exclusiveMaximum`` into 2020-12 numbers.
+
+    In 3.0 a ``true`` flag pairs with ``minimum`` or ``maximum`` to mark the bound as exclusive.
+    In 2020-12 the exclusive keyword holds the number itself, so the paired bound folds into it.
+    A ``false`` flag only marks an inclusive bound, so it is dropped and the bound stays.
+    """
+    result = schema
+    for exclusive_key, bound_key in (('exclusiveMinimum', 'minimum'), ('exclusiveMaximum', 'maximum')):
+        if isinstance(result.get(exclusive_key), bool):
+            if result is schema:
+                result = dict(schema)
+            if result[exclusive_key] and bound_key in result:
+                result[exclusive_key] = result.pop(bound_key)
+            else:
+                del result[exclusive_key]
+    return result
+
+
+def _normalize_example(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Move an OpenAPI ``example`` into the 2020-12 ``examples`` array, the keyword 2020-12 defines."""
+    if 'example' not in schema:
+        return schema
+    result = {key: value for key, value in schema.items() if key != 'example'}
+    result.setdefault('examples', [schema['example']])
+    return result
+
+
+def _sanitize_dialect(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Rewrite OpenAPI 3.0 keywords into their JSON Schema 2020-12 equivalents.
+
+    MCP advertises tool input schemas as 2020-12, which strict clients validate, so a 3.0 construct
+    left in place fails the call. A 3.1 schema is already 2020-12 and passes through unchanged.
+    """
+    return _normalize_example(_normalize_exclusive_bounds(_normalize_nullable(schema)))
+
+
 def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Expand a JSON Schema fragment in place.
 
     Resolves ``$ref``, flattens ``allOf`` via ``_deep_merge``,
-    recurses into ``properties`` / ``items`` / ``oneOf`` / ``anyOf``,
-    and normalizes OpenAPI 3.0 ``nullable`` into the 2020-12 union type.
+    recurses into ``properties`` / ``items`` / ``additionalProperties`` / ``oneOf`` / ``anyOf``,
+    and rewrites OpenAPI 3.0 keywords into their JSON Schema 2020-12 equivalents.
     """
     if '$ref' in schema:
         resolved = _resolve_ref(raw, schema['$ref'])
@@ -281,12 +318,14 @@ def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) ->
     elif 'array' in type_names and result.get('items'):
         result['items'] = _expand_schema(raw, result['items'])
 
+    if isinstance(result.get('additionalProperties'), dict):
+        result['additionalProperties'] = _expand_schema(raw, result['additionalProperties'])
     if 'oneOf' in result:
         result['oneOf'] = [_expand_schema(raw, item) for item in result['oneOf']]
     if 'anyOf' in result:
         result['anyOf'] = [_expand_schema(raw, item) for item in result['anyOf']]
 
-    return _normalize_nullable(result)
+    return _sanitize_dialect(result)
 
 
 def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str | None) -> list[dict[str, typing.Any]]:

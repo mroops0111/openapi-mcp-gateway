@@ -183,6 +183,30 @@ class TestNullable:
         assert by_name['count'].schema_ == {'type': ['integer', 'null']}
 
 
+class TestExclusiveBoundsAndExample:
+    """OpenAPI 3.0 exclusive bounds and ``example`` are rewritten to their 2020-12 forms."""
+
+    def test_boolean_exclusive_minimum_becomes_number(self):
+        """``{minimum, exclusiveMinimum: true}`` folds the bound into a numeric ``exclusiveMinimum``."""
+        result = _expand_schema({}, {'type': 'integer', 'minimum': 0, 'exclusiveMinimum': True})
+        assert result == {'type': 'integer', 'exclusiveMinimum': 0}
+
+    def test_boolean_exclusive_minimum_false_is_dropped(self):
+        """``exclusiveMinimum: false`` marks an inclusive bound, so only the flag is dropped."""
+        result = _expand_schema({}, {'type': 'integer', 'minimum': 0, 'exclusiveMinimum': False})
+        assert result == {'type': 'integer', 'minimum': 0}
+
+    def test_numeric_exclusive_maximum_is_left_as_is(self):
+        """A 2020-12 numeric ``exclusiveMaximum`` passes through unchanged."""
+        result = _expand_schema({}, {'type': 'integer', 'exclusiveMaximum': 10})
+        assert result == {'type': 'integer', 'exclusiveMaximum': 10}
+
+    def test_example_moves_to_examples(self):
+        """A singular ``example`` becomes a 2020-12 ``examples`` array."""
+        result = _expand_schema({}, {'type': 'string', 'example': 'hi'})
+        assert result == {'type': 'string', 'examples': ['hi']}
+
+
 class TestParseSpec:
     """End-to-end ``parse_spec`` against the petstore fixture."""
 
