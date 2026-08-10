@@ -150,17 +150,21 @@ class ResourceGenerator:
         self.binding = binding
         self.server_name = server_name
 
-    def register(self, operations: list[OperationInfo]) -> None:
-        """Declare one MCP resource per ``OperationInfo`` in ``operations``."""
+    def register(self, operations: list[OperationInfo]) -> list[str]:
+        """Declare one MCP resource per ``OperationInfo`` in ``operations``, returning the resource names."""
+        resource_names: list[str] = []
         for operation in operations:
             override = _get_override(operation, 'resource')
             uri = derive_resource_uri(self.server_name, operation)
             read_function = build_resource_read_function(operation, self.binding)
+            name = derive_name(operation, override.name if override else None)
             self.mcp.resource(
                 uri,
-                name=derive_name(operation, override.name if override else None),
+                name=name,
                 description=derive_description(operation, override.description if override else None),
                 mime_type=derive_resource_mime_type(operation),
             )(read_function)
+            resource_names.append(name)
             logger.debug('Resource registered: %s ← %s %s', uri, operation.method.upper(), operation.path)
         logger.info('Registered %d MCP resource(s) on server "%s"', len(operations), self.mcp.name)
+        return resource_names
