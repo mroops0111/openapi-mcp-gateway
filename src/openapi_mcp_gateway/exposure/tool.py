@@ -9,7 +9,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, ToolAnnotations
 
-from ..openapi import OperationInfo
+from ..openapi import ExposedTool, OperationInfo, ToolOverride
 from ._shaping import shape_operation
 from ._shared import (
     _get_override,
@@ -41,6 +41,20 @@ _CALL_OPERATION_DESCRIPTION = (
     'Invoke an operation by name with a JSON object of arguments. '
     'Argument keys must match the keys in `get_operation(name).input_schema.properties`.'
 )
+
+
+def _shaping_label(tool_override: ToolOverride | None) -> str:
+    """Summarise a tool override as a short label, or "passthrough" when nothing reshapes the call."""
+    if tool_override is None:
+        return 'passthrough'
+    parts: list[str] = []
+    if tool_override.params and tool_override.strategy:
+        parts.append(tool_override.strategy)
+    if tool_override.request:
+        parts.append('request')
+    if tool_override.response:
+        parts.append('response')
+    return ', '.join(parts) if parts else 'passthrough'
 
 
 def derive_tool_title(operation: OperationInfo) -> str | None:
@@ -92,7 +106,11 @@ def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, 
     then optional parameters with ``default=None``.
     Dedupes by sanitised identifier.
     """
-    ordered_parameters = list(_iter_unique_sanitised_parameters(operation.parameters))
+    ordered_parameters = [
+        (name, parameter)
+        for name, parameter in _iter_unique_sanitised_parameters(operation.parameters)
+        if parameter.visible
+    ]
     # Namespace nested model names by operationId, so two tools that expose a same-named body param
     # get distinct generated classes in the resulting JSON Schema.
     operation_name_prefix = inflection.camelize(operation.operation_id)
@@ -196,8 +214,9 @@ class ToolGenerator:
         self.mcp = mcp
         self.binding = binding
 
-    def register(self, operations: list[OperationInfo]) -> None:
-        """Declare one MCP tool per ``OperationInfo`` in ``operations``."""
+    def register(self, operations: list[OperationInfo]) -> list[ExposedTool]:
+        """Declare one MCP tool per ``OperationInfo`` in ``operations``, returning what was exposed."""
+        exposed_tools: list[ExposedTool] = []
         for operation in operations:
             # Shape once, then feed the shaped operation to every consumer (schema, signature, upstream),
             # so hidden / default / description overrides stay consistent across all of them.
@@ -220,8 +239,12 @@ class ToolGenerator:
             # Overwrite it with the schema built straight from the operation, so the LLM sees the real contract.
             # build_tool_function enforces this same schema before the upstream call, so display and validation match.
             registered.parameters = build_input_schema(shaped_operation)
+            exposed_tools.append(
+                ExposedTool(name, shaped_operation.method, shaped_operation.path, _shaping_label(tool_override))
+            )
             logger.debug('Tool registered: %s ← %s %s', name, shaped_operation.method.upper(), shaped_operation.path)
         logger.info('Registered %d MCP tool(s) on server "%s"', len(operations), self.mcp.name)
+        return exposed_tools
 
 
 class MetaToolGenerator:
@@ -237,8 +260,8 @@ class MetaToolGenerator:
         self.binding = binding
         self._registry: dict[str, _MetaToolEntry] = {}
 
-    def register(self, operations: list[OperationInfo]) -> None:
-        """Populate the registry from ``operations`` and bind the three meta-tools."""
+    def register(self, operations: list[OperationInfo]) -> list[ExposedTool]:
+        """Populate the registry from ``operations`` and bind the three meta-tools, returning them."""
         for operation in operations:
             # Same shaping as the static path, so a dynamic operation exposes the identical surface.
             # Meta-tools carry no per-operation annotations, so annotation overrides do not apply here.
@@ -259,6 +282,12 @@ class MetaToolGenerator:
             len(self._registry),
             self.mcp.name,
         )
+        operation_count = len(self._registry)
+        return [
+            ExposedTool('list_operations', '-', '-', f'dynamic, {operation_count} operation(s)'),
+            ExposedTool('get_operation', '-', '-', 'dynamic'),
+            ExposedTool('call_operation', '-', '-', 'dynamic'),
+        ]
 
     def _bind_meta_tools(self) -> None:
         registry = self._registry
