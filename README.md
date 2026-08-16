@@ -17,47 +17,37 @@ uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 # Server live at http://127.0.0.1:8000/api/mcp
 ```
 
-- **Multi-Spec, Multi-Auth.** Mount GitHub, an OAuth2 SaaS, and your internal API side by side, each with its own bearer / API key / OAuth2 auth and token namespace.
+- **Multi-Spec, Multi-Auth.** Mount GitHub, an OAuth2 SaaS, and your internal API side by side, each with its own auth and token namespace.
+- **Spec-Compliant Authorization.** The gateway runs its own OAuth server and mints audience-bound upstream tokens, so the MCP client's credential is never replayed against a third party.
+- **Tool Shaping.** Rename ugly `operationId`s, hide knobs the model should never touch, and rewrite requests and responses with JSONata, all in YAML with no fork required.
+- **Dynamic Exposure.** Front a 1,200-operation spec with three `list → get → call` meta-tools, so connecting to it does not spend the LLM's whole context window on tool schemas.
+- **Resources, Not Just Tools.** Eligible read-only GETs register as MCP resources instead, addressable by URI and surfaced by the client rather than guessed at by the model.
 - **FastAPI-Native.** Decorate routes with `@mcp_tool` to expose them in-process over ASGI, no extra hop and no second spec to maintain.
-- **Dynamic Exposure.** Front a huge spec with three `list → get → call` meta-tools instead of hundreds of schemas, so it never blows the LLM's context window.
-- **Resource Auto-Promotion.** Set `mode: auto` and eligible GETs register as MCP resources instead of tools, keeping the tool list small while reads stay addressable by URI.
-- **Spec-Compliant Authorization.** Audience-bound tokens with no silent passthrough to upstreams, plus protocol-native `annotations` and `structuredContent` on every tool.
-- **Tool Name and Description Overrides.** Rewrite ugly `operationId`s and empty descriptions in YAML, no fork required.
-- **Tool Shaping.** Declare a friendly input schema and rewrite the request and response with JSONata, turning a raw endpoint with a filter DSL and a bloated envelope into a clean two-argument tool.
-- **Pluggable Token Store.** Memory by default, switch to Redis to share OAuth credential state across replicas. It holds OAuth tokens and client registrations, never MCP protocol sessions, so single-replica or non-OAuth deployments do not need it.
-- **Every Transport.** Streamable HTTP and stdio on the same binary, from Claude Desktop and Cursor to any other MCP client. SSE still works but is deprecated in the 2026-07-28 spec, so new deployments should choose streamable HTTP.
 
 ---
 
 ## Installation
 
-Add the gateway to your project with [uv](https://docs.astral.sh/uv/):
-
 ```bash
 uv add openapi-mcp-gateway
+uv add "openapi-mcp-gateway[redis]"   # optional, Redis token store for multi-replica OAuth
 ```
 
-Optional extras:
-
-```bash
-uv add "openapi-mcp-gateway[redis]"   # Redis token store, used for auth memoization
-```
-
-Requires Python 3.11+.
+Requires Python 3.11+. To skip the install entirely, `uvx openapi-mcp-gateway` runs the published package directly.
 
 ## Quick Start
+
+Every example below uses `uv run`, which assumes the install above.
 
 ### 1. Public API, No Auth
 
 ```bash
-# `uv run` assumes you ran `uv add openapi-mcp-gateway` (see Installation above).
-# To skip the install, swap in `uvx openapi-mcp-gateway` to run the published package directly.
 uv run openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
 ```
 
 Connect an MCP client to `http://127.0.0.1:8000/petstore/mcp`.
 
-### 2. Bearer Token
+### 2. Bearer Token or API Key
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
@@ -68,7 +58,10 @@ uv run openapi-mcp-gateway \
     --auth-token '${GITHUB_TOKEN}'
 ```
 
-For an API-key header, use config so the header name is explicit:
+<details>
+<summary><b>API-key header instead of a bearer token</b></summary>
+
+Use a config file so the header name is explicit:
 
 ```yaml
 servers:
@@ -80,9 +73,11 @@ servers:
       api_key_header: api_key
 ```
 
-### 3. OAuth2, Per-User Delegation (`authorization_code`)
+</details>
 
-The gateway runs its own OAuth server so each MCP client authenticates as its own end-user, with tokens minted per session.
+### 3. OAuth2
+
+The gateway runs its own authorization server rather than asking you to paste an upstream token into config. `authorization_code` gives each end-user their own upstream token, minted per session. `client_credentials` uses the gateway's own service credentials to share one token across every client.
 
 ```bash
 export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
@@ -95,29 +90,14 @@ uv run openapi-mcp-gateway \
     --auth-scopes "openid,email,profile,users:read,workspaces:read"
 ```
 
-### 4. OAuth2, Service Token (`client_credentials`)
+For the service-token flow, add `--auth-flow client_credentials`. Both flows are also configurable per server under `auth:` in YAML.
 
-The gateway holds its own credentials and shares one upstream token across every MCP client, no per-user OAuth dance:
-
-```bash
-export SVC_CLIENT_ID="..." SVC_CLIENT_SECRET="..."
-uv run openapi-mcp-gateway \
-    --spec ./service-api.json \
-    --name svc \
-    --auth-type oauth2 \
-    --auth-flow client_credentials \
-    --auth-client-id '${SVC_CLIENT_ID}' \
-    --auth-client-secret '${SVC_CLIENT_SECRET}'
-```
-
-### 5. Multiple APIs at Once
+### 4. Multiple APIs at Once
 
 Mix public, bearer, and OAuth2 services in a single config. Each server is mounted at `/{name}/mcp`:
 
 ```yaml
 # servers.yml
-host: "127.0.0.1"
-port: 8000
 url: http://127.0.0.1:8000   # public base URL for OAuth callbacks
 
 servers:
@@ -145,23 +125,9 @@ servers:
       scopes: [openid, email, profile, users:read, workspaces:read]
 ```
 
-What this gives you at `http://127.0.0.1:8000`:
+That one file serves 13 tools with 3 concrete resources and 3 resource templates at `/petstore/mcp`, three meta-tools fronting ~1,200 endpoints at `/github/mcp`, and per-user OAuth2 against Asana's IdP at `/asana/mcp`. No spec edits anywhere. Run it with `uv run openapi-mcp-gateway --config servers.yml`.
 
-- `/petstore/mcp`: 13 tools + 3 concrete resources + 3 resource templates, partitioned by `mode: auto` with no spec edits.
-- `/github/mcp`: three meta-tools (`list_operations`, `get_operation`, `call_operation`) fronting ~1,200 endpoints.
-- `/asana/mcp`: per-user OAuth2 against Asana's IdP, with tokens minted server-side (see [Authorization](#authorization)).
-
-```bash
-export GITHUB_TOKEN="ghp_..."
-export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
-uv run openapi-mcp-gateway --config servers.yml
-```
-
-Runnable variants live in [`examples/`](examples/). Each YAML lists its prerequisites at the top.
-
-`${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`. Override with `auth.authorization_url` / `auth.token_url` / `auth.scopes` when the spec is incomplete.
-
-### 6. Local Desktop Client (stdio)
+### 5. Local Desktop Client (stdio)
 
 For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
 
@@ -169,10 +135,8 @@ For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
 {
   "mcpServers": {
     "petstore": {
-      "command": "uv",
+      "command": "uvx",
       "args": [
-        "run",
-        "--project", "/abs/path/to/your/project",
         "openapi-mcp-gateway",
         "--spec", "/abs/path/to/openapi.json",
         "--transport", "stdio"
@@ -182,21 +146,34 @@ For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
 }
 ```
 
+### More Examples
+
+Runnable configs for every scenario above live in [`examples/`](examples/), each with its prerequisites documented at the top.
+
 ## Authorization
 
-The gateway runs its own authorization server and mints upstream tokens server-side, so each MCP client authenticates as its own end-user and never handles a third-party credential directly. Tokens are audience-bound and scoped to their `(server, user)` pair, so a token minted for one upstream is never replayed against another.
+The gateway mints upstream tokens server-side, so each MCP client authenticates as its own end-user and never handles a third-party credential directly. Tokens are audience-bound and scoped to their `(server, user)` pair, so a token minted for one upstream is never replayed against another.
 
-The gateway does not silently pass the MCP client's token through to third-party upstreams, in line with the MCP spec's [Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction). For `authorization_code` it mints per-user tokens against the upstream IdP per [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707), and for `client_credentials` it uses its own service credentials. The one exception is the FastAPI integration, which runs in-process at the same OAuth audience, so the client's `Authorization` header is forwarded verbatim (see [Expose Your FastAPI App as MCP Tools](#expose-your-fastapi-app-as-mcp-tools)).
+<details>
+<summary><b>Passthrough policy and token lifetimes</b></summary>
 
-For `authorization_code`, the MCP access token lives 1 hour and the refresh token 24 hours by default. Each refresh issues a fresh refresh token, so the refresh TTL is the practical re-authorization cadence. A client that refreshes within it never has to sign in again, while one idle past it must re-authorize. Tune both per server with `auth.mcp_access_token_ttl` and `auth.mcp_refresh_token_ttl`.
+The gateway does not silently pass the MCP client's token through to third-party upstreams, in line with the MCP spec's [Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction). For `authorization_code` it mints per-user tokens against the upstream IdP per [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707), and for `client_credentials` it uses its own service credentials. The one exception is the [FastAPI integration](#fastapi-integration), which runs in-process at the same OAuth audience, so the client's `Authorization` header is forwarded verbatim.
 
-Tool results are spec-compliant too. Every tool carries a protocol-native `title`, `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), and `structuredContent`, so an agent can judge a tool before calling it and read structured error bodies without re-parsing text.
+For `authorization_code`, the MCP access token lives 1 hour and the refresh token 24 hours by default. Each refresh issues a fresh refresh token, so the refresh TTL is the practical re-authorization cadence. A client that refreshes within it never has to sign in again, while one idle past it must re-authorize. Tune both with `auth.mcp_access_token_ttl` and `auth.mcp_refresh_token_ttl`.
+
+</details>
+
+## Tool Results
+
+Every registered tool carries a protocol-native `title` and `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), so an agent can judge a tool before calling it. Results carry `structuredContent`, so a client reads a typed body and structured error payloads without re-parsing text. None of this needs configuration.
 
 ## Configuration
 
-Run `uv run openapi-mcp-gateway --help` for the CLI reference. The [Quick Start](#quick-start) examples cover most setups. The full field reference is below.
+Run `uv run openapi-mcp-gateway --help` for the CLI reference. The [Quick Start](#quick-start) covers most setups, and the full field reference is below.
 
 Configuration merges in this order, with each layer overriding the previous: **defaults → YAML (`--config`) → CLI flags → `Gateway.run(...)` kwargs**. A layer only overrides the fields it actually sets, so `--log-level=DEBUG` won't reset `logging.format` from your YAML. Nested objects like `logging` and per-server `auth` merge field-by-field. The `servers` list is the exception, replaced wholesale rather than merged entry-by-entry.
+
+`${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`, and the `auth.*` fields below override them when the spec is incomplete.
 
 <details>
 <summary><b>Top-Level Fields</b></summary>
@@ -207,7 +184,7 @@ Configuration merges in this order, with each layer overriding the previous: **d
 | `port` | int | `8000` | Bind port |
 | `url` | string | *(empty)* | Public base URL for OAuth redirects and discovery. When unset: `http://localhost:{port}` if `host` is `0.0.0.0`, otherwise `http://{host}:{port}`. Override when your registered redirect URI uses another host (tunnel, reverse proxy, etc.). |
 | `transport` | string | `streamable-http` | `streamable-http`, `stdio`, or `sse` (deprecated) |
-| `store.type` | string | `memory` | `memory` or `redis` |
+| `store.type` | string | `memory` | `memory` or `redis`. Redis shares OAuth credential state across replicas. It holds OAuth tokens and client registrations, never MCP protocol sessions, so single-replica or non-OAuth deployments can stay on `memory`. |
 | `store.redis_url` | string | `redis://localhost:6379` | Redis URL when `store.type: redis` |
 | `logging.level` | string | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `logging.format` | string | `text` | `text` or `json` |
@@ -228,6 +205,7 @@ Configuration merges in this order, with each layer overriding the previous: **d
 | `auth.token` | string |  | Required for `bearer` / `api_key` |
 | `auth.api_key_header` | string | `X-API-Key` | Header name for `api_key` |
 | `auth.client_id`, `auth.client_secret` | string |  | Required for `oauth2` |
+| `auth.flow` | string | from spec | `authorization_code` for per-user delegation, `client_credentials` for a shared service token. When unset the gateway prefers the spec's declared `authorizationCode` flow, falling back to whatever else it declares. |
 | `auth.scopes`, `auth.authorization_url`, `auth.token_url` |  | from spec | OAuth2 overrides when `securitySchemes` is incomplete |
 | `auth.mcp_access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints for `authorization_code` |
 | `auth.mcp_refresh_token_ttl` | int | `86400` | Lifetime in seconds of the MCP refresh token. This is the practical re-authorization cadence, since each refresh slides the window forward |
@@ -242,7 +220,10 @@ Configuration merges in this order, with each layer overriding the previous: **d
 
 ### Filtering Operations
 
-Use `policy.allow` and `policy.deny` with `fnmatch` syntax against operation IDs (`getUsers`, `create*`) or method + path (`GET /users/*`):
+Use `policy.allow` and `policy.deny` with `fnmatch` syntax against operation IDs (`getUsers`, `create*`) or method + path (`GET /users/*`).
+
+<details>
+<summary><b>Filter syntax and ordering</b></summary>
 
 ```yaml
 policy:
@@ -252,22 +233,20 @@ policy:
 
 Operations can also be opted in from the spec side with `x-mcp-integration: {tool: {}}` plus `policy.marked_only: true`. Filters apply in order: `marked_only`, then `allow`, then `deny`.
 
+</details>
+
 ### Resource Exposure
 
-Read-only `GET` operations are a better fit for the MCP **resource** primitive than for a tool. Most MCP clients do not auto-load resources into the LLM context, so promoting catalog-style endpoints to resources saves tokens without losing reachability.
+Read-only `GET` operations are a better fit for the MCP **resource** primitive than for a tool. Tools are model-controlled, so the LLM decides when to call one. Resources are application-controlled, surfaced by the client or picked by the user. A `GET` that is fully identified by its URL is a thing that exists at an address, which is what a URI is for.
 
-The default `mode: tool_only` exposes every operation as a tool. Set `mode: auto` to promote eligible GETs (no required `query` / `header` / `body` parameter) to resources:
+Set `mode: auto` and every eligible GET promotes automatically. Eligible means no required `query`, `header`, or body parameter. Required path parameters are fine and turn the operation into a resource template. Against the vanilla Petstore3 spec that yields 13 tools, 3 concrete resources, and 3 resource templates with zero spec edits.
 
-```yaml
-servers:
-  - name: petstore
-    spec: https://petstore3.swagger.io/api/v3/openapi.json
-    mode: auto
-```
+Keeping those endpoints off the tool list also saves context, since most clients do not auto-load resources. Resource support is uneven across the ecosystem, though, and an agent framework that ignores resources entirely will not reach a promoted operation at all. Stay on the default `mode: tool_only` when that is your target.
 
-That covers the common case: against the vanilla Petstore3 spec it produces 13 tools, 3 concrete resources, and 3 resource templates, zero spec edits.
+<details>
+<summary><b>Per-operation control, from YAML or from the spec</b></summary>
 
-For finer per-operation control (rename the resource, set a custom URI template, set a non-JSON MIME type), use the `operations` map:
+To rename a resource, set a custom URI template, or set a non-JSON MIME type, use the `operations` map keyed by `operationId`:
 
 ```yaml
 servers:
@@ -284,9 +263,7 @@ servers:
           name: inventory
 ```
 
-Keys are matched against `operationId`. An unknown id raises at startup so typos do not silently no-op. Each entry fully replaces (does not merge with) the spec-side `x-mcp-integration`. A runnable demo lives at [`examples/petstore-override.yml`](examples/petstore-override.yml).
-
-If you own the upstream spec, write the same opt-in inline with `x-mcp-integration.resource`:
+If you own the upstream spec, write the same opt-in inline instead:
 
 ```yaml
 paths:
@@ -297,14 +274,21 @@ paths:
         resource:
           name: pet
           mime_type: application/json
-          # uri_template: petstore://v2/pets/{petId}  # optional override, must start with "<server>://"
+          # uri_template: petstore://v2/pets/{petId}  # optional, must start with "<server>://"
 ```
 
-Declaring both `tool` and `resource` registers the operation on both surfaces. Resource declarations are validated at startup: non-`GET` methods, required non-path parameters, and `uri_template` values that do not start with `<server>://` abort `Gateway.from_config` with a concrete error. Subscriptions are not implemented because REST has no native push.
+Declaring both `tool` and `resource` registers the operation on both surfaces. Each entry fully replaces (does not merge with) the spec-side `x-mcp-integration`. A runnable demo lives at [`examples/petstore-override.yml`](examples/petstore-override.yml).
 
-### Tool Name and Description Overrides
+An unknown `operationId` raises at startup so typos do not silently no-op. Resource declarations are validated there too, so non-`GET` methods, required non-path parameters, and `uri_template` values that do not start with `<server>://` abort `Gateway.from_config` with a concrete error. Subscriptions are not implemented because REST has no native push.
 
-Real-world specs ship ugly `operationId`s (GitHub's `actions/list-jobs-for-workflow-run-attempt`) and empty descriptions (most of `gists/*`), leaving the LLM to guess intent from the name. The same `operations` map renames the tool and rewrites the description without forking the spec:
+</details>
+
+### Tool Shaping
+
+A raw operation rarely makes a good tool. Its `operationId` is ugly (GitHub's `actions/list-jobs-for-workflow-run-attempt`), its description is empty (most of `gists/*`), it takes a cryptic filter DSL alongside a dozen knobs the model should never touch, and it wraps the few useful fields in a large envelope. `x-mcp-integration.tool` fixes all of that without forking the spec. `name` and `description` fix how the tool presents itself, while `params`, `strategy`, `request`, and `response` reshape the interface behind it.
+
+<details>
+<summary><b>Renaming a GitHub operation</b></summary>
 
 ```yaml
 servers:
@@ -320,29 +304,19 @@ servers:
             line counts.
 ```
 
-If you own the upstream spec, the inline form is `x-mcp-integration.tool` on the operation.
+If you own the upstream spec, write the same block inline as `x-mcp-integration.tool` on the operation.
 
-### Tool Shaping
-
-A raw operation rarely makes a good tool. It may take a cryptic filter DSL, expose a dozen knobs the model should never touch, and wrap the few useful fields in a large envelope. `x-mcp-integration.tool` reshapes an operation on both sides without forking the spec, pairing a declarative input layer with [JSONata](https://jsonata.org/) expressions for the value transforms. Three keys work together.
-
-- **`params` and `strategy`**: declare what the model sees.
-- **`request`**: a JSONata expression that maps the friendly arguments onto the upstream request.
-- **`response`**: a JSONata expression that reshapes the upstream body before it reaches the client.
-
-#### Input Schema
-
-`strategy` decides how `params` relates to the spec and is mandatory whenever `params` is set. Each `params` entry is then a JSON Schema fragment plus two flags.
-
-- **`strategy`**:
-  - **`merge`**: tweaks the operation's existing parameters and keeps the rest visible, so a parameter the spec does not define is an error.
-  - **`replace`**: makes the declared entries the whole schema and drops every spec parameter, so it needs a `request` to route the friendly arguments upstream.
-- **`type`**: one of `string`, `integer`, `number`, `boolean`, `array`, `object`, alongside the usual JSON Schema keywords (`enum`, `default`, `description`, `format`, `minimum`, `items`, and so on).
-- **`required`**: lifts the parameter into the schema's required list.
-- **`hidden`**: removes a spec parameter from the surface.
+</details>
 
 <details>
-<summary><b><code>merge</code> Example</b></summary>
+<summary><b>Reshaping the interface with <code>params</code>, <code>strategy</code>, <code>request</code>, and <code>response</code></b></summary>
+
+The input layer is declarative and the value transforms are [JSONata](https://jsonata.org/) expressions.
+
+**`params` and `strategy` shape what the model sees.** Each `params` entry is a JSON Schema fragment (`type`, `enum`, `default`, `description`, `format`, `minimum`, `items`, and so on) plus two flags. `required` lifts the parameter into the schema's required list, and `hidden` removes a spec parameter from the surface. `strategy` is mandatory whenever `params` is set:
+
+- **`merge`**: tweaks the operation's existing parameters and keeps the rest visible, so declaring a parameter the spec does not define is an error.
+- **`replace`**: makes the declared entries the whole schema and drops every spec parameter, so it always needs a `request` to route the friendly arguments upstream.
 
 ```yaml
 operations:
@@ -355,75 +329,41 @@ operations:
         sort: { description: "One of comments, created, updated." }
 ```
 
-</details>
-
-<details>
-<summary><b><code>replace</code> Example</b></summary>
+**`request` and `response` transform the values.** Both are optional and independent of each other. `request` builds the entire upstream request, and `response` reshapes a successful body before it reaches the client.
 
 ```yaml
 operations:
-  discover_movies:
+  searchIssues:
     tool:
-      strategy: replace
-      params:
-        sort:
-          type: string
-          enum: [popular, top_rated, newest]
-          default: popular
-        page:
-          type: integer
-          default: 1
       request: |
-        {
-          "sort_by": $lookup(
-            {"popular": "popularity.desc", "top_rated": "vote_average.desc", "newest": "primary_release_date.desc"},
-            sort
-          ),
-          "page": page,
-          "include_adult": false,
-          "language": "en-US"
-        }
+        $merge([$, { "per_page": 30, "state": "open" }])
       response: |
-        [results.{ "title": title, "overview": overview, "rating": vote_average }]
+        [items.{ "title": title, "url": html_url }]
 ```
 
-The model sees only `sort` and `page`. `request` maps them onto the raw query and injects the locale and safety flags, and `response` trims each result. `$lookup` translates a friendly enum into the raw value, and the surrounding `[ ... ]` keeps the result a list even for a single match.
+- **Routing**: a key that names a path placeholder fills the path, and the rest become query parameters for a body-less method or the JSON body otherwise.
+- **Passthrough**: `$merge([$, { ... }])` forwards the incoming arguments and overrides only the keys you name, as above.
+- **Lists**: wrapping a mapping in `[ ... ]` keeps the result an array even when a single item matches.
+- **Errors**: a broken expression is rejected at startup, and a runtime failure returns an `isError` result naming the side that broke.
+
+For a full `replace` example, where the declared `params` are the entire surface and `request` maps a friendly enum onto the raw query with `$lookup`, see [`examples/movie-shaping.yml`](examples/movie-shaping.yml).
 
 </details>
 
-#### Request and Response
-
-`request` builds the entire upstream request, and `response` transforms a successful body. Both are optional and independent.
-
-- **Routing**: a key that names a path placeholder fills the path, and the rest become query parameters for a body-less method or the JSON body otherwise.
-- **Passthrough**: to forward the incoming arguments and change only a few, merge them with `$merge([$, { ... }])`.
-- **Errors**: a broken expression is rejected at startup, and a runtime failure returns an `isError` result naming the side that broke.
-
-A runnable end-to-end example lives at [`examples/movie-shaping.yml`](examples/movie-shaping.yml).
-
 ### Dynamic Exposure
 
-For APIs with hundreds of operations (GitHub, Stripe, etc.), registering each as its own tool can blow the LLM's context window before the agent does anything. Set `exposure: dynamic` and the client sees three meta-tools instead:
+For APIs with hundreds of operations (GitHub, Stripe, etc.), registering each as its own tool can blow the LLM's context window before the agent does anything. Set `exposure: dynamic` and the client sees three meta-tools instead, which the LLM walks as `list → get → call` to discover and invoke operations on demand. It is per-server, so `/github/mcp` can run `dynamic` while `/petstore/mcp` runs `static` in the same process.
 
-```yaml
-servers:
-  - name: github
-    spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
-    exposure: dynamic   # default is 'static'
-    auth:
-      type: bearer
-      token: ${GITHUB_TOKEN}
-```
-
-The three meta-tools:
+<details>
+<summary><b>The three meta-tools</b></summary>
 
 - `list_operations()` returns `[{name, description}, ...]` for every operation on this server.
 - `get_operation(name)` returns one operation's JSON Schema for input arguments.
 - `call_operation(name, arguments)` invokes that operation against the upstream.
 
-The LLM walks `list → get → call` to discover and invoke operations on demand. Auth, path templating, and per-operation request shape match static mode. Only the surfacing changes.
+Auth, path templating, and per-operation request shape match static mode, so only the surfacing changes. See [`examples/github-dynamic.yml`](examples/github-dynamic.yml) for a runnable config.
 
-`exposure` is per-server, so `/github/mcp` can run `dynamic` while `/petstore/mcp` runs `static` in the same process.
+</details>
 
 ### Logging
 
@@ -436,17 +376,13 @@ Configure via the `logging.*` YAML keys or via CLI flags (`--log-level`, `--log-
 ```
 /plugin marketplace add mroops0111/openapi-mcp-gateway
 /plugin install openapi-mcp-gateway
-```
 
-Then, for example:
-
-```
 /generate-config connect our GitHub so my assistant can manage issues
 ```
 
 ## Python API
 
-Use the gateway as a library:
+The gateway works as a library, either standalone or wrapped around an app you already run.
 
 ```python
 from openapi_mcp_gateway import Gateway
@@ -465,9 +401,12 @@ gateway.add_server(
 gateway.run(port=8000)
 ```
 
-### Expose Your FastAPI App as MCP Tools
+### FastAPI Integration
 
-Already running FastAPI? Decorate the routes you want exposed with `@mcp_tool` and the gateway picks them up. No second spec, no separate process, and no extra network hop (calls go in-process through `httpx.ASGITransport`):
+If you already run FastAPI, decorate the routes you want exposed with `@mcp_tool` and the gateway picks them up. No second spec, no separate process, and no extra network hop, since calls go in-process through `httpx.ASGITransport`. Auth is auto-detected from the app's `securitySchemes`, and passing an explicit `auth=AuthConfig(...)` to `Gateway.from_fastapi` overrides it.
+
+<details>
+<summary><b>Decorating routes with <code>@mcp_tool</code></b></summary>
 
 ```python
 from fastapi import FastAPI
@@ -487,7 +426,7 @@ def health():
 Gateway.from_fastapi(app, name="myapp").run()
 ```
 
-Auth is auto-detected from the app's `securitySchemes`. Override by passing an explicit `auth=AuthConfig(...)` to `Gateway.from_fastapi`.
+</details>
 
 <details>
 <summary><b>How auth works for the FastAPI integration</b></summary>
@@ -496,9 +435,12 @@ Because the gateway runs in-process and routes through `httpx.ASGITransport`, ga
 
 </details>
 
-### Embed in an Existing FastAPI App
+### Mounting into an Existing App
 
-To serve MCP alongside your own routes, build a `Gateway` and mount it onto your app. `mount` attaches every MCP sub-app at its configured path and also registers the OAuth authorization-server and `.well-known` discovery routes those servers own, so an OAuth flow works end to end:
+To serve MCP alongside your own routes, build a `Gateway` and mount it onto your app. `mount` attaches every MCP sub-app at its configured path and also registers the OAuth authorization-server and `.well-known` discovery routes those servers own, so an OAuth flow works end to end.
+
+<details>
+<summary><b>Mounting onto your own FastAPI app</b></summary>
 
 ```python
 from fastapi import FastAPI
@@ -515,9 +457,9 @@ gateway = Gateway.from_config(
 gateway.mount(app)  # mounts /petstore/mcp plus its OAuth and .well-known routes
 ```
 
-Set `GatewayConfig.url` to the host app's public URL so discovery documents and OAuth redirect URLs point at the right origin.
+Set `GatewayConfig.url` to the host app's public URL so discovery documents and OAuth redirect URLs point at the right origin. The upstream OAuth callback for a server named `<server>` is fixed at `/<server>/auth/callback`, so keep it clear of your app's own callback paths.
 
-The upstream OAuth callback for a server named `<server>` is fixed at `/<server>/auth/callback`. Keep it clear of your app's own callback paths.
+</details>
 
 ## License
 
