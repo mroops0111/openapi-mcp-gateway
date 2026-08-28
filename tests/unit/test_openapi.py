@@ -181,6 +181,93 @@ class TestNullable:
         assert by_name['count'].schema_ == {'type': ['integer', 'null']}
 
 
+class TestRequestBodyDetection:
+    """A request body becomes body parameters whenever it declares ``properties``, whatever its ``type`` says.
+
+    Keying the check off ``type == 'object'`` used to drop the entire body of an optional request,
+    since ``{type: 'object', nullable: true}`` normalizes to the union form ``{type: ['object', 'null']}``.
+    On GitHub's own spec that silently cost 16 operations every one of their body fields,
+    including ``merge_method`` on ``pulls/merge``.
+    """
+
+    @staticmethod
+    def _body_param_names(body_schema: dict) -> set[str]:
+        raw = {
+            'openapi': '3.0.3',
+            'info': {'title': 't', 'version': '1'},
+            'paths': {
+                '/things': {
+                    'put': {
+                        'operationId': 'updateThing',
+                        'requestBody': {'required': False, 'content': {'application/json': {'schema': body_schema}}},
+                    }
+                }
+            },
+        }
+        operation = parse_spec(raw).operations[0]
+        return {param.name for param in operation.parameters if param.location == 'body'}
+
+    def test_plain_object_body(self):
+        """The already-working baseline, an object body with a declared type."""
+        schema = {'type': 'object', 'properties': {'name': {'type': 'string'}}}
+        assert self._body_param_names(schema) == {'name'}
+
+    def test_v30_nullable_object_body(self):
+        """A 3.0 optional body written as ``nullable: true`` keeps every field."""
+        schema = {
+            'type': 'object',
+            'nullable': True,
+            'properties': {'merge_method': {'type': 'string'}, 'sha': {'type': 'string'}},
+        }
+        assert self._body_param_names(schema) == {'merge_method', 'sha'}
+
+    def test_v31_union_type_object_body(self):
+        """The same body written natively in 3.1 as a union type keeps every field."""
+        schema = {'type': ['object', 'null'], 'properties': {'merge_method': {'type': 'string'}}}
+        assert self._body_param_names(schema) == {'merge_method'}
+
+    def test_typeless_body(self):
+        """``type`` is optional in JSON Schema, so ``properties`` alone is enough."""
+        assert self._body_param_names({'properties': {'query_suite': {'type': 'string'}}}) == {'query_suite'}
+
+    def test_non_object_type_wins_over_properties(self):
+        """A declared non-object type is respected, so a malformed fragment leaks no body parameters."""
+        assert self._body_param_names({'type': 'string', 'properties': {'name': {'type': 'string'}}}) == set()
+
+    def test_body_without_properties(self):
+        """A free-form body declares no fields, so it contributes no body parameters."""
+        assert self._body_param_names({'type': 'object'}) == set()
+
+    def test_required_flag_survives_the_union_type(self):
+        """``required`` is read off the same schema, so it still marks fields on a nullable body."""
+        raw = {
+            'openapi': '3.0.3',
+            'info': {'title': 't', 'version': '1'},
+            'paths': {
+                '/things': {
+                    'post': {
+                        'operationId': 'createThing',
+                        'requestBody': {
+                            'content': {
+                                'application/json': {
+                                    'schema': {
+                                        'type': 'object',
+                                        'nullable': True,
+                                        'required': ['name'],
+                                        'properties': {'name': {'type': 'string'}, 'tag': {'type': 'string'}},
+                                    }
+                                }
+                            }
+                        },
+                    }
+                }
+            },
+        }
+        by_name = {param.name: param for param in parse_spec(raw).operations[0].parameters}
+        assert by_name['name'].required is True
+        assert by_name['tag'].required is False
+
+
 class TestExclusiveBounds:
     """OpenAPI 3.0 boolean exclusive bounds are rewritten to their 2020-12 numeric form."""
 

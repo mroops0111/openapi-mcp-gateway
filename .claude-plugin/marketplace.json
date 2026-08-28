@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Skills for authoring and operating an OpenAPI MCP Gateway.",
-    "version": "0.6.2"
+    "version": "0.6.3"
   },
   "plugins": [
     {

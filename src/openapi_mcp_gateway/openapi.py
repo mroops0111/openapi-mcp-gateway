@@ -306,6 +306,26 @@ def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) ->
     return _normalize_to_2020_12(result)
 
 
+def _declares_object_properties(schema: dict[str, typing.Any]) -> bool:
+    """Report whether ``schema`` describes an object whose ``properties`` should become body parameters.
+
+    Keying off ``properties`` rather than ``type`` matches ``_expand_schema``,
+    since ``type`` is optional in JSON Schema and is a list whenever the object is also nullable.
+    An optional body written as OpenAPI 3.0 ``{type: "object", nullable: true}`` normalizes to
+    ``{type: ["object", "null"]}``, which an equality test against ``"object"`` silently drops,
+    taking every body field of the operation with it.
+    A declared non-object ``type`` still wins, so a malformed fragment does not leak body parameters.
+    """
+    if not schema.get('properties'):
+        return False
+    schema_type = schema.get('type')
+    if schema_type is None:
+        return True
+    if isinstance(schema_type, list):
+        return 'object' in schema_type
+    return schema_type == 'object'
+
+
 def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str | None) -> list[dict[str, typing.Any]]:
     """Resolve relative ``servers[].url`` against ``source`` per OpenAPI 3.0 §4.7.5."""
     if not source or not source.startswith(('http://', 'https://')):
@@ -374,7 +394,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                 content = request_body.get('content', {}).get('application/json', {})
                 schema = _expand_schema(raw, content.get('schema', {}))
 
-                if schema.get('type') == 'object' and schema.get('properties'):
+                if _declares_object_properties(schema):
                     required_props = schema.get('required', [])
                     for prop_name, prop_schema in schema['properties'].items():
                         params.append(
