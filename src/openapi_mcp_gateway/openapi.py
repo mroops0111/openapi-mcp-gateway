@@ -310,11 +310,14 @@ def _declares_object_properties(schema: dict[str, typing.Any]) -> bool:
     """Report whether ``schema`` describes an object whose ``properties`` should become body parameters.
 
     Keying off ``properties`` rather than ``type`` matches ``_expand_schema``,
-    since ``type`` is optional in JSON Schema and is a list whenever the object is also nullable.
-    An optional body written as OpenAPI 3.0 ``{type: "object", nullable: true}`` normalizes to
-    ``{type: ["object", "null"]}``, which an equality test against ``"object"`` silently drops,
-    taking every body field of the operation with it.
-    A declared non-object ``type`` still wins, so a malformed fragment does not leak body parameters.
+    since ``type`` is optional in JSON Schema,
+    and is a list whenever the object is also nullable.
+    An optional OpenAPI 3.0 body carries ``{type: "object", nullable: true}``,
+    which normalization rewrites into ``{type: ["object", "null"]}``.
+    An equality test against ``"object"`` then fails,
+    silently taking every body field of the operation with it.
+    A declared non-object ``type`` still wins,
+    so a malformed fragment does not leak body parameters.
     """
     if not schema.get('properties'):
         return False
