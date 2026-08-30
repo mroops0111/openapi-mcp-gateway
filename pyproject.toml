@@ -1,6 +1,6 @@
 [project]
 name = "openapi-mcp-gateway"
-version = "0.6.2"
+version = "0.6.3"
 description = "Turn any OpenAPI specification into a Model Context Protocol (MCP) server with a single command."
 authors = [
     {name = "Yun-Tai Yang"},
