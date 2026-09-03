@@ -100,6 +100,29 @@ class PassthroughAuthResolver(AuthResolver):
         return result
 
 
+class TokenExchangeAuthResolver(AuthResolver):
+    """Resolve the upstream bearer by exchanging the caller's own validated token.
+
+    Reads the token the MCP transport already verified for this request,
+    so the exchange only ever runs on a credential the gateway has accepted for itself.
+    Returns no header when there is no authenticated caller,
+    which lets the upstream reject the call rather than the gateway serving it anonymously.
+    """
+
+    def __init__(self, token_source: typing.Any) -> None:
+        # token_source is TokenExchangeTokenSource; Any avoids a circular import.
+        self._token_source = token_source
+
+    async def resolve(self, ctx: Context) -> dict[str, str]:
+        from mcp.server.auth.middleware.auth_context import get_access_token
+
+        access_token = get_access_token()
+        if access_token is None:
+            return {}
+        upstream_token = await self._token_source.exchange(access_token.token)
+        return {'Authorization': f'Bearer {upstream_token}'}
+
+
 class CompositeAuthResolver(AuthResolver):
     """Compose multiple resolvers; later resolvers override earlier ones on key collision.
 

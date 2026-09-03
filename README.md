@@ -179,6 +179,33 @@ servers:
 
 Without this the provider mints a token for its own default audience and the API refuses it. The parameter rides on the authorization request and on every token request, including refreshes, so a rotated token stays usable. Authorization servers disagree on the spelling: `audience` is what Auth0 expects, `resource` is the RFC 8707 parameter. Set whichever yours accepts.
 
+### Delegating this endpoint's authorization too
+
+`authorization_code` leaves the gateway issuing credentials of its own, which means revoking a user at the provider does not take effect until the gateway's token expires. `resource_server` removes that second issuer. The provider mints tokens for the MCP endpoint directly, the gateway validates them, and each one is exchanged under [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693) for a second token naming the upstream:
+
+```yaml
+servers:
+  - name: internal
+    spec: https://internal.example.com/openapi.json
+    auth:
+      type: oauth2
+      flow: resource_server
+      issuer: https://auth.example.com/realms/internal
+      audience: https://internal.example.com
+      client_id: ${GATEWAY_CLIENT_ID}
+      client_secret: ${GATEWAY_CLIENT_SECRET}
+```
+
+The gateway serves no `/authorize` or `/token` here. Its protected resource metadata names the issuer, clients authorize there, and the JWKS is discovered from the issuer's own metadata so key rotation needs no restart. Install the extra for JWT verification: `uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway`.
+
+Token exchange support varies by authorization server, and this is the constraint worth checking before committing to the mode. Keycloak has it generally available and enabled by default, and authentik added it in 2026.8. Auth0 offers it as Custom Token Exchange behind its Professional and Enterprise plans, with a custom Action to write. Zitadel only lets an exchange narrow an audience the token already carries. Logto does not implement it yet.
+
+The client also has to be able to register with the issuer rather than with the gateway, so check whether yours supports dynamic client registration or whether each MCP client needs pre-registering.
+
+### Which mode to use
+
+`authorization_code` fits an upstream reached through a provider you do not control, and gives you dynamic client registration for free because the gateway is the authorization server. `resource_server` fits an upstream inside your own trust domain, where the identity provider should be the single authority over who holds a token. Both are per-server, so one gateway can run both.
+
 The two layers stay separate. MCP clients still authorize against the gateway and receive a gateway-issued token, while the provider-issued token is a second credential the gateway holds on their behalf. This is what the MCP spec requires of a server calling an upstream API, and it is why the client's own token is never forwarded. End users see whatever login the provider federates to.
 
 For `authorization_code`, the MCP access token lives 1 hour and the refresh token 24 hours by default. Each refresh issues a fresh refresh token, so the refresh TTL is the practical re-authorization cadence. A client that refreshes within it never has to sign in again, while one idle past it must re-authorize. Tune both with `auth.mcp_access_token_ttl` and `auth.mcp_refresh_token_ttl`.
@@ -227,7 +254,8 @@ Configuration merges in this order, with each layer overriding the previous: **d
 | `auth.token` | string |  | Required for `bearer` / `api_key` |
 | `auth.api_key_header` | string | `X-API-Key` | Header name for `api_key` |
 | `auth.client_id`, `auth.client_secret` | string |  | Required for `oauth2` |
-| `auth.flow` | string | from spec | `authorization_code` for per-user delegation, `client_credentials` for a shared service token. When unset the gateway prefers the spec's declared `authorizationCode` flow, falling back to whatever else it declares. |
+| `auth.flow` | string | from spec | `authorization_code` for per-user delegation, `client_credentials` for a shared service token, `resource_server` to delegate this endpoint's authorization to an external issuer. When unset the gateway prefers the spec's declared `authorizationCode` flow, falling back to whatever else it declares. |
+| `auth.issuer` | string |  | Required for `resource_server`. The authorization server that mints tokens for this MCP endpoint |
 | `auth.scopes`, `auth.authorization_url`, `auth.token_url` |  | from spec | OAuth2 overrides when `securitySchemes` is incomplete |
 | `auth.resource`, `auth.audience` | string |  | Names the API the upstream token is for, when the API and its authorization server are different parties. `resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter, `audience` is the spelling Auth0 uses. Set whichever your authorization server accepts; only what you set is sent |
 | `auth.mcp_access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints for `authorization_code` |

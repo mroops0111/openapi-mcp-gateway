@@ -8,6 +8,7 @@ from .authorization_code import AuthorizationCodeFlowHandler
 from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 from .client_credentials import ClientCredentialsFlowHandler
 from .passthrough import PassthroughFlowHandler
+from .resource_server import ResourceServerFlowHandler
 
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ OAUTH_FLOW_HANDLERS: dict[str, type[OAuthFlowHandler]] = {
     'authorization_code': AuthorizationCodeFlowHandler,
     'client_credentials': ClientCredentialsFlowHandler,
     'passthrough': PassthroughFlowHandler,
+    'resource_server': ResourceServerFlowHandler,
 }
 
 
@@ -72,8 +74,10 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
     """
     explicit_flow_type = entry.auth.flow
 
-    if explicit_flow_type == 'passthrough':
-        return DetectedOAuthFlow(flow_type='passthrough')
+    # Neither can be declared in a spec, so the detector has nothing to contribute
+    # and consulting it would only produce a misleading "flow not declared" error.
+    if explicit_flow_type in ('passthrough', 'resource_server'):
+        return DetectedOAuthFlow(flow_type=explicit_flow_type)
 
     declared_flows = detect_oauth_flows(spec)
     selected_flow = _pick_from_declared_flows(declared_flows, explicit_flow_type)

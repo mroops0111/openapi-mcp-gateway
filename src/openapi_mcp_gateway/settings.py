@@ -32,7 +32,7 @@ _resolve_env_var = resolve_env_var
 class AuthConfig(pydantic.BaseModel):
     """Authentication for an upstream API.
 
-    ``token``, ``client_id``, ``client_secret``, ``resource``,
+    ``token``, ``client_id``, ``client_secret``, ``issuer``, ``resource``,
     and ``audience`` accept ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` substitution at resolve time.
     Numeric OAuth credentials are coerced from int to str,
     so unquoted YAML values still parse on providers that use numeric ``client_id`` (Asana, Facebook).
@@ -50,7 +50,12 @@ class AuthConfig(pydantic.BaseModel):
     authorization_url: str | None = None
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
-    flow: typing.Literal['authorization_code', 'client_credentials', 'passthrough'] | None = None
+    flow: typing.Literal['authorization_code', 'client_credentials', 'passthrough', 'resource_server'] | None = None
+
+    # Issuer of the authorization server that protects this MCP endpoint, for ``resource_server``.
+    # Set it and the gateway stops issuing credentials of its own,
+    # validating tokens minted by that issuer and exchanging them for upstream ones instead.
+    issuer: str | None = None
 
     # Names the API the upstream token is for,
     # for an upstream whose API and authorization server are different parties.
@@ -91,6 +96,10 @@ class AuthConfig(pydantic.BaseModel):
     def resolve_client_secret(self) -> str | None:
         """OAuth client secret after env-var substitution."""
         return _resolve_env_var(self.client_secret)
+
+    def resolve_issuer(self) -> str | None:
+        """External authorization server issuer after env-var substitution."""
+        return _resolve_env_var(self.issuer)
 
     def resolve_upstream_audience_params(self) -> dict[str, str]:
         """Return the extra parameters naming the upstream token's audience, after env-var substitution.

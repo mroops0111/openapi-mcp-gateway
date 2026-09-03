@@ -1,7 +1,7 @@
 import json
 import pathlib
 import typing
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -12,6 +12,7 @@ from mcp.types import RequestParamsMeta, TextContent
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.auth import token_source as token_source_module
+from openapi_mcp_gateway.auth.oidc import IssuerMetadata
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
 
@@ -604,3 +605,71 @@ class TestMovieShapingExample:
             'rating': 8.4,
             'cast': ['Edward Norton', 'Brad Pitt'],
         }
+
+
+class TestResourceServerDiscovery:
+    """Discovery documents for a server whose authorization is delegated to an external issuer."""
+
+    @pytest.fixture
+    def delegating_client(self, petstore_json_path):
+        """Gateway whose petstore server validates tokens from an issuer it does not own."""
+        metadata = IssuerMetadata(
+            issuer='https://auth.example.com',
+            jwks_uri='https://auth.example.com/jwks',
+            token_endpoint='https://auth.example.com/token',
+        )
+        config = GatewayConfig(
+            url='https://mcp.example.com',
+            servers=[
+                ServerConfig(
+                    name='petstore',
+                    spec=str(petstore_json_path),
+                    auth=AuthConfig(
+                        type='oauth2',
+                        flow='resource_server',
+                        issuer='https://auth.example.com',
+                        audience='https://api.example.com',
+                        client_id='gateway',
+                        client_secret='secret',
+                        scopes=['read'],
+                    ),
+                ),
+            ],
+        )
+        with (
+            patch('openapi_mcp_gateway.auth.flows.resource_server.fetch_issuer_metadata', return_value=metadata),
+            patch('openapi_mcp_gateway.auth.oidc._build_jwk_client'),
+        ):
+            gateway = Gateway.from_config(config)
+            app = gateway._build_app(transport='streamable-http')
+        return TestClient(app)
+
+    def test_protected_resource_names_the_external_issuer(self, delegating_client):
+        """The document points clients at the issuer, and names this endpoint as the resource."""
+        response = delegating_client.get('/.well-known/oauth-protected-resource/petstore')
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data['resource'] == 'https://mcp.example.com/petstore/mcp'
+        assert data['authorization_servers'] == ['https://auth.example.com']
+
+    def test_gateway_does_not_claim_to_be_an_authorization_server(self, delegating_client):
+        """The AS metadata path 404s, since the gateway serves no /authorize or /token here.
+
+        Publishing a document would send clients to endpoints this app does not have.
+        """
+        response = delegating_client.get('/.well-known/oauth-authorization-server/petstore')
+
+        assert response.status_code == 404
+        assert 'not an authorization server' in response.json()['error']
+
+    def test_no_oauth_endpoints_are_mounted(self, delegating_client):
+        """``/authorize`` and ``/token`` under the mount path belong to the issuer, not the gateway."""
+        assert delegating_client.get('/petstore/authorize').status_code == 404
+        assert delegating_client.post('/petstore/token').status_code == 404
+
+    def test_healthz_reports_the_endpoint_as_protected(self, delegating_client):
+        """A delegating server is still OAuth-protected, so health must not report it as open."""
+        servers = delegating_client.get('/healthz').json()['servers']
+
+        assert servers[0]['auth'] == 'oauth2'

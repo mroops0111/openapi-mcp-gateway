@@ -30,19 +30,39 @@ class OAuthFlowContext:
     mount_path: str
 
 
+@dataclasses.dataclass(frozen=True)
+class AdvertisedResource:
+    """What the gateway's RFC 9728 document says about one server.
+
+    ``resource`` is always this MCP endpoint's own canonical URI,
+    since a client must request its token for the server it is calling.
+    ``authorization_servers`` names whoever mints those tokens,
+    which is the gateway itself under ``authorization_code`` and an external issuer under ``resource_server``.
+    """
+
+    resource: str
+    authorization_servers: tuple[str, ...]
+    scopes_supported: tuple[str, ...] = ()
+
+
 @dataclasses.dataclass
 class OAuthFlowSetup:
     """Result of an ``OAuthFlowHandler.build`` call, consumed by ``Gateway``.
 
     Only ``resolver`` is always set.
-    ``provider`` and ``settings`` are populated when the flow needs to act as an MCP-side OAuth server,
+    ``provider`` is populated when the flow makes the gateway an MCP-side OAuth server,
     currently only ``authorization_code``.
+    ``verifier`` is populated instead when the gateway validates tokens it did not issue.
+    The two are mutually exclusive, and the MCP SDK rejects a server given both.
+    ``settings`` and ``advertised_resource`` accompany either one and drive the discovery documents.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
     resolver: AuthResolver
     provider: 'AuthorizationCodeProvider | None' = None
     settings: AuthSettings | None = None
+    verifier: typing.Any | None = None
+    advertised_resource: AdvertisedResource | None = None
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
 
 

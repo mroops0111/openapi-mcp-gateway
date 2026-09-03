@@ -14,7 +14,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .auth.flows import AuthorizationCodeProvider
+from .auth.flows import AdvertisedResource, AuthorizationCodeProvider
 from .openapi import ExposedTool, OpenAPISpec
 from .settings import GatewayConfig
 from .stores.base import TokenStore
@@ -35,6 +35,8 @@ class _ServerBundle(typing.NamedTuple):
     spec: OpenAPISpec
     auth_provider: AuthorizationCodeProvider | None
     auth_settings: AuthSettings | None = None
+    token_verifier: typing.Any | None = None
+    advertised_resource: AdvertisedResource | None = None
     # Captured at registration for the --dry-run summary.
     base_url: str = ''
     auth_summary: str = 'none'
@@ -106,6 +108,9 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
     Register before mounting, so the explicit OAuth paths win over each catch-all ``mount_path``.
     """
     # Per-server OAuth endpoints and RFC 9728 protected-resource routes.
+    # Only a bundle whose flow made the gateway the authorization server gets the former.
+    # Advertising /authorize and /token for a server that delegates to an external issuer
+    # would point clients at endpoints this app does not serve.
     for bundle in servers:
         if not bundle.auth_provider or not bundle.auth_settings:
             continue
@@ -126,13 +131,11 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                 name=route.name,
             )
 
-        issuer = str(bundle.auth_settings.issuer_url).rstrip('/')
+        advertised = _advertised_resource(bundle)
         pr_routes = create_protected_resource_routes(
-            resource_url=pydantic.AnyHttpUrl(f'{issuer}/mcp'),
-            authorization_servers=[bundle.auth_settings.issuer_url],
-            scopes_supported=bundle.auth_settings.client_registration_options.valid_scopes
-            if bundle.auth_settings.client_registration_options
-            else None,
+            resource_url=pydantic.AnyHttpUrl(advertised.resource),
+            authorization_servers=_authorization_server_urls(advertised.authorization_servers),
+            scopes_supported=list(advertised.scopes_supported) or None,
         )
         for route in pr_routes:
             app.router.add_route(
@@ -156,6 +159,16 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                 status_code=404,
                 content={'error': f'Server not found: {server_name}'},
             )
+        if not bundle.auth_provider:
+            # This server delegates to an external issuer, so the gateway has no metadata to publish.
+            # The protected-resource document names that issuer, and the client discovers it there.
+            return JSONResponse(
+                status_code=404,
+                content={
+                    'error': f'Server "{server_name}" is not an authorization server. '
+                    'Read its protected resource metadata for the issuer that is.'
+                },
+            )
         metadata = build_metadata(
             issuer_url=bundle.auth_settings.issuer_url,
             service_documentation_url=bundle.auth_settings.service_documentation_url,
@@ -176,16 +189,52 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                 status_code=404,
                 content={'error': f'Server not found: {server_name}'},
             )
-        issuer = str(bundle.auth_settings.issuer_url).rstrip('/')
-        metadata = ProtectedResourceMetadata(
-            resource=pydantic.AnyHttpUrl(f'{issuer}/mcp'),
-            authorization_servers=[pydantic.AnyHttpUrl(issuer)],
-            scopes_supported=bundle.auth_settings.client_registration_options.valid_scopes
-            if bundle.auth_settings.client_registration_options
-            else None,
+        advertised = _advertised_resource(bundle)
+        metadata = ProtectedResourceMetadata.model_validate(
+            {
+                'resource': advertised.resource,
+                'authorization_servers': list(advertised.authorization_servers),
+                'scopes_supported': list(advertised.scopes_supported) or None,
+            }
         )
         handler = ProtectedResourceMetadataHandler(metadata)
         return await handler.handle(request)
+
+
+def _authorization_server_urls(issuers: tuple[str, ...]) -> list[pydantic.AnyHttpUrl]:
+    """Parse issuer strings while keeping a path-less issuer path-less.
+
+    RFC 8414 §2 compares issuers by exact string, and a client matching the value it discovered here
+    against the ``iss`` its authorization server publishes would fail on a spurious trailing slash.
+    ``AnyHttpUrl`` adds one unless told otherwise, hence the explicit config.
+    """
+    adapter = pydantic.TypeAdapter(
+        pydantic.AnyHttpUrl,
+        config=pydantic.ConfigDict(url_preserve_empty_path=True),
+    )
+    return [adapter.validate_python(issuer) for issuer in issuers]
+
+
+def _advertised_resource(bundle: _ServerBundle) -> AdvertisedResource:
+    """Return what this server's RFC 9728 document should say.
+
+    A flow that delegates to an external issuer supplies its own,
+    since only it knows which issuer to name.
+    Otherwise the gateway is both issuer and resource,
+    and the document is derived from the settings it built for itself.
+    """
+    if bundle.advertised_resource is not None or bundle.auth_settings is None:
+        # Callers only reach here for a bundle carrying one or the other,
+        # so the fallback stands in for a shape that cannot occur rather than describing a real server.
+        return bundle.advertised_resource or AdvertisedResource(resource='', authorization_servers=())
+
+    issuer = str(bundle.auth_settings.issuer_url).rstrip('/')
+    registration = bundle.auth_settings.client_registration_options
+    return AdvertisedResource(
+        resource=f'{issuer}/mcp',
+        authorization_servers=(issuer,),
+        scopes_supported=tuple(registration.valid_scopes or ()) if registration else (),
+    )
 
 
 def _register_health_route(app: FastAPI, servers: list[_ServerBundle]) -> None:
@@ -200,7 +249,9 @@ def _register_health_route(app: FastAPI, servers: list[_ServerBundle]) -> None:
                     'name': bundle.name,
                     'path': bundle.mount_path,
                     'title': bundle.spec.title,
-                    'auth': 'oauth2' if bundle.auth_provider else 'static',
+                    # A verifier protects the endpoint just as a provider does,
+                    # so a delegating server must not report itself as unprotected.
+                    'auth': 'oauth2' if (bundle.auth_provider or bundle.token_verifier) else 'static',
                 }
                 for bundle in servers
             ],

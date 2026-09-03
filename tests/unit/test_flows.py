@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 
 from openapi_mcp_gateway.auth.flows import (
@@ -5,12 +7,15 @@ from openapi_mcp_gateway.auth.flows import (
     ClientCredentialsFlowHandler,
     OAuthFlowContext,
     PassthroughFlowHandler,
+    ResourceServerFlowHandler,
     build_oauth_flow,
 )
 from openapi_mcp_gateway.auth.flows.factory import resolve_oauth_flow
+from openapi_mcp_gateway.auth.oidc import IssuerMetadata
 from openapi_mcp_gateway.auth.resolver import (
     AuthorizationCodeAuthResolver,
     PassthroughAuthResolver,
+    TokenExchangeAuthResolver,
     TokenSourceAuthResolver,
 )
 from openapi_mcp_gateway.auth.token_source import ClientCredentialsTokenSource
@@ -446,3 +451,93 @@ class TestUpstreamAudienceWiring:
         token_source = setup.resolver._token_source
         assert isinstance(token_source, ClientCredentialsTokenSource)
         assert token_source.audience_params == {'resource': 'https://api.example.com'}
+
+
+def _resource_server_entry(**auth_overrides) -> ServerConfig:
+    """Entry configured for the resource_server flow, with every requirement satisfied by default."""
+    defaults = {
+        'type': 'oauth2',
+        'flow': 'resource_server',
+        'issuer': 'https://auth.example.com',
+        'audience': 'https://api.example.com',
+        'client_id': 'gateway',
+        'client_secret': 'secret',
+    }
+    return _entry(AuthConfig(**{**defaults, **auth_overrides}))
+
+
+def _build_resource_server(entry: ServerConfig):
+    """Run the handler with issuer discovery stubbed out."""
+    metadata = IssuerMetadata(
+        issuer='https://auth.example.com',
+        jwks_uri='https://auth.example.com/jwks',
+        token_endpoint='https://auth.example.com/token',
+    )
+    with (
+        patch('openapi_mcp_gateway.auth.flows.resource_server.fetch_issuer_metadata', return_value=metadata),
+        patch('openapi_mcp_gateway.auth.oidc._build_jwk_client'),
+    ):
+        return ResourceServerFlowHandler().build(
+            OAuthFlowContext(
+                entry=entry,
+                spec=_build_spec(),
+                oauth_flow=resolve_oauth_flow(entry, _build_spec()),
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                mount_path='/srv',
+            )
+        )
+
+
+class TestResourceServerFlowHandler:
+    """The resource_server flow delegates issuance and exchanges the caller's token."""
+
+    def test_advertises_the_gateway_as_the_resource_and_the_issuer_as_the_as(self):
+        """The document names this endpoint's canonical URI, and the external issuer that mints for it.
+
+        Advertising the upstream's identifier instead would make clients request a token
+        the gateway must then refuse, since the MCP spec forbids accepting one minted for another resource.
+        """
+        setup = _build_resource_server(_resource_server_entry())
+
+        assert setup.advertised_resource is not None
+        assert setup.advertised_resource.resource == 'http://localhost:8000/srv/mcp'
+        assert setup.advertised_resource.authorization_servers == ('https://auth.example.com',)
+
+    def test_produces_a_verifier_and_no_provider(self):
+        """The gateway validates rather than issues, which is what the SDK's two modes are."""
+        setup = _build_resource_server(_resource_server_entry())
+
+        assert setup.provider is None
+        assert setup.verifier is not None
+        assert isinstance(setup.resolver, TokenExchangeAuthResolver)
+
+    def test_verifier_audience_is_the_gateway_not_the_upstream(self):
+        """Inbound tokens must name this endpoint, even though the exchange targets the upstream."""
+        setup = _build_resource_server(_resource_server_entry())
+
+        assert setup.verifier.audience == 'http://localhost:8000/srv/mcp'
+
+    def test_requires_issuer(self):
+        """Without an issuer there is nothing to validate tokens against."""
+        with pytest.raises(ValueError, match=r'requires auth\.issuer'):
+            _build_resource_server(_resource_server_entry(issuer=None))
+
+    def test_requires_an_upstream_audience(self):
+        """Without a target the issuer mints for its own default, which the upstream refuses."""
+        with pytest.raises(ValueError, match=r'requires auth\.resource or auth\.audience'):
+            _build_resource_server(_resource_server_entry(audience=None))
+
+    def test_requires_client_credentials_for_the_exchange(self):
+        """Authorization servers require a confidential client for the token-exchange grant."""
+        with pytest.raises(ValueError, match='requires client_id and client_secret'):
+            _build_resource_server(_resource_server_entry(client_secret=None))
+
+    def test_short_circuits_before_reading_the_spec(self):
+        """``securitySchemes`` cannot declare this flow, so the detector is never consulted.
+
+        Consulting it would raise a misleading "flow not declared" error on every spec.
+        """
+        entry = _resource_server_entry()
+
+        assert resolve_oauth_flow(entry, _spec_with_authorization_code()).flow_type == 'resource_server'
