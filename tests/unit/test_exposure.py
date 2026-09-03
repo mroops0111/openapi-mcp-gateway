@@ -1067,7 +1067,7 @@ def _shaped_op(
     annotations: dict | None = None,
     request: str | None = None,
     response: str | None = None,
-    strategy: typing.Literal['merge', 'replace'] | None = None,
+    params_strategy: typing.Literal['merge', 'replace'] | None = None,
     method: str = 'get',
     path: str = '/things',
     operation_id: str = 'do_thing',
@@ -1075,15 +1075,15 @@ def _shaped_op(
 ) -> OperationInfo:
     """Build an operation whose ``x-mcp-integration.tool`` carries the given overrides.
 
-    When ``params`` is set and ``strategy`` is not, it defaults to ``replace`` if any entry declares
+    When ``params`` is set and ``params_strategy`` is not, it defaults to ``replace`` if any entry declares
     a ``type``, else ``merge``, so tests that only care about the override still read cleanly.
     """
-    if params and strategy is None:
-        strategy = 'replace' if any('type' in cfg for cfg in params.values()) else 'merge'
+    if params and params_strategy is None:
+        params_strategy = 'replace' if any('type' in cfg for cfg in params.values()) else 'merge'
     tool = ToolOverride(
         params={name: ParamOverride(**cfg) for name, cfg in (params or {}).items()},
         annotations=annotations,
-        strategy=strategy,
+        params_strategy=params_strategy,
         request=request,
         response=response,
     )
@@ -1201,7 +1201,7 @@ class TestHiddenParameterInjection:
         operation = _shaped_op(
             [ParameterInfo(name='format', location='path', required=True, schema={'type': 'string'})],
             params={'format': {'hidden': True, 'default': 'json'}},
-            strategy='merge',
+            params_strategy='merge',
             path='/issues.{format}',
         )
         shaped_operation = shape_operation(operation)
@@ -1222,7 +1222,7 @@ class TestHiddenParameterInjection:
         operation = _shaped_op(
             [ParameterInfo(name='format', location='path', required=True, schema={'type': 'string'})],
             params={'format': {'hidden': True, 'default': 'json'}},
-            strategy='merge',
+            params_strategy='merge',
             path='/issues.{format}',
         )
         await _register(operation).run({}, context=_stub_context())
@@ -1233,7 +1233,7 @@ class TestHiddenParameterInjection:
         operation = _shaped_op(
             [ParameterInfo(name='format', location='path', required=True, schema={'type': 'string'})],
             params={'format': {'hidden': True}},
-            strategy='merge',
+            params_strategy='merge',
             path='/issues.{format}',
         )
         with pytest.raises(ValueError, match='nothing to fill'):
@@ -1247,10 +1247,10 @@ class TestShapingLabel:
         """No override reshapes nothing, so the label is passthrough."""
         assert _shaping_label(None) == 'passthrough'
 
-    def test_strategy_and_transforms_are_listed(self):
+    def test_params_strategy_and_transforms_are_listed(self):
         """Strategy, request, and response each appear in the label."""
         override = ToolOverride.model_validate(
-            {'strategy': 'replace', 'params': {'x': {'type': 'string'}}, 'request': '{}', 'response': 'r'}
+            {'params_strategy': 'replace', 'params': {'x': {'type': 'string'}}, 'request': '{}', 'response': 'r'}
         )
         assert _shaping_label(override) == 'replace, request, response'
 
@@ -1674,7 +1674,7 @@ class TestParamDeclaration:
 
 
 class TestStrategy:
-    """``strategy`` explicitly chooses merge (layer onto spec) or replace (declare the whole surface)."""
+    """``params_strategy`` explicitly chooses merge (layer onto spec) or replace (declare the whole surface)."""
 
     def test_missing_strategy_raises(self):
         """Setting params without a strategy is rejected at build time."""
@@ -1685,7 +1685,7 @@ class TestStrategy:
             parameters=[ParameterInfo(name='q', location='query', schema={'type': 'string'})],
             x_mcp_integration=McpIntegration(tool=ToolOverride(params={'q': ParamOverride(hidden=True)})),
         )
-        with pytest.raises(ValueError, match=r'tool\.strategy'):
+        with pytest.raises(ValueError, match=r'tool\.params_strategy'):
             shape_operation(op)
 
     def test_merge_keeps_undeclared_spec_params(self):
@@ -1696,7 +1696,7 @@ class TestStrategy:
                 ParameterInfo(name='secret', location='query', required=True, schema={'type': 'string'}),
             ],
             params={'secret': {'hidden': True}},
-            strategy='merge',
+            params_strategy='merge',
         )
         assert [parameter.name for parameter in shape_operation(op).parameters] == ['keep']
 
@@ -1705,7 +1705,7 @@ class TestStrategy:
         op = _shaped_op(
             [ParameterInfo(name='keep', location='query', schema={'type': 'string'})],
             params={'extra': {'type': 'string'}},
-            strategy='merge',
+            params_strategy='merge',
         )
         with pytest.raises(ValueError, match='replace'):
             shape_operation(op)
@@ -1715,7 +1715,7 @@ class TestStrategy:
         op = _shaped_op(
             [ParameterInfo(name='raw', location='query', required=True, schema={'type': 'string'})],
             params={'friendly': {'type': 'string'}},
-            strategy='replace',
+            params_strategy='replace',
             request='{"raw": friendly}',
         )
         assert [parameter.name for parameter in shape_operation(op).parameters] == ['friendly']
@@ -1725,7 +1725,7 @@ class TestStrategy:
         op = _shaped_op(
             [ParameterInfo(name='sort', location='query', required=True, schema={'type': 'string'})],
             params={'sort': {'type': 'string', 'enum': ['a', 'b']}},
-            strategy='merge',
+            params_strategy='merge',
         )
         shaped = shape_operation(op)
         assert shaped.parameters[0].schema_['enum'] == ['a', 'b']

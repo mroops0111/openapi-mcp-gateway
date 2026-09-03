@@ -48,8 +48,8 @@ def _shaping_label(tool_override: ToolOverride | None) -> str:
     if tool_override is None:
         return 'passthrough'
     parts: list[str] = []
-    if tool_override.params and tool_override.strategy:
-        parts.append(tool_override.strategy)
+    if tool_override.params and tool_override.params_strategy:
+        parts.append(tool_override.params_strategy)
     if tool_override.request:
         parts.append('request')
     if tool_override.response:

@@ -17,7 +17,7 @@ from starlette.testclient import TestClient
 from openapi_mcp_gateway.auth import token_source as token_source_module
 from openapi_mcp_gateway.auth.oidc import IssuerMetadata
 from openapi_mcp_gateway.gateway import Gateway
-from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
+from openapi_mcp_gateway.settings import AuthConfig, ExposureConfig, GatewayConfig, PolicyConfig, ServerConfig
 
 
 class _StubContext:
@@ -262,7 +262,7 @@ class TestDynamicExposureEndToEnd:
         """Petstore gateway with the server flipped to dynamic exposure."""
         config = GatewayConfig(
             servers=[
-                ServerConfig(name='petstore', spec=str(petstore_json_path), exposure='dynamic'),
+                ServerConfig(name='petstore', spec=str(petstore_json_path), exposure=ExposureConfig(style='dynamic')),
             ],
         )
         return Gateway.from_config(config)

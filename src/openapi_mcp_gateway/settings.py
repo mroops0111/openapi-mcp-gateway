@@ -168,7 +168,23 @@ class PolicyConfig(pydantic.BaseModel):
 
     allow: list[str] | None = None
     deny: list[str] | None = None
-    marked_only: bool = False
+    # Named for the spec-side annotation it filters on, ``x-mcp-integration``.
+    annotated_only: bool = False
+
+
+class ExposureConfig(pydantic.BaseModel):
+    """How a server's operations surface as MCP primitives.
+
+    The two settings interact, so they live together rather than as sibling keys.
+    ``style: dynamic`` fronts the whole spec with meta-tools and ignores ``promote_resources``,
+    since the meta-tools surface every operation uniformly.
+    """
+
+    style: typing.Literal['static', 'dynamic'] = 'static'
+    # Whether a parameterless GET may become an MCP resource instead of a tool.
+    # Named for what it does, since the operations it promotes are the ones a client can read
+    # rather than call, and an operation can still opt in per-operation regardless.
+    promote_resources: bool = False
 
 
 class ServerConfig(pydantic.BaseModel):
@@ -181,8 +197,7 @@ class ServerConfig(pydantic.BaseModel):
     auth: AuthConfig = AuthConfig()
     policy: PolicyConfig = PolicyConfig()
     timeout: float = 90
-    exposure: typing.Literal['static', 'dynamic'] = 'static'
-    mode: typing.Literal['tool_only', 'auto'] = 'tool_only'
+    exposure: ExposureConfig = ExposureConfig()
     operations: dict[str, McpIntegration] = pydantic.Field(default_factory=dict)
 
     @pydantic.field_validator('name')

@@ -3,6 +3,7 @@ from .gateway import Gateway
 from .settings import (
     AuthConfig,
     CORSConfig,
+    ExposureConfig,
     GatewayConfig,
     LoggingConfig,
     PolicyConfig,
@@ -18,6 +19,7 @@ from .stores import MemoryTokenStore, TokenStore
 __all__ = [
     'AuthConfig',
     'CORSConfig',
+    'ExposureConfig',
     'Gateway',
     'GatewayConfig',
     'LoggingConfig',

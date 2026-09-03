@@ -34,7 +34,7 @@ from .fastapi import (
 )
 from .openapi import ExposedTool, McpIntegration, OpenAPISpec, OperationInfo, load_spec, parse_spec
 from .policy import filter_operations
-from .settings import AuthConfig, GatewayConfig, PolicyConfig, ServerConfig
+from .settings import AuthConfig, ExposureConfig, GatewayConfig, PolicyConfig, ServerConfig
 from .stores import create_store
 
 
@@ -146,7 +146,7 @@ def _apply_yaml_overrides(
     if unmatched:
         raise ValueError(
             f'Server "{server_name}": YAML operations override targets unknown operation_id(s) {sorted(unmatched)!r}; '
-            'check the spec or your allow / deny / marked_only policy.'
+            'check the spec or your allow / deny / annotated_only policy.'
         )
     return [
         operation.model_copy(update={'x_mcp_integration': yaml_overrides[operation.operation_id]})
@@ -159,18 +159,18 @@ def _apply_yaml_overrides(
 def _partition_operations(
     operations: list[OperationInfo],
     server_name: str,
-    mode: typing.Literal['tool_only', 'auto'] = 'tool_only',
+    promote_resources: bool = False,
 ) -> tuple[list[OperationInfo], list[OperationInfo]]:
-    """Split ``operations`` into ``(resource_operations, tool_operations)`` based on ``mode`` and per-operation opt-ins.
+    """Split ``operations`` into ``(resource_operations, tool_operations)``.
 
-    Under ``mode='tool_only'`` (default) every operation becomes a tool,
+    With ``promote_resources`` off, the default, every operation becomes a tool
     and ``x-mcp-integration.resource`` declarations are ignored.
 
-    Under ``mode='auto'`` an operation becomes a resource when it either declares ``resource`` explicitly,
-    or qualifies for auto-promotion (no ``tool`` and the eligibility rules pass).
+    With it on, an operation becomes a resource when it either declares ``resource`` explicitly,
+    or qualifies for promotion (no ``tool`` and the eligibility rules pass).
     Declaring both ``tool`` and ``resource`` registers the operation in both lists.
     """
-    if mode == 'tool_only':
+    if not promote_resources:
         return [], list(operations)
 
     resource_operations: list[OperationInfo] = []
@@ -281,9 +281,12 @@ class Gateway:
         auth: dict[str, typing.Any] | None = None,
         policy: dict[str, typing.Any] | None = None,
         timeout: float = 90,
-        exposure: typing.Literal['static', 'dynamic'] = 'static',
+        exposure: dict[str, typing.Any] | None = None,
     ) -> None:
-        """Register a server inline (convenience over building ``ServerConfig`` directly)."""
+        """Register a server inline (convenience over building ``ServerConfig`` directly).
+
+        ``auth``, ``policy`` and ``exposure`` take the same mappings their YAML keys do.
+        """
         server_config = ServerConfig(
             name=name,
             spec=spec,
@@ -292,7 +295,7 @@ class Gateway:
             auth=AuthConfig.model_validate(auth) if auth else AuthConfig(),
             policy=PolicyConfig.model_validate(policy) if policy else PolicyConfig(),
             timeout=timeout,
-            exposure=exposure,
+            exposure=ExposureConfig.model_validate(exposure) if exposure else ExposureConfig(),
         )
         self._add_server_from_server_config(server_config=server_config)
 
@@ -378,16 +381,16 @@ class Gateway:
             spec.operations,
             allow=server_config.policy.allow,
             deny=server_config.policy.deny,
-            marked_only=server_config.policy.marked_only,
+            annotated_only=server_config.policy.annotated_only,
         )
         logger.debug(
-            'Policy applied to "%s": %d → %d operations (allow=%s deny=%s marked_only=%s)',
+            'Policy applied to "%s": %d → %d operations (allow=%s deny=%s annotated_only=%s)',
             server_config.name,
             len(spec.operations),
             len(operations),
             server_config.policy.allow,
             server_config.policy.deny,
-            server_config.policy.marked_only,
+            server_config.policy.annotated_only,
         )
 
         if not operations:
@@ -481,26 +484,28 @@ class Gateway:
         )
         exposed_tools: list[ExposedTool] = []
         resource_names: list[str] = []
-        if server_config.exposure == 'dynamic':
+        if server_config.exposure.style == 'dynamic':
             resource_optins = [op.operation_id for op in operations if op.resource_exposed]
             if resource_optins:
                 logger.warning(
-                    'Server "%s": dynamic exposure mode ignores x-mcp-integration.resource declarations '
+                    'Server "%s": dynamic exposure ignores x-mcp-integration.resource declarations '
                     'on %d operation(s) (%s). '
                     'The meta-tools surface every operation uniformly.',
                     server_config.name,
                     len(resource_optins),
                     ', '.join(resource_optins[:5]) + ('...' if len(resource_optins) > 5 else ''),
                 )
-            if server_config.mode == 'auto':
+            if server_config.exposure.promote_resources:
                 logger.warning(
-                    'Server "%s": dynamic exposure overrides mode=auto. '
+                    'Server "%s": dynamic exposure overrides promote_resources. '
                     'The meta-tools surface every operation uniformly, so resource promotion is skipped.',
                     server_config.name,
                 )
             exposed_tools = MetaToolGenerator(mcp=mcp, binding=binding).register(operations)
         else:
-            resource_ops, tool_ops = _partition_operations(operations, server_config.name, server_config.mode)
+            resource_ops, tool_ops = _partition_operations(
+                operations, server_config.name, server_config.exposure.promote_resources
+            )
             if resource_ops:
                 resource_names = ResourceGenerator(mcp=mcp, binding=binding, server_name=server_config.name).register(
                     resource_ops
@@ -520,7 +525,7 @@ class Gateway:
                 protected_resource=auth.protected_resource,
                 base_url=base_url,
                 auth_summary=_auth_summary(server_config.auth),
-                exposure=server_config.exposure,
+                exposure=server_config.exposure.style,
                 tools=tuple(exposed_tools),
                 resource_names=tuple(resource_names),
             )

@@ -1,6 +1,6 @@
-# Petstore3 spec with mode=auto: resource exposure with zero spec edits.
+# Petstore3 spec with exposure.promote_resources, resource exposure with zero spec edits.
 #
-# `mode: auto` runs every operation through resource eligibility at startup:
+# `promote_resources: true` runs every operation through resource eligibility at startup:
 # GETs with no required query / header / body parameters become MCP resources;
 # everything else stays a tool.
 #
@@ -19,4 +19,5 @@ servers:
   - name: petstore
     spec: https://petstore3.swagger.io/api/v3/openapi.json
     base_url: https://petstore.swagger.io/v2  # v3 demo endpoint is flaky; v2 endpoint shares the same path templates
-    mode: auto
+    exposure:
+      promote_resources: true
