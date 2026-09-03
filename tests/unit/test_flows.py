@@ -1,7 +1,6 @@
 from unittest.mock import patch
 
 import pytest
-from pydantic import ValidationError
 
 from openapi_mcp_gateway.auth.flows import (
     AuthorizationCodeFlowHandler,
@@ -312,15 +311,6 @@ class TestPassthroughAuthType:
         assert setup.provider is None
         assert setup.verifier is None
         assert setup.settings is None
-
-    def test_old_flow_spelling_explains_where_it_moved(self):
-        """The former ``flow: passthrough`` fails with migration guidance.
-
-        Left to the literal, the error would only list the permitted flows
-        without saying that this one became a type.
-        """
-        with pytest.raises(ValidationError, match=r'moved to auth\.type'):
-            AuthConfig(type='oauth2', flow='passthrough')
 
 
 class TestClientCredentialsFlowHandler:

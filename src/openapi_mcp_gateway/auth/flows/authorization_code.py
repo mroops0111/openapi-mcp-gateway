@@ -115,9 +115,7 @@ class AuthorizationCodeProvider:
         # and RFC 8707 §2 requires the parameter on both.
         query_params.update(self.audience_params)
 
-        logger.info(
-            'Upstream OAuth authorize: scopes=%s audience_params=%s', self.scopes, self.audience_params
-        )
+        logger.info('Upstream OAuth authorize: scopes=%s audience_params=%s', self.scopes, self.audience_params)
         return f'{self.upstream_auth_url}?{urllib.parse.urlencode(query_params)}'
 
     async def load_authorization_code(

@@ -50,7 +50,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
         if not client_id or not client_secret:
             raise ValueError(
                 f'Server "{entry.name}": token_exchange flow requires client_id and client_secret. '
-                'The gateway authenticates as itself to exchange the caller\'s token, '
+                "The gateway authenticates as itself to exchange the caller's token, "
                 'and authorization servers require a confidential client for that grant.'
             )
 
@@ -58,7 +58,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
         if not metadata.token_endpoint:
             raise ValueError(
                 f'Server "{entry.name}": issuer "{issuer}" publishes no token_endpoint, '
-                'so the gateway cannot exchange the caller\'s token for an upstream one.'
+                "so the gateway cannot exchange the caller's token for an upstream one."
             )
 
         # RFC 8707 §2: the canonical URI of this MCP server, which is what a client asks the issuer for

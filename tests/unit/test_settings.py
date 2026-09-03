@@ -331,7 +331,9 @@ class TestAuthConfigUpstreamAudience:
 
     def test_both_are_sent_when_both_configured(self):
         """Setting both is allowed, for an authorization server that accepts either spelling."""
-        auth = AuthConfig(type='oauth2', upstream_resource='https://res.example.com', upstream_audience='https://aud.example.com')
+        auth = AuthConfig(
+            type='oauth2', upstream_resource='https://res.example.com', upstream_audience='https://aud.example.com'
+        )
 
         assert auth.resolve_upstream_audience_params() == {
             'resource': 'https://res.example.com',

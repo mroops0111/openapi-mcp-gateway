@@ -45,24 +45,6 @@ class AuthConfig(pydantic.BaseModel):
 
     model_config = pydantic.ConfigDict(coerce_numbers_to_str=True)
 
-    @pydantic.model_validator(mode='before')
-    @classmethod
-    def _reject_passthrough_as_a_flow(cls, data: typing.Any) -> typing.Any:
-        """Point the old ``flow: passthrough`` spelling at its replacement.
-
-        It moved to ``type`` because the gateway performs no OAuth exchange in that mode,
-        which made it a peer of ``bearer`` and ``api_key`` rather than of the real grants.
-        Caught here rather than left to the ``flow`` literal,
-        whose "not a permitted value" message would not say where the setting went.
-        """
-        if isinstance(data, dict) and data.get('flow') == 'passthrough':
-            raise ValueError(
-                'auth.flow: passthrough moved to auth.type: passthrough. '
-                'The gateway runs no OAuth exchange in that mode, so it never belonged under a flow. '
-                'Replace "type: oauth2" and "flow: passthrough" with "type: passthrough".'
-            )
-        return data
-
     type: typing.Literal['bearer', 'api_key', 'oauth2', 'passthrough', 'none'] = 'none'
     token: str | None = None
     api_key_header: str = 'X-API-Key'

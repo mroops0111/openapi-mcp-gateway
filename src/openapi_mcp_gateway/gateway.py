@@ -585,6 +585,7 @@ class Gateway:
         The SDK rejects a server given both,
         since issuing tokens and validating someone else's are alternatives rather than layers.
         """
+
         @contextlib.asynccontextmanager
         async def lifespan(_app: MCPServer, _auth_provider=auth_provider):
             try:
