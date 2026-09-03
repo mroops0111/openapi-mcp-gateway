@@ -199,6 +199,8 @@ Authorization servers disagree on the spelling. `upstream_audience` is what Auth
 
 MCP clients still authorize against the gateway and receive a gateway-issued token, while the provider-issued one is a second credential held on their behalf. End users see whatever login the provider federates to, so this works on any plan and needs nothing of the upstream but that it accept what the provider issues.
 
+The Auth0 Management API is a worked example of exactly this shape, since its own audience differs from the tenant that issues for it. See [`examples/auth0-management.yml`](examples/auth0-management.yml).
+
 </details>
 
 <details>

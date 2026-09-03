@@ -135,6 +135,137 @@ class TestExpandSchema:
         assert 'color' in result['properties']
 
 
+class TestRecursiveSchemas:
+    """A schema that refers to itself is truncated at the cycle rather than expanded forever."""
+
+    def _spec(self, schemas: dict) -> dict:
+        return {'components': {'schemas': schemas}}
+
+    def test_self_reference_terminates(self):
+        """A node referring to itself expands one level, then stops.
+
+        Without a guard the resolver follows the reference back into itself until the stack runs out.
+        """
+        raw = self._spec(
+            {
+                'Node': {
+                    'type': 'object',
+                    'title': 'Node',
+                    'properties': {'name': {'type': 'string'}, 'child': {'$ref': '#/components/schemas/Node'}},
+                }
+            }
+        )
+
+        result = _expand_schema(raw, {'$ref': '#/components/schemas/Node'})
+
+        assert result['properties']['name'] == {'type': 'string'}
+        assert result['properties']['child'] == {'type': 'object', 'title': 'Node'}
+
+    def test_truncation_keeps_the_scalar_description(self):
+        """The cut keeps what the fragment says about itself, dropping only what nests further.
+
+        Collapsing to an empty schema would advertise "anything" for a field the spec describes as an object.
+        """
+        raw = self._spec(
+            {
+                'Node': {
+                    'type': 'object',
+                    'description': 'A tree node.',
+                    'required': ['child'],
+                    'properties': {'child': {'$ref': '#/components/schemas/Node'}},
+                }
+            }
+        )
+
+        cut = _expand_schema(raw, {'$ref': '#/components/schemas/Node'})['properties']['child']
+
+        assert cut == {'type': 'object', 'description': 'A tree node.', 'required': ['child']}
+
+    def test_mutual_recursion_terminates(self):
+        """A cycle spanning two schemas is caught the same way as a direct one."""
+        raw = self._spec(
+            {
+                'A': {'type': 'object', 'properties': {'b': {'$ref': '#/components/schemas/B'}}},
+                'B': {'type': 'object', 'properties': {'a': {'$ref': '#/components/schemas/A'}}},
+            }
+        )
+
+        result = _expand_schema(raw, {'$ref': '#/components/schemas/A'})
+
+        assert result['properties']['b']['properties']['a'] == {'type': 'object'}
+
+    def test_recursion_through_array_items_terminates(self):
+        """The cycle is cut wherever it runs, including through ``items``."""
+        raw = self._spec(
+            {
+                'Tree': {
+                    'type': 'object',
+                    'properties': {'kids': {'type': 'array', 'items': {'$ref': '#/components/schemas/Tree'}}},
+                }
+            }
+        )
+
+        result = _expand_schema(raw, {'$ref': '#/components/schemas/Tree'})
+
+        assert result['properties']['kids']['items'] == {'type': 'object'}
+
+    def test_repeated_reference_is_not_a_cycle(self):
+        """One schema used twice in sibling branches still expands in full on both.
+
+        The guard tracks the path currently being expanded, not every pointer ever seen,
+        so ordinary reuse is untouched.
+        """
+        raw = self._spec(
+            {
+                'Money': {'type': 'object', 'properties': {'amount': {'type': 'integer'}}},
+                'Order': {
+                    'type': 'object',
+                    'properties': {
+                        'net': {'$ref': '#/components/schemas/Money'},
+                        'gross': {'$ref': '#/components/schemas/Money'},
+                    },
+                },
+            }
+        )
+
+        result = _expand_schema(raw, {'$ref': '#/components/schemas/Order'})
+
+        assert result['properties']['net']['properties']['amount'] == {'type': 'integer'}
+        assert result['properties']['gross']['properties']['amount'] == {'type': 'integer'}
+
+    def test_recursive_body_still_produces_a_tool_parameter(self):
+        """A recursive request body parses into operations rather than raising."""
+        raw = {
+            'openapi': '3.1.0',
+            'info': {'title': 'Tree API', 'version': '1.0.0'},
+            'paths': {
+                '/trees': {
+                    'post': {
+                        'operationId': 'create_tree',
+                        'requestBody': {
+                            'content': {'application/json': {'schema': {'$ref': '#/components/schemas/Node'}}}
+                        },
+                        'responses': {'200': {'description': 'ok'}},
+                    }
+                }
+            },
+            'components': {
+                'schemas': {
+                    'Node': {
+                        'type': 'object',
+                        'properties': {'label': {'type': 'string'}, 'child': {'$ref': '#/components/schemas/Node'}},
+                    }
+                }
+            },
+        }
+
+        spec = parse_spec(raw)
+
+        body = {p.name: p for p in spec.operations[0].parameters if p.location == 'body'}
+        assert body['label'].schema_ == {'type': 'string'}
+        assert body['child'].schema_ == {'type': 'object'}
+
+
 class TestNullable:
     """OpenAPI 3.0 ``nullable`` and 3.1 array ``type`` both normalize to the 2020-12 union form."""
 

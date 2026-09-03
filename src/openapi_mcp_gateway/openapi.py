@@ -272,7 +272,24 @@ _SUBSCHEMA_LIST_KEYS = ('oneOf', 'anyOf', 'prefixItems')
 _SUBSCHEMA_MAP_KEYS = ('properties', 'patternProperties', 'dependentSchemas')
 
 
-def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+def _truncate_at_cycle(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Describe ``schema`` without any of the keywords that could lead back into it.
+
+    A recursive schema has no finite expansion, so re-entering one has to stop somewhere.
+    Stopping here keeps every scalar keyword the fragment carries, ``type`` and ``title`` and the rest,
+    and drops only the keywords that nest further.
+    A self-referencing ``Node`` therefore still advertises itself as an object,
+    rather than collapsing to "anything" and leaving the model to guess.
+    """
+    dropped = {'$ref', 'allOf', *_SUBSCHEMA_KEYS, *_SUBSCHEMA_LIST_KEYS, *_SUBSCHEMA_MAP_KEYS}
+    return {key: value for key, value in schema.items() if key not in dropped}
+
+
+def _expand_schema(
+    raw: dict[str, typing.Any],
+    schema: dict[str, typing.Any],
+    expanding: frozenset[str] = frozenset(),
+) -> dict[str, typing.Any]:
     """Expand a JSON Schema fragment into the form the gateway advertises.
 
     Resolves ``$ref`` and flattens ``allOf`` via ``_deep_merge``,
@@ -280,28 +297,40 @@ def _expand_schema(raw: dict[str, typing.Any], schema: dict[str, typing.Any]) ->
     and finally rewrites OpenAPI 3.0 keywords into their JSON Schema 2020-12 equivalents.
     Recursion keys off each keyword's presence rather than off ``type``,
     since ``type`` is optional and a fragment may carry ``properties`` or ``items`` without declaring it.
+
+    ``expanding`` holds the pointers on the current path, and callers leave it empty.
+    Re-entering one means the schema refers to itself, so that branch is truncated instead of expanded.
+    The set is passed down rather than mutated, so it holds only the current path.
+    A schema referenced twice in sibling branches still expands fully in both,
+    and only an actual cycle is cut.
     """
     if '$ref' in schema:
-        resolved = _resolve_ref(raw, schema['$ref'])
-        return _expand_schema(raw, resolved)
+        pointer = schema['$ref']
+        resolved = _resolve_ref(raw, pointer)
+        if pointer in expanding:
+            return _truncate_at_cycle(resolved)
+        return _expand_schema(raw, resolved, expanding | {pointer})
 
     if 'allOf' in schema:
         merged: dict[str, typing.Any] = {}
         for sub in schema['allOf']:
-            merged = _deep_merge(merged, _expand_schema(raw, sub))
+            merged = _deep_merge(merged, _expand_schema(raw, sub, expanding))
         return merged
 
     result = schema.copy()
     for key in _SUBSCHEMA_KEYS:
         if isinstance(result.get(key), dict):
-            result[key] = _expand_schema(raw, result[key])
+            result[key] = _expand_schema(raw, result[key], expanding)
     for key in _SUBSCHEMA_LIST_KEYS:
         if isinstance(result.get(key), list):
-            result[key] = [_expand_schema(raw, item) if isinstance(item, dict) else item for item in result[key]]
+            result[key] = [
+                _expand_schema(raw, item, expanding) if isinstance(item, dict) else item for item in result[key]
+            ]
     for key in _SUBSCHEMA_MAP_KEYS:
         if isinstance(result.get(key), dict):
             result[key] = {
-                name: _expand_schema(raw, sub) if isinstance(sub, dict) else sub for name, sub in result[key].items()
+                name: _expand_schema(raw, sub, expanding) if isinstance(sub, dict) else sub
+                for name, sub in result[key].items()
             }
     return _normalize_to_2020_12(result)
 

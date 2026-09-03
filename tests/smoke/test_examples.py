@@ -22,6 +22,8 @@ def _smoke_credentials(monkeypatch):
     monkeypatch.setenv('ASANA_CLIENT_ID', 'smoke-test-client-id')
     monkeypatch.setenv('ASANA_CLIENT_SECRET', 'smoke-test-client-secret')
     monkeypatch.setenv('GITHUB_TOKEN', 'smoke-test-github-token')
+    monkeypatch.setenv('AUTH0_CLIENT_ID', 'smoke-test-auth0-client-id')
+    monkeypatch.setenv('AUTH0_CLIENT_SECRET', 'smoke-test-auth0-client-secret')
 
 
 @pytest.mark.parametrize(
@@ -31,6 +33,7 @@ def _smoke_credentials(monkeypatch):
         'github.yml',
         'asana.yml',
         'multi-server.yml',
+        'auth0-management.yml',
     ],
 )
 async def test_example_config_lists_tools(config_name: str):
