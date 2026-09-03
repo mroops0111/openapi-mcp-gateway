@@ -6,7 +6,7 @@ import click
 from .gateway import Gateway
 from .logger import FORMATS, LEVELS, setup
 from .openapi import ExposedTool
-from .settings import AuthConfig, GatewayConfig, build_gateway_config, single_spec_layer, yaml_layer
+from .settings import AuthConfig, GatewayConfig, UpstreamAuthConfig, build_gateway_config, single_spec_layer, yaml_layer
 
 
 logger = logging.getLogger(__name__)
@@ -282,12 +282,14 @@ def _build_auth_config(
     return AuthConfig(
         type=auth_type,
         token=auth_token,
-        client_id=auth_client_id,
-        client_secret=auth_client_secret,
-        authorization_url=auth_authorization_url,
-        token_url=auth_token_url,
-        upstream_scopes=scopes,
         flow=auth_flow,
+        upstream=UpstreamAuthConfig(
+            client_id=auth_client_id,
+            client_secret=auth_client_secret,
+            authorization_url=auth_authorization_url,
+            token_url=auth_token_url,
+            scopes=scopes,
+        ),
     )
 
 

@@ -163,8 +163,8 @@ def _partition_operations(
 ) -> tuple[list[OperationInfo], list[OperationInfo]]:
     """Split ``operations`` into ``(resource_operations, tool_operations)``.
 
-    With ``promote_resources`` off, the default, every operation becomes a tool
-    and ``x-mcp-integration.resource`` declarations are ignored.
+    With ``promote_resources`` off, the default,
+    every operation becomes a tool and ``x-mcp-integration.resource`` declarations are ignored.
 
     With it on, an operation becomes a resource when it either declares ``resource`` explicitly,
     or qualifies for promotion (no ``tool`` and the eligibility rules pass).

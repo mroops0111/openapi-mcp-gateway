@@ -46,11 +46,12 @@ servers:
     spec: https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml
     auth:
       type: oauth2
-      client_id: ${ASANA_CLIENT_ID}
-      client_secret: ${ASANA_CLIENT_SECRET}
-      upstream_scopes:
-        - openid
-        - email
-        - profile
-        - users:read
-        - workspaces:read
+      upstream:
+        client_id: ${ASANA_CLIENT_ID}
+        client_secret: ${ASANA_CLIENT_SECRET}
+        scopes:
+          - openid
+          - email
+          - profile
+          - users:read
+          - workspaces:read

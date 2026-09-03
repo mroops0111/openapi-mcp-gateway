@@ -133,7 +133,7 @@ class TestAuthInference:
         )
         assert auth.type == 'none'
         assert auth.token is None
-        assert auth.client_id is None
+        assert auth.upstream.client_id is None
 
     def test_token_only_infers_bearer(self):
         """A bare ``--auth-token`` is enough to infer ``bearer``."""
@@ -163,8 +163,8 @@ class TestAuthInference:
             auth_flow=None,
         )
         assert auth.type == 'oauth2'
-        assert auth.client_id == 'cid'
-        assert auth.client_secret == 'sec'
+        assert auth.upstream.client_id == 'cid'
+        assert auth.upstream.client_secret == 'sec'
 
     def test_explicit_type_wins(self):
         """An explicit ``--auth-type`` takes precedence over inference."""
@@ -192,7 +192,7 @@ class TestAuthInference:
             auth_token_url=None,
             auth_flow=None,
         )
-        assert auth.upstream_scopes == ['read', 'write', 'admin']
+        assert auth.upstream.scopes == ['read', 'write', 'admin']
 
     def test_ambiguous_flags_raise_usage_error(self):
         """Auth flags with no token, no client_id and no explicit type are unrecoverable."""
@@ -220,8 +220,8 @@ class TestAuthInference:
             auth_token_url='https://auth.example.com/token',
             auth_flow=None,
         )
-        assert auth.authorization_url == 'https://auth.example.com/authorize'
-        assert auth.token_url == 'https://auth.example.com/token'
+        assert auth.upstream.authorization_url == 'https://auth.example.com/authorize'
+        assert auth.upstream.token_url == 'https://auth.example.com/token'
 
 
 class TestConfigPrecedence:

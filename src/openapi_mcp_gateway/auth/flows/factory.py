@@ -83,15 +83,15 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
         # Spec declared no OAuth flows, so the flow must be synthesised from explicit config.
         selected_flow = _synthesise_from_config(entry, explicit_flow_type)
 
-    if entry.auth.authorization_url:
-        selected_flow.authorization_url = entry.auth.authorization_url
-    if entry.auth.token_url:
-        selected_flow.token_url = entry.auth.token_url
+    if entry.auth.upstream.authorization_url:
+        selected_flow.authorization_url = entry.auth.upstream.authorization_url
+    if entry.auth.upstream.token_url:
+        selected_flow.token_url = entry.auth.upstream.token_url
 
     if (
         selected_flow.flow_type == 'authorization_code'
         and explicit_flow_type != 'authorization_code'
-        and not (entry.auth.resolve_client_id() and entry.auth.resolve_client_secret())
+        and not (entry.auth.upstream.resolve_client_id() and entry.auth.upstream.resolve_client_secret())
     ):
         raise ValueError(
             f'Server "{entry.name}": authorization_code flow declared in spec but no client_id/client_secret configured.\n\n'
@@ -141,26 +141,26 @@ def _pick_from_declared_flows(
 
 def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None) -> DetectedOAuthFlow:
     """Build a ``DetectedOAuthFlow`` from explicit config when the spec declares none."""
-    if not entry.auth.token_url:
+    if not entry.auth.upstream.token_url:
         raise ValueError(
             f'Server "{entry.name}": auth type is oauth2 but the spec has no OAuth2 flow and no token_url is provided. '
-            'Set auth.token_url (and authorization_url if using authorization_code), or add a securitySchemes section to the spec.'
+            'Set auth.upstream.token_url (and authorization_url if using authorization_code), or add a securitySchemes section to the spec.'
         )
 
     if explicit_flow_type is not None:
         flow_type = explicit_flow_type
-    elif entry.auth.authorization_url:
+    elif entry.auth.upstream.authorization_url:
         flow_type = 'authorization_code'
     else:
         flow_type = 'client_credentials'
 
-    if flow_type == 'authorization_code' and not entry.auth.authorization_url:
-        raise ValueError(f'Server "{entry.name}": authorization_code flow requires auth.authorization_url.')
+    if flow_type == 'authorization_code' and not entry.auth.upstream.authorization_url:
+        raise ValueError(f'Server "{entry.name}": authorization_code flow requires auth.upstream.authorization_url.')
 
-    scopes_map = dict.fromkeys(entry.auth.upstream_scopes, '')
+    scopes_map = dict.fromkeys(entry.auth.upstream.scopes, '')
     return DetectedOAuthFlow(
         flow_type=flow_type,  # type: ignore[arg-type]
-        authorization_url=entry.auth.authorization_url,
-        token_url=entry.auth.token_url,
+        authorization_url=entry.auth.upstream.authorization_url,
+        token_url=entry.auth.upstream.token_url,
         scopes=scopes_map,
     )

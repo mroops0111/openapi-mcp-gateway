@@ -450,8 +450,8 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         entry = flow_context.entry
         oauth_flow = flow_context.oauth_flow
 
-        client_id = entry.auth.resolve_client_id()
-        client_secret = entry.auth.resolve_client_secret()
+        client_id = entry.auth.upstream.resolve_client_id()
+        client_secret = entry.auth.upstream.resolve_client_secret()
         if not client_id or not client_secret:
             raise ValueError(
                 f'Server "{entry.name}": authorization_code flow requires client_id and client_secret. '
@@ -461,7 +461,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         if not oauth_flow.authorization_url:
             raise ValueError(
                 f'Server "{entry.name}": authorization_code flow requires authorization_url. '
-                'Provide auth.authorization_url or add it to the spec securitySchemes.'
+                'Provide auth.upstream.authorization_url or add it to the spec securitySchemes.'
             )
         if not oauth_flow.token_url:
             raise ValueError(f'Server "{entry.name}": authorization_code flow requires token_url.')
@@ -476,9 +476,9 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             client_id=client_id,
             client_secret=client_secret,
             callback_url=callback_url,
-            scopes=entry.auth.upstream_scopes,
+            scopes=entry.auth.upstream.scopes,
             prefix=entry.name,
-            audience_params=entry.auth.resolve_upstream_audience_params(),
+            audience_params=entry.auth.upstream.resolve_audience_params(),
             mcp_access_token_ttl=entry.auth.mcp_access_token_ttl,
             mcp_refresh_token_ttl=entry.auth.mcp_refresh_token_ttl,
         )
@@ -501,8 +501,8 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             entry.name,
             oauth_flow.authorization_url,
             oauth_flow.token_url,
-            entry.auth.upstream_scopes,
-            entry.auth.resolve_upstream_audience_params(),
+            entry.auth.upstream.scopes,
+            entry.auth.upstream.resolve_audience_params(),
         )
 
         return OAuthFlowSetup(

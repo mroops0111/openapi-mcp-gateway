@@ -1,3 +1,4 @@
+import typing
 from unittest.mock import patch
 
 import pytest
@@ -20,7 +21,7 @@ from openapi_mcp_gateway.auth.resolver import (
 from openapi_mcp_gateway.auth.token_source import ClientCredentialsTokenSource
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import OpenAPISpec
-from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, ServerConfig
+from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, ServerConfig, UpstreamAuthConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 
 
@@ -102,20 +103,24 @@ class TestResolveOAuthFlow:
 
     def test_picks_authorization_code_by_default(self):
         """When the spec declares both flows, authorization_code wins."""
-        entry = _entry(AuthConfig(type='oauth2', client_id='cid', client_secret='sec'))
+        entry = _entry(AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec')))
         flow = resolve_oauth_flow(entry, _spec_with_both_flows())
         assert flow.flow_type == 'authorization_code'
 
     def test_picks_client_credentials_when_only_one_declared(self):
         """If the spec only declares clientCredentials, it is selected without an override."""
-        entry = _entry(AuthConfig(type='oauth2', client_id='cid', client_secret='sec'))
+        entry = _entry(AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec')))
         flow = resolve_oauth_flow(entry, _spec_with_client_credentials())
         assert flow.flow_type == 'client_credentials'
 
     def test_explicit_flow_wins_over_default(self):
         """``auth.flow='client_credentials'`` overrides the authorization_code preference."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', flow='client_credentials'),
+            AuthConfig(
+                type='oauth2',
+                flow='client_credentials',
+                upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec'),
+            ),
         )
         flow = resolve_oauth_flow(entry, _spec_with_both_flows())
         assert flow.flow_type == 'client_credentials'
@@ -123,7 +128,11 @@ class TestResolveOAuthFlow:
     def test_explicit_flow_unknown_in_spec_raises(self):
         """Asking for a flow the spec does not declare is a configuration error."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', flow='client_credentials'),
+            AuthConfig(
+                type='oauth2',
+                flow='client_credentials',
+                upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec'),
+            ),
         )
         with pytest.raises(ValueError, match='spec does not declare'):
             resolve_oauth_flow(entry, _spec_with_authorization_code())
@@ -133,9 +142,9 @@ class TestResolveOAuthFlow:
         entry = _entry(
             AuthConfig(
                 type='oauth2',
-                client_id='cid',
-                client_secret='sec',
-                token_url='https://auth.example.com/token',
+                upstream=UpstreamAuthConfig(
+                    client_id='cid', client_secret='sec', token_url='https://auth.example.com/token'
+                ),
             ),
         )
         flow = resolve_oauth_flow(entry, _build_spec())
@@ -147,10 +156,12 @@ class TestResolveOAuthFlow:
         entry = _entry(
             AuthConfig(
                 type='oauth2',
-                client_id='cid',
-                client_secret='sec',
-                authorization_url='https://auth.example.com/authorize',
-                token_url='https://auth.example.com/token',
+                upstream=UpstreamAuthConfig(
+                    client_id='cid',
+                    client_secret='sec',
+                    authorization_url='https://auth.example.com/authorize',
+                    token_url='https://auth.example.com/token',
+                ),
             ),
         )
         flow = resolve_oauth_flow(entry, _build_spec())
@@ -158,18 +169,18 @@ class TestResolveOAuthFlow:
 
     def test_no_spec_no_token_url_raises(self):
         """OAuth2 with neither spec flow nor token_url is rejected with a clear error."""
-        entry = _entry(AuthConfig(type='oauth2', client_id='cid', client_secret='sec'))
+        entry = _entry(AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec')))
         with pytest.raises(ValueError, match='no OAuth2 flow'):
             resolve_oauth_flow(entry, _build_spec())
 
     def test_config_urls_override_spec_urls(self):
-        """Explicit ``auth.token_url`` overrides the spec-declared value."""
+        """Explicit ``auth.upstream.token_url`` overrides the spec-declared value."""
         entry = _entry(
             AuthConfig(
                 type='oauth2',
-                client_id='cid',
-                client_secret='sec',
-                token_url='https://other.example.com/token',
+                upstream=UpstreamAuthConfig(
+                    client_id='cid', client_secret='sec', token_url='https://other.example.com/token'
+                ),
             ),
         )
         flow = resolve_oauth_flow(entry, _spec_with_authorization_code())
@@ -182,7 +193,9 @@ class TestBuildOAuthFlow:
     def test_authorization_code_returns_provider_and_settings(self):
         """authorization_code yields a provider, AuthSettings, and an AuthorizationCodeAuthResolver."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', upstream_scopes=['api']),
+            AuthConfig(
+                type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', scopes=['api'])
+            ),
         )
         setup = build_oauth_flow(
             entry=entry,
@@ -199,7 +212,9 @@ class TestBuildOAuthFlow:
     def test_authorization_code_defaults_token_ttls(self):
         """Without config overrides the provider keeps the built-in access and refresh TTLs."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', upstream_scopes=['api']),
+            AuthConfig(
+                type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', scopes=['api'])
+            ),
         )
         setup = build_oauth_flow(
             entry=entry,
@@ -217,11 +232,9 @@ class TestBuildOAuthFlow:
         entry = _entry(
             AuthConfig(
                 type='oauth2',
-                client_id='cid',
-                client_secret='sec',
-                upstream_scopes=['api'],
                 mcp_access_token_ttl=7200,
                 mcp_refresh_token_ttl=604800,
+                upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', scopes=['api']),
             ),
         )
         setup = build_oauth_flow(
@@ -238,7 +251,9 @@ class TestBuildOAuthFlow:
     def test_client_credentials_returns_token_source_resolver(self):
         """client_credentials yields a TokenSourceAuthResolver and an on_shutdown hook."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', upstream_scopes=['api']),
+            AuthConfig(
+                type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', scopes=['api'])
+            ),
         )
         setup = build_oauth_flow(
             entry=entry,
@@ -319,7 +334,9 @@ class TestClientCredentialsFlowHandler:
     def test_token_source_uses_resolved_credentials(self):
         """Handler builds a ``ClientCredentialsTokenSource`` carrying the resolved credentials."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', upstream_scopes=['read']),
+            AuthConfig(
+                type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', scopes=['read'])
+            ),
         )
         spec = _spec_with_client_credentials()
         handler = ClientCredentialsFlowHandler()
@@ -350,7 +367,9 @@ class TestAuthorizationCodeFlowHandler:
     def test_provider_carries_callback_url(self):
         """Handler composes the callback URL from gateway_url + mount_path."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', upstream_scopes=['api']),
+            AuthConfig(
+                type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', scopes=['api'])
+            ),
         )
         spec = _spec_with_authorization_code()
         handler = AuthorizationCodeFlowHandler()
@@ -381,9 +400,7 @@ class TestUpstreamAudienceWiring:
         entry = _entry(
             AuthConfig(
                 type='oauth2',
-                client_id='cid',
-                client_secret='sec',
-                upstream_audience='https://api.example.com',
+                upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', audience='https://api.example.com'),
             ),
         )
         spec = _spec_with_authorization_code()
@@ -407,10 +424,8 @@ class TestUpstreamAudienceWiring:
         entry = _entry(
             AuthConfig(
                 type='oauth2',
-                client_id='cid',
-                client_secret='sec',
                 flow='client_credentials',
-                upstream_resource='https://api.example.com',
+                upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', resource='https://api.example.com'),
             ),
         )
         spec = _spec_with_client_credentials()
@@ -432,17 +447,22 @@ class TestUpstreamAudienceWiring:
         assert token_source.audience_params == {'resource': 'https://api.example.com'}
 
 
-def _token_exchange_entry(**auth_overrides) -> ServerConfig:
-    """Entry configured for the token_exchange flow, with every requirement satisfied by default."""
-    defaults = {
-        'type': 'oauth2',
-        'flow': 'token_exchange',
-        'issuer': 'https://auth.example.com',
-        'upstream_audience': 'https://api.example.com',
+def _token_exchange_entry(**overrides) -> ServerConfig:
+    """Entry configured for the token_exchange flow, with every requirement satisfied by default.
+
+    Keys belonging to the nested ``upstream`` block are accepted flat here for brevity,
+    so a test can vary one of them without restating the rest.
+    """
+    upstream_keys = {'client_id', 'client_secret', 'authorization_url', 'token_url', 'scopes', 'resource', 'audience'}
+    upstream: dict[str, typing.Any] = {
+        'audience': 'https://api.example.com',
         'client_id': 'gateway',
         'client_secret': 'secret',
     }
-    return _entry(AuthConfig(**{**defaults, **auth_overrides}))
+    auth: dict[str, typing.Any] = {'type': 'oauth2', 'flow': 'token_exchange', 'issuer': 'https://auth.example.com'}
+    for key, value in overrides.items():
+        (upstream if key in upstream_keys else auth)[key] = value
+    return _entry(AuthConfig.model_validate({**auth, 'upstream': upstream}))
 
 
 def _build_token_exchange(entry: ServerConfig):
@@ -507,8 +527,8 @@ class TestTokenExchangeFlowHandler:
 
     def test_requires_an_upstream_audience(self):
         """Without a target the issuer mints for its own default, which the upstream refuses."""
-        with pytest.raises(ValueError, match=r'requires auth\.upstream_resource or auth\.upstream_audience'):
-            _build_token_exchange(_token_exchange_entry(upstream_audience=None))
+        with pytest.raises(ValueError, match=r'requires auth\.upstream\.resource or auth\.upstream\.audience'):
+            _build_token_exchange(_token_exchange_entry(audience=None))
 
     def test_inbound_and_upstream_scopes_are_independent(self):
         """Asking the issuer for a scope must not make it mandatory on the caller's token.
@@ -518,7 +538,7 @@ class TestTokenExchangeFlowHandler:
         Coupling the two locked out every client that did not happen to match.
         """
         setup = _build_token_exchange(
-            _token_exchange_entry(upstream_scopes=['email', 'profile'], required_scopes=['mcp.access'])
+            _token_exchange_entry(scopes=['email', 'profile'], required_scopes=['mcp.access'])
         )
 
         assert setup.verifier is not None
@@ -532,7 +552,7 @@ class TestTokenExchangeFlowHandler:
         Advertising the upstream set instead would send clients after scopes this endpoint never checks,
         while staying silent about the ones it does.
         """
-        setup = _build_token_exchange(_token_exchange_entry(upstream_scopes=['email'], required_scopes=['mcp.access']))
+        setup = _build_token_exchange(_token_exchange_entry(scopes=['email'], required_scopes=['mcp.access']))
 
         assert setup.protected_resource is not None
         assert setup.protected_resource.scopes_supported == ['mcp.access']

@@ -17,7 +17,14 @@ from starlette.testclient import TestClient
 from openapi_mcp_gateway.auth import token_source as token_source_module
 from openapi_mcp_gateway.auth.oidc import IssuerMetadata
 from openapi_mcp_gateway.gateway import Gateway
-from openapi_mcp_gateway.settings import AuthConfig, ExposureConfig, GatewayConfig, PolicyConfig, ServerConfig
+from openapi_mcp_gateway.settings import (
+    AuthConfig,
+    ExposureConfig,
+    GatewayConfig,
+    PolicyConfig,
+    ServerConfig,
+    UpstreamAuthConfig,
+)
 
 
 class _StubContext:
@@ -150,11 +157,13 @@ class TestWellKnownOAuth:
                     spec=str(petstore_json_path),
                     auth=AuthConfig(
                         type='oauth2',
-                        client_id='test-client-id',
-                        client_secret='test-client-secret',
-                        authorization_url='https://auth.example.com/authorize',
-                        token_url='https://auth.example.com/token',
-                        upstream_scopes=['read'],
+                        upstream=UpstreamAuthConfig(
+                            client_id='test-client-id',
+                            client_secret='test-client-secret',
+                            authorization_url='https://auth.example.com/authorize',
+                            token_url='https://auth.example.com/token',
+                            scopes=['read'],
+                        ),
                     ),
                 ),
             ],
@@ -206,11 +215,13 @@ class TestMountEmbedding:
                     spec=str(petstore_json_path),
                     auth=AuthConfig(
                         type='oauth2',
-                        client_id='test-client-id',
-                        client_secret='test-client-secret',
-                        authorization_url='https://auth.example.com/authorize',
-                        token_url='https://auth.example.com/token',
-                        upstream_scopes=['read'],
+                        upstream=UpstreamAuthConfig(
+                            client_id='test-client-id',
+                            client_secret='test-client-secret',
+                            authorization_url='https://auth.example.com/authorize',
+                            token_url='https://auth.example.com/token',
+                            scopes=['read'],
+                        ),
                     ),
                 ),
             ],
@@ -255,7 +266,7 @@ class TestEndToEndToolInvocation:
 
 
 class TestDynamicExposureEndToEnd:
-    """Full assembly chain when ``exposure: dynamic`` swaps tools for the three meta-tools."""
+    """Full assembly chain when ``exposure.style: dynamic`` swaps tools for the three meta-tools."""
 
     @pytest.fixture
     def dynamic_gateway(self, petstore_json_path):
@@ -348,9 +359,9 @@ class TestClientCredentialsFlowEndToEnd:
                     spec=str(spec_path),
                     auth=AuthConfig(
                         type='oauth2',
-                        client_id='gateway-id',
-                        client_secret='gateway-secret',
-                        upstream_scopes=['api'],
+                        upstream=UpstreamAuthConfig(
+                            client_id='gateway-id', client_secret='gateway-secret', scopes=['api']
+                        ),
                     ),
                 ),
             ],
@@ -631,10 +642,12 @@ class TestTokenExchangeDiscovery:
                         type='oauth2',
                         flow='token_exchange',
                         issuer='https://auth.example.com',
-                        upstream_audience='https://api.example.com',
-                        client_id='gateway',
-                        client_secret='secret',
-                        upstream_scopes=['read'],
+                        upstream=UpstreamAuthConfig(
+                            audience='https://api.example.com',
+                            client_id='gateway',
+                            client_secret='secret',
+                            scopes=['read'],
+                        ),
                     ),
                 ),
             ],
@@ -720,9 +733,9 @@ class TestRejectedTokenResponse:
                         type='oauth2',
                         flow='token_exchange',
                         issuer=self.ISSUER,
-                        upstream_audience='https://api.example.com',
-                        client_id='gateway',
-                        client_secret='secret',
+                        upstream=UpstreamAuthConfig(
+                            audience='https://api.example.com', client_id='gateway', client_secret='secret'
+                        ),
                     ),
                 ),
             ],

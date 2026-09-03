@@ -33,7 +33,7 @@ Do not invent a key you have not seen in one of those.
 
 Follow these two rules:
 
-- **Policy Selects, Operations Override.** The tool surface comes from the `policy` block, where `allow` and `deny` are globs over operation ids and `marked_only` keeps only marked operations. The `operations` map only attaches overrides to operations the policy already kept, and it errors on an unknown id. Set `policy.allow` to narrow a large spec, or every operation becomes a tool.
+- **Policy Selects, Operations Override.** The tool surface comes from the `policy` block, where `allow` and `deny` are globs over operation ids and `annotated_only` keeps only operations the spec annotates. The `operations` map only attaches overrides to operations the policy already kept, and it errors on an unknown id. Set `policy.allow` to narrow a large spec, or every operation becomes a tool.
 - **Complete Spec, Lean Config.** Point `spec` at the full upstream document and never trim it. Narrow the surface with `policy.allow`, so the user can widen it later with a one-line change instead of re-acquiring the spec.
 
 ### Features by Scenario
@@ -44,7 +44,7 @@ Match features to the user's situation, do not reach for all of them.
 - **A Huge Spec of Hundreds of Operations.** Prefer dynamic exposure, which fronts the spec with a few meta-tools, over listing every operation, so the tool list never floods the model. Still scope it with `policy.allow`.
 - **A Messy API That Makes Poor Tools.** Shape it. Hide the knobs the model should not set, and trim the response.
 - **Multiple Users, or a Provider That Mandates It.** Use `oauth2`, so each user signs in with their own credentials. `authorization_code` is the default and fits nearly every case.
-- **An API Behind an Identity Provider You Run.** Point the OAuth URLs at that provider and set `upstream_audience` to the API, so the provider mints a token the API will accept rather than one for its own default audience. Reach for `flow: token_exchange` only when the provider should also issue for the MCP endpoint itself, which needs RFC 8693 support on its side.
+- **An API Behind an Identity Provider You Run.** Point the OAuth URLs at that provider and set `auth.upstream.audience` to the API, so the provider mints a token the API will accept rather than one for its own default audience. Reach for `flow: token_exchange` only when the provider should also issue for the MCP endpoint itself, which needs RFC 8693 support on its side.
 
 ## Process
 
@@ -114,14 +114,17 @@ servers:
       type: bearer # or api_key / oauth2 / passthrough / none
       token: ${SOME_TOKEN}
       # oauth2 also takes flow: authorization_code (default) / client_credentials / token_exchange
-      # upstream_scopes: what to request from the upstream authorization server
       # required_scopes: for token_exchange, what an inbound token must already carry
+      upstream: # everything the gateway sends to the upstream authorization server
+        client_id: ${SOME_ID}
+        scopes: [...]
+        audience: https://the-api.example.com # when the API and its AS differ
     policy: # the selector for which operations become tools
       allow: ["<operation_id>", "..."] # globs matched against operation ids, omit to expose all
     operations: # overrides only, applied to operations the policy kept
       <operation_id>:
         tool: # optional, omit for an as-is passthrough
-          strategy: replace # or merge
+          params_strategy: replace # or merge
           params:
             <friendly_param>:
               type: string

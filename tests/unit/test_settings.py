@@ -8,6 +8,7 @@ from openapi_mcp_gateway.settings import (
     AuthConfig,
     GatewayConfig,
     ServerConfig,
+    UpstreamAuthConfig,
     build_gateway_config,
     single_spec_layer,
     yaml_layer,
@@ -74,9 +75,11 @@ class TestAuthConfig:
 
     def test_numeric_client_id_coerced_to_string(self):
         """Unquoted numeric ``client_id`` in YAML (Asana 18-digit, Facebook etc.) parses without raising."""
-        auth = AuthConfig.model_validate({'type': 'oauth2', 'client_id': 1214443090174193, 'client_secret': 'abc'})
-        assert auth.client_id == '1214443090174193'
-        assert isinstance(auth.client_id, str)
+        auth = AuthConfig.model_validate(
+            {'type': 'oauth2', 'upstream': {'client_id': 1214443090174193, 'client_secret': 'abc'}}
+        )
+        assert auth.upstream.client_id == '1214443090174193'
+        assert isinstance(auth.upstream.client_id, str)
 
     def test_numeric_token_coerced_to_string(self):
         """Same coercion applies to ``token`` and ``client_secret`` for consistency."""
@@ -113,8 +116,8 @@ class TestAuthConfig:
     def test_resolve_client_id(self, monkeypatch):
         """OAuth ``client_id`` honours ``${VAR}`` substitution."""
         monkeypatch.setenv('CID', 'client-123')
-        auth = AuthConfig(type='oauth2', client_id='${CID}')
-        assert auth.resolve_client_id() == 'client-123'
+        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='${CID}'))
+        assert auth.upstream.resolve_client_id() == 'client-123'
 
     def test_mcp_token_ttl_defaults(self):
         """MCP token TTLs default to 1 hour access and 24 hours refresh."""
@@ -130,14 +133,14 @@ class TestAuthConfig:
 
     def test_resolve_client_id_direct(self):
         """A literal ``client_id`` is returned verbatim."""
-        auth = AuthConfig(type='oauth2', client_id='direct-id')
-        assert auth.resolve_client_id() == 'direct-id'
+        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='direct-id'))
+        assert auth.upstream.resolve_client_id() == 'direct-id'
 
     def test_resolve_client_secret(self, monkeypatch):
         """OAuth ``client_secret`` honours ``${VAR}`` substitution."""
         monkeypatch.setenv('SEC', 'secret-456')
-        auth = AuthConfig(type='oauth2', client_secret='${SEC}')
-        assert auth.resolve_client_secret() == 'secret-456'
+        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_secret='${SEC}'))
+        assert auth.upstream.resolve_client_secret() == 'secret-456'
 
 
 class TestGatewayConfig:
@@ -309,33 +312,34 @@ class TestLayerHelpers:
 
 
 class TestAuthConfigUpstreamAudience:
-    """``resolve_upstream_audience_params`` names the API an upstream token is minted for."""
+    """``upstream.resolve_audience_params`` names the API an upstream token is minted for."""
 
     def test_empty_when_neither_configured(self):
         """An upstream that issues its own tokens needs no audience named, so nothing is sent."""
-        auth = AuthConfig(type='oauth2', client_id='cid', client_secret='sec')
+        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec'))
 
-        assert auth.resolve_upstream_audience_params() == {}
+        assert auth.upstream.resolve_audience_params() == {}
 
     def test_resource_emits_rfc_8707_parameter(self):
         """``resource`` is passed through under its RFC 8707 name."""
-        auth = AuthConfig(type='oauth2', upstream_resource='https://api.example.com')
+        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(resource='https://api.example.com'))
 
-        assert auth.resolve_upstream_audience_params() == {'resource': 'https://api.example.com'}
+        assert auth.upstream.resolve_audience_params() == {'resource': 'https://api.example.com'}
 
     def test_audience_emits_auth0_parameter(self):
         """``audience`` is passed through under the spelling Auth0 expects."""
-        auth = AuthConfig(type='oauth2', upstream_audience='https://api.example.com')
+        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(audience='https://api.example.com'))
 
-        assert auth.resolve_upstream_audience_params() == {'audience': 'https://api.example.com'}
+        assert auth.upstream.resolve_audience_params() == {'audience': 'https://api.example.com'}
 
     def test_both_are_sent_when_both_configured(self):
         """Setting both is allowed, for an authorization server that accepts either spelling."""
         auth = AuthConfig(
-            type='oauth2', upstream_resource='https://res.example.com', upstream_audience='https://aud.example.com'
+            type='oauth2',
+            upstream=UpstreamAuthConfig(resource='https://res.example.com', audience='https://aud.example.com'),
         )
 
-        assert auth.resolve_upstream_audience_params() == {
+        assert auth.upstream.resolve_audience_params() == {
             'resource': 'https://res.example.com',
             'audience': 'https://aud.example.com',
         }
@@ -343,6 +347,6 @@ class TestAuthConfigUpstreamAudience:
     def test_env_var_substitution(self, monkeypatch):
         """Both fields resolve ``${ENV_VAR}`` like the other credential fields do."""
         monkeypatch.setenv('UPSTREAM_AUD', 'https://from-env.example.com')
-        auth = AuthConfig(type='oauth2', upstream_audience='${UPSTREAM_AUD}')
+        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(audience='${UPSTREAM_AUD}'))
 
-        assert auth.resolve_upstream_audience_params() == {'audience': 'https://from-env.example.com'}
+        assert auth.upstream.resolve_audience_params() == {'audience': 'https://from-env.example.com'}

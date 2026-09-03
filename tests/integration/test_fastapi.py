@@ -8,7 +8,7 @@ from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway import Gateway, mcp_tool
 from openapi_mcp_gateway.auth import token_source as token_source_module
-from openapi_mcp_gateway.settings import AuthConfig
+from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
 
 
 class _StubRequestContext:
@@ -103,7 +103,7 @@ class TestGatewayFromFastapiAssembly:
         gateway = Gateway.from_fastapi(
             app,
             name='svc',
-            auth=AuthConfig(type='oauth2', client_id='cid', client_secret='sec'),
+            auth=AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec')),
         )
         # client_credentials registers a shutdown hook that closes the token source's HTTP client.
         assert len(gateway._shutdown_hooks) == 1
@@ -276,7 +276,7 @@ class TestGatewayFromFastapiToolCall:
         gateway = Gateway.from_fastapi(
             app,
             name='svc',
-            auth=AuthConfig(type='oauth2', client_id='cid', client_secret='sec'),
+            auth=AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec')),
         )
         mcp = gateway._servers[0].mcp
         tool = next(iter(mcp._tool_manager.list_tools()))

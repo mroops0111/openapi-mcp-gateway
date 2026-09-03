@@ -1075,8 +1075,9 @@ def _shaped_op(
 ) -> OperationInfo:
     """Build an operation whose ``x-mcp-integration.tool`` carries the given overrides.
 
-    When ``params`` is set and ``params_strategy`` is not, it defaults to ``replace`` if any entry declares
-    a ``type``, else ``merge``, so tests that only care about the override still read cleanly.
+    When ``params`` is set and ``params_strategy`` is not,
+    it defaults to ``replace`` if any entry declares a ``type``, else ``merge``,
+    so tests that only care about the override still read cleanly.
     """
     if params and params_strategy is None:
         params_strategy = 'replace' if any('type' in cfg for cfg in params.values()) else 'merge'
