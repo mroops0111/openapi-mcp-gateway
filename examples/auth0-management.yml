@@ -42,7 +42,7 @@ servers:
       # Without this the token is minted for Auth0's default audience and every call 401s.
       # The trailing slash is part of the audience, unlike base_url above.
       upstream_audience: https://YOUR_TENANT.auth0.com/api/v2/
-      scopes:
+      upstream_scopes:
         - read:users
         - read:clients
     policy:
