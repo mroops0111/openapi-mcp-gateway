@@ -165,7 +165,7 @@ Every request crosses two boundaries, and one `auth:` block settles both of them
 
 Only the last two put a check in front of the MCP endpoint. The others suit a gateway on localhost or inside a private network, and leave it open to anyone who can reach the port.
 
-`token_exchange` verifies JWT signatures, so it needs the `oidc` extra: run the gateway as `uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway`. Without it the gateway refuses to start and says so.
+`token_exchange` verifies JWT signatures, so it needs the `oidc` extra. Run the gateway as `uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway`. Without it the gateway refuses to start and says so.
 
 <details>
 <summary><b>Token Forwarding Policy</b></summary>
