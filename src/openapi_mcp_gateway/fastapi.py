@@ -140,7 +140,7 @@ def override_with_metadata(operation: OperationInfo, metadata: ToolMetadata) -> 
 
 
 def infer_auth_from_declared_flows(declared: list[DetectedOAuthFlow]) -> AuthConfig:
-    """Default to ``oauth2`` with explicit ``passthrough`` flow when the FastAPI app declares any supported OAuth flow,
+    """Default to ``passthrough`` when the FastAPI app declares any supported OAuth flow,
     ``none`` otherwise.
 
     Passthrough is the correct default here because the gateway is mounted onto the same app it exposes:
@@ -151,7 +151,7 @@ def infer_auth_from_declared_flows(declared: list[DetectedOAuthFlow]) -> AuthCon
     that path is selected by passing an explicit ``auth=AuthConfig(...)`` with credentials.
     """
     if declared:
-        return AuthConfig(type='oauth2', flow='passthrough')
+        return AuthConfig(type='passthrough')
     return AuthConfig(type='none')
 
 

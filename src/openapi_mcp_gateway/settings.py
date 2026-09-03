@@ -36,11 +36,34 @@ class AuthConfig(pydantic.BaseModel):
     and ``upstream_audience`` accept ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` substitution at resolve time.
     Numeric OAuth credentials are coerced from int to str,
     so unquoted YAML values still parse on providers that use numeric ``client_id`` (Asana, Facebook).
+
+    ``type`` groups by where the upstream credential comes from:
+    ``bearer`` and ``api_key`` hold a fixed one, ``oauth2`` obtains one, ``passthrough`` forwards the caller's,
+    and ``none`` sends nothing.
+    ``flow`` refines ``oauth2`` alone, naming the grant used to obtain that credential.
     """
 
     model_config = pydantic.ConfigDict(coerce_numbers_to_str=True)
 
-    type: typing.Literal['bearer', 'api_key', 'oauth2', 'none'] = 'none'
+    @pydantic.model_validator(mode='before')
+    @classmethod
+    def _reject_passthrough_as_a_flow(cls, data: typing.Any) -> typing.Any:
+        """Point the old ``flow: passthrough`` spelling at its replacement.
+
+        It moved to ``type`` because the gateway performs no OAuth exchange in that mode,
+        which made it a peer of ``bearer`` and ``api_key`` rather than of the real grants.
+        Caught here rather than left to the ``flow`` literal,
+        whose "not a permitted value" message would not say where the setting went.
+        """
+        if isinstance(data, dict) and data.get('flow') == 'passthrough':
+            raise ValueError(
+                'auth.flow: passthrough moved to auth.type: passthrough. '
+                'The gateway runs no OAuth exchange in that mode, so it never belonged under a flow. '
+                'Replace "type: oauth2" and "flow: passthrough" with "type: passthrough".'
+            )
+        return data
+
+    type: typing.Literal['bearer', 'api_key', 'oauth2', 'passthrough', 'none'] = 'none'
     token: str | None = None
     api_key_header: str = 'X-API-Key'
 
@@ -50,7 +73,7 @@ class AuthConfig(pydantic.BaseModel):
     authorization_url: str | None = None
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
-    flow: typing.Literal['authorization_code', 'client_credentials', 'passthrough', 'token_exchange'] | None = None
+    flow: typing.Literal['authorization_code', 'client_credentials', 'token_exchange'] | None = None
 
     # Issuer of the authorization server that protects this MCP endpoint, for ``token_exchange``.
     # Set it and the gateway stops issuing credentials of its own,

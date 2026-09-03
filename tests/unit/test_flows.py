@@ -1,12 +1,12 @@
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 from openapi_mcp_gateway.auth.flows import (
     AuthorizationCodeFlowHandler,
     ClientCredentialsFlowHandler,
     OAuthFlowContext,
-    PassthroughFlowHandler,
     TokenExchangeFlowHandler,
     build_oauth_flow,
 )
@@ -19,8 +19,9 @@ from openapi_mcp_gateway.auth.resolver import (
     TokenSourceAuthResolver,
 )
 from openapi_mcp_gateway.auth.token_source import ClientCredentialsTokenSource
+from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import OpenAPISpec
-from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
+from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, ServerConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 
 
@@ -271,7 +272,7 @@ class TestBuildOAuthFlow:
         which forwards the MCP client's token to a third-party upstream.
         That violates RFC 8707 audience binding, the "confused deputy" pattern the MCP authorization spec forbids.
 
-        Users who genuinely want passthrough must set ``auth.flow='passthrough'`` explicitly,
+        Users who genuinely want passthrough must set ``auth.type='passthrough'`` explicitly,
         to acknowledge the shared-audience requirement.
         """
         entry = _entry(AuthConfig(type='oauth2'))
@@ -296,42 +297,30 @@ class TestBuildOAuthFlow:
                 mount_path='/srv',
             )
 
-    def test_explicit_passthrough_short_circuits_detector(self):
-        """``flow='passthrough'`` is honoured even when the spec declares no OAuth flows."""
-        entry = _entry(AuthConfig(type='oauth2', flow='passthrough'))
-        setup = build_oauth_flow(
-            entry=entry,
-            spec=_build_spec(),
-            store=MemoryTokenStore(),
-            gateway_url='http://localhost:8000',
-            mount_path='/srv',
-        )
-        assert isinstance(setup.resolver, PassthroughAuthResolver)
 
+class TestPassthroughAuthType:
+    """``passthrough`` is an auth type, since the gateway runs no OAuth exchange in that mode."""
 
-class TestPassthroughFlowHandler:
-    """``PassthroughFlowHandler`` builds a minimal setup (resolver only)."""
+    def test_resolves_without_consulting_a_flow(self):
+        """It never reaches the flow factory, so no spec or flow value is involved."""
+        gateway = Gateway.from_config(GatewayConfig())
+        entry = _entry(AuthConfig(type='passthrough'))
 
-    def test_build_returns_passthrough_resolver(self):
-        """The handler returns an ``OAuthFlowSetup`` carrying only a ``PassthroughAuthResolver``."""
-        from openapi_mcp_gateway.auth.detector import DetectedOAuthFlow
+        setup = gateway._resolve_auth(entry, _build_spec())
 
-        entry = _entry(AuthConfig(type='oauth2', flow='passthrough'))
-        flow = DetectedOAuthFlow(flow_type='passthrough')
-        setup = PassthroughFlowHandler().build(
-            OAuthFlowContext(
-                entry=entry,
-                spec=_build_spec(),
-                oauth_flow=flow,
-                store=MemoryTokenStore(),
-                gateway_url='http://localhost:8000',
-                mount_path='/srv',
-            )
-        )
         assert isinstance(setup.resolver, PassthroughAuthResolver)
         assert setup.provider is None
+        assert setup.verifier is None
         assert setup.settings is None
-        assert setup.on_shutdown is None
+
+    def test_old_flow_spelling_explains_where_it_moved(self):
+        """The former ``flow: passthrough`` fails with migration guidance.
+
+        Left to the literal, the error would only list the permitted flows
+        without saying that this one became a type.
+        """
+        with pytest.raises(ValidationError, match=r'moved to auth\.type'):
+            AuthConfig(type='oauth2', flow='passthrough')
 
 
 class TestClientCredentialsFlowHandler:

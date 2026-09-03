@@ -539,7 +539,8 @@ class Gateway:
     def _resolve_auth(self, entry: ServerConfig, spec: OpenAPISpec) -> OAuthFlowSetup:
         """Return the auth components for ``entry``, as the flow handlers already shape them.
 
-        Non-OAuth auth types produce a setup carrying only a resolver,
+        Only ``oauth2`` consults ``flow`` and reaches a handler.
+        The other types produce a setup carrying just a resolver,
         so every caller sees one shape regardless of which branch ran.
         """
         if entry.auth.type == 'oauth2':
@@ -553,6 +554,12 @@ class Gateway:
             if setup.on_shutdown is not None:
                 self._shutdown_hooks.append(setup.on_shutdown)
             return setup
+
+        if entry.auth.type == 'passthrough':
+            # No credential of the gateway's own, and no MCP-side check either.
+            # Only correct where the caller's token already addresses the upstream,
+            # which in practice means the in-process FastAPI integration.
+            return OAuthFlowSetup(resolver=PassthroughAuthResolver())
 
         if entry.auth.type in ('bearer', 'api_key'):
             header_value = entry.auth.resolve_header()

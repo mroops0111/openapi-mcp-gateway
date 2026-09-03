@@ -9,12 +9,11 @@ class DetectedOAuthFlow(pydantic.BaseModel):
     """Minimal OAuth2 flow metadata describing how the gateway should obtain tokens.
 
     ``authorization_code`` and ``client_credentials`` come directly from the spec via ``detect_oauth_flows``.
-    ``passthrough`` and ``token_exchange`` are never produced from a spec,
-    since ``securitySchemes`` can declare neither.
-    The factory short-circuits to them only when ``auth.flow`` names them explicitly.
+    ``token_exchange`` is never produced from a spec, since ``securitySchemes`` cannot declare it.
+    The factory short-circuits to it only when ``auth.flow`` names it explicitly.
     """
 
-    flow_type: typing.Literal['authorization_code', 'client_credentials', 'passthrough', 'token_exchange']
+    flow_type: typing.Literal['authorization_code', 'client_credentials', 'token_exchange']
     authorization_url: str | None = None
     token_url: str | None = None
     scopes: dict[str, str] = pydantic.Field(default_factory=dict)

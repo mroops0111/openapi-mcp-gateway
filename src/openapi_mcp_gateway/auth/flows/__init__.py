@@ -2,7 +2,6 @@ from .authorization_code import AuthorizationCodeFlowHandler, AuthorizationCodeP
 from .base import AdvertisedResource, OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 from .client_credentials import ClientCredentialsFlowHandler
 from .factory import OAUTH_FLOW_HANDLERS, build_oauth_flow
-from .passthrough import PassthroughFlowHandler
 from .token_exchange import TokenExchangeFlowHandler
 
 
@@ -15,7 +14,6 @@ __all__ = [
     'OAuthFlowContext',
     'OAuthFlowHandler',
     'OAuthFlowSetup',
-    'PassthroughFlowHandler',
     'TokenExchangeFlowHandler',
     'build_oauth_flow',
 ]
