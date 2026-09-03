@@ -31,7 +31,8 @@ class JsonFormatter(logging.Formatter):
 
     The traceback is carried in its own field rather than folded into ``message``,
     so a log pipeline can index the two separately.
-    Omitting it entirely was worse than it sounds: this is the format a container deployment picks,
+    Omitting it entirely was worse than it sounds.
+    JSON is what a container deployment picks,
     so the harder-to-diagnose environment was the one losing the diagnosis.
     """
 

@@ -68,8 +68,8 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
         canonical_uri = f'{gateway_url}{flow_context.mount_path}/mcp'
 
         # The two scope lists point in opposite directions and must not be conflated.
-        # Demanding upstream_scopes of the caller would lock out every client that did not happen
-        # to register with the set this deployment wants from the issuer, which it does not control.
+        # Demanding upstream_scopes of the caller would lock out every client that did not match,
+        # since the deployment picks what to request from the issuer but not what a caller registered with.
         required_scopes = list(entry.auth.required_scopes)
         verifier = JWKSTokenVerifier(
             issuer=metadata.issuer,
@@ -112,8 +112,8 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
                 {
                     'resource': canonical_uri,
                     'authorization_servers': [metadata.issuer],
-                    # RFC 9728: what a client must obtain for this endpoint to accept its token,
-                    # which is the inbound list. A client reads this to know what to register for.
+                    # RFC 9728 defines this as what a client must obtain for this endpoint,
+                    # so it is the inbound list, and a registering client reads it to know what to ask for.
                     'scopes_supported': required_scopes or None,
                 }
             ),

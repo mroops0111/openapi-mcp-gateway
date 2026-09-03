@@ -141,13 +141,15 @@ class JWKSTokenVerifier:
         """Return an ``AccessToken`` for an acceptable token, or ``None`` for anything else.
 
         ``None`` is the only rejection the SDK's bearer backend understands.
-        It does not guard this call, so raising here would reach the client as a server error,
-        which reads as "the gateway is broken" rather than "re-authorize" and leaves it resending
-        the same dead credential. Expiry makes that the common path rather than an edge case,
+        It does not guard this call, so raising here would reach the client as a server error.
+        That reads as "the gateway is broken" rather than "re-authorize",
+        and leaves the client resending the same dead credential.
+        Expiry makes it the common path rather than an edge case,
         since under this flow the issuer owns the lifetimes.
 
-        The reason is logged rather than returned, since the 401 the caller receives carries
-        only the generic challenge. Rejections are ordinary traffic here, so this is not an error.
+        The reason is logged rather than returned,
+        since the 401 the caller receives carries only the generic challenge.
+        Rejections are ordinary traffic here, so this is not an error.
         """
         try:
             return self._verified_access_token(token)

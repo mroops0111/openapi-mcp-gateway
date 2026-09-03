@@ -687,9 +687,10 @@ def signing_key():
 class TestRejectedTokenResponse:
     """A token the gateway refuses produces a 401 challenge, not a server error.
 
-    The MCP SDK's bearer backend does not guard the ``verify_token`` call, so an exception raised
-    there reaches uvicorn as a 500. A client reads that as the server being broken and keeps
-    resending the same credential, where a 401 would have sent it to re-authorize.
+    The MCP SDK's bearer backend does not guard the ``verify_token`` call,
+    so an exception raised there reaches uvicorn as a 500.
+    A client reads that as the server being broken and keeps resending the same credential,
+    where a 401 would have sent it to re-authorize.
     """
 
     ISSUER = 'https://auth.example.com'

@@ -124,8 +124,8 @@ class TestJsonFormatter:
     def test_traceback_is_carried_in_its_own_field(self):
         """A logged exception keeps its traceback, in a field a pipeline can index separately.
 
-        JSON is what a container deployment picks, so dropping it lost the diagnosis exactly where
-        re-running with another format is hardest.
+        JSON is what a container deployment picks,
+        so dropping it lost the diagnosis exactly where re-running with another format is hardest.
         """
         payload = json.loads(JsonFormatter().format(self._record_with_exception()))
 

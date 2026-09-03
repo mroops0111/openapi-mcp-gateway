@@ -155,8 +155,8 @@ class TestJWKSTokenVerifier:
     async def test_expired_token_reports_as_expired(self, signing_key):
         """Expiry is reported distinctly rather than as a generic invalid token.
 
-        It is also the common rejection under this flow, since the issuer sets the lifetimes
-        and five minutes is a widespread default.
+        It is also the common rejection under this flow,
+        since the issuer sets the lifetimes and five minutes is a widespread default.
         """
         verifier = _verifier(signing_key)
         token = _issue(signing_key, exp=int(time.time()) - 10)

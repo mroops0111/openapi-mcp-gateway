@@ -513,8 +513,9 @@ class TestTokenExchangeFlowHandler:
     def test_inbound_and_upstream_scopes_are_independent(self):
         """Asking the issuer for a scope must not make it mandatory on the caller's token.
 
-        A deployment chooses what to request upstream, but has no say in what a caller's client
-        registered with. Coupling the two locked out every client that did not happen to match.
+        A deployment chooses what to request upstream,
+        but has no say in what a caller's client registered with.
+        Coupling the two locked out every client that did not happen to match.
         """
         setup = _build_token_exchange(
             _token_exchange_entry(upstream_scopes=['email', 'profile'], required_scopes=['mcp.access'])
@@ -528,8 +529,8 @@ class TestTokenExchangeFlowHandler:
     def test_advertised_scopes_are_the_ones_a_caller_must_hold(self):
         """RFC 9728 ``scopes_supported`` tells a client what to register for, so it is the inbound set.
 
-        Advertising the upstream set instead would send clients to obtain scopes this endpoint
-        never checks, while staying silent about the ones it does.
+        Advertising the upstream set instead would send clients after scopes this endpoint never checks,
+        while staying silent about the ones it does.
         """
         setup = _build_token_exchange(_token_exchange_entry(upstream_scopes=['email'], required_scopes=['mcp.access']))
 

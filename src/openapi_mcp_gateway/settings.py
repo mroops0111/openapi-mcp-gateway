@@ -58,9 +58,9 @@ class AuthConfig(pydantic.BaseModel):
     upstream_scopes: list[str] = pydantic.Field(default_factory=list)
 
     # What an inbound token must already carry, for token_exchange only.
-    # Separate from upstream_scopes because the two point in opposite directions:
-    # the gateway chooses what to request upstream, but has no say in what a caller's client
-    # registered with, so demanding the same set of both locks out clients it never configured.
+    # Separate from upstream_scopes because the two point in opposite directions.
+    # The gateway chooses what to request upstream, but has no say in what a caller registered with,
+    # so demanding the same set of both locks out clients it never configured.
     required_scopes: list[str] = pydantic.Field(default_factory=list)
     flow: typing.Literal['authorization_code', 'client_credentials', 'token_exchange'] | None = None
 
