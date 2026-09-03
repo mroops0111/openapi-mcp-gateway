@@ -182,7 +182,7 @@ class TestBuildOAuthFlow:
     def test_authorization_code_returns_provider_and_settings(self):
         """authorization_code yields a provider, AuthSettings, and an AuthorizationCodeAuthResolver."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', scopes=['api']),
+            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', upstream_scopes=['api']),
         )
         setup = build_oauth_flow(
             entry=entry,
@@ -199,7 +199,7 @@ class TestBuildOAuthFlow:
     def test_authorization_code_defaults_token_ttls(self):
         """Without config overrides the provider keeps the built-in access and refresh TTLs."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', scopes=['api']),
+            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', upstream_scopes=['api']),
         )
         setup = build_oauth_flow(
             entry=entry,
@@ -219,7 +219,7 @@ class TestBuildOAuthFlow:
                 type='oauth2',
                 client_id='cid',
                 client_secret='sec',
-                scopes=['api'],
+                upstream_scopes=['api'],
                 mcp_access_token_ttl=7200,
                 mcp_refresh_token_ttl=604800,
             ),
@@ -238,7 +238,7 @@ class TestBuildOAuthFlow:
     def test_client_credentials_returns_token_source_resolver(self):
         """client_credentials yields a TokenSourceAuthResolver and an on_shutdown hook."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', scopes=['api']),
+            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', upstream_scopes=['api']),
         )
         setup = build_oauth_flow(
             entry=entry,
@@ -319,7 +319,7 @@ class TestClientCredentialsFlowHandler:
     def test_token_source_uses_resolved_credentials(self):
         """Handler builds a ``ClientCredentialsTokenSource`` carrying the resolved credentials."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', scopes=['read']),
+            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', upstream_scopes=['read']),
         )
         spec = _spec_with_client_credentials()
         handler = ClientCredentialsFlowHandler()
@@ -350,7 +350,7 @@ class TestAuthorizationCodeFlowHandler:
     def test_provider_carries_callback_url(self):
         """Handler composes the callback URL from gateway_url + mount_path."""
         entry = _entry(
-            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', scopes=['api']),
+            AuthConfig(type='oauth2', client_id='cid', client_secret='sec', upstream_scopes=['api']),
         )
         spec = _spec_with_authorization_code()
         handler = AuthorizationCodeFlowHandler()
@@ -509,6 +509,32 @@ class TestTokenExchangeFlowHandler:
         """Without a target the issuer mints for its own default, which the upstream refuses."""
         with pytest.raises(ValueError, match=r'requires auth\.upstream_resource or auth\.upstream_audience'):
             _build_token_exchange(_token_exchange_entry(upstream_audience=None))
+
+    def test_inbound_and_upstream_scopes_are_independent(self):
+        """Asking the issuer for a scope must not make it mandatory on the caller's token.
+
+        A deployment chooses what to request upstream, but has no say in what a caller's client
+        registered with. Coupling the two locked out every client that did not happen to match.
+        """
+        setup = _build_token_exchange(
+            _token_exchange_entry(upstream_scopes=['email', 'profile'], required_scopes=['mcp.access'])
+        )
+
+        assert setup.verifier is not None
+        assert setup.verifier.required_scopes == ('mcp.access',)
+        assert isinstance(setup.resolver, TokenExchangeAuthResolver)
+        assert setup.resolver._token_source.scopes == ['email', 'profile']
+
+    def test_advertised_scopes_are_the_ones_a_caller_must_hold(self):
+        """RFC 9728 ``scopes_supported`` tells a client what to register for, so it is the inbound set.
+
+        Advertising the upstream set instead would send clients to obtain scopes this endpoint
+        never checks, while staying silent about the ones it does.
+        """
+        setup = _build_token_exchange(_token_exchange_entry(upstream_scopes=['email'], required_scopes=['mcp.access']))
+
+        assert setup.protected_resource is not None
+        assert setup.protected_resource.scopes_supported == ['mcp.access']
 
     def test_requires_client_credentials_for_the_exchange(self):
         """Authorization servers require a confidential client for the token-exchange grant."""

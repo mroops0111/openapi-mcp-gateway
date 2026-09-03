@@ -476,7 +476,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             client_id=client_id,
             client_secret=client_secret,
             callback_url=callback_url,
-            scopes=entry.auth.scopes,
+            scopes=entry.auth.upstream_scopes,
             prefix=entry.name,
             audience_params=entry.auth.resolve_upstream_audience_params(),
             mcp_access_token_ttl=entry.auth.mcp_access_token_ttl,
@@ -501,7 +501,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             entry.name,
             oauth_flow.authorization_url,
             oauth_flow.token_url,
-            entry.auth.scopes,
+            entry.auth.upstream_scopes,
             entry.auth.resolve_upstream_audience_params(),
         )
 

@@ -67,32 +67,39 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
         gateway_url = flow_context.gateway_url.rstrip('/')
         canonical_uri = f'{gateway_url}{flow_context.mount_path}/mcp'
 
+        # The two scope lists point in opposite directions and must not be conflated.
+        # Demanding upstream_scopes of the caller would lock out every client that did not happen
+        # to register with the set this deployment wants from the issuer, which it does not control.
+        required_scopes = list(entry.auth.required_scopes)
         verifier = JWKSTokenVerifier(
             issuer=metadata.issuer,
             audience=canonical_uri,
             jwks_uri=metadata.jwks_uri,
-            required_scopes=entry.auth.scopes,
+            required_scopes=required_scopes,
         )
         token_source = TokenExchangeTokenSource(
             token_endpoint=metadata.token_endpoint,
             client_id=client_id,
             client_secret=client_secret,
             audience_params=audience_params,
-            scopes=entry.auth.scopes,
+            scopes=entry.auth.upstream_scopes,
         )
 
         settings = AuthSettings(
             issuer_url=pydantic.AnyHttpUrl(metadata.issuer),
             resource_server_url=pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}'),
-            required_scopes=list(entry.auth.scopes) or None,
+            required_scopes=required_scopes or None,
         )
 
         logger.debug(
-            'Resource server flow set up for "%s": issuer=%s resource=%s exchange_target=%s',
+            'Token exchange flow set up for "%s": issuer=%s resource=%s exchange_target=%s '
+            'required_scopes=%s upstream_scopes=%s',
             entry.name,
             metadata.issuer,
             canonical_uri,
             audience_params,
+            required_scopes,
+            entry.auth.upstream_scopes,
         )
 
         return OAuthFlowSetup(
@@ -105,7 +112,9 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
                 {
                     'resource': canonical_uri,
                     'authorization_servers': [metadata.issuer],
-                    'scopes_supported': list(entry.auth.scopes) or None,
+                    # RFC 9728: what a client must obtain for this endpoint to accept its token,
+                    # which is the inbound list. A client reads this to know what to register for.
+                    'scopes_supported': required_scopes or None,
                 }
             ),
             on_shutdown=token_source.aclose,

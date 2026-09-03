@@ -74,7 +74,12 @@ logger = logging.getLogger(__name__)
     default=None,
     help='OAuth2 client secret or ${ENV_VAR} reference.',
 )
-@click.option('--auth-scopes', type=str, default=None, help='Comma-separated upstream OAuth2 scopes.')
+@click.option(
+    '--auth-upstream-scopes',
+    type=str,
+    default=None,
+    help='Comma-separated scopes to request from the upstream authorization server.',
+)
 @click.option('--auth-authorization-url', type=str, default=None, help='OAuth2 authorization URL (if not in spec).')
 @click.option('--auth-token-url', type=str, default=None, help='OAuth2 token URL (if not in spec).')
 @click.option(
@@ -128,7 +133,7 @@ def main(
     auth_token: str | None,
     auth_client_id: str | None,
     auth_client_secret: str | None,
-    auth_scopes: str | None,
+    auth_upstream_scopes: str | None,
     auth_authorization_url: str | None,
     auth_token_url: str | None,
     auth_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
@@ -190,7 +195,7 @@ def main(
             auth_token=auth_token,
             auth_client_id=auth_client_id,
             auth_client_secret=auth_client_secret,
-            auth_scopes=auth_scopes,
+            auth_upstream_scopes=auth_upstream_scopes,
             auth_authorization_url=auth_authorization_url,
             auth_token_url=auth_token_url,
             auth_flow=auth_flow,
@@ -242,7 +247,7 @@ def _build_auth_config(
     auth_token: str | None,
     auth_client_id: str | None,
     auth_client_secret: str | None,
-    auth_scopes: str | None,
+    auth_upstream_scopes: str | None,
     auth_authorization_url: str | None,
     auth_token_url: str | None,
     auth_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
@@ -254,7 +259,7 @@ def _build_auth_config(
             auth_token,
             auth_client_id,
             auth_client_secret,
-            auth_scopes,
+            auth_upstream_scopes,
             auth_authorization_url,
             auth_token_url,
             auth_flow,
@@ -272,7 +277,7 @@ def _build_auth_config(
         else:
             raise click.UsageError('Cannot infer --auth-type from the provided flags. Specify --auth-type explicitly.')
 
-    scopes = [s.strip() for s in auth_scopes.split(',')] if auth_scopes else []
+    scopes = [s.strip() for s in auth_upstream_scopes.split(',')] if auth_upstream_scopes else []
 
     return AuthConfig(
         type=auth_type,
@@ -281,7 +286,7 @@ def _build_auth_config(
         client_secret=auth_client_secret,
         authorization_url=auth_authorization_url,
         token_url=auth_token_url,
-        scopes=scopes,
+        upstream_scopes=scopes,
         flow=auth_flow,
     )
 
