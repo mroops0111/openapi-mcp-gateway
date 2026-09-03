@@ -1,18 +1,23 @@
-# Auth0 Management API: an upstream whose audience differs from its authorization server.
+# Auth0 Management API, an upstream whose audience differs from its authorization server.
 #
-# Auth0 issues tokens at {tenant}/oauth/token, but the Management API only accepts one that was
-# requested for its own audience, {tenant}/api/v2/. Ask without it and Auth0 mints a token for its
-# default audience, which every call here then rejects.
+# Auth0 issues tokens at {tenant}/oauth/token,
+# but the Management API accepts only one that was requested for its own audience, {tenant}/api/v2/.
+# Ask without it and Auth0 mints a token for its default audience, which every call here rejects.
 #
-# OpenAPI cannot express that parameter, which is why Auth0's own spec smuggles it through a vendor
-# extension ("x-form-parameters": {"audience": "/api/v2/"}). The gateway takes it as configuration
-# instead, through auth.upstream_audience.
+# OpenAPI cannot express that parameter,
+# which is why Auth0's own spec smuggles it through a vendor extension.
+# Its clientCredentials block carries an "x-form-parameters" entry naming the audience.
+# The gateway takes it as configuration instead, through auth.upstream_audience.
 #
 # Prerequisites:
-#   1. Create a Machine to Machine application authorised for the Management API, granting it the
-#      read:users and read:clients scopes: https://manage.auth0.com/#/applications
-#   2. Replace YOUR_TENANT.eu.auth0.com below with your own tenant domain. Only credential fields
-#      expand ${ENV_VAR}, so base_url and token_url have to be literal.
+#   1. Create a Machine to Machine application authorised for the Management API,
+#      granting it read:users and read:clients.
+#      The spec names further read scopes on these operations, which widen what comes back
+#      rather than gate the call, so those two are enough for the four tools below.
+#      https://manage.auth0.com/#/applications
+#   2. Replace YOUR_TENANT.auth0.com below with your own tenant domain,
+#      which carries a region segment on newer tenants, as in YOUR_TENANT.eu.auth0.com.
+#      Only credential fields expand ${ENV_VAR}, so base_url and token_url have to be literal.
 #   3. export AUTH0_CLIENT_ID="..." AUTH0_CLIENT_SECRET="..."
 #
 # Usage: openapi-mcp-gateway --config examples/auth0-management.yml
@@ -25,16 +30,18 @@ servers:
   - name: auth0
     spec: https://auth0.com/docs/api/management/openapi.json
     # The spec's server URL is templated on the tenant, so the real host has to be given here.
-    base_url: https://YOUR_TENANT.eu.auth0.com/api/v2
+    base_url: https://YOUR_TENANT.auth0.com/api/v2
     auth:
       type: oauth2
       flow: client_credentials
-      # Declared relative in the spec, so it needs the tenant host too.
-      token_url: https://YOUR_TENANT.eu.auth0.com/oauth/token
+      # The spec declares this as the relative "/oauth/token/", so the tenant host is required here.
+      # Auth0's own documentation gives the endpoint without the trailing slash.
+      token_url: https://YOUR_TENANT.auth0.com/oauth/token
       client_id: ${AUTH0_CLIENT_ID}
       client_secret: ${AUTH0_CLIENT_SECRET}
       # Without this the token is minted for Auth0's default audience and every call 401s.
-      upstream_audience: https://YOUR_TENANT.eu.auth0.com/api/v2/
+      # The trailing slash is part of the audience, unlike base_url above.
+      upstream_audience: https://YOUR_TENANT.auth0.com/api/v2/
       scopes:
         - read:users
         - read:clients
