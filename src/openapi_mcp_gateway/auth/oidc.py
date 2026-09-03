@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 # and a deployment should not have to tell the gateway which kind it runs.
 ISSUER_METADATA_PATHS = ('/.well-known/openid-configuration', '/.well-known/oauth-authorization-server')
 
+# Verification is restricted to the family of the key the issuer published,
+# rather than to whatever the token's own header asks for.
+# That is what closes the algorithm-confusion hole,
+# where a token asks for an RSA public key to be read as an HMAC secret.
+_ALGORITHMS_BY_KEY_TYPE = {
+    'RSA': ['RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512'],
+    'EC': ['ES256', 'ES384', 'ES512', 'ES256K'],
+    'OKP': ['EdDSA'],
+}
+
 
 class OIDCConfigurationError(Exception):
     """Raised when discovery cannot produce a usable JWKS or token endpoint."""
@@ -101,13 +111,6 @@ def fetch_issuer_metadata(issuer: str, timeout: float = 10.0) -> IssuerMetadata:
         )
 
     raise OIDCConfigurationError(f'Could not discover metadata for issuer "{issuer}". Tried:\n  ' + '\n  '.join(errors))
-
-
-_ALGORITHMS_BY_KEY_TYPE = {
-    'RSA': ['RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512'],
-    'EC': ['ES256', 'ES384', 'ES512', 'ES256K'],
-    'OKP': ['EdDSA'],
-}
 
 
 class JWKSTokenVerifier:
@@ -199,11 +202,8 @@ def _build_jwk_client(jwks_uri: str) -> typing.Any:
 
 
 def _permitted_algorithms(signing_key: typing.Any) -> list[str]:
-    """Restrict verification to the algorithm family of the key the issuer published.
+    """Return the algorithms acceptable for ``signing_key``, per ``_ALGORITHMS_BY_KEY_TYPE``.
 
-    Deriving the list from the key rather than honouring the token header's ``alg``
-    is what closes the algorithm-confusion hole,
-    where a token asks for an RSA public key to be read as an HMAC secret.
     Symmetric keys are refused outright, since a JWKS has no business publishing one.
     """
     key_type = getattr(signing_key, 'key_type', None)

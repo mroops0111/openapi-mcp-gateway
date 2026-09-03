@@ -191,6 +191,27 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
         return await handler.handle(request)
 
 
+def _register_health_route(app: FastAPI, servers: list[_ServerBundle]) -> None:
+    """Register ``/healthz`` reporting per-server name, mount path, and auth mode."""
+
+    @app.get('/healthz')
+    async def healthz():
+        return {
+            'status': 'ok',
+            'servers': [
+                {
+                    'name': bundle.name,
+                    'path': bundle.mount_path,
+                    'title': bundle.spec.title,
+                    # A verifier protects the endpoint just as a provider does,
+                    # so a delegating server must not report itself as unprotected.
+                    'auth': 'oauth2' if (bundle.auth_provider or bundle.token_verifier) else 'static',
+                }
+                for bundle in servers
+            ],
+        }
+
+
 def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:
     """Return the RFC 9728 document this server publishes.
 
@@ -213,24 +234,3 @@ def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:
             'scopes_supported': registration.valid_scopes if registration else None,
         }
     )
-
-
-def _register_health_route(app: FastAPI, servers: list[_ServerBundle]) -> None:
-    """Register ``/healthz`` reporting per-server name, mount path, and auth mode."""
-
-    @app.get('/healthz')
-    async def healthz():
-        return {
-            'status': 'ok',
-            'servers': [
-                {
-                    'name': bundle.name,
-                    'path': bundle.mount_path,
-                    'title': bundle.spec.title,
-                    # A verifier protects the endpoint just as a provider does,
-                    # so a delegating server must not report itself as unprotected.
-                    'auth': 'oauth2' if (bundle.auth_provider or bundle.token_verifier) else 'static',
-                }
-                for bundle in servers
-            ],
-        }
