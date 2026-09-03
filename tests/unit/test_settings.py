@@ -49,29 +49,7 @@ class TestServerConfig:
 
 
 class TestAuthConfig:
-    """Header resolution and env-var substitution on ``AuthConfig``."""
-
-    @pytest.mark.parametrize(
-        ('auth_type', 'token', 'expected'),
-        [
-            ('bearer', 'my-token', 'Bearer my-token'),
-            ('api_key', 'key123', 'key123'),
-        ],
-    )
-    def test_resolve_header_static(self, auth_type, token, expected):
-        """Static tokens render as ``Bearer …`` for bearer and as-is for api_key."""
-        auth = AuthConfig(type=auth_type, token=token)
-        assert auth.resolve_header() == expected
-
-    def test_resolve_api_key_default_header_name(self):
-        """Default api_key header name is ``X-API-Key``."""
-        auth = AuthConfig(type='api_key', token='key123')
-        assert auth.resolve_header_name() == 'X-API-Key'
-
-    def test_resolve_api_key_custom_header(self):
-        """``api_key_header`` overrides the default header name."""
-        auth = AuthConfig(type='api_key', token='key123', api_key_header='X-Custom')
-        assert auth.resolve_header_name() == 'X-Custom'
+    """Env-var substitution on ``AuthConfig``. How a token becomes a header belongs to the type handler."""
 
     def test_numeric_client_id_coerced_to_string(self):
         """Unquoted numeric ``client_id`` in YAML (Asana 18-digit, Facebook etc.) parses without raising."""
@@ -91,27 +69,22 @@ class TestAuthConfig:
         """``${VAR}`` placeholders are resolved against the environment."""
         monkeypatch.setenv('TEST_TOKEN', 'env-token')
         auth = AuthConfig(type='bearer', token='${TEST_TOKEN}')
-        assert auth.resolve_header() == 'Bearer env-token'
+        assert auth.resolve_token() == 'env-token'
 
     def test_resolve_env_var_with_default(self):
         """``${VAR:-default}`` falls back to the default when the var is unset."""
         auth = AuthConfig(type='bearer', token='${NONEXISTENT_VAR:-fallback-token}')
-        assert auth.resolve_header() == 'Bearer fallback-token'
+        assert auth.resolve_token() == 'fallback-token'
 
     def test_resolve_env_var_unset_no_default(self):
         """An unset env var with no default resolves to ``None``."""
         auth = AuthConfig(type='bearer', token='${NONEXISTENT_VAR}')
-        assert auth.resolve_header() is None
+        assert auth.resolve_token() is None
 
     def test_resolve_no_token(self):
-        """A bearer config without a token resolves to ``None``."""
+        """A config without a token resolves to ``None``."""
         auth = AuthConfig(type='bearer')
-        assert auth.resolve_header() is None
-
-    def test_resolve_none_type(self):
-        """``type='none'`` ignores any token and resolves to ``None``."""
-        auth = AuthConfig(type='none', token='ignored')
-        assert auth.resolve_header() is None
+        assert auth.resolve_token() is None
 
     def test_resolve_client_id(self, monkeypatch):
         """OAuth ``client_id`` honours ``${VAR}`` substitution."""

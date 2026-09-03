@@ -16,14 +16,13 @@ from starlette.responses import RedirectResponse
 
 from .app import _ServerBundle, build_app, build_mcp_asgi_app, register_auth_routes
 from .auth.detector import detect_oauth_flows, detect_unsupported_oauth_flows
-from .auth.flows import AuthorizationCodeProvider, OAuthFlowSetup, build_oauth_flow
+from .auth.flows import AuthorizationCodeProvider, OAuthFlowSetup
 from .auth.resolver import (
     AuthResolver,
     CompositeAuthResolver,
-    NullAuthResolver,
     PassthroughAuthResolver,
-    StaticAuthResolver,
 )
+from .auth.types import AuthTypeContext, build_auth
 from .exposure import MetaToolGenerator, ResourceGenerator, ToolGenerator, UpstreamBinding
 from .fastapi import (
     collect_marked_routes,
@@ -485,7 +484,7 @@ class Gateway:
         exposed_tools: list[ExposedTool] = []
         resource_names: list[str] = []
         if server_config.exposure.style == 'dynamic':
-            resource_optins = [op.operation_id for op in operations if op.resource_exposed]
+            resource_optins = [operation.operation_id for operation in operations if operation.resource_exposed]
             if resource_optins:
                 logger.warning(
                     'Server "%s": dynamic exposure ignores x-mcp-integration.resource declarations '
@@ -542,41 +541,16 @@ class Gateway:
         )
 
     def _resolve_auth(self, entry: ServerConfig, spec: OpenAPISpec) -> OAuthFlowSetup:
-        """Return the auth components for ``entry``, as the flow handlers already shape them.
+        """Return the auth components for ``entry``, dispatching on ``auth.type``.
 
-        Only ``oauth2`` consults ``flow`` and reaches a handler.
-        The other types produce a setup carrying just a resolver,
-        so every caller sees one shape regardless of which branch ran.
+        Every type produces the same shape, so callers never branch on which one ran.
+        Registering the shutdown hook is the gateway's business rather than a handler's,
+        since only the gateway owns the process lifecycle.
         """
-        if entry.auth.type == 'oauth2':
-            setup = build_oauth_flow(
-                entry=entry,
-                spec=spec,
-                store=self._store,
-                gateway_url=self._config.url,
-                mount_path=entry.mount_path,
-            )
-            if setup.on_shutdown is not None:
-                self._shutdown_hooks.append(setup.on_shutdown)
-            return setup
-
-        if entry.auth.type == 'passthrough':
-            # No credential of the gateway's own, and no MCP-side check either.
-            # Only correct where the caller's token already addresses the upstream,
-            # which in practice means the in-process FastAPI integration.
-            return OAuthFlowSetup(resolver=PassthroughAuthResolver())
-
-        if entry.auth.type in ('bearer', 'api_key'):
-            header_value = entry.auth.resolve_header()
-            if header_value:
-                return OAuthFlowSetup(
-                    resolver=StaticAuthResolver(
-                        header_value=header_value,
-                        header_name=entry.auth.resolve_header_name(),
-                    )
-                )
-
-        return OAuthFlowSetup(resolver=NullAuthResolver())
+        setup = build_auth(AuthTypeContext(entry=entry, spec=spec, store=self._store, gateway_url=self._config.url))
+        if setup.on_shutdown is not None:
+            self._shutdown_hooks.append(setup.on_shutdown)
+        return setup
 
     @staticmethod
     def _build_mcp_server(

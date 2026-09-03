@@ -8,6 +8,11 @@ from .env import resolve_env_var
 from .openapi import McpIntegration
 
 
+# The resolver moved to the leaf ``env`` module so exposure/ can reuse it without importing settings.
+# Kept as a private alias here so AuthConfig's existing call sites need no change.
+_resolve_env_var = resolve_env_var
+
+
 def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Recursively merge ``override`` into ``base``; ``override`` wins for non-dict values.
 
@@ -22,11 +27,6 @@ def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) ->
         else:
             result[key] = value
     return result
-
-
-# The resolver moved to the leaf ``env`` module so exposure/ can reuse it without importing settings.
-# Kept as a private alias here so AuthConfig's existing call sites need no change.
-_resolve_env_var = resolve_env_var
 
 
 class UpstreamAuthConfig(pydantic.BaseModel):
@@ -49,12 +49,13 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
 
-    # Names the API the token is for, when that API and its authorization server are different
-    # parties. Without it the authorization server mints for its own default audience, which the
-    # API then refuses. Servers disagree on the spelling, so both are offered and only what is set
-    # is sent. ``resource`` is the RFC 8707 parameter, ``audience`` is the spelling Auth0 uses.
-    # A server that does not recognise one ignores it silently rather than refusing, so setting
-    # both is the portable choice.
+    # Names the API the token is for,
+    # when that API and its authorization server are different parties.
+    # Without it the authorization server mints for its own default audience, which the API refuses.
+    # Servers disagree on the spelling, so both are offered and only what is set is sent.
+    # ``resource`` is the RFC 8707 parameter, ``audience`` is the spelling Auth0 uses.
+    # A server that does not recognise one ignores it silently rather than refusing,
+    # so setting both is the portable choice.
     resource: str | None = None
     audience: str | None = None
 
@@ -102,8 +103,9 @@ class AuthConfig(pydantic.BaseModel):
 
     flow: typing.Literal['authorization_code', 'client_credentials', 'token_exchange'] | None = None
 
-    # Inbound. The authorization server that mints tokens for this MCP endpoint, and what one of
-    # its tokens must already carry, both for ``token_exchange`` only.
+    # Inbound, and for ``token_exchange`` only.
+    # The authorization server that mints tokens for this MCP endpoint,
+    # and what one of its tokens must already carry.
     issuer: str | None = None
     required_scopes: list[str] = pydantic.Field(default_factory=list)
 
@@ -116,24 +118,13 @@ class AuthConfig(pydantic.BaseModel):
     mcp_access_token_ttl: int = pydantic.Field(default=3600, gt=0)
     mcp_refresh_token_ttl: int = pydantic.Field(default=86400, gt=0)
 
-    def resolve_header(self) -> str | None:
-        """Return ``Bearer <token>`` for ``bearer``, the raw token for ``api_key``, or ``None`` otherwise."""
-        token = _resolve_env_var(self.token)
+    def resolve_token(self) -> str | None:
+        """Static credential after env-var substitution.
 
-        if not token:
-            return None
-
-        if self.type == 'bearer':
-            return f'Bearer {token}'
-        if self.type == 'api_key':
-            return token
-        return None
-
-    def resolve_header_name(self) -> str:
-        """HTTP header that carries credentials (the configured ``api_key_header`` or ``Authorization``)."""
-        if self.type == 'api_key':
-            return self.api_key_header
-        return 'Authorization'
+        How it is framed as a header belongs to the auth type handler rather than here,
+        since ``Bearer <token>`` is protocol knowledge rather than configuration.
+        """
+        return _resolve_env_var(self.token)
 
     def resolve_issuer(self) -> str | None:
         """External authorization server issuer after env-var substitution."""
@@ -187,8 +178,8 @@ class ExposureConfig(pydantic.BaseModel):
 
     style: typing.Literal['static', 'dynamic'] = 'static'
     # Whether a parameterless GET may become an MCP resource instead of a tool.
-    # Named for what it does, since the operations it promotes are the ones a client reads
-    # rather than calls. An operation can still opt in per-operation regardless.
+    # Named for what it does. The operations it promotes are the ones a client reads rather than calls,
+    # and an operation can still opt in per-operation regardless.
     promote_resources: bool = False
 
 
@@ -207,10 +198,10 @@ class ServerConfig(pydantic.BaseModel):
 
     @pydantic.field_validator('name')
     @classmethod
-    def _validate_name(cls, v: str) -> str:
-        if not v.replace('-', '').replace('_', '').isalnum():
-            raise ValueError(f'Server name must be alphanumeric (with - or _): {v}')
-        return v
+    def _validate_name(cls, name: str) -> str:
+        if not name.replace('-', '').replace('_', '').isalnum():
+            raise ValueError(f'Server name must be alphanumeric (with - or _): {name}')
+        return name
 
     @pydantic.computed_field
     @property

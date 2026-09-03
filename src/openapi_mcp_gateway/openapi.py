@@ -12,6 +12,15 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+# JSON Schema keywords whose value is a single nested schema.
+_SUBSCHEMA_KEYS = ('items', 'not', 'additionalProperties', 'propertyNames', 'contains', 'if', 'then', 'else')
+# Keywords whose value is a list of nested schemas.
+# ``allOf`` is absent here because it is flattened separately, not recursed in place.
+_SUBSCHEMA_LIST_KEYS = ('oneOf', 'anyOf', 'prefixItems')
+# Keywords whose value maps a name to a nested schema.
+_SUBSCHEMA_MAP_KEYS = ('properties', 'patternProperties', 'dependentSchemas')
+
+
 class ParameterInfo(pydantic.BaseModel):
     """One OpenAPI parameter (path, query, header, cookie, or body) with its schema."""
 
@@ -263,15 +272,6 @@ def _normalize_to_2020_12(schema: dict[str, typing.Any]) -> dict[str, typing.Any
     return _normalize_exclusive_bounds(_normalize_nullable(schema))
 
 
-# JSON Schema keywords whose value is a single nested schema.
-_SUBSCHEMA_KEYS = ('items', 'not', 'additionalProperties', 'propertyNames', 'contains', 'if', 'then', 'else')
-# Keywords whose value is a list of nested schemas.
-# ``allOf`` is absent here because it is flattened separately, not recursed in place.
-_SUBSCHEMA_LIST_KEYS = ('oneOf', 'anyOf', 'prefixItems')
-# Keywords whose value maps a name to a nested schema.
-_SUBSCHEMA_MAP_KEYS = ('properties', 'patternProperties', 'dependentSchemas')
-
-
 def _truncate_at_cycle(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Describe ``schema`` without any of the keywords that could lead back into it.
 
@@ -313,8 +313,8 @@ def _expand_schema(
 
     if 'allOf' in schema:
         merged: dict[str, typing.Any] = {}
-        for sub in schema['allOf']:
-            merged = _deep_merge(merged, _expand_schema(raw, sub, expanding))
+        for branch in schema['allOf']:
+            merged = _deep_merge(merged, _expand_schema(raw, branch, expanding))
         return merged
 
     result = schema.copy()

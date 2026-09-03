@@ -277,7 +277,7 @@ def _build_auth_config(
         else:
             raise click.UsageError('Cannot infer --auth-type from the provided flags. Specify --auth-type explicitly.')
 
-    scopes = [s.strip() for s in auth_upstream_scopes.split(',')] if auth_upstream_scopes else []
+    scopes = [scope.strip() for scope in auth_upstream_scopes.split(',')] if auth_upstream_scopes else []
 
     return AuthConfig(
         type=auth_type,

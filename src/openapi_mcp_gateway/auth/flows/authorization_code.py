@@ -28,7 +28,10 @@ from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 logger = logging.getLogger(__name__)
 
 
-MCP_SCOPES = ['api']
+# The scope the gateway issues and demands when it is the authorization server.
+# It has no upstream meaning, since the gateway mints these tokens itself,
+# and exists only so the OAuth machinery has a scope to name.
+DEFAULT_MCP_SCOPE = 'api'
 
 
 class AuthorizationCodeProvider:
@@ -55,6 +58,7 @@ class AuthorizationCodeProvider:
         scopes: list[str] | None = None,
         prefix: str = 'gateway',
         audience_params: dict[str, str] | None = None,
+        mcp_scopes: list[str] | None = None,
         *,
         mcp_access_token_ttl: int,
         mcp_refresh_token_ttl: int,
@@ -67,6 +71,9 @@ class AuthorizationCodeProvider:
         self.callback_url = callback_url
         self.scopes = scopes or []
         self.audience_params = audience_params or {}
+        # What the gateway grants on the tokens it mints, distinct from ``scopes``,
+        # which is what it requests from the upstream on the caller's behalf.
+        self.mcp_scopes = mcp_scopes or [DEFAULT_MCP_SCOPE]
         self._prefix = prefix
         self.mcp_access_token_ttl = mcp_access_token_ttl
         self.mcp_refresh_token_ttl = mcp_refresh_token_ttl
@@ -289,7 +296,7 @@ class AuthorizationCodeProvider:
                 'redirect_uri': redirect_uri,
                 'redirect_uri_provided_explicitly': redirect_uri_provided_explicitly,
                 'expires_at': time.time() + 300,
-                'scopes': MCP_SCOPES,
+                'scopes': list(self.mcp_scopes),
                 'code_challenge': code_challenge,
             },
             ttl=300,
@@ -469,6 +476,10 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         gateway_url = flow_context.gateway_url.rstrip('/')
         callback_url = f'{gateway_url}{flow_context.mount_path}/auth/callback'
 
+        # auth.required_scopes names what a caller must hold. The gateway is the issuer here,
+        # so it is also what the gateway advertises and grants, rather than something it merely checks.
+        mcp_scopes = list(entry.auth.required_scopes) or [DEFAULT_MCP_SCOPE]
+
         provider = AuthorizationCodeProvider(
             store=flow_context.store,
             upstream_auth_url=oauth_flow.authorization_url,
@@ -479,6 +490,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             scopes=entry.auth.upstream.scopes,
             prefix=entry.name,
             audience_params=entry.auth.upstream.resolve_audience_params(),
+            mcp_scopes=mcp_scopes,
             mcp_access_token_ttl=entry.auth.mcp_access_token_ttl,
             mcp_refresh_token_ttl=entry.auth.mcp_refresh_token_ttl,
         )
@@ -490,10 +502,10 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             revocation_options=RevocationOptions(enabled=True),
             client_registration_options=ClientRegistrationOptions(
                 enabled=True,
-                valid_scopes=['api'],
-                default_scopes=['api'],
+                valid_scopes=mcp_scopes,
+                default_scopes=mcp_scopes,
             ),
-            required_scopes=['api'],
+            required_scopes=mcp_scopes,
         )
 
         logger.debug(

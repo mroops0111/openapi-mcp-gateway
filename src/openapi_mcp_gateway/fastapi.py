@@ -13,6 +13,13 @@ from .settings import AuthConfig
 logger = logging.getLogger(__name__)
 
 
+# OPTIONS (CORS preflight) and HEAD (mirror of GET) are never meaningful for an LLM to invoke.
+_TOOL_HTTP_METHODS = ('GET', 'POST', 'PUT', 'PATCH', 'DELETE')
+
+
+CallableT = typing.TypeVar('CallableT', bound=typing.Callable[..., typing.Any])
+
+
 _TOOL_METADATA_ATTR = '_openapi_mcp_gateway_tool'
 
 
@@ -22,9 +29,6 @@ class ToolMetadata(pydantic.BaseModel):
     expose: bool = True
     name: str | None = None
     description: str | None = None
-
-
-CallableT = typing.TypeVar('CallableT', bound=typing.Callable[..., typing.Any])
 
 
 def mark_tool(
@@ -74,10 +78,6 @@ class RouteSelection:
     method: str
     path: str
     metadata: ToolMetadata
-
-
-# OPTIONS (CORS preflight) and HEAD (mirror of GET) are never meaningful for an LLM to invoke.
-_TOOL_HTTP_METHODS = ('GET', 'POST', 'PUT', 'PATCH', 'DELETE')
 
 
 def collect_marked_routes(app: FastAPI) -> list[RouteSelection]:

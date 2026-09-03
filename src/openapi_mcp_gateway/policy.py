@@ -30,12 +30,12 @@ def filter_operations(
     result = operations
 
     if annotated_only:
-        result = [op for op in result if op.tool_exposed]
+        result = [operation for operation in result if operation.tool_exposed]
 
     if allow:
-        result = [op for op in result if any(matches_pattern(op, p) for p in allow)]
+        result = [operation for operation in result if any(matches_pattern(operation, pattern) for pattern in allow)]
 
     if deny:
-        result = [op for op in result if not any(matches_pattern(op, p) for p in deny)]
+        result = [operation for operation in result if not any(matches_pattern(operation, pattern) for pattern in deny)]
 
     return result

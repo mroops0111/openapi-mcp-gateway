@@ -130,7 +130,7 @@ def _pick_from_declared_flows(
                 return candidate
         raise ValueError(
             f'auth.flow="{explicit_flow_type}" but the spec does not declare that flow. '
-            f'Declared flows: {[f.flow_type for f in declared_flows]}'
+            f'Declared flows: {[candidate.flow_type for candidate in declared_flows]}'
         )
 
     for candidate in declared_flows:

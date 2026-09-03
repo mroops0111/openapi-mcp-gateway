@@ -570,3 +570,44 @@ class TestTokenExchangeFlowHandler:
         entry = _token_exchange_entry()
 
         assert resolve_oauth_flow(entry, _spec_with_authorization_code()).flow_type == 'token_exchange'
+
+
+class TestAuthorizationCodeScopes:
+    """``required_scopes`` reaches the tokens the gateway mints, rather than being ignored."""
+
+    def _build(self, **auth_overrides):
+        defaults = {'type': 'oauth2', 'upstream': {'client_id': 'cid', 'client_secret': 'sec'}}
+        entry = _entry(AuthConfig.model_validate({**defaults, **auth_overrides}))
+        spec = _spec_with_authorization_code()
+        return AuthorizationCodeFlowHandler().build(
+            OAuthFlowContext(
+                entry=entry,
+                spec=spec,
+                oauth_flow=resolve_oauth_flow(entry, spec),
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                mount_path='/srv',
+            )
+        )
+
+    def test_required_scopes_drive_what_the_gateway_issues(self):
+        """The gateway is the issuer here, so the scopes it demands are the ones it grants.
+
+        Previously the value was hardcoded, so configuring it changed nothing and said nothing.
+        """
+        setup = self._build(required_scopes=['reports.read', 'reports.write'])
+
+        assert setup.settings is not None
+        assert setup.settings.required_scopes == ['reports.read', 'reports.write']
+        registration = setup.settings.client_registration_options
+        assert registration is not None
+        assert registration.valid_scopes == ['reports.read', 'reports.write']
+        assert setup.provider is not None
+        assert setup.provider.mcp_scopes == ['reports.read', 'reports.write']
+
+    def test_a_default_scope_stands_in_when_none_is_configured(self):
+        """OAuth needs a scope to name even when a deployment has no opinion about them."""
+        setup = self._build()
+
+        assert setup.settings is not None
+        assert setup.settings.required_scopes == ['api']
