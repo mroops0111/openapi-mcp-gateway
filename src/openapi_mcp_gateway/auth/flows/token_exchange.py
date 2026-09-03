@@ -62,8 +62,8 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
                 "so the gateway cannot exchange the caller's token for an upstream one."
             )
 
-        # RFC 8707 §2: the canonical URI of this MCP server, which is what a client asks the issuer for
-        # and therefore what the issuer stamps into the token's audience.
+        # RFC 8707 §2: the canonical URI of this MCP server.
+        # A client asks the issuer for this, so it is what the issuer stamps into the token's audience.
         gateway_url = flow_context.gateway_url.rstrip('/')
         canonical_uri = f'{gateway_url}{flow_context.mount_path}/mcp'
 

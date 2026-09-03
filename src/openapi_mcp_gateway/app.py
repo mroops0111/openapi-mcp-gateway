@@ -108,8 +108,7 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
     """
     # Per-server OAuth endpoints and RFC 9728 protected-resource routes.
     # Only a bundle whose flow made the gateway the authorization server gets the former.
-    # Advertising /authorize and /token for a server that delegates to an external issuer
-    # would point clients at endpoints this app does not serve.
+    # Advertising /authorize and /token for a delegating server would point clients at endpoints this app does not serve.
     for bundle in servers:
         if not bundle.auth_provider or not bundle.auth_settings:
             continue
@@ -195,10 +194,8 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
 def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:
     """Return the RFC 9728 document this server publishes.
 
-    A flow that delegates to an external issuer supplies its own,
-    since only it knows which issuer to name.
-    Otherwise the gateway is both issuer and resource,
-    and the document is derived from the settings it built for itself.
+    A flow that delegates to an external issuer supplies its own, since only it knows which issuer to name.
+    Otherwise the gateway is both issuer and resource, so the document follows from the settings it built for itself.
 
     Callers reach this only for a bundle carrying ``auth_settings``,
     which the surrounding checks have already established.

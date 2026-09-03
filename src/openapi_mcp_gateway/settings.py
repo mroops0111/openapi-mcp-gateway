@@ -62,12 +62,10 @@ class AuthConfig(pydantic.BaseModel):
     # validating tokens minted by that issuer and exchanging them for upstream ones instead.
     issuer: str | None = None
 
-    # Names the API the upstream token is for,
-    # for an upstream whose API and authorization server are different parties.
-    # Without it the authorization server mints a token for its own default audience,
-    # which an API that merely trusts that issuer refuses.
-    # Prefixed because the gateway's own audience is a separate value under token_exchange,
-    # and is derived from the mount path rather than configured.
+    # Names the API the upstream token is for, when that API and its authorization server are different parties.
+    # Without it the authorization server mints for its own default audience, which the API then refuses.
+    # The prefix separates this from the gateway's own audience under token_exchange,
+    # which is derived from the mount path rather than configured.
     upstream_resource: str | None = None
     upstream_audience: str | None = None
 

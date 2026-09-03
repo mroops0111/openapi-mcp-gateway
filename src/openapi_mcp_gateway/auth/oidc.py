@@ -114,9 +114,7 @@ class JWKSTokenVerifier:
     """Verify inbound bearer tokens as JWTs signed by an external issuer.
 
     Implements the MCP SDK's ``TokenVerifier`` protocol.
-    Signing keys come from the issuer's JWKS and are cached by ``PyJWKClient``,
-    which refetches when a token arrives with an unknown ``kid``,
-    so key rotation needs no restart.
+    ``PyJWKClient`` caches the issuer's signing keys and refetches on an unknown ``kid``, so rotation needs no restart.
 
     ``audience`` is the gateway's own canonical URI, never the upstream API's.
     The MCP spec requires a server to accept only tokens minted for itself,

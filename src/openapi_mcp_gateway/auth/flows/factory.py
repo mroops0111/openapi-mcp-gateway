@@ -71,7 +71,7 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
     """
     explicit_flow_type = entry.auth.flow
 
-    # No spec can declare this one, so the detector has nothing to contribute
+    # No spec can declare this one, so the detector has nothing to contribute,
     # and consulting it would only produce a misleading "flow not declared" error.
     if explicit_flow_type == 'token_exchange':
         return DetectedOAuthFlow(flow_type='token_exchange')

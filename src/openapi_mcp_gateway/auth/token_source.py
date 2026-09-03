@@ -140,12 +140,10 @@ ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token'  # noqa: S10
 class TokenExchangeTokenSource:
     """Exchange a caller's access token for one the upstream API accepts, per RFC 8693.
 
-    Used by the ``token_exchange`` flow, where the gateway holds no credential of its own
-    for the person making the call.
+    Used by the ``token_exchange`` flow, where the gateway holds no credential for the person calling it.
     The MCP spec forbids relaying the caller's token to an upstream API,
     so the gateway asks the issuer for a second token naming that API instead.
-    The exchanged token keeps the caller's ``sub``,
-    which is what preserves per-user authorization across the hop.
+    The exchanged token keeps the caller's ``sub``, which is what preserves per-user authorization across the hop.
 
     Results are cached per subject token, since one MCP session makes many tool calls.
     The cache is keyed by the token itself rather than by user,

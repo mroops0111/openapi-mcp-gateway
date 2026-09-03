@@ -474,8 +474,8 @@ class TestTokenExchangeFlowHandler:
     def test_advertises_the_gateway_as_the_resource_and_the_issuer_as_the_as(self):
         """The document names this endpoint's canonical URI, and the external issuer that mints for it.
 
-        Advertising the upstream's identifier instead would make clients request a token
-        the gateway must then refuse, since the MCP spec forbids accepting one minted for another resource.
+        Advertising the upstream's identifier instead would have clients request a token the gateway must refuse,
+        since the MCP spec forbids accepting one minted for another resource.
         """
         setup = _build_token_exchange(_token_exchange_entry())
 
