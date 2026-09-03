@@ -495,6 +495,7 @@ class TestTokenExchangeFlowHandler:
         """Inbound tokens must name this endpoint, even though the exchange targets the upstream."""
         setup = _build_token_exchange(_token_exchange_entry())
 
+        assert setup.verifier is not None
         assert setup.verifier.audience == 'http://localhost:8000/srv/mcp'
 
     def test_requires_issuer(self):

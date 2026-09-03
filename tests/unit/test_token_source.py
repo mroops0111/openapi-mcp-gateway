@@ -227,6 +227,7 @@ class TestTokenExchangeTokenSource:
         token = await source.exchange('caller-token')
 
         assert token == 'upstream'
+        assert post_mock.await_args is not None
         posted = post_mock.await_args.kwargs['data']
         assert posted['grant_type'] == 'urn:ietf:params:oauth:grant-type:token-exchange'
         assert posted['subject_token'] == 'caller-token'
