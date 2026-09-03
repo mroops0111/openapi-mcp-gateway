@@ -77,7 +77,7 @@ servers:
 
 ### 3. OAuth2
 
-The gateway runs its own authorization server rather than asking you to paste an upstream token into config. `authorization_code` gives each end-user their own upstream token, minted per session. `client_credentials` uses the gateway's own service credentials to share one token across every client.
+Rather than asking you to paste an upstream token into config, the gateway obtains one per caller. `authorization_code` runs the gateway as the authorization server and mints each end-user their own upstream token. `client_credentials` shares a single service token across every client. `token_exchange` hands issuance to an identity provider you already run. See [Authorization](#authorization) for how each pairs a check on the MCP endpoint with a credential for the API.
 
 ```bash
 export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
@@ -90,7 +90,7 @@ uv run openapi-mcp-gateway \
     --auth-scopes "openid,email,profile,users:read,workspaces:read"
 ```
 
-For the service-token flow, add `--auth-flow client_credentials`. Both flows are also configurable per server under `auth:` in YAML.
+For the service-token flow, add `--auth-flow client_credentials`. Every flow is also configurable per server under `auth:` in YAML.
 
 ### 4. Multiple APIs at Once
 
@@ -152,16 +152,32 @@ Runnable configs for every scenario above live in [`examples/`](examples/), each
 
 ## Authorization
 
-The gateway mints upstream tokens server-side, so each MCP client authenticates as its own end-user and never handles a third-party credential directly. Tokens are audience-bound and scoped to their `(server, user)` pair, so a token minted for one upstream is never replayed against another.
+Every request crosses two boundaries, and one `auth:` block settles both: who may call the MCP endpoint, and what credential reaches the API behind it. Picking `auth.type`, and `auth.flow` under `oauth2`, chooses a pairing of the two.
+
+| `auth.type` / `auth.flow` | MCP endpoint | Credential sent upstream |
+| --- | --- | --- |
+| `none` | open | none |
+| `bearer`, `api_key` | open | a fixed one from config, shared by every caller |
+| `passthrough` | open | the caller's own header, forwarded unchanged |
+| `oauth2` + `client_credentials` | open | one service token, shared by every caller |
+| `oauth2` + `authorization_code` | **the gateway is the authorization server** | a per-user token the gateway obtained on their behalf |
+| `oauth2` + `token_exchange` | **an external issuer is the authorization server** | a per-user token exchanged from the caller's |
+
+Only the last two put a check in front of the MCP endpoint. The others suit a gateway on localhost or inside a private network, and leave it open to anyone who can reach the port.
 
 <details>
-<summary><b>Passthrough policy and token lifetimes</b></summary>
+<summary><b>Why the caller's own token is never forwarded</b></summary>
 
-The gateway does not silently pass the MCP client's token through to third-party upstreams, in line with the MCP spec's [Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction). For `authorization_code` it mints per-user tokens against the upstream IdP per [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707), and for `client_credentials` it uses its own service credentials. The one exception is the [FastAPI integration](#fastapi-integration), which runs in-process at the same OAuth audience, so the client's `Authorization` header is forwarded verbatim.
+The MCP spec requires a server to accept only tokens minted for itself, and forbids relaying one to an upstream API. So under both protected flows the upstream is reached with a second, separately obtained credential rather than the one the caller presented. See [Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction).
 
-### Upstreams behind a separate identity provider
+`passthrough` is the one exception, and it exists for the [FastAPI integration](#fastapi-integration), where the gateway runs in-process as part of the app it exposes. There is no separate upstream to be confused about. Setting it against a genuinely separate API is the confused-deputy pattern the spec forbids, which is why nothing selects it automatically.
 
-An API that has no authorization server of its own, and instead accepts tokens from an identity provider the deployment already runs, needs the gateway to say which API its upstream token is for. Point the OAuth URLs at that provider and name the API:
+</details>
+
+<details>
+<summary><b>An upstream behind a separate identity provider</b></summary>
+
+An API with no authorization server of its own, which accepts tokens from a provider the deployment already runs, needs the gateway to say which API its upstream token is for. Point the OAuth URLs at that provider and name the API:
 
 ```yaml
 servers:
@@ -177,11 +193,18 @@ servers:
       upstream_audience: https://internal.example.com
 ```
 
-Without this the provider mints a token for its own default audience and the API refuses it. The parameter rides on the authorization request and on every token request, including refreshes, so a rotated token stays usable. Authorization servers disagree on the spelling: `upstream_audience` is what Auth0 expects, `upstream_resource` is the RFC 8707 parameter. Set whichever yours accepts.
+Without it the provider mints for its own default audience and the API refuses the result. The parameter rides on the authorization request and on every token request, refreshes included, so a rotated token stays usable.
 
-### Delegating this endpoint's authorization too
+Authorization servers disagree on the spelling. `upstream_audience` is what Auth0 expects, `upstream_resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter. Set whichever yours accepts.
 
-`authorization_code` leaves the gateway issuing credentials of its own, which means revoking a user at the provider does not take effect until the gateway's token expires. `token_exchange` removes that second issuer. The provider mints tokens for the MCP endpoint directly, the gateway validates them, and each one is exchanged under [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693) for a second token naming the upstream:
+MCP clients still authorize against the gateway and receive a gateway-issued token, while the provider-issued one is a second credential held on their behalf. End users see whatever login the provider federates to, so this works on any plan and needs nothing of the upstream but that it accept what the provider issues.
+
+</details>
+
+<details>
+<summary><b>Delegating issuance entirely, with <code>token_exchange</code></b></summary>
+
+`authorization_code` leaves the gateway issuing credentials of its own, so revoking someone at the provider has no effect until the gateway's token expires. `token_exchange` removes that second issuer. The provider mints tokens for the MCP endpoint directly, the gateway validates them, and each call exchanges one under [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693) for a second token naming the upstream:
 
 ```yaml
 servers:
@@ -196,21 +219,28 @@ servers:
       client_secret: ${GATEWAY_CLIENT_SECRET}
 ```
 
-The gateway serves no `/authorize` or `/token` here. Its protected resource metadata names the issuer, clients authorize there, and the JWKS is discovered from the issuer's own metadata so key rotation needs no restart. Install the extra for JWT verification: `uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway`.
+The gateway serves no `/authorize` or `/token` here. Its protected resource metadata names the issuer, clients authorize there, and the JWKS comes from the issuer's own metadata so key rotation needs no restart. JWT verification needs the extra: `uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway`.
 
-Token exchange support varies by authorization server, and this is the constraint worth checking before committing to the mode. Keycloak has it generally available and enabled by default, and authentik added it in 2026.8. Auth0 offers it as Custom Token Exchange behind its Professional and Enterprise plans, with a custom Action to write. Zitadel only lets an exchange narrow an audience the token already carries. Logto does not implement it yet.
+Two things to check before committing to this mode. Token exchange support varies:
 
-The client also has to be able to register with the issuer rather than with the gateway, so check whether yours supports dynamic client registration or whether each MCP client needs pre-registering.
+| Authorization server | Token exchange |
+| --- | --- |
+| Keycloak | generally available, enabled by default |
+| authentik | 2026.8 and later |
+| Zitadel | can only narrow an audience the token already carries |
+| Auth0 | Custom Token Exchange, on Professional and Enterprise plans, with an Action to write |
+| Logto | not implemented |
 
-### Which mode to use
+And because the issuer is the authorization server for this endpoint, MCP clients register there rather than with the gateway. Check whether yours supports dynamic client registration, or whether each client needs pre-registering.
 
-`authorization_code` fits an upstream reached through a provider you do not control, and gives you dynamic client registration for free because the gateway is the authorization server. `token_exchange` fits an upstream inside your own trust domain, where the identity provider should be the single authority over who holds a token. Both are per-server, so one gateway can run both.
+</details>
 
-The two layers stay separate. MCP clients still authorize against the gateway and receive a gateway-issued token, while the provider-issued token is a second credential the gateway holds on their behalf. This is what the MCP spec requires of a server calling an upstream API, and it is why the client's own token is never forwarded. End users see whatever login the provider federates to.
+<details>
+<summary><b>Token lifetimes</b></summary>
 
-Note that the upstream API needs no authorization server of its own for this. The gateway talks to the identity provider, and the API only has to accept what that provider issues.
+Under `authorization_code` the gateway's own access token lives 1 hour and its refresh token 24 hours. Each refresh issues a fresh refresh token, so the refresh TTL is the practical re-authorization cadence: a client refreshing within it never signs in again, while one idle past it must re-authorize. Tune both with `auth.mcp_access_token_ttl` and `auth.mcp_refresh_token_ttl`.
 
-For `authorization_code`, the MCP access token lives 1 hour and the refresh token 24 hours by default. Each refresh issues a fresh refresh token, so the refresh TTL is the practical re-authorization cadence. A client that refreshes within it never has to sign in again, while one idle past it must re-authorize. Tune both with `auth.mcp_access_token_ttl` and `auth.mcp_refresh_token_ttl`.
+`token_exchange` mints nothing, so neither applies. Lifetimes are the issuer's to set.
 
 </details>
 
