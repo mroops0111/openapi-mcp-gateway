@@ -27,18 +27,28 @@ def iso_time(record: logging.LogRecord) -> str:
 
 
 class JsonFormatter(logging.Formatter):
-    """Emit one JSON object per log line (time, level, logger, message)."""
+    """Emit one JSON object per log line (time, level, logger, message, and any traceback).
+
+    The traceback is carried in its own field rather than folded into ``message``,
+    so a log pipeline can index the two separately.
+    Omitting it entirely was worse than it sounds: this is the format a container deployment picks,
+    so the harder-to-diagnose environment was the one losing the diagnosis.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
-        return json.dumps(
-            {
-                'time': iso_time(record),
-                'level': record.levelname,
-                'logger': record.name,
-                'message': record.getMessage(),
-            },
-            ensure_ascii=False,
-        )
+        payload = {
+            'time': iso_time(record),
+            'level': record.levelname,
+            'logger': record.name,
+            'message': record.getMessage(),
+        }
+        if record.exc_info:
+            payload['exception'] = self.formatException(record.exc_info)
+        elif record.exc_text:
+            payload['exception'] = record.exc_text
+        if record.stack_info:
+            payload['stack'] = self.formatStack(record.stack_info)
+        return json.dumps(payload, ensure_ascii=False)
 
 
 class TextFormatter(logging.Formatter):
