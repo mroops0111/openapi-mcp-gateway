@@ -35,18 +35,21 @@ class ClientCredentialsFlowHandler(OAuthFlowHandler):
             )
 
         scopes = entry.auth.scopes or list(oauth_flow.scopes.keys())
+        audience_params = entry.auth.resolve_upstream_audience_params()
         token_source = ClientCredentialsTokenSource(
             token_url=oauth_flow.token_url,
             client_id=client_id,
             client_secret=client_secret,
             scopes=scopes,
+            audience_params=audience_params,
         )
 
         logger.debug(
-            'Client credentials flow set up for "%s": token=%s scopes=%s',
+            'Client credentials flow set up for "%s": token=%s scopes=%s audience_params=%s',
             entry.name,
             oauth_flow.token_url,
             scopes,
+            audience_params,
         )
 
         return OAuthFlowSetup(

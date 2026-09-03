@@ -9,7 +9,7 @@
 Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, or expose an existing FastAPI app the same way. Multiple APIs in one process, each with its own mount path and auth.
 
 <p align="center">
-  <img src="architecture.png" alt="OpenAPI MCP Gateway architecture: MCP clients (Claude Desktop, Cursor, AI agents) connect over stdio / SSE / streamable-http to the gateway, which at startup ingests OpenAPI specs or FastAPI apps and exposes them as MCP tools, meta-tools, and resources, then per call authorizes with bearer / API key / OAuth2, shapes the request and response with JSONata, and emits MCP-native output, calling upstream REST APIs over HTTP or an in-process FastAPI app over ASGI." width="100%">
+  <img src="architecture.png" alt="OpenAPI MCP Gateway architecture: MCP clients (Claude Desktop, Cursor, AI agents) connect over stdio / SSE / streamable-http to the gateway, which at startup ingests OpenAPI specs or FastAPI apps and exposes them as MCP tools, meta-tools, and resources, then per call authorizes with bearer / API key / OAuth2 against its own issuer or an external one, never forwarding the caller's token, shapes the request and response with JSONata, and emits MCP-native output, calling upstream REST APIs over HTTP or an in-process FastAPI app over ASGI." width="100%">
 </p>
 
 ```bash
@@ -59,7 +59,7 @@ uv run openapi-mcp-gateway \
 ```
 
 <details>
-<summary><b>API-key header instead of a bearer token</b></summary>
+<summary><b>API-Key Header instead of a Bearer Token</b></summary>
 
 Use a config file so the header name is explicit:
 
@@ -77,7 +77,7 @@ servers:
 
 ### 3. OAuth2
 
-The gateway runs its own authorization server rather than asking you to paste an upstream token into config. `authorization_code` gives each end-user their own upstream token, minted per session. `client_credentials` uses the gateway's own service credentials to share one token across every client.
+Rather than asking you to paste an upstream token into config, the gateway obtains one per caller. `authorization_code` runs the gateway as the authorization server and mints each end-user their own upstream token. `client_credentials` shares a single service token across every client. `token_exchange` hands issuance to an identity provider you already run. See [Authorization](#authorization) for how each pairs a check on the MCP endpoint with a credential for the API.
 
 ```bash
 export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
@@ -90,7 +90,7 @@ uv run openapi-mcp-gateway \
     --auth-scopes "openid,email,profile,users:read,workspaces:read"
 ```
 
-For the service-token flow, add `--auth-flow client_credentials`. Both flows are also configurable per server under `auth:` in YAML.
+For the service-token flow, add `--auth-flow client_credentials`. Those two are what the CLI reaches. `token_exchange` needs an issuer and an audience, so it is configured per server under `auth:` in YAML, described in [Authorization](#authorization).
 
 ### 4. Multiple APIs at Once
 
@@ -152,14 +152,95 @@ Runnable configs for every scenario above live in [`examples/`](examples/), each
 
 ## Authorization
 
-The gateway mints upstream tokens server-side, so each MCP client authenticates as its own end-user and never handles a third-party credential directly. Tokens are audience-bound and scoped to their `(server, user)` pair, so a token minted for one upstream is never replayed against another.
+Every request crosses two boundaries, and one `auth:` block settles both of them. One is who may call the MCP endpoint, the other is what credential reaches the API behind it. Setting `auth.type`, plus `auth.flow` under `oauth2`, picks a pairing of the two.
+
+| `auth.type` / `auth.flow` | MCP Endpoint | Credential Sent Upstream |
+| --- | --- | --- |
+| `none` | open | none |
+| `bearer`, `api_key` | open | a fixed one from config, shared by every caller |
+| `passthrough` | open | the caller's own header, forwarded unchanged |
+| `oauth2` + `client_credentials` | open | one service token, shared by every caller |
+| `oauth2` + `authorization_code` | **the gateway is the authorization server** | a per-user token the gateway obtained on their behalf |
+| `oauth2` + `token_exchange` | **an external issuer is the authorization server** | a per-user token exchanged from the caller's |
+
+Only the last two put a check in front of the MCP endpoint. The others suit a gateway on localhost or inside a private network, and leave it open to anyone who can reach the port.
 
 <details>
-<summary><b>Passthrough policy and token lifetimes</b></summary>
+<summary><b>Token Forwarding Policy</b></summary>
 
-The gateway does not silently pass the MCP client's token through to third-party upstreams, in line with the MCP spec's [Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction). For `authorization_code` it mints per-user tokens against the upstream IdP per [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707), and for `client_credentials` it uses its own service credentials. The one exception is the [FastAPI integration](#fastapi-integration), which runs in-process at the same OAuth audience, so the client's `Authorization` header is forwarded verbatim.
+The MCP spec requires a server to accept only tokens minted for itself, and forbids relaying one to an upstream API. So under both protected flows the upstream is reached with a second, separately obtained credential rather than the one the caller presented. See [Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction).
 
-For `authorization_code`, the MCP access token lives 1 hour and the refresh token 24 hours by default. Each refresh issues a fresh refresh token, so the refresh TTL is the practical re-authorization cadence. A client that refreshes within it never has to sign in again, while one idle past it must re-authorize. Tune both with `auth.mcp_access_token_ttl` and `auth.mcp_refresh_token_ttl`.
+`passthrough` is the one exception, and it exists for the [FastAPI integration](#fastapi-integration), where the gateway runs in-process as part of the app it exposes. There is no separate upstream to be confused about. Setting it against a genuinely separate API is the confused-deputy pattern the spec forbids, which is why nothing selects it automatically.
+
+</details>
+
+<details>
+<summary><b>An Upstream behind a Separate Identity Provider</b></summary>
+
+An API with no authorization server of its own, which accepts tokens from a provider the deployment already runs, needs the gateway to say which API its upstream token is for. Point the OAuth URLs at that provider and name the API:
+
+```yaml
+servers:
+  - name: internal
+    spec: https://internal.example.com/openapi.json
+    auth:
+      type: oauth2
+      flow: authorization_code
+      authorization_url: https://you.auth0.com/authorize
+      token_url: https://you.auth0.com/oauth/token
+      client_id: ${GATEWAY_CLIENT_ID}
+      client_secret: ${GATEWAY_CLIENT_SECRET}
+      upstream_audience: https://internal.example.com
+```
+
+Without it the provider mints for its own default audience and the API refuses the result. The parameter rides on the authorization request and on every token request, refreshes included, so a rotated token stays usable.
+
+Authorization servers disagree on the spelling. `upstream_audience` is what Auth0 expects, `upstream_resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter. Set whichever yours accepts.
+
+MCP clients still authorize against the gateway and receive a gateway-issued token, while the provider-issued one is a second credential held on their behalf. End users see whatever login the provider federates to, so this works on any plan and needs nothing of the upstream but that it accept what the provider issues.
+
+</details>
+
+<details>
+<summary><b>Full Delegation with <code>token_exchange</code></b></summary>
+
+`authorization_code` leaves the gateway issuing credentials of its own, so revoking someone at the provider has no effect until the gateway's token expires. `token_exchange` removes that second issuer. The provider mints tokens for the MCP endpoint directly, the gateway validates them, and each call exchanges one under [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693) for a second token naming the upstream:
+
+```yaml
+servers:
+  - name: internal
+    spec: https://internal.example.com/openapi.json
+    auth:
+      type: oauth2
+      flow: token_exchange
+      issuer: https://auth.example.com/realms/internal
+      upstream_audience: https://internal.example.com
+      client_id: ${GATEWAY_CLIENT_ID}
+      client_secret: ${GATEWAY_CLIENT_SECRET}
+```
+
+The gateway serves no `/authorize` or `/token` here. Its protected resource metadata names the issuer, clients authorize there, and the JWKS comes from the issuer's own metadata so key rotation needs no restart. JWT verification needs the `oidc` extra, so run it as `uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway`.
+
+Two things to check before committing to this mode. Token exchange support varies:
+
+| Authorization Server | Token Exchange |
+| --- | --- |
+| Keycloak | generally available, enabled by default |
+| authentik | 2026.8 and later |
+| Zitadel | can only narrow an audience the token already carries |
+| Auth0 | Custom Token Exchange, on Professional and Enterprise plans, with an Action to write |
+| Logto | not implemented |
+
+And because the issuer is the authorization server for this endpoint, MCP clients register there rather than with the gateway. Check whether yours supports dynamic client registration, or whether each client needs pre-registering.
+
+</details>
+
+<details>
+<summary><b>Token Lifetimes</b></summary>
+
+Under `authorization_code` the gateway's own access token lives 1 hour and its refresh token 24 hours. Each refresh issues a fresh refresh token, so the refresh TTL is the practical re-authorization cadence. A client refreshing within it never signs in again, while one idle past it must re-authorize. Tune both with `auth.mcp_access_token_ttl` and `auth.mcp_refresh_token_ttl`.
+
+`token_exchange` mints nothing, so neither applies. Lifetimes are the issuer's to set.
 
 </details>
 
@@ -171,7 +252,7 @@ Every registered tool carries a protocol-native `title` and `annotations` (`read
 
 Run `uv run openapi-mcp-gateway --help` for the CLI reference. The [Quick Start](#quick-start) covers most setups, and the full field reference is below.
 
-Configuration merges in this order, with each layer overriding the previous: **defaults → YAML (`--config`) → CLI flags → `Gateway.run(...)` kwargs**. A layer only overrides the fields it actually sets, so `--log-level=DEBUG` won't reset `logging.format` from your YAML. Nested objects like `logging` and per-server `auth` merge field-by-field. The `servers` list is the exception, replaced wholesale rather than merged entry-by-entry.
+Configuration merges in this order, with each layer overriding the previous one. **Defaults → YAML (`--config`) → CLI flags → `Gateway.run(...)` kwargs**. A layer only overrides the fields it actually sets, so `--log-level=DEBUG` won't reset `logging.format` from your YAML. Nested objects like `logging` and per-server `auth` merge field-by-field. The `servers` list is the exception, replaced wholesale rather than merged entry-by-entry.
 
 `${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`, and the `auth.*` fields below override them when the spec is incomplete.
 
@@ -201,12 +282,14 @@ Configuration merges in this order, with each layer overriding the previous: **d
 | `name` | string | required | Unique identifier. Mount path defaults to `/{name}` |
 | `spec` | string | required | Path or URL to OpenAPI document (JSON or YAML) |
 | `base_url` | string | from spec | Override the upstream base URL |
-| `auth.type` | string | `none` | `none`, `bearer`, `api_key`, or `oauth2` |
+| `auth.type` | string | `none` | `none`, `bearer`, `api_key`, `oauth2`, or `passthrough`. Says where the upstream credential comes from: a fixed one, one the gateway obtains, or the caller's own forwarded |
 | `auth.token` | string |  | Required for `bearer` / `api_key` |
 | `auth.api_key_header` | string | `X-API-Key` | Header name for `api_key` |
 | `auth.client_id`, `auth.client_secret` | string |  | Required for `oauth2` |
-| `auth.flow` | string | from spec | `authorization_code` for per-user delegation, `client_credentials` for a shared service token. When unset the gateway prefers the spec's declared `authorizationCode` flow, falling back to whatever else it declares. |
+| `auth.flow` | string | from spec | `authorization_code` for per-user delegation, `client_credentials` for a shared service token, `token_exchange` to delegate this endpoint's authorization to an external issuer. When unset the gateway prefers the spec's declared `authorizationCode` flow, falling back to whatever else it declares. |
+| `auth.issuer` | string |  | Required for `token_exchange`. The authorization server that mints tokens for this MCP endpoint |
 | `auth.scopes`, `auth.authorization_url`, `auth.token_url` |  | from spec | OAuth2 overrides when `securitySchemes` is incomplete |
+| `auth.upstream_resource`, `auth.upstream_audience` | string |  | Names the API the upstream token is for, when the API and its authorization server are different parties. `upstream_resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter, `upstream_audience` is the spelling Auth0 uses. Set whichever your authorization server accepts; only what you set is sent |
 | `auth.mcp_access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints for `authorization_code` |
 | `auth.mcp_refresh_token_ttl` | int | `86400` | Lifetime in seconds of the MCP refresh token. This is the practical re-authorization cadence, since each refresh slides the window forward |
 | `policy.allow` | list |  | Only expose matching operations |
@@ -223,7 +306,7 @@ Configuration merges in this order, with each layer overriding the previous: **d
 Use `policy.allow` and `policy.deny` with `fnmatch` syntax against operation IDs (`getUsers`, `create*`) or method + path (`GET /users/*`).
 
 <details>
-<summary><b>Filter syntax and ordering</b></summary>
+<summary><b>Filter Syntax and Ordering</b></summary>
 
 ```yaml
 policy:
@@ -231,7 +314,7 @@ policy:
   deny:  ["GET /repos/*/actions/secrets*"]
 ```
 
-Operations can also be opted in from the spec side with `x-mcp-integration: {tool: {}}` plus `policy.marked_only: true`. Filters apply in order: `marked_only`, then `allow`, then `deny`.
+Operations can also be opted in from the spec side with `x-mcp-integration: {tool: {}}` plus `policy.marked_only: true`. Filters apply in the order `marked_only`, then `allow`, then `deny`.
 
 </details>
 
@@ -244,7 +327,7 @@ Set `mode: auto` and every eligible GET promotes automatically. Eligible means n
 Keeping those endpoints off the tool list also saves context, since most clients do not auto-load resources. Resource support is uneven across the ecosystem, though, and an agent framework that ignores resources entirely will not reach a promoted operation at all. Stay on the default `mode: tool_only` when that is your target.
 
 <details>
-<summary><b>Per-operation control, from YAML or from the spec</b></summary>
+<summary><b>Per-Operation Control, from YAML or from the Spec</b></summary>
 
 To rename a resource, set a custom URI template, or set a non-JSON MIME type, use the `operations` map keyed by `operationId`:
 
@@ -288,7 +371,7 @@ An unknown `operationId` raises at startup so typos do not silently no-op. Resou
 A raw operation rarely makes a good tool. Its `operationId` is ugly (GitHub's `actions/list-jobs-for-workflow-run-attempt`), its description is empty (most of `gists/*`), it takes a cryptic filter DSL alongside a dozen knobs the model should never touch, and it wraps the few useful fields in a large envelope. `x-mcp-integration.tool` fixes all of that without forking the spec. `name` and `description` fix how the tool presents itself, while `params`, `strategy`, `request`, and `response` reshape the interface behind it.
 
 <details>
-<summary><b>Renaming a GitHub operation</b></summary>
+<summary><b>Renaming a GitHub Operation</b></summary>
 
 ```yaml
 servers:
@@ -309,7 +392,7 @@ If you own the upstream spec, write the same block inline as `x-mcp-integration.
 </details>
 
 <details>
-<summary><b>Reshaping the interface with <code>params</code>, <code>strategy</code>, <code>request</code>, and <code>response</code></b></summary>
+<summary><b>Reshaping the Interface with <code>params</code>, <code>strategy</code>, <code>request</code>, and <code>response</code></b></summary>
 
 The input layer is declarative and the value transforms are [JSONata](https://jsonata.org/) expressions.
 
@@ -355,7 +438,7 @@ For a full `replace` example, where the declared `params` are the entire surface
 For APIs with hundreds of operations (GitHub, Stripe, etc.), registering each as its own tool can blow the LLM's context window before the agent does anything. Set `exposure: dynamic` and the client sees three meta-tools instead, which the LLM walks as `list → get → call` to discover and invoke operations on demand. It is per-server, so `/github/mcp` can run `dynamic` while `/petstore/mcp` runs `static` in the same process.
 
 <details>
-<summary><b>The three meta-tools</b></summary>
+<summary><b>The Three Meta-Tools</b></summary>
 
 - `list_operations()` returns `[{name, description}, ...]` for every operation on this server.
 - `get_operation(name)` returns one operation's JSON Schema for input arguments.
@@ -406,7 +489,7 @@ gateway.run(port=8000)
 If you already run FastAPI, decorate the routes you want exposed with `@mcp_tool` and the gateway picks them up. No second spec, no separate process, and no extra network hop, since calls go in-process through `httpx.ASGITransport`. Auth is auto-detected from the app's `securitySchemes`, and passing an explicit `auth=AuthConfig(...)` to `Gateway.from_fastapi` overrides it.
 
 <details>
-<summary><b>Decorating routes with <code>@mcp_tool</code></b></summary>
+<summary><b>Decorating Routes with <code>@mcp_tool</code></b></summary>
 
 ```python
 from fastapi import FastAPI
@@ -429,9 +512,9 @@ Gateway.from_fastapi(app, name="myapp").run()
 </details>
 
 <details>
-<summary><b>How auth works for the FastAPI integration</b></summary>
+<summary><b>Auth in the FastAPI Integration</b></summary>
 
-Because the gateway runs in-process and routes through `httpx.ASGITransport`, gateway and upstream share the same OAuth audience, so the MCP client's `Authorization` header passes through verbatim (`auth.flow: passthrough`, set automatically for this integration only). For `client_credentials` schemes the gateway mints upstream tokens from its own credentials instead.
+Because the gateway runs in-process and routes through `httpx.ASGITransport`, gateway and upstream share the same OAuth audience, so the MCP client's `Authorization` header passes through verbatim (`auth.type: passthrough`, set automatically for this integration only). For `client_credentials` schemes the gateway mints upstream tokens from its own credentials instead.
 
 </details>
 
@@ -440,7 +523,7 @@ Because the gateway runs in-process and routes through `httpx.ASGITransport`, ga
 To serve MCP alongside your own routes, build a `Gateway` and mount it onto your app. `mount` attaches every MCP sub-app at its configured path and also registers the OAuth authorization-server and `.well-known` discovery routes those servers own, so an OAuth flow works end to end.
 
 <details>
-<summary><b>Mounting onto your own FastAPI app</b></summary>
+<summary><b>Mounting onto Your Own FastAPI App</b></summary>
 
 ```python
 from fastapi import FastAPI

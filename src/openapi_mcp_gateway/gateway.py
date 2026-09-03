@@ -16,7 +16,7 @@ from starlette.responses import RedirectResponse
 
 from .app import _ServerBundle, build_app, build_mcp_asgi_app, register_auth_routes
 from .auth.detector import detect_oauth_flows, detect_unsupported_oauth_flows
-from .auth.flows import AuthorizationCodeProvider, build_oauth_flow
+from .auth.flows import AuthorizationCodeProvider, OAuthFlowSetup, build_oauth_flow
 from .auth.resolver import (
     AuthResolver,
     CompositeAuthResolver,
@@ -196,9 +196,11 @@ class _AppContext:
 
 
 def _auth_summary(auth: AuthConfig) -> str:
-    """A short human label for a server's auth, naming the header for api_key."""
+    """A short human label for a server's auth, naming the header for api_key and the OAuth flow."""
     if auth.type == 'api_key':
         return f'api_key (header {auth.api_key_header})'
+    if auth.type == 'oauth2' and auth.flow:
+        return f'oauth2 ({auth.flow})'
     return auth.type
 
 
@@ -465,11 +467,11 @@ class Gateway:
         transport: httpx.AsyncBaseTransport | None = None,
         forward_incoming_headers: tuple[str, ...] = (),
     ) -> None:
-        base_resolver, auth_provider, auth_settings = self._resolve_auth(server_config, spec)
-        auth_resolver = _compose_with_passthrough(base_resolver, forward_incoming_headers)
-        mcp = self._build_mcp_server(server_config.name, auth_provider, auth_settings)
-        if auth_provider is not None:
-            self._register_oauth_callback(mcp, auth_provider)
+        auth = self._resolve_auth(server_config, spec)
+        auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
+        mcp = self._build_mcp_server(server_config.name, auth.provider, auth.settings, auth.verifier)
+        if auth.provider is not None:
+            self._register_oauth_callback(mcp, auth.provider)
 
         binding = UpstreamBinding(
             base_url=base_url,
@@ -512,8 +514,10 @@ class Gateway:
                 mount_path=server_config.mount_path,
                 mcp=mcp,
                 spec=spec,
-                auth_provider=auth_provider,
-                auth_settings=auth_settings,
+                auth_provider=auth.provider,
+                auth_settings=auth.settings,
+                token_verifier=auth.verifier,
+                protected_resource=auth.protected_resource,
                 base_url=base_url,
                 auth_summary=_auth_summary(server_config.auth),
                 exposure=server_config.exposure,
@@ -528,19 +532,17 @@ class Gateway:
             base_url,
             len(exposed_tools),
             len(resource_names),
-            server_config.auth.type,
+            _auth_summary(server_config.auth),
             type(auth_resolver).__name__,
         )
 
-    def _resolve_auth(
-        self,
-        entry: ServerConfig,
-        spec: OpenAPISpec,
-    ) -> tuple[AuthResolver, AuthorizationCodeProvider | None, AuthSettings | None]:
-        auth_provider: AuthorizationCodeProvider | None = None
-        auth_resolver: AuthResolver
-        auth_settings: AuthSettings | None = None
+    def _resolve_auth(self, entry: ServerConfig, spec: OpenAPISpec) -> OAuthFlowSetup:
+        """Return the auth components for ``entry``, as the flow handlers already shape them.
 
+        Only ``oauth2`` consults ``flow`` and reaches a handler.
+        The other types produce a setup carrying just a resolver,
+        so every caller sees one shape regardless of which branch ran.
+        """
         if entry.auth.type == 'oauth2':
             setup = build_oauth_flow(
                 entry=entry,
@@ -549,31 +551,41 @@ class Gateway:
                 gateway_url=self._config.url,
                 mount_path=entry.mount_path,
             )
-            auth_resolver = setup.resolver
-            auth_provider = setup.provider
-            auth_settings = setup.settings
             if setup.on_shutdown is not None:
                 self._shutdown_hooks.append(setup.on_shutdown)
-        elif entry.auth.type in ('bearer', 'api_key'):
+            return setup
+
+        if entry.auth.type == 'passthrough':
+            # No credential of the gateway's own, and no MCP-side check either.
+            # Only correct where the caller's token already addresses the upstream,
+            # which in practice means the in-process FastAPI integration.
+            return OAuthFlowSetup(resolver=PassthroughAuthResolver())
+
+        if entry.auth.type in ('bearer', 'api_key'):
             header_value = entry.auth.resolve_header()
             if header_value:
-                auth_resolver = StaticAuthResolver(
-                    header_value=header_value,
-                    header_name=entry.auth.resolve_header_name(),
+                return OAuthFlowSetup(
+                    resolver=StaticAuthResolver(
+                        header_value=header_value,
+                        header_name=entry.auth.resolve_header_name(),
+                    )
                 )
-            else:
-                auth_resolver = NullAuthResolver()
-        else:
-            auth_resolver = NullAuthResolver()
 
-        return auth_resolver, auth_provider, auth_settings
+        return OAuthFlowSetup(resolver=NullAuthResolver())
 
     @staticmethod
     def _build_mcp_server(
         name: str,
         auth_provider: AuthorizationCodeProvider | None,
         auth_settings: AuthSettings | None,
+        token_verifier: typing.Any | None = None,
     ) -> MCPServer:
+        """Build the MCP server, wiring whichever of provider or verifier the flow produced.
+
+        The SDK rejects a server given both,
+        since issuing tokens and validating someone else's are alternatives rather than layers.
+        """
+
         @contextlib.asynccontextmanager
         async def lifespan(_app: MCPServer, _auth_provider=auth_provider):
             try:
@@ -584,6 +596,7 @@ class Gateway:
         return MCPServer(
             f'{name} (via OpenAPI MCP Gateway)',
             auth_server_provider=auth_provider,
+            token_verifier=token_verifier,
             auth=auth_settings,
             lifespan=lifespan,
             cache_hints=_STATIC_CACHE_HINTS,

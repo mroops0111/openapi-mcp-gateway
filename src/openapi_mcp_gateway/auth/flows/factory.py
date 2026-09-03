@@ -7,7 +7,7 @@ from ..detector import DetectedOAuthFlow, detect_oauth_flows
 from .authorization_code import AuthorizationCodeFlowHandler
 from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 from .client_credentials import ClientCredentialsFlowHandler
-from .passthrough import PassthroughFlowHandler
+from .token_exchange import TokenExchangeFlowHandler
 
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 OAUTH_FLOW_HANDLERS: dict[str, type[OAuthFlowHandler]] = {
     'authorization_code': AuthorizationCodeFlowHandler,
     'client_credentials': ClientCredentialsFlowHandler,
-    'passthrough': PassthroughFlowHandler,
+    'token_exchange': TokenExchangeFlowHandler,
 }
 
 
@@ -65,15 +65,16 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
     Raises ``ValueError`` when ``authorization_code`` is auto-selected,
     but the gateway lacks the ``client_id`` / ``client_secret`` needed to act as an MCP-side OAuth server.
 
-    Passthrough is never auto-selected.
     Forwarding the MCP client's token to a third-party upstream violates RFC 8707 audience binding,
-    the "confused deputy" pattern the MCP 2025-11-25 spec forbids.
-    Set ``auth.flow: passthrough`` explicitly only when the gateway and the upstream share the same OAuth audience.
+    the "confused deputy" pattern the MCP 2025-11-25 spec forbids,
+    so ``auth.type: passthrough`` is never reached from here and must be asked for by name.
     """
     explicit_flow_type = entry.auth.flow
 
-    if explicit_flow_type == 'passthrough':
-        return DetectedOAuthFlow(flow_type='passthrough')
+    # No spec can declare this one, so the detector has nothing to contribute,
+    # and consulting it would only produce a misleading "flow not declared" error.
+    if explicit_flow_type == 'token_exchange':
+        return DetectedOAuthFlow(flow_type='token_exchange')
 
     declared_flows = detect_oauth_flows(spec)
     selected_flow = _pick_from_declared_flows(declared_flows, explicit_flow_type)
@@ -99,7 +100,7 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
             'so the gateway can mint its own upstream tokens. '
             "Forwarding the MCP client's token to a third-party upstream is forbidden by the MCP authorization spec "
             '(RFC 8707 audience binding).\n\n'
-            'auth.flow: passthrough is ONLY for the rare case where the gateway and the upstream share the same OAuth audience, '
+            'auth.type: passthrough is ONLY for the rare case where the gateway and the upstream share the same OAuth audience, '
             'e.g. internal corporate SSO where both sides trust the same IdP-issued tokens, '
             'or the FastAPI integration where the gateway is mounted onto the app it exposes. '
             'It is NOT safe for third-party SaaS APIs.'
@@ -142,9 +143,8 @@ def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None)
     """Build a ``DetectedOAuthFlow`` from explicit config when the spec declares none."""
     if not entry.auth.token_url:
         raise ValueError(
-            f'Server "{entry.name}": auth type is oauth2 but the spec has no OAuth2 flow '
-            'and no token_url is provided. Set auth.token_url (and authorization_url if '
-            'using authorization_code), or add a securitySchemes section to the spec.'
+            f'Server "{entry.name}": auth type is oauth2 but the spec has no OAuth2 flow and no token_url is provided. '
+            'Set auth.token_url (and authorization_url if using authorization_code), or add a securitySchemes section to the spec.'
         )
 
     if explicit_flow_type is not None:

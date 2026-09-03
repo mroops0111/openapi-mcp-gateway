@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from openapi_mcp_gateway.auth.token_source import ClientCredentialsTokenSource
+from openapi_mcp_gateway.auth.token_source import ClientCredentialsTokenSource, TokenExchangeTokenSource
 
 
 def _build_response(status_code: int, payload: dict | None = None, text: str = '') -> MagicMock:
@@ -165,3 +165,123 @@ class TestClientCredentialsTokenSourceClose:
             client_secret='secret',
         )
         await source.aclose()  # Should not raise.
+
+
+class TestClientCredentialsTokenSourceAudience:
+    """Audience parameters name the API a service token is minted for."""
+
+    async def test_audience_params_are_posted(self):
+        """Configured audience parameters ride along with the client_credentials grant."""
+        source = ClientCredentialsTokenSource(
+            token_url='https://auth.example.com/token',
+            client_id='cid',
+            client_secret='secret',
+            audience_params={'audience': 'https://api.example.com'},
+        )
+        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'tok', 'expires_in': 3600}))
+        source._http_client = MagicMock()
+        source._http_client.post = post_mock
+
+        await source.get_token()
+
+        assert post_mock.await_args is not None
+        assert post_mock.await_args.kwargs['data']['audience'] == 'https://api.example.com'
+
+    async def test_no_audience_params_leaves_request_unchanged(self):
+        """Without configuration the grant carries no audience keys at all."""
+        source = ClientCredentialsTokenSource(
+            token_url='https://auth.example.com/token',
+            client_id='cid',
+            client_secret='secret',
+        )
+        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'tok', 'expires_in': 3600}))
+        source._http_client = MagicMock()
+        source._http_client.post = post_mock
+
+        await source.get_token()
+
+        assert post_mock.await_args is not None
+        assert 'audience' not in post_mock.await_args.kwargs['data']
+        assert 'resource' not in post_mock.await_args.kwargs['data']
+
+
+class TestTokenExchangeTokenSource:
+    """RFC 8693 exchange of a caller's token for one the upstream API accepts."""
+
+    def _source(self, **kwargs) -> TokenExchangeTokenSource:
+        defaults = {
+            'token_endpoint': 'https://auth.example.com/token',
+            'client_id': 'gateway',
+            'client_secret': 'secret',
+            'audience_params': {'audience': 'https://api.example.com'},
+        }
+        return TokenExchangeTokenSource(**{**defaults, **kwargs})
+
+    async def test_posts_rfc_8693_grant(self):
+        """The request carries the token-exchange grant, the subject token, and the target audience."""
+        source = self._source()
+        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'upstream', 'expires_in': 3600}))
+        source._http_client = MagicMock()
+        source._http_client.post = post_mock
+
+        token = await source.exchange('caller-token')
+
+        assert token == 'upstream'
+        assert post_mock.await_args is not None
+        posted = post_mock.await_args.kwargs['data']
+        assert posted['grant_type'] == 'urn:ietf:params:oauth:grant-type:token-exchange'
+        assert posted['subject_token'] == 'caller-token'
+        assert posted['subject_token_type'] == 'urn:ietf:params:oauth:token-type:access_token'
+        assert posted['audience'] == 'https://api.example.com'
+        assert posted['client_id'] == 'gateway'
+
+    async def test_repeat_exchange_is_cached(self):
+        """One MCP session makes many tool calls, so a fresh result is reused."""
+        source = self._source()
+        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'upstream', 'expires_in': 3600}))
+        source._http_client = MagicMock()
+        source._http_client.post = post_mock
+
+        first = await source.exchange('caller-token')
+        second = await source.exchange('caller-token')
+
+        assert first == second == 'upstream'
+        post_mock.assert_awaited_once()
+
+    async def test_different_subject_tokens_do_not_share_a_result(self):
+        """Caching is keyed by the subject token, so a re-authenticated caller gets a fresh exchange.
+
+        Keying by user instead would let a new session inherit credentials minted for an old one.
+        """
+        source = self._source()
+        responses = [
+            _build_response(200, {'access_token': 'upstream-a', 'expires_in': 3600}),
+            _build_response(200, {'access_token': 'upstream-b', 'expires_in': 3600}),
+        ]
+        source._http_client = MagicMock()
+        source._http_client.post = AsyncMock(side_effect=responses)
+
+        assert await source.exchange('caller-a') == 'upstream-a'
+        assert await source.exchange('caller-b') == 'upstream-b'
+
+    async def test_expired_cache_entry_triggers_a_new_exchange(self):
+        """A result past its refresh skew is discarded rather than returned stale."""
+        source = self._source(refresh_skew_seconds=0.0)
+        responses = [
+            _build_response(200, {'access_token': 'first', 'expires_in': 0}),
+            _build_response(200, {'access_token': 'second', 'expires_in': 3600}),
+        ]
+        source._http_client = MagicMock()
+        source._http_client.post = AsyncMock(side_effect=responses)
+
+        assert await source.exchange('caller-token') == 'first'
+        assert await source.exchange('caller-token') == 'second'
+
+    async def test_failure_explains_the_likely_causes(self):
+        """A rejected exchange names what to check, since support varies between authorization servers."""
+        source = self._source()
+        source._http_client = MagicMock()
+        source._http_client.post = AsyncMock(return_value=_build_response(400, text='unsupported_grant_type'))
+
+        with pytest.raises(RuntimeError, match='RFC 8693'):
+            await source.exchange('caller-token')

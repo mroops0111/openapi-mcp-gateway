@@ -3,6 +3,7 @@ import dataclasses
 import typing
 
 from mcp.server.auth.settings import AuthSettings
+from mcp.shared.auth import ProtectedResourceMetadata
 
 from ...openapi import OpenAPISpec
 from ...settings import ServerConfig
@@ -35,14 +36,22 @@ class OAuthFlowSetup:
     """Result of an ``OAuthFlowHandler.build`` call, consumed by ``Gateway``.
 
     Only ``resolver`` is always set.
-    ``provider`` and ``settings`` are populated when the flow needs to act as an MCP-side OAuth server,
+    ``provider`` is populated when the flow makes the gateway an MCP-side OAuth server,
     currently only ``authorization_code``.
+    ``verifier`` is populated instead when the gateway validates tokens it did not issue.
+    The two are mutually exclusive, and the MCP SDK rejects a server given both.
+    ``settings`` and ``protected_resource`` accompany either one and drive the discovery documents.
+    ``protected_resource`` is the RFC 9728 document this server publishes:
+    its ``resource`` is always the endpoint's own canonical URI,
+    while ``authorization_servers`` names whoever mints tokens for it.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
     resolver: AuthResolver
     provider: 'AuthorizationCodeProvider | None' = None
     settings: AuthSettings | None = None
+    verifier: typing.Any | None = None
+    protected_resource: ProtectedResourceMetadata | None = None
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
 
 

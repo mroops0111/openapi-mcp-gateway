@@ -43,7 +43,8 @@ Match features to the user's situation, do not reach for all of them.
 - **Local, Single User, One API (stdio).** A static token is enough, `bearer` or `api_key` with the provider's header, such as a GitHub personal access token. No OAuth. Expose a handful of operations with `policy.allow`.
 - **A Huge Spec of Hundreds of Operations.** Prefer dynamic exposure, which fronts the spec with a few meta-tools, over listing every operation, so the tool list never floods the model. Still scope it with `policy.allow`.
 - **A Messy API That Makes Poor Tools.** Shape it. Hide the knobs the model should not set, and trim the response.
-- **Multiple Users, or a Provider That Mandates It.** Use `oauth2`, so each user signs in with their own credentials.
+- **Multiple Users, or a Provider That Mandates It.** Use `oauth2`, so each user signs in with their own credentials. `authorization_code` is the default and fits nearly every case.
+- **An API Behind an Identity Provider You Run.** Point the OAuth URLs at that provider and set `upstream_audience` to the API, so the provider mints a token the API will accept rather than one for its own default audience. Reach for `flow: token_exchange` only when the provider should also issue for the MCP endpoint itself, which needs RFC 8693 support on its side.
 
 ## Process
 
@@ -110,8 +111,9 @@ servers:
     spec: <url-or-local-path>
     base_url: <upstream-base-url> # required, a spec with a relative server needs the real host
     auth:
-      type: bearer # or api_key / oauth2 / none
+      type: bearer # or api_key / oauth2 / passthrough / none
       token: ${SOME_TOKEN}
+      # oauth2 also takes flow: authorization_code (default) / client_credentials / token_exchange
     policy: # the selector for which operations become tools
       allow: ["<operation_id>", "..."] # globs matched against operation ids, omit to expose all
     operations: # overrides only, applied to operations the policy kept
@@ -146,6 +148,8 @@ uvx openapi-mcp-gateway --config <config.yml> --dry-run
 ```
 
 It loads every spec, applies the policy, and compiles the shaping, then exits without serving and prints a summary of what would run. Exit 0 means the config is valid. On failure, read the named side (request or response), fix the JSONata, and re-run until it validates clean.
+
+One config shape cannot be validated offline. `flow: token_exchange` contacts the issuer during startup to discover its JWKS and token endpoints, so `--dry-run` needs that provider reachable. Say so rather than reporting the config unverified.
 
 Hand the finished config to the user with a one-line summary of each tool, the environment variables they must set, and the exact run command:
 

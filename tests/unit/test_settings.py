@@ -306,3 +306,43 @@ class TestLayerHelpers:
         assert server['base_url'] == 'https://example.com'
         assert server['auth']['type'] == 'bearer'
         assert server['auth']['token'] == '${TOK}'
+
+
+class TestAuthConfigUpstreamAudience:
+    """``resolve_upstream_audience_params`` names the API an upstream token is minted for."""
+
+    def test_empty_when_neither_configured(self):
+        """An upstream that issues its own tokens needs no audience named, so nothing is sent."""
+        auth = AuthConfig(type='oauth2', client_id='cid', client_secret='sec')
+
+        assert auth.resolve_upstream_audience_params() == {}
+
+    def test_resource_emits_rfc_8707_parameter(self):
+        """``resource`` is passed through under its RFC 8707 name."""
+        auth = AuthConfig(type='oauth2', upstream_resource='https://api.example.com')
+
+        assert auth.resolve_upstream_audience_params() == {'resource': 'https://api.example.com'}
+
+    def test_audience_emits_auth0_parameter(self):
+        """``audience`` is passed through under the spelling Auth0 expects."""
+        auth = AuthConfig(type='oauth2', upstream_audience='https://api.example.com')
+
+        assert auth.resolve_upstream_audience_params() == {'audience': 'https://api.example.com'}
+
+    def test_both_are_sent_when_both_configured(self):
+        """Setting both is allowed, for an authorization server that accepts either spelling."""
+        auth = AuthConfig(
+            type='oauth2', upstream_resource='https://res.example.com', upstream_audience='https://aud.example.com'
+        )
+
+        assert auth.resolve_upstream_audience_params() == {
+            'resource': 'https://res.example.com',
+            'audience': 'https://aud.example.com',
+        }
+
+    def test_env_var_substitution(self, monkeypatch):
+        """Both fields resolve ``${ENV_VAR}`` like the other credential fields do."""
+        monkeypatch.setenv('UPSTREAM_AUD', 'https://from-env.example.com')
+        auth = AuthConfig(type='oauth2', upstream_audience='${UPSTREAM_AUD}')
+
+        assert auth.resolve_upstream_audience_params() == {'audience': 'https://from-env.example.com'}

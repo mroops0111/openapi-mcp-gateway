@@ -922,7 +922,7 @@
                           "fill": "#9C978F",
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
-                          "content": "audience-bound,\nno passthrough",
+                          "content": "own or external issuer,\nnever forwarded",
                           "lineHeight": 1.35,
                           "fontFamily": "Inter",
                           "fontSize": 12,

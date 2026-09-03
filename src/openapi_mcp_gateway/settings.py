@@ -32,15 +32,20 @@ _resolve_env_var = resolve_env_var
 class AuthConfig(pydantic.BaseModel):
     """Authentication for an upstream API.
 
-    ``token``, ``client_id``,
-    and ``client_secret`` accept ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` substitution at resolve time.
+    ``token``, ``client_id``, ``client_secret``, ``issuer``, ``upstream_resource``,
+    and ``upstream_audience`` accept ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` substitution at resolve time.
     Numeric OAuth credentials are coerced from int to str,
     so unquoted YAML values still parse on providers that use numeric ``client_id`` (Asana, Facebook).
+
+    ``type`` groups by where the upstream credential comes from:
+    ``bearer`` and ``api_key`` hold a fixed one, ``oauth2`` obtains one, ``passthrough`` forwards the caller's,
+    and ``none`` sends nothing.
+    ``flow`` refines ``oauth2`` alone, naming the grant used to obtain that credential.
     """
 
     model_config = pydantic.ConfigDict(coerce_numbers_to_str=True)
 
-    type: typing.Literal['bearer', 'api_key', 'oauth2', 'none'] = 'none'
+    type: typing.Literal['bearer', 'api_key', 'oauth2', 'passthrough', 'none'] = 'none'
     token: str | None = None
     api_key_header: str = 'X-API-Key'
 
@@ -50,7 +55,19 @@ class AuthConfig(pydantic.BaseModel):
     authorization_url: str | None = None
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
-    flow: typing.Literal['authorization_code', 'client_credentials', 'passthrough'] | None = None
+    flow: typing.Literal['authorization_code', 'client_credentials', 'token_exchange'] | None = None
+
+    # Issuer of the authorization server that protects this MCP endpoint, for ``token_exchange``.
+    # Set it and the gateway stops issuing credentials of its own,
+    # validating tokens minted by that issuer and exchanging them for upstream ones instead.
+    issuer: str | None = None
+
+    # Names the API the upstream token is for, when that API and its authorization server are different parties.
+    # Without it the authorization server mints for its own default audience, which the API then refuses.
+    # The prefix separates this from the gateway's own audience under token_exchange,
+    # which is derived from the mount path rather than configured.
+    upstream_resource: str | None = None
+    upstream_audience: str | None = None
 
     # Lifetimes of the MCP-side tokens the gateway mints for authorization_code, in seconds.
     # The refresh TTL is the practical idle window, since each refresh issues a fresh refresh token,
@@ -84,6 +101,31 @@ class AuthConfig(pydantic.BaseModel):
     def resolve_client_secret(self) -> str | None:
         """OAuth client secret after env-var substitution."""
         return _resolve_env_var(self.client_secret)
+
+    def resolve_issuer(self) -> str | None:
+        """External authorization server issuer after env-var substitution."""
+        return _resolve_env_var(self.issuer)
+
+    def resolve_upstream_audience_params(self) -> dict[str, str]:
+        """Return the extra parameters naming the upstream token's audience, after env-var substitution.
+
+        Authorization servers disagree on the spelling,
+        so both are offered and only what is configured is sent.
+        ``upstream_resource`` is the RFC 8707 parameter, ``upstream_audience`` is the spelling Auth0 uses.
+
+        Resolving both here keeps every flow handler out of the business of classifying vendors,
+        so a third spelling is added in this one method rather than in each component that talks upstream.
+        Empty when neither is configured,
+        which is the right shape for an upstream that issues its own tokens.
+        """
+        params: dict[str, str] = {}
+        resource = _resolve_env_var(self.upstream_resource)
+        audience = _resolve_env_var(self.upstream_audience)
+        if resource:
+            params['resource'] = resource
+        if audience:
+            params['audience'] = audience
+        return params
 
 
 class CORSConfig(pydantic.BaseModel):

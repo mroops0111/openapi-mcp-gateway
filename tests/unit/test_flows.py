@@ -1,21 +1,26 @@
+from unittest.mock import patch
+
 import pytest
 
 from openapi_mcp_gateway.auth.flows import (
     AuthorizationCodeFlowHandler,
     ClientCredentialsFlowHandler,
     OAuthFlowContext,
-    PassthroughFlowHandler,
+    TokenExchangeFlowHandler,
     build_oauth_flow,
 )
 from openapi_mcp_gateway.auth.flows.factory import resolve_oauth_flow
+from openapi_mcp_gateway.auth.oidc import IssuerMetadata
 from openapi_mcp_gateway.auth.resolver import (
     AuthorizationCodeAuthResolver,
     PassthroughAuthResolver,
+    TokenExchangeAuthResolver,
     TokenSourceAuthResolver,
 )
 from openapi_mcp_gateway.auth.token_source import ClientCredentialsTokenSource
+from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import OpenAPISpec
-from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
+from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, ServerConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 
 
@@ -266,7 +271,7 @@ class TestBuildOAuthFlow:
         which forwards the MCP client's token to a third-party upstream.
         That violates RFC 8707 audience binding, the "confused deputy" pattern the MCP authorization spec forbids.
 
-        Users who genuinely want passthrough must set ``auth.flow='passthrough'`` explicitly,
+        Users who genuinely want passthrough must set ``auth.type='passthrough'`` explicitly,
         to acknowledge the shared-audience requirement.
         """
         entry = _entry(AuthConfig(type='oauth2'))
@@ -291,42 +296,21 @@ class TestBuildOAuthFlow:
                 mount_path='/srv',
             )
 
-    def test_explicit_passthrough_short_circuits_detector(self):
-        """``flow='passthrough'`` is honoured even when the spec declares no OAuth flows."""
-        entry = _entry(AuthConfig(type='oauth2', flow='passthrough'))
-        setup = build_oauth_flow(
-            entry=entry,
-            spec=_build_spec(),
-            store=MemoryTokenStore(),
-            gateway_url='http://localhost:8000',
-            mount_path='/srv',
-        )
-        assert isinstance(setup.resolver, PassthroughAuthResolver)
 
+class TestPassthroughAuthType:
+    """``passthrough`` is an auth type, since the gateway runs no OAuth exchange in that mode."""
 
-class TestPassthroughFlowHandler:
-    """``PassthroughFlowHandler`` builds a minimal setup (resolver only)."""
+    def test_resolves_without_consulting_a_flow(self):
+        """It never reaches the flow factory, so no spec or flow value is involved."""
+        gateway = Gateway.from_config(GatewayConfig())
+        entry = _entry(AuthConfig(type='passthrough'))
 
-    def test_build_returns_passthrough_resolver(self):
-        """The handler returns an ``OAuthFlowSetup`` carrying only a ``PassthroughAuthResolver``."""
-        from openapi_mcp_gateway.auth.detector import DetectedOAuthFlow
+        setup = gateway._resolve_auth(entry, _build_spec())
 
-        entry = _entry(AuthConfig(type='oauth2', flow='passthrough'))
-        flow = DetectedOAuthFlow(flow_type='passthrough')
-        setup = PassthroughFlowHandler().build(
-            OAuthFlowContext(
-                entry=entry,
-                spec=_build_spec(),
-                oauth_flow=flow,
-                store=MemoryTokenStore(),
-                gateway_url='http://localhost:8000',
-                mount_path='/srv',
-            )
-        )
         assert isinstance(setup.resolver, PassthroughAuthResolver)
         assert setup.provider is None
+        assert setup.verifier is None
         assert setup.settings is None
-        assert setup.on_shutdown is None
 
 
 class TestClientCredentialsFlowHandler:
@@ -387,3 +371,155 @@ class TestAuthorizationCodeFlowHandler:
         assert setup.provider.callback_url == 'http://localhost:8000/srv/auth/callback'
         assert setup.provider.upstream_auth_url == 'https://auth.example.com/authorize'
         assert setup.provider.upstream_token_url == 'https://auth.example.com/token'
+
+
+class TestUpstreamAudienceWiring:
+    """Config-level ``resource`` / ``audience`` reach the component that talks to the upstream."""
+
+    def test_authorization_code_provider_receives_audience(self):
+        """``AuthorizationCodeFlowHandler`` hands the resolved parameters to the provider."""
+        entry = _entry(
+            AuthConfig(
+                type='oauth2',
+                client_id='cid',
+                client_secret='sec',
+                upstream_audience='https://api.example.com',
+            ),
+        )
+        spec = _spec_with_authorization_code()
+
+        setup = AuthorizationCodeFlowHandler().build(
+            OAuthFlowContext(
+                entry=entry,
+                spec=spec,
+                oauth_flow=resolve_oauth_flow(entry, spec),
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                mount_path='/srv',
+            )
+        )
+
+        assert setup.provider is not None
+        assert setup.provider.audience_params == {'audience': 'https://api.example.com'}
+
+    def test_client_credentials_token_source_receives_resource(self):
+        """``ClientCredentialsFlowHandler`` hands the resolved parameters to the token source."""
+        entry = _entry(
+            AuthConfig(
+                type='oauth2',
+                client_id='cid',
+                client_secret='sec',
+                flow='client_credentials',
+                upstream_resource='https://api.example.com',
+            ),
+        )
+        spec = _spec_with_client_credentials()
+
+        setup = ClientCredentialsFlowHandler().build(
+            OAuthFlowContext(
+                entry=entry,
+                spec=spec,
+                oauth_flow=resolve_oauth_flow(entry, spec),
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                mount_path='/srv',
+            )
+        )
+
+        assert isinstance(setup.resolver, TokenSourceAuthResolver)
+        token_source = setup.resolver._token_source
+        assert isinstance(token_source, ClientCredentialsTokenSource)
+        assert token_source.audience_params == {'resource': 'https://api.example.com'}
+
+
+def _token_exchange_entry(**auth_overrides) -> ServerConfig:
+    """Entry configured for the token_exchange flow, with every requirement satisfied by default."""
+    defaults = {
+        'type': 'oauth2',
+        'flow': 'token_exchange',
+        'issuer': 'https://auth.example.com',
+        'upstream_audience': 'https://api.example.com',
+        'client_id': 'gateway',
+        'client_secret': 'secret',
+    }
+    return _entry(AuthConfig(**{**defaults, **auth_overrides}))
+
+
+def _build_token_exchange(entry: ServerConfig):
+    """Run the handler with issuer discovery stubbed out."""
+    metadata = IssuerMetadata(
+        issuer='https://auth.example.com',
+        jwks_uri='https://auth.example.com/jwks',
+        token_endpoint='https://auth.example.com/token',
+    )
+    with (
+        patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
+        patch('openapi_mcp_gateway.auth.oidc._build_jwk_client'),
+    ):
+        return TokenExchangeFlowHandler().build(
+            OAuthFlowContext(
+                entry=entry,
+                spec=_build_spec(),
+                oauth_flow=resolve_oauth_flow(entry, _build_spec()),
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                mount_path='/srv',
+            )
+        )
+
+
+class TestTokenExchangeFlowHandler:
+    """The token_exchange flow delegates issuance and exchanges the caller's token."""
+
+    def test_advertises_the_gateway_as_the_resource_and_the_issuer_as_the_as(self):
+        """The document names this endpoint's canonical URI, and the external issuer that mints for it.
+
+        Advertising the upstream's identifier instead would have clients request a token the gateway must refuse,
+        since the MCP spec forbids accepting one minted for another resource.
+        """
+        setup = _build_token_exchange(_token_exchange_entry())
+
+        assert setup.protected_resource is not None
+        assert str(setup.protected_resource.resource) == 'http://localhost:8000/srv/mcp'
+        assert [str(server) for server in setup.protected_resource.authorization_servers] == [
+            'https://auth.example.com'
+        ]
+
+    def test_produces_a_verifier_and_no_provider(self):
+        """The gateway validates rather than issues, which is what the SDK's two modes are."""
+        setup = _build_token_exchange(_token_exchange_entry())
+
+        assert setup.provider is None
+        assert setup.verifier is not None
+        assert isinstance(setup.resolver, TokenExchangeAuthResolver)
+
+    def test_verifier_audience_is_the_gateway_not_the_upstream(self):
+        """Inbound tokens must name this endpoint, even though the exchange targets the upstream."""
+        setup = _build_token_exchange(_token_exchange_entry())
+
+        assert setup.verifier is not None
+        assert setup.verifier.audience == 'http://localhost:8000/srv/mcp'
+
+    def test_requires_issuer(self):
+        """Without an issuer there is nothing to validate tokens against."""
+        with pytest.raises(ValueError, match=r'requires auth\.issuer'):
+            _build_token_exchange(_token_exchange_entry(issuer=None))
+
+    def test_requires_an_upstream_audience(self):
+        """Without a target the issuer mints for its own default, which the upstream refuses."""
+        with pytest.raises(ValueError, match=r'requires auth\.upstream_resource or auth\.upstream_audience'):
+            _build_token_exchange(_token_exchange_entry(upstream_audience=None))
+
+    def test_requires_client_credentials_for_the_exchange(self):
+        """Authorization servers require a confidential client for the token-exchange grant."""
+        with pytest.raises(ValueError, match='requires client_id and client_secret'):
+            _build_token_exchange(_token_exchange_entry(client_secret=None))
+
+    def test_short_circuits_before_reading_the_spec(self):
+        """``securitySchemes`` cannot declare this flow, so the detector is never consulted.
+
+        Consulting it would raise a misleading "flow not declared" error on every spec.
+        """
+        entry = _token_exchange_entry()
+
+        assert resolve_oauth_flow(entry, _spec_with_authorization_code()).flow_type == 'token_exchange'

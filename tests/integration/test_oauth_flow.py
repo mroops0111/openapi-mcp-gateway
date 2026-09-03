@@ -296,3 +296,135 @@ class TestUpstreamCallbackErrors:
             await provider.handle_upstream_callback('upstream-code', 'state-missing-token')
         assert exception_info.value.status_code == 400
         assert 'access_token' in exception_info.value.detail
+
+
+@pytest.fixture
+def audience_provider(store):
+    """Provider configured to name the upstream API the token is minted for."""
+    return AuthorizationCodeProvider(
+        store=store,
+        upstream_auth_url='https://auth.example.com/authorize',
+        upstream_token_url='https://auth.example.com/token',
+        client_id='gateway-client-id',
+        client_secret='gateway-client-secret',
+        callback_url='http://localhost:8000/petstore/auth/callback',
+        scopes=['read'],
+        prefix='petstore',
+        audience_params={'audience': 'https://api.example.com'},
+        mcp_access_token_ttl=3600,
+        mcp_refresh_token_ttl=86400,
+    )
+
+
+def _token_response(granted: str) -> MagicMock:
+    """Mock upstream token endpoint response granting ``granted`` plus a refresh token."""
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {
+        'access_token': granted,
+        'refresh_token': 'upstream-refresh-token',
+        'expires_in': 3600,
+    }
+    return response
+
+
+class TestUpstreamAudienceParams:
+    """The audience naming the upstream API rides on every upstream request.
+
+    Without it an authorization server mints a token for its own default audience,
+    which an API that merely trusts that issuer will refuse.
+    """
+
+    async def test_authorize_url_carries_audience(self, audience_provider, mcp_client_info):
+        """The browser redirect names the API, since consent binds the audience."""
+        await audience_provider.register_client(mcp_client_info)
+        params = AuthorizationParams(
+            state='state-aud',
+            scopes=['read'],
+            redirect_uri=AnyHttpUrl('http://localhost:3000/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge-abc',
+        )
+
+        url = await audience_provider.authorize(mcp_client_info, params)
+
+        assert 'audience=https%3A%2F%2Fapi.example.com' in url
+
+    async def test_code_exchange_carries_audience(self, audience_provider, mcp_client_info):
+        """The authorization_code grant names the API as well as the authorize request."""
+        await audience_provider.register_client(mcp_client_info)
+        params = AuthorizationParams(
+            state='state-aud',
+            scopes=['read'],
+            redirect_uri=AnyHttpUrl('http://localhost:3000/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge-abc',
+        )
+        await audience_provider.authorize(mcp_client_info, params)
+
+        post_mock = AsyncMock(return_value=_token_response('upstream-access-token'))
+        with patch('httpx.AsyncClient.post', post_mock):
+            await audience_provider.handle_upstream_callback('upstream-code', 'state-aud')
+
+        assert post_mock.await_args is not None
+        posted = post_mock.await_args.kwargs['data']
+        assert posted['grant_type'] == 'authorization_code'
+        assert posted['audience'] == 'https://api.example.com'
+
+    async def test_refresh_carries_audience(self, audience_provider, mcp_client_info, store):
+        """A refresh names the API too, so the rotated token stays usable upstream.
+
+        Dropping the audience here would return a token the upstream refuses,
+        and that failure would only surface once the first token expired.
+        """
+        await audience_provider.register_client(mcp_client_info)
+        params = AuthorizationParams(
+            state='state-aud',
+            scopes=['read'],
+            redirect_uri=AnyHttpUrl('http://localhost:3000/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge-abc',
+        )
+        await audience_provider.authorize(mcp_client_info, params)
+
+        with patch('httpx.AsyncClient.post', AsyncMock(return_value=_token_response('upstream-access-token'))):
+            redirect = await audience_provider.handle_upstream_callback('upstream-code', 'state-aud')
+        mcp_auth_code = redirect.split('code=')[1].split('&')[0]
+        auth_code = await audience_provider.load_authorization_code(mcp_client_info, mcp_auth_code)
+        token = await audience_provider.exchange_authorization_code(mcp_client_info, auth_code)
+        refresh = await audience_provider.load_refresh_token(mcp_client_info, token.refresh_token)
+
+        # Expire the upstream token so the refresh path actually calls the token endpoint.
+        await store.delete('api_access_token', 'upstream-access-token')
+
+        post_mock = AsyncMock(return_value=_token_response('rotated-access-token'))
+        with patch('httpx.AsyncClient.post', post_mock):
+            await audience_provider.exchange_refresh_token(mcp_client_info, refresh, ['read'])
+
+        assert post_mock.await_args is not None
+        posted = post_mock.await_args.kwargs['data']
+        assert posted['grant_type'] == 'refresh_token'
+        assert posted['audience'] == 'https://api.example.com'
+
+    async def test_unconfigured_provider_sends_no_audience(self, provider, mcp_client_info):
+        """An upstream that issues its own tokens sees no audience keys at all."""
+        await provider.register_client(mcp_client_info)
+        params = AuthorizationParams(
+            state='state-plain',
+            scopes=['read'],
+            redirect_uri=AnyHttpUrl('http://localhost:3000/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge-abc',
+        )
+        url = await provider.authorize(mcp_client_info, params)
+        assert 'audience=' not in url
+        assert 'resource=' not in url
+
+        post_mock = AsyncMock(return_value=_token_response('upstream-access-token'))
+        with patch('httpx.AsyncClient.post', post_mock):
+            await provider.handle_upstream_callback('upstream-code', 'state-plain')
+
+        assert post_mock.await_args is not None
+        posted = post_mock.await_args.kwargs['data']
+        assert 'audience' not in posted
+        assert 'resource' not in posted
