@@ -252,7 +252,7 @@ Configuration merges in this order, with each layer overriding the previous: **d
 | `name` | string | required | Unique identifier. Mount path defaults to `/{name}` |
 | `spec` | string | required | Path or URL to OpenAPI document (JSON or YAML) |
 | `base_url` | string | from spec | Override the upstream base URL |
-| `auth.type` | string | `none` | `none`, `bearer`, `api_key`, or `oauth2` |
+| `auth.type` | string | `none` | `none`, `bearer`, `api_key`, `oauth2`, or `passthrough`. Says where the upstream credential comes from: a fixed one, one the gateway obtains, or the caller's own forwarded |
 | `auth.token` | string |  | Required for `bearer` / `api_key` |
 | `auth.api_key_header` | string | `X-API-Key` | Header name for `api_key` |
 | `auth.client_id`, `auth.client_secret` | string |  | Required for `oauth2` |
