@@ -1,15 +1,17 @@
 """Strategies for assembling auth components from ``auth.type``.
 
-``auth.type`` says where the upstream credential comes from, and each answer needs different
-machinery. A static credential is captured once at startup, ``oauth2`` obtains one per flow,
+``auth.type`` says where the upstream credential comes from,
+and each answer needs different machinery.
+A static credential is captured once at startup, ``oauth2`` obtains one per flow,
 ``passthrough`` forwards the caller's, and ``none`` sends nothing.
 
 This mirrors ``OAuthFlowHandler``, which does the same job one level down for ``auth.flow``.
 Both exist so that adding a variant means adding a class and a registry entry,
 rather than editing a branch that every other variant also passes through.
 
-Header formats live here rather than on ``AuthConfig``, since knowing that a bearer token is
-written ``Bearer <token>`` is protocol knowledge rather than configuration.
+Header formats live here rather than on ``AuthConfig``.
+Knowing that a bearer token is written ``Bearer <token>`` is protocol knowledge,
+not configuration.
 """
 
 import abc
@@ -58,8 +60,8 @@ class StaticCredentialHandler(AuthTypeHandler):
     """Send one fixed credential, captured from config at startup.
 
     Shared by ``bearer`` and ``api_key``, which differ only in header name and prefix.
-    Every caller reaches the upstream as the same identity, so any per-user rule the upstream
-    enforces stops distinguishing anyone.
+    Every caller reaches the upstream as the same identity,
+    so any per-user rule the upstream enforces stops distinguishing anyone.
 
     Falls back to sending nothing when no token is configured,
     which keeps a half-filled config serving a public API rather than failing at startup.

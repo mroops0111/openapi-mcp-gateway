@@ -224,8 +224,8 @@ class TestBuildOAuthFlow:
             mount_path='/srv',
         )
         assert setup.provider is not None
-        assert setup.provider.mcp_access_token_ttl == 3600
-        assert setup.provider.mcp_refresh_token_ttl == 86400
+        assert setup.provider.issued_tokens.access_token_ttl == 3600
+        assert setup.provider.issued_tokens.refresh_token_ttl == 86400
 
     def test_authorization_code_honours_configured_token_ttls(self):
         """``mcp_access_token_ttl`` / ``mcp_refresh_token_ttl`` reach the provider."""
@@ -245,8 +245,8 @@ class TestBuildOAuthFlow:
             mount_path='/srv',
         )
         assert setup.provider is not None
-        assert setup.provider.mcp_access_token_ttl == 7200
-        assert setup.provider.mcp_refresh_token_ttl == 604800
+        assert setup.provider.issued_tokens.access_token_ttl == 7200
+        assert setup.provider.issued_tokens.refresh_token_ttl == 604800
 
     def test_client_credentials_returns_token_source_resolver(self):
         """client_credentials yields a TokenSourceAuthResolver and an on_shutdown hook."""
@@ -387,9 +387,9 @@ class TestAuthorizationCodeFlowHandler:
         )
 
         assert setup.provider is not None
-        assert setup.provider.callback_url == 'http://localhost:8000/srv/auth/callback'
-        assert setup.provider.upstream_auth_url == 'https://auth.example.com/authorize'
-        assert setup.provider.upstream_token_url == 'https://auth.example.com/token'
+        assert setup.provider.upstream.callback_url == 'http://localhost:8000/srv/auth/callback'
+        assert setup.provider.upstream.authorization_url == 'https://auth.example.com/authorize'
+        assert setup.provider.upstream.token_url == 'https://auth.example.com/token'
 
 
 class TestUpstreamAudienceWiring:
@@ -417,7 +417,7 @@ class TestUpstreamAudienceWiring:
         )
 
         assert setup.provider is not None
-        assert setup.provider.audience_params == {'audience': 'https://api.example.com'}
+        assert setup.provider.upstream.audience_params == {'audience': 'https://api.example.com'}
 
     def test_client_credentials_token_source_receives_resource(self):
         """``ClientCredentialsFlowHandler`` hands the resolved parameters to the token source."""
@@ -603,7 +603,7 @@ class TestAuthorizationCodeScopes:
         assert registration is not None
         assert registration.valid_scopes == ['reports.read', 'reports.write']
         assert setup.provider is not None
-        assert setup.provider.mcp_scopes == ['reports.read', 'reports.write']
+        assert setup.provider.issued_tokens.scopes == ['reports.read', 'reports.write']
 
     def test_a_default_scope_stands_in_when_none_is_configured(self):
         """OAuth needs a scope to name even when a deployment has no opinion about them."""
