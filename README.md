@@ -159,6 +159,28 @@ The gateway mints upstream tokens server-side, so each MCP client authenticates 
 
 The gateway does not silently pass the MCP client's token through to third-party upstreams, in line with the MCP spec's [Access Token Privilege Restriction](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction). For `authorization_code` it mints per-user tokens against the upstream IdP per [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707), and for `client_credentials` it uses its own service credentials. The one exception is the [FastAPI integration](#fastapi-integration), which runs in-process at the same OAuth audience, so the client's `Authorization` header is forwarded verbatim.
 
+### Upstreams behind a separate identity provider
+
+An API that has no authorization server of its own, and instead accepts tokens from an identity provider the deployment already runs, needs the gateway to say which API its upstream token is for. Point the OAuth URLs at that provider and name the API:
+
+```yaml
+servers:
+  - name: internal
+    spec: https://internal.example.com/openapi.json
+    auth:
+      type: oauth2
+      flow: authorization_code
+      authorization_url: https://you.auth0.com/authorize
+      token_url: https://you.auth0.com/oauth/token
+      client_id: ${GATEWAY_CLIENT_ID}
+      client_secret: ${GATEWAY_CLIENT_SECRET}
+      audience: https://internal.example.com
+```
+
+Without this the provider mints a token for its own default audience and the API refuses it. The parameter rides on the authorization request and on every token request, including refreshes, so a rotated token stays usable. Authorization servers disagree on the spelling: `audience` is what Auth0 expects, `resource` is the RFC 8707 parameter. Set whichever yours accepts.
+
+The two layers stay separate. MCP clients still authorize against the gateway and receive a gateway-issued token, while the provider-issued token is a second credential the gateway holds on their behalf. This is what the MCP spec requires of a server calling an upstream API, and it is why the client's own token is never forwarded. End users see whatever login the provider federates to.
+
 For `authorization_code`, the MCP access token lives 1 hour and the refresh token 24 hours by default. Each refresh issues a fresh refresh token, so the refresh TTL is the practical re-authorization cadence. A client that refreshes within it never has to sign in again, while one idle past it must re-authorize. Tune both with `auth.mcp_access_token_ttl` and `auth.mcp_refresh_token_ttl`.
 
 </details>
@@ -207,6 +229,7 @@ Configuration merges in this order, with each layer overriding the previous: **d
 | `auth.client_id`, `auth.client_secret` | string |  | Required for `oauth2` |
 | `auth.flow` | string | from spec | `authorization_code` for per-user delegation, `client_credentials` for a shared service token. When unset the gateway prefers the spec's declared `authorizationCode` flow, falling back to whatever else it declares. |
 | `auth.scopes`, `auth.authorization_url`, `auth.token_url` |  | from spec | OAuth2 overrides when `securitySchemes` is incomplete |
+| `auth.resource`, `auth.audience` | string |  | Names the API the upstream token is for, when the API and its authorization server are different parties. `resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter, `audience` is the spelling Auth0 uses. Set whichever your authorization server accepts; only what you set is sent |
 | `auth.mcp_access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints for `authorization_code` |
 | `auth.mcp_refresh_token_ttl` | int | `86400` | Lifetime in seconds of the MCP refresh token. This is the practical re-authorization cadence, since each refresh slides the window forward |
 | `policy.allow` | list |  | Only expose matching operations |

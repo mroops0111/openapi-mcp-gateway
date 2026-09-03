@@ -37,6 +37,11 @@ class AuthorizationCodeProvider:
     Registers MCP clients, forwards browser authorization to the upstream IdP,
     exchanges grants at ``upstream_token_url``, and keeps the MCP-to-upstream token mappings inside ``store``.
     Each MCP access token corresponds to one user's upstream token.
+
+    The upstream token is a separate credential from the ``mcp_...`` token handed to the MCP client,
+    which is what the MCP authorization spec requires of a server calling an upstream API.
+    ``audience_params`` names the API that upstream token is for,
+    for an upstream whose API and authorization server are different parties.
     """
 
     def __init__(
@@ -49,6 +54,7 @@ class AuthorizationCodeProvider:
         callback_url: str,
         scopes: list[str] | None = None,
         prefix: str = 'gateway',
+        audience_params: dict[str, str] | None = None,
         *,
         mcp_access_token_ttl: int,
         mcp_refresh_token_ttl: int,
@@ -60,6 +66,7 @@ class AuthorizationCodeProvider:
         self.client_secret = client_secret
         self.callback_url = callback_url
         self.scopes = scopes or []
+        self.audience_params = audience_params or {}
         self._prefix = prefix
         self.mcp_access_token_ttl = mcp_access_token_ttl
         self.mcp_refresh_token_ttl = mcp_refresh_token_ttl
@@ -103,8 +110,14 @@ class AuthorizationCodeProvider:
         }
         if self.scopes:
             query_params['scope'] = ' '.join(self.scopes)
+        # Sent on the authorization request as well as the token request,
+        # since an authorization server binds the audience at consent time,
+        # and RFC 8707 §2 requires the parameter on both.
+        query_params.update(self.audience_params)
 
-        logger.info('Upstream OAuth authorize: scopes=%s', self.scopes)
+        logger.info(
+            'Upstream OAuth authorize: scopes=%s audience_params=%s', self.scopes, self.audience_params
+        )
         return f'{self.upstream_auth_url}?{urllib.parse.urlencode(query_params)}'
 
     async def load_authorization_code(
@@ -396,13 +409,19 @@ class AuthorizationCodeProvider:
     async def _request_upstream_token(self, request_data: dict[str, typing.Any]) -> tuple[str, str | None, int]:
         """POST ``request_data`` to ``upstream_token_url``.
 
+        Audience parameters are added here rather than at each call site,
+        so the initial exchange and every later refresh stay bound to the same API.
+        Dropping them on refresh would return a token the upstream refuses,
+        and that failure would only surface once the first token expired.
+
         Returns ``(access_token, refresh_token | None, expires_in)``,
         raising ``HTTPException`` when the upstream rejects the exchange.
         """
+        # Grant fields last, so a stray audience key can never displace ``grant_type`` or the credentials.
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 self.upstream_token_url,
-                data=request_data,
+                data={**self.audience_params, **request_data},
                 headers={'Accept': 'application/json'},
             )
 
@@ -461,6 +480,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             callback_url=callback_url,
             scopes=entry.auth.scopes,
             prefix=entry.name,
+            audience_params=entry.auth.resolve_upstream_audience_params(),
             mcp_access_token_ttl=entry.auth.mcp_access_token_ttl,
             mcp_refresh_token_ttl=entry.auth.mcp_refresh_token_ttl,
         )
@@ -479,11 +499,12 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         )
 
         logger.debug(
-            'Authorization code flow set up for "%s": authorize=%s token=%s scopes=%s',
+            'Authorization code flow set up for "%s": authorize=%s token=%s scopes=%s audience_params=%s',
             entry.name,
             oauth_flow.authorization_url,
             oauth_flow.token_url,
             entry.auth.scopes,
+            entry.auth.resolve_upstream_audience_params(),
         )
 
         return OAuthFlowSetup(

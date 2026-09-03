@@ -32,8 +32,8 @@ _resolve_env_var = resolve_env_var
 class AuthConfig(pydantic.BaseModel):
     """Authentication for an upstream API.
 
-    ``token``, ``client_id``,
-    and ``client_secret`` accept ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` substitution at resolve time.
+    ``token``, ``client_id``, ``client_secret``, ``resource``,
+    and ``audience`` accept ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` substitution at resolve time.
     Numeric OAuth credentials are coerced from int to str,
     so unquoted YAML values still parse on providers that use numeric ``client_id`` (Asana, Facebook).
     """
@@ -51,6 +51,13 @@ class AuthConfig(pydantic.BaseModel):
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
     flow: typing.Literal['authorization_code', 'client_credentials', 'passthrough'] | None = None
+
+    # Names the API the upstream token is for,
+    # for an upstream whose API and authorization server are different parties.
+    # Without it the authorization server mints a token for its own default audience,
+    # which an API that merely trusts that issuer refuses.
+    resource: str | None = None
+    audience: str | None = None
 
     # Lifetimes of the MCP-side tokens the gateway mints for authorization_code, in seconds.
     # The refresh TTL is the practical idle window, since each refresh issues a fresh refresh token,
@@ -84,6 +91,27 @@ class AuthConfig(pydantic.BaseModel):
     def resolve_client_secret(self) -> str | None:
         """OAuth client secret after env-var substitution."""
         return _resolve_env_var(self.client_secret)
+
+    def resolve_upstream_audience_params(self) -> dict[str, str]:
+        """Return the extra parameters naming the upstream token's audience, after env-var substitution.
+
+        Authorization servers disagree on the spelling,
+        so both are offered and only what is configured is sent.
+        ``resource`` is the RFC 8707 parameter, ``audience`` is the spelling Auth0 uses.
+
+        Resolving both here keeps every flow handler out of the business of classifying vendors,
+        so a third spelling is added in this one method rather than in each component that talks upstream.
+        Empty when neither is configured,
+        which is the right shape for an upstream that issues its own tokens.
+        """
+        params: dict[str, str] = {}
+        resource = _resolve_env_var(self.resource)
+        audience = _resolve_env_var(self.audience)
+        if resource:
+            params['resource'] = resource
+        if audience:
+            params['audience'] = audience
+        return params
 
 
 class CORSConfig(pydantic.BaseModel):

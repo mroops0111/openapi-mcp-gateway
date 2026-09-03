@@ -36,6 +36,9 @@ class ClientCredentialsTokenSource(TokenSource):
     The token is fetched lazily on first ``get_token``,
     and cached until ``refresh_skew_seconds`` before its declared expiry.
     Concurrent refreshes are de-duped through an internal ``asyncio.Lock``.
+
+    ``audience_params`` names the API the token is for,
+    for an upstream whose API and authorization server are different parties.
     """
 
     def __init__(
@@ -45,12 +48,14 @@ class ClientCredentialsTokenSource(TokenSource):
         client_secret: str,
         scopes: list[str] | None = None,
         refresh_skew_seconds: float = DEFAULT_REFRESH_SKEW_SECONDS,
+        audience_params: dict[str, str] | None = None,
     ) -> None:
         self.token_url = token_url
         self.client_id = client_id
         self.client_secret = client_secret
         self.scopes = scopes or []
         self.refresh_skew_seconds = refresh_skew_seconds
+        self.audience_params = audience_params or {}
         self._access_token: str | None = None
         self._expires_at_monotonic: float = 0.0
         self._lock = asyncio.Lock()
@@ -77,7 +82,9 @@ class ClientCredentialsTokenSource(TokenSource):
         )
 
     async def _fetch_token(self) -> None:
+        # Grant fields last, so a stray audience key can never displace ``grant_type`` or the credentials.
         request_data: dict[str, str] = {
+            **self.audience_params,
             'grant_type': 'client_credentials',
             'client_id': self.client_id,
             'client_secret': self.client_secret,
@@ -88,7 +95,12 @@ class ClientCredentialsTokenSource(TokenSource):
         if self._http_client is None:
             self._http_client = httpx.AsyncClient()
 
-        logger.debug('Client credentials token fetch: url=%s scopes=%s', self.token_url, self.scopes)
+        logger.debug(
+            'Client credentials token fetch: url=%s scopes=%s audience_params=%s',
+            self.token_url,
+            self.scopes,
+            self.audience_params,
+        )
         response = await self._http_client.post(
             self.token_url,
             data=request_data,

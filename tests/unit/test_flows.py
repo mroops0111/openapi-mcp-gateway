@@ -387,3 +387,62 @@ class TestAuthorizationCodeFlowHandler:
         assert setup.provider.callback_url == 'http://localhost:8000/srv/auth/callback'
         assert setup.provider.upstream_auth_url == 'https://auth.example.com/authorize'
         assert setup.provider.upstream_token_url == 'https://auth.example.com/token'
+
+
+class TestUpstreamAudienceWiring:
+    """Config-level ``resource`` / ``audience`` reach the component that talks to the upstream."""
+
+    def test_authorization_code_provider_receives_audience(self):
+        """``AuthorizationCodeFlowHandler`` hands the resolved parameters to the provider."""
+        entry = _entry(
+            AuthConfig(
+                type='oauth2',
+                client_id='cid',
+                client_secret='sec',
+                audience='https://api.example.com',
+            ),
+        )
+        spec = _spec_with_authorization_code()
+
+        setup = AuthorizationCodeFlowHandler().build(
+            OAuthFlowContext(
+                entry=entry,
+                spec=spec,
+                oauth_flow=resolve_oauth_flow(entry, spec),
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                mount_path='/srv',
+            )
+        )
+
+        assert setup.provider is not None
+        assert setup.provider.audience_params == {'audience': 'https://api.example.com'}
+
+    def test_client_credentials_token_source_receives_resource(self):
+        """``ClientCredentialsFlowHandler`` hands the resolved parameters to the token source."""
+        entry = _entry(
+            AuthConfig(
+                type='oauth2',
+                client_id='cid',
+                client_secret='sec',
+                flow='client_credentials',
+                resource='https://api.example.com',
+            ),
+        )
+        spec = _spec_with_client_credentials()
+
+        setup = ClientCredentialsFlowHandler().build(
+            OAuthFlowContext(
+                entry=entry,
+                spec=spec,
+                oauth_flow=resolve_oauth_flow(entry, spec),
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                mount_path='/srv',
+            )
+        )
+
+        assert isinstance(setup.resolver, TokenSourceAuthResolver)
+        token_source = setup.resolver._token_source
+        assert isinstance(token_source, ClientCredentialsTokenSource)
+        assert token_source.audience_params == {'resource': 'https://api.example.com'}

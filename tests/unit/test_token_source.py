@@ -165,3 +165,41 @@ class TestClientCredentialsTokenSourceClose:
             client_secret='secret',
         )
         await source.aclose()  # Should not raise.
+
+
+class TestClientCredentialsTokenSourceAudience:
+    """Audience parameters name the API a service token is minted for."""
+
+    async def test_audience_params_are_posted(self):
+        """Configured audience parameters ride along with the client_credentials grant."""
+        source = ClientCredentialsTokenSource(
+            token_url='https://auth.example.com/token',
+            client_id='cid',
+            client_secret='secret',
+            audience_params={'audience': 'https://api.example.com'},
+        )
+        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'tok', 'expires_in': 3600}))
+        source._http_client = MagicMock()
+        source._http_client.post = post_mock
+
+        await source.get_token()
+
+        assert post_mock.await_args is not None
+        assert post_mock.await_args.kwargs['data']['audience'] == 'https://api.example.com'
+
+    async def test_no_audience_params_leaves_request_unchanged(self):
+        """Without configuration the grant carries no audience keys at all."""
+        source = ClientCredentialsTokenSource(
+            token_url='https://auth.example.com/token',
+            client_id='cid',
+            client_secret='secret',
+        )
+        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'tok', 'expires_in': 3600}))
+        source._http_client = MagicMock()
+        source._http_client.post = post_mock
+
+        await source.get_token()
+
+        assert post_mock.await_args is not None
+        assert 'audience' not in post_mock.await_args.kwargs['data']
+        assert 'resource' not in post_mock.await_args.kwargs['data']
