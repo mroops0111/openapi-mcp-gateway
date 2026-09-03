@@ -109,7 +109,17 @@ class TestFetchIssuerMetadata:
 
 
 class TestJWKSTokenVerifier:
-    """Inbound tokens are accepted only when minted by the issuer for this MCP endpoint."""
+    """Inbound tokens are accepted only when minted by the issuer for this MCP endpoint.
+
+    Every rejection reports as ``None``, the only refusal the SDK's bearer backend understands,
+    while the reason stays reachable on the inner method for logging and for these tests.
+    """
+
+    async def _assert_rejected(self, verifier, token, reason_matches):
+        """A token must both report as unacceptable and carry a diagnosable reason."""
+        assert await verifier.verify_token(token) is None
+        with pytest.raises(TokenVerificationError, match=reason_matches):
+            verifier._verified_access_token(token)
 
     async def test_accepts_token_for_this_resource(self, signing_key):
         """A well-formed token yields an ``AccessToken`` carrying the caller's subject."""
@@ -140,29 +150,29 @@ class TestJWKSTokenVerifier:
         verifier = _verifier(signing_key)
         token = _issue(signing_key, aud='https://braid.example.com')
 
-        with pytest.raises(TokenVerificationError, match='audience does not match'):
-            await verifier.verify_token(token)
+        await self._assert_rejected(verifier, token, 'audience does not match')
 
     async def test_expired_token_reports_as_expired(self, signing_key):
-        """Expiry is reported distinctly rather than as a generic invalid token."""
+        """Expiry is reported distinctly rather than as a generic invalid token.
+
+        It is also the common rejection under this flow,
+        since the issuer sets the lifetimes and five minutes is a widespread default.
+        """
         verifier = _verifier(signing_key)
         token = _issue(signing_key, exp=int(time.time()) - 10)
 
-        with pytest.raises(TokenVerificationError, match='expired'):
-            await verifier.verify_token(token)
+        await self._assert_rejected(verifier, token, 'expired')
 
     async def test_token_from_another_issuer_is_rejected(self, signing_key):
         """An issuer mismatch is refused even when the signature verifies."""
         verifier = _verifier(signing_key)
         token = _issue(signing_key, iss='https://other.example.com')
 
-        with pytest.raises(TokenVerificationError, match='not issued by'):
-            await verifier.verify_token(token)
+        await self._assert_rejected(verifier, token, 'not issued by')
 
     async def test_missing_required_scope_is_rejected(self, signing_key):
         """Scopes the deployment requires are enforced at verification time."""
         verifier = _verifier(signing_key, required_scopes=['admin'])
         token = _issue(signing_key, scope='read')
 
-        with pytest.raises(TokenVerificationError, match='missing required scopes'):
-            await verifier.verify_token(token)
+        await self._assert_rejected(verifier, token, 'missing required scopes')

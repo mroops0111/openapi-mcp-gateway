@@ -114,6 +114,8 @@ servers:
       type: bearer # or api_key / oauth2 / passthrough / none
       token: ${SOME_TOKEN}
       # oauth2 also takes flow: authorization_code (default) / client_credentials / token_exchange
+      # upstream_scopes: what to request from the upstream authorization server
+      # required_scopes: for token_exchange, what an inbound token must already carry
     policy: # the selector for which operations become tools
       allow: ["<operation_id>", "..."] # globs matched against operation ids, omit to expose all
     operations: # overrides only, applied to operations the policy kept

@@ -126,7 +126,7 @@ class TestAuthInference:
             auth_token=None,
             auth_client_id=None,
             auth_client_secret=None,
-            auth_scopes=None,
+            auth_upstream_scopes=None,
             auth_authorization_url=None,
             auth_token_url=None,
             auth_flow=None,
@@ -142,7 +142,7 @@ class TestAuthInference:
             auth_token='my-token',
             auth_client_id=None,
             auth_client_secret=None,
-            auth_scopes=None,
+            auth_upstream_scopes=None,
             auth_authorization_url=None,
             auth_token_url=None,
             auth_flow=None,
@@ -157,7 +157,7 @@ class TestAuthInference:
             auth_token=None,
             auth_client_id='cid',
             auth_client_secret='sec',
-            auth_scopes=None,
+            auth_upstream_scopes=None,
             auth_authorization_url=None,
             auth_token_url=None,
             auth_flow=None,
@@ -173,7 +173,7 @@ class TestAuthInference:
             auth_token='key123',
             auth_client_id=None,
             auth_client_secret=None,
-            auth_scopes=None,
+            auth_upstream_scopes=None,
             auth_authorization_url=None,
             auth_token_url=None,
             auth_flow=None,
@@ -187,12 +187,12 @@ class TestAuthInference:
             auth_token=None,
             auth_client_id='cid',
             auth_client_secret='sec',
-            auth_scopes='read , write,admin',
+            auth_upstream_scopes='read , write,admin',
             auth_authorization_url=None,
             auth_token_url=None,
             auth_flow=None,
         )
-        assert auth.scopes == ['read', 'write', 'admin']
+        assert auth.upstream_scopes == ['read', 'write', 'admin']
 
     def test_ambiguous_flags_raise_usage_error(self):
         """Auth flags with no token, no client_id and no explicit type are unrecoverable."""
@@ -202,7 +202,7 @@ class TestAuthInference:
                 auth_token=None,
                 auth_client_id=None,
                 auth_client_secret=None,
-                auth_scopes='read',
+                auth_upstream_scopes='read',
                 auth_authorization_url=None,
                 auth_token_url=None,
                 auth_flow=None,
@@ -215,7 +215,7 @@ class TestAuthInference:
             auth_token=None,
             auth_client_id='cid',
             auth_client_secret='sec',
-            auth_scopes=None,
+            auth_upstream_scopes=None,
             auth_authorization_url='https://auth.example.com/authorize',
             auth_token_url='https://auth.example.com/token',
             auth_flow=None,

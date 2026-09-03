@@ -157,7 +157,7 @@ def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None)
     if flow_type == 'authorization_code' and not entry.auth.authorization_url:
         raise ValueError(f'Server "{entry.name}": authorization_code flow requires auth.authorization_url.')
 
-    scopes_map = dict.fromkeys(entry.auth.scopes, '')
+    scopes_map = dict.fromkeys(entry.auth.upstream_scopes, '')
     return DetectedOAuthFlow(
         flow_type=flow_type,  # type: ignore[arg-type]
         authorization_url=entry.auth.authorization_url,

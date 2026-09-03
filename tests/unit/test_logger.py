@@ -2,6 +2,7 @@ import json
 import logging
 import pathlib
 import re
+import sys
 
 import pytest
 
@@ -104,6 +105,47 @@ class TestTextFormatter:
 
 class TestJsonFormatter:
     """Structured JSON formatter payload shape."""
+
+    def _record_with_exception(self) -> logging.LogRecord:
+        """A record carrying live ``exc_info``, as ``logger.exception`` produces."""
+        try:
+            raise ValueError('boom')
+        except ValueError:
+            return logging.LogRecord(
+                name='uvicorn.error',
+                level=logging.ERROR,
+                pathname=__file__,
+                lineno=1,
+                msg='Exception in ASGI application',
+                args=(),
+                exc_info=sys.exc_info(),
+            )
+
+    def test_traceback_is_carried_in_its_own_field(self):
+        """A logged exception keeps its traceback, in a field a pipeline can index separately.
+
+        JSON is what a container deployment picks,
+        so dropping it lost the diagnosis exactly where re-running with another format is hardest.
+        """
+        payload = json.loads(JsonFormatter().format(self._record_with_exception()))
+
+        assert 'Traceback' in payload['exception']
+        assert 'ValueError: boom' in payload['exception']
+        assert payload['message'] == 'Exception in ASGI application'
+
+    def test_no_exception_field_without_one(self):
+        """An ordinary record stays the same four keys."""
+        record = logging.LogRecord(
+            name='openapi_mcp_gateway.test',
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg='hello',
+            args=(),
+            exc_info=None,
+        )
+
+        assert 'exception' not in json.loads(JsonFormatter().format(record))
 
     def test_payload(self):
         """Formatter emits ``{time, level, logger, message}`` with rendered args."""

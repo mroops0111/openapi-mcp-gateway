@@ -138,7 +138,27 @@ class JWKSTokenVerifier:
         self._jwk_client = _build_jwk_client(jwks_uri)
 
     async def verify_token(self, token: str) -> typing.Any | None:
-        """Return an ``AccessToken`` for a valid JWT, or ``None`` when the credential is not a JWT."""
+        """Return an ``AccessToken`` for an acceptable token, or ``None`` for anything else.
+
+        ``None`` is the only rejection the SDK's bearer backend understands.
+        It does not guard this call, so raising here would reach the client as a server error.
+        That reads as "the gateway is broken" rather than "re-authorize",
+        and leaves the client resending the same dead credential.
+        Expiry makes it the common path rather than an edge case,
+        since under this flow the issuer owns the lifetimes.
+
+        The reason is logged rather than returned,
+        since the 401 the caller receives carries only the generic challenge.
+        Rejections are ordinary traffic here, so this is not an error.
+        """
+        try:
+            return self._verified_access_token(token)
+        except TokenVerificationError as rejection:
+            logger.info('Rejected bearer token for %s: %s', self.audience, rejection)
+            return None
+
+    def _verified_access_token(self, token: str) -> typing.Any | None:
+        """Validate ``token``, raising ``TokenVerificationError`` with the reason it is unacceptable."""
         import jwt
         from mcp.server.auth.provider import AccessToken
 

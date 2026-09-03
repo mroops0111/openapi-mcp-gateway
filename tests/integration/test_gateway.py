@@ -1,10 +1,13 @@
 import json
 import pathlib
+import time
 import typing
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from mcp import Client
 from mcp.server.mcpserver import Context
@@ -151,7 +154,7 @@ class TestWellKnownOAuth:
                         client_secret='test-client-secret',
                         authorization_url='https://auth.example.com/authorize',
                         token_url='https://auth.example.com/token',
-                        scopes=['read'],
+                        upstream_scopes=['read'],
                     ),
                 ),
             ],
@@ -207,7 +210,7 @@ class TestMountEmbedding:
                         client_secret='test-client-secret',
                         authorization_url='https://auth.example.com/authorize',
                         token_url='https://auth.example.com/token',
-                        scopes=['read'],
+                        upstream_scopes=['read'],
                     ),
                 ),
             ],
@@ -347,7 +350,7 @@ class TestClientCredentialsFlowEndToEnd:
                         type='oauth2',
                         client_id='gateway-id',
                         client_secret='gateway-secret',
-                        scopes=['api'],
+                        upstream_scopes=['api'],
                     ),
                 ),
             ],
@@ -631,7 +634,7 @@ class TestTokenExchangeDiscovery:
                         upstream_audience='https://api.example.com',
                         client_id='gateway',
                         client_secret='secret',
-                        scopes=['read'],
+                        upstream_scopes=['read'],
                     ),
                 ),
             ],
@@ -673,3 +676,125 @@ class TestTokenExchangeDiscovery:
         servers = delegating_client.get('/healthz').json()['servers']
 
         assert servers[0]['auth'] == 'oauth2'
+
+
+@pytest.fixture(scope='module')
+def signing_key():
+    """One RSA keypair for the module, since generation dominates the runtime."""
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+class TestRejectedTokenResponse:
+    """A token the gateway refuses produces a 401 challenge, not a server error.
+
+    The MCP SDK's bearer backend does not guard the ``verify_token`` call,
+    so an exception raised there reaches uvicorn as a 500.
+    A client reads that as the server being broken and keeps resending the same credential,
+    where a 401 would have sent it to re-authorize.
+    """
+
+    ISSUER = 'https://auth.example.com'
+    RESOURCE = 'https://mcp.example.com/petstore/mcp'
+
+    @pytest.fixture
+    def delegating_app(self, petstore_json_path, signing_key):
+        """Gateway delegating to an external issuer, with that issuer's key resolvable."""
+        metadata = IssuerMetadata(
+            issuer=self.ISSUER,
+            jwks_uri=f'{self.ISSUER}/jwks',
+            token_endpoint=f'{self.ISSUER}/token',
+        )
+        jwk = MagicMock()
+        jwk.key = signing_key.public_key()
+        jwk.key_type = 'RSA'
+        jwk_client = MagicMock()
+        jwk_client.get_signing_key_from_jwt.return_value = jwk
+
+        config = GatewayConfig(
+            url='https://mcp.example.com',
+            servers=[
+                ServerConfig(
+                    name='petstore',
+                    spec=str(petstore_json_path),
+                    auth=AuthConfig(
+                        type='oauth2',
+                        flow='token_exchange',
+                        issuer=self.ISSUER,
+                        upstream_audience='https://api.example.com',
+                        client_id='gateway',
+                        client_secret='secret',
+                    ),
+                ),
+            ],
+        )
+        with (
+            patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
+            patch('openapi_mcp_gateway.auth.oidc._build_jwk_client', return_value=jwk_client),
+        ):
+            gateway = Gateway.from_config(config)
+            app = gateway._build_app(transport='streamable-http')
+        return TestClient(app)
+
+    def _token(self, signing_key, **claims) -> str:
+        payload = {
+            'iss': self.ISSUER,
+            'aud': self.RESOURCE,
+            'sub': 'user-1',
+            'exp': int(time.time()) + 300,
+            **claims,
+        }
+        return jwt.encode(payload, signing_key, algorithm='RS256')
+
+    def _post(self, client, token: str):
+        return client.post(
+            '/petstore/mcp',
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Accept': 'application/json, text/event-stream',
+                'Content-Type': 'application/json',
+            },
+            json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
+        )
+
+    def test_expired_token_is_a_challenge_not_a_server_error(self, delegating_app, signing_key):
+        """Expiry is the ordinary path here, since the issuer owns the lifetimes.
+
+        Keycloak defaults to five minutes, so every session reaches this within minutes of starting.
+        A 500 leaves the client resending the same dead token forever.
+        """
+        expired = self._token(signing_key, exp=int(time.time()) - 60)
+
+        response = self._post(delegating_app, expired)
+
+        assert response.status_code == 401
+        assert 'invalid_token' in response.headers.get('WWW-Authenticate', '')
+
+    @pytest.mark.parametrize(
+        ('claims', 'reason'),
+        [
+            ({'aud': 'https://api.example.com'}, 'audience naming the upstream instead of this endpoint'),
+            ({'iss': 'https://other.example.com'}, 'another issuer'),
+            ({'aud': None}, 'no audience at all'),
+        ],
+    )
+    def test_every_rejection_reason_is_a_challenge(self, delegating_app, signing_key, claims, reason):
+        """No rejection path may reach the client as a server error."""
+        payload = {k: v for k, v in claims.items() if v is not None}
+        token = self._token(signing_key, **payload)
+        if claims.get('aud') is None and 'aud' in claims:
+            token = jwt.encode(
+                {'iss': self.ISSUER, 'sub': 'user-1', 'exp': int(time.time()) + 300},
+                signing_key,
+                algorithm='RS256',
+            )
+
+        response = self._post(delegating_app, token)
+
+        assert response.status_code == 401, f'rejected for {reason}'
+        assert 'invalid_token' in response.headers.get('WWW-Authenticate', '')
+
+    def test_a_credential_that_is_not_a_jwt_is_also_a_challenge(self, delegating_app):
+        """An opaque credential is unrecognised rather than invalid, and still must not 500."""
+        response = self._post(delegating_app, 'an-opaque-session-token')
+
+        assert response.status_code == 401

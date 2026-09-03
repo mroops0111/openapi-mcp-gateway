@@ -87,7 +87,7 @@ uv run openapi-mcp-gateway \
     --auth-type oauth2 \
     --auth-client-id '${ASANA_CLIENT_ID}' \
     --auth-client-secret '${ASANA_CLIENT_SECRET}' \
-    --auth-scopes "openid,email,profile,users:read,workspaces:read"
+    --auth-upstream-scopes "openid,email,profile,users:read,workspaces:read"
 ```
 
 For the service-token flow, add `--auth-flow client_credentials`. Those two are what the CLI reaches. `token_exchange` needs an issuer and an audience, so it is configured per server under `auth:` in YAML, described in [Authorization](#authorization).
@@ -165,6 +165,8 @@ Every request crosses two boundaries, and one `auth:` block settles both of them
 
 Only the last two put a check in front of the MCP endpoint. The others suit a gateway on localhost or inside a private network, and leave it open to anyone who can reach the port.
 
+`token_exchange` verifies JWT signatures, so it needs the `oidc` extra. Run the gateway as `uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway`. Without it the gateway refuses to start and says so.
+
 <details>
 <summary><b>Token Forwarding Policy</b></summary>
 
@@ -195,7 +197,9 @@ servers:
 
 Without it the provider mints for its own default audience and the API refuses the result. The parameter rides on the authorization request and on every token request, refreshes included, so a rotated token stays usable.
 
-Authorization servers disagree on the spelling. `upstream_audience` is what Auth0 expects, `upstream_resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter. Set whichever yours accepts.
+Authorization servers disagree on the spelling. `upstream_audience` is what Auth0 expects, `upstream_resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter.
+
+Set the one yours reads, or set both. A server that does not recognise a parameter ignores it silently rather than refusing, so Keycloak given only `upstream_resource` returns a perfectly ordinary token whose audience is wrong, and the upstream then rejects it for reasons that look unrelated. Sending both is legal, since RFC 8707 §2.1 defines both names, and it is the portable choice.
 
 MCP clients still authorize against the gateway and receive a gateway-issued token, while the provider-issued one is a second credential held on their behalf. End users see whatever login the provider federates to, so this works on any plan and needs nothing of the upstream but that it accept what the provider issues.
 
@@ -221,7 +225,9 @@ servers:
       client_secret: ${GATEWAY_CLIENT_SECRET}
 ```
 
-The gateway serves no `/authorize` or `/token` here. Its protected resource metadata names the issuer, clients authorize there, and the JWKS comes from the issuer's own metadata so key rotation needs no restart. JWT verification needs the `oidc` extra, so run it as `uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway`.
+The gateway serves no `/authorize` or `/token` here. Its protected resource metadata names the issuer, clients authorize there, and the JWKS comes from the issuer's own metadata so key rotation needs no restart.
+
+The endpoint identifies itself as `{url}{mount_path}/mcp`, built from the gateway's `url` and the server's mount path, so the example above is `https://gw.example.com/internal/mcp`. That exact string is what an inbound token's `aud` must contain, so you need it when creating the matching client and audience mapping at the issuer.
 
 Two things to check before committing to this mode. Token exchange support varies:
 
@@ -233,7 +239,13 @@ Two things to check before committing to this mode. Token exchange support varie
 | Auth0 | Custom Token Exchange, on Professional and Enterprise plans, with an Action to write |
 | Logto | not implemented |
 
-And because the issuer is the authorization server for this endpoint, MCP clients register there rather than with the gateway. Check whether yours supports dynamic client registration, or whether each client needs pre-registering.
+Keycloak is generally available in the sense that the feature flag is on, but a working realm still needs three things that its documentation does not connect to this use case:
+
+- **The inbound `aud` comes from an audience mapper**, added to a client scope. Keycloak ignores `resource` and `audience` on the authorization and token endpoints, so without a mapper the token's audience is just `account` and the gateway rejects it.
+- **The client performing the exchange must itself be in the subject token's audience**, or the exchange fails with `access_denied: Client is not within the token audience`. The tidiest arrangement is to make the MCP endpoint a client whose `clientId` is its canonical URI, so it is both the audience target and the exchanging client.
+- **The exchange target must exist as a client** and be reachable from the exchanging client's scopes, or the exchange fails with `invalid_request: Requested audience not available`.
+
+And because the issuer is the authorization server for this endpoint, MCP clients register there rather than with the gateway. Check whether yours supports dynamic client registration, or whether each client needs pre-registering. If it does support it, set `required_scopes` so the advertised `scopes_supported` tells a registering client what to ask for. Leave it empty and a client may register with a minimal scope set whose tokens then carry neither the audience nor the claims the upstream needs.
 
 </details>
 
@@ -290,7 +302,8 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `auth.client_id`, `auth.client_secret` | string |  | Required for `oauth2` |
 | `auth.flow` | string | from spec | `authorization_code` for per-user delegation, `client_credentials` for a shared service token, `token_exchange` to delegate this endpoint's authorization to an external issuer. When unset the gateway prefers the spec's declared `authorizationCode` flow, falling back to whatever else it declares. |
 | `auth.issuer` | string |  | Required for `token_exchange`. The authorization server that mints tokens for this MCP endpoint |
-| `auth.scopes`, `auth.authorization_url`, `auth.token_url` |  | from spec | OAuth2 overrides when `securitySchemes` is incomplete |
+| `auth.upstream_scopes`, `auth.authorization_url`, `auth.token_url` |  | from spec | OAuth2 overrides when `securitySchemes` is incomplete. `upstream_scopes` is what the gateway requests from the upstream authorization server |
+| `auth.required_scopes` | list |  | For `token_exchange`, what an inbound token must already carry. Separate from `upstream_scopes`, which points the other way, and advertised as `scopes_supported` so a client knows what to register for |
 | `auth.upstream_resource`, `auth.upstream_audience` | string |  | Names the API the upstream token is for, when the API and its authorization server are different parties. `upstream_resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter, `upstream_audience` is the spelling Auth0 uses. Set whichever your authorization server accepts; only what you set is sent |
 | `auth.mcp_access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints for `authorization_code` |
 | `auth.mcp_refresh_token_ttl` | int | `86400` | Lifetime in seconds of the MCP refresh token. This is the practical re-authorization cadence, since each refresh slides the window forward |

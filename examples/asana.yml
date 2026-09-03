@@ -20,7 +20,7 @@ servers:
       type: oauth2
       client_id: ${ASANA_CLIENT_ID}
       client_secret: ${ASANA_CLIENT_SECRET}
-      scopes:
+      upstream_scopes:
         - openid
         - email
         - profile

@@ -54,7 +54,14 @@ class AuthConfig(pydantic.BaseModel):
     client_secret: str | None = None
     authorization_url: str | None = None
     token_url: str | None = None
-    scopes: list[str] = pydantic.Field(default_factory=list)
+    # What the gateway asks the upstream authorization server for, on every flow.
+    upstream_scopes: list[str] = pydantic.Field(default_factory=list)
+
+    # What an inbound token must already carry, for token_exchange only.
+    # Separate from upstream_scopes because the two point in opposite directions.
+    # The gateway chooses what to request upstream, but has no say in what a caller registered with,
+    # so demanding the same set of both locks out clients it never configured.
+    required_scopes: list[str] = pydantic.Field(default_factory=list)
     flow: typing.Literal['authorization_code', 'client_credentials', 'token_exchange'] | None = None
 
     # Issuer of the authorization server that protects this MCP endpoint, for ``token_exchange``.

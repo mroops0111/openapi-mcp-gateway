@@ -34,7 +34,7 @@ class ClientCredentialsFlowHandler(OAuthFlowHandler):
                 'Provide auth.token_url or add it to the spec securitySchemes.'
             )
 
-        scopes = entry.auth.scopes or list(oauth_flow.scopes.keys())
+        scopes = entry.auth.upstream_scopes or list(oauth_flow.scopes.keys())
         audience_params = entry.auth.resolve_upstream_audience_params()
         token_source = ClientCredentialsTokenSource(
             token_url=oauth_flow.token_url,
