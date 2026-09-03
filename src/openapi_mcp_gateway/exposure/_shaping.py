@@ -52,7 +52,7 @@ def shape_operation(operation: OperationInfo) -> OperationInfo:
     Only what the LLM sees is changed here.
     The value actually sent upstream is shaped later, by the ``request`` JSONata expression.
 
-    ``tool.strategy`` chooses how ``params`` relates to the spec's own parameters.
+    ``tool.params_strategy`` chooses how ``params`` relates to the spec's own parameters.
     With ``merge`` each entry tweaks the matching spec parameter and the undeclared ones stay visible,
     so naming a parameter the spec does not define is rejected at build time.
     With ``replace`` the declared entries are the entire surface and every spec parameter is dropped,
@@ -63,19 +63,19 @@ def shape_operation(operation: OperationInfo) -> OperationInfo:
         return operation
 
     params = tool_override.params
-    if tool_override.strategy is None:
+    if tool_override.params_strategy is None:
         raise ValueError(
-            f'Operation "{operation.operation_id}" sets tool.params but no tool.strategy. '
-            'Set strategy to "merge" (layer onto the spec) or "replace" (declare the whole surface).'
+            f'Operation "{operation.operation_id}" sets tool.params but no tool.params_strategy. '
+            'Set params_strategy to "merge" (layer onto the spec) or "replace" (declare the whole surface).'
         )
 
     shaped_operation = operation.model_copy(deep=True)
     spec_names = {parameter.name for parameter in operation.parameters}
 
-    if tool_override.strategy == 'replace':
+    if tool_override.params_strategy == 'replace':
         if not tool_override.request:
             raise ValueError(
-                f'Operation "{operation.operation_id}" uses strategy "replace" but no tool.request. '
+                f'Operation "{operation.operation_id}" uses params_strategy "replace" but no tool.request. '
                 'Replaced parameters reach the upstream only through a request expression.'
             )
         shaped_operation.parameters = [_declared_parameter(name, param) for name, param in params.items()]
@@ -84,9 +84,9 @@ def shape_operation(operation: OperationInfo) -> OperationInfo:
     unknown_names = [name for name in params if name not in spec_names]
     if unknown_names:
         raise ValueError(
-            f'Operation "{operation.operation_id}" uses strategy "merge" but names parameter(s) '
+            f'Operation "{operation.operation_id}" uses params_strategy "merge" but names parameter(s) '
             f'{unknown_names} the spec does not define. Merge only tweaks existing parameters. '
-            'Use strategy "replace" to declare a new friendly surface.'
+            'Use params_strategy "replace" to declare a new friendly surface.'
         )
 
     kept_parameters: list[ParameterInfo] = []

@@ -6,7 +6,11 @@ from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import AnyHttpUrl
 from starlette.exceptions import HTTPException
 
-from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeProvider
+from openapi_mcp_gateway.auth.flows.authorization_code import (
+    AuthorizationCodeProvider,
+    IssuedTokenPolicy,
+    UpstreamOAuthClient,
+)
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 
 
@@ -21,15 +25,16 @@ def provider(store):
     """``AuthorizationCodeProvider`` wired against ``auth.example.com`` for the petstore prefix."""
     return AuthorizationCodeProvider(
         store=store,
-        upstream_auth_url='https://auth.example.com/authorize',
-        upstream_token_url='https://auth.example.com/token',
-        client_id='gateway-client-id',
-        client_secret='gateway-client-secret',
-        callback_url='http://localhost:8000/petstore/auth/callback',
-        scopes=['read', 'write'],
+        upstream=UpstreamOAuthClient(
+            authorization_url='https://auth.example.com/authorize',
+            token_url='https://auth.example.com/token',
+            client_id='gateway-client-id',
+            client_secret='gateway-client-secret',
+            callback_url='http://localhost:8000/petstore/auth/callback',
+            scopes=['read', 'write'],
+        ),
+        issued_tokens=IssuedTokenPolicy(access_token_ttl=3600, refresh_token_ttl=86400),
         prefix='petstore',
-        mcp_access_token_ttl=3600,
-        mcp_refresh_token_ttl=86400,
     )
 
 
@@ -166,15 +171,16 @@ class TestConfigurableTokenTtl:
         """A provider built with a custom access TTL mints tokens expiring on that cadence."""
         provider = AuthorizationCodeProvider(
             store=store,
-            upstream_auth_url='https://auth.example.com/authorize',
-            upstream_token_url='https://auth.example.com/token',
-            client_id='gateway-client-id',
-            client_secret='gateway-client-secret',
-            callback_url='http://localhost:8000/petstore/auth/callback',
-            scopes=['read'],
+            upstream=UpstreamOAuthClient(
+                authorization_url='https://auth.example.com/authorize',
+                token_url='https://auth.example.com/token',
+                client_id='gateway-client-id',
+                client_secret='gateway-client-secret',
+                callback_url='http://localhost:8000/petstore/auth/callback',
+                scopes=['read'],
+            ),
+            issued_tokens=IssuedTokenPolicy(access_token_ttl=7200, refresh_token_ttl=604800),
             prefix='petstore',
-            mcp_access_token_ttl=7200,
-            mcp_refresh_token_ttl=604800,
         )
         await provider.register_client(mcp_client_info)
 
@@ -303,16 +309,17 @@ def audience_provider(store):
     """Provider configured to name the upstream API the token is minted for."""
     return AuthorizationCodeProvider(
         store=store,
-        upstream_auth_url='https://auth.example.com/authorize',
-        upstream_token_url='https://auth.example.com/token',
-        client_id='gateway-client-id',
-        client_secret='gateway-client-secret',
-        callback_url='http://localhost:8000/petstore/auth/callback',
-        scopes=['read'],
+        upstream=UpstreamOAuthClient(
+            authorization_url='https://auth.example.com/authorize',
+            token_url='https://auth.example.com/token',
+            client_id='gateway-client-id',
+            client_secret='gateway-client-secret',
+            callback_url='http://localhost:8000/petstore/auth/callback',
+            scopes=['read'],
+            audience_params={'audience': 'https://api.example.com'},
+        ),
+        issued_tokens=IssuedTokenPolicy(access_token_ttl=3600, refresh_token_ttl=86400),
         prefix='petstore',
-        audience_params={'audience': 'https://api.example.com'},
-        mcp_access_token_ttl=3600,
-        mcp_refresh_token_ttl=86400,
     )
 
 

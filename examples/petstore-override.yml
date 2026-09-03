@@ -7,7 +7,7 @@
 # Result against the vanilla Petstore3 spec:
 #   - getPetById       -> resource template `petstore://pet/{petId}` named `pet`
 #   - getInventory     -> concrete resource `petstore://store/inventory` named `inventory`
-#   - everything else  -> handled by `mode: auto` (eligible GETs auto-promote, the rest stay tools)
+#   - everything else  -> handled by `promote_resources: true` (eligible GETs promote, the rest stay tools)
 #
 # Usage: openapi-mcp-gateway --config examples/petstore-override.yml
 
@@ -19,7 +19,8 @@ servers:
   - name: petstore
     spec: https://petstore3.swagger.io/api/v3/openapi.json
     base_url: https://petstore.swagger.io/v2  # v3 demo endpoint is flaky; v2 shares the same path templates
-    mode: auto
+    exposure:
+      promote_resources: true
     operations:
       getPetById:
         resource:

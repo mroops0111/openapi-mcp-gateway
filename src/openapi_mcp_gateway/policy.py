@@ -21,21 +21,21 @@ def filter_operations(
     operations: list[OperationInfo],
     allow: list[str] | None = None,
     deny: list[str] | None = None,
-    marked_only: bool = False,
+    annotated_only: bool = False,
 ) -> list[OperationInfo]:
-    """Apply ``marked_only``, ``allow``, and ``deny`` rules in that order.
+    """Apply ``annotated_only``, ``allow``, and ``deny`` rules in that order.
 
-    ``marked_only`` keeps only operations exposed via ``x-mcp-integration.tool``.
+    ``annotated_only`` keeps only operations the spec annotates with ``x-mcp-integration.tool``.
     """
     result = operations
 
-    if marked_only:
-        result = [op for op in result if op.tool_exposed]
+    if annotated_only:
+        result = [operation for operation in result if operation.tool_exposed]
 
     if allow:
-        result = [op for op in result if any(matches_pattern(op, p) for p in allow)]
+        result = [operation for operation in result if any(matches_pattern(operation, pattern) for pattern in allow)]
 
     if deny:
-        result = [op for op in result if not any(matches_pattern(op, p) for p in deny)]
+        result = [operation for operation in result if not any(matches_pattern(operation, pattern) for pattern in deny)]
 
     return result

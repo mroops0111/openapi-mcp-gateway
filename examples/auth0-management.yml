@@ -34,17 +34,18 @@ servers:
     auth:
       type: oauth2
       flow: client_credentials
-      # The spec declares this as the relative "/oauth/token/", so the tenant host is required here.
-      # Auth0's own documentation gives the endpoint without the trailing slash.
-      token_url: https://YOUR_TENANT.auth0.com/oauth/token
-      client_id: ${AUTH0_CLIENT_ID}
-      client_secret: ${AUTH0_CLIENT_SECRET}
-      # Without this the token is minted for Auth0's default audience and every call 401s.
-      # The trailing slash is part of the audience, unlike base_url above.
-      upstream_audience: https://YOUR_TENANT.auth0.com/api/v2/
-      upstream_scopes:
-        - read:users
-        - read:clients
+      upstream:
+        # The spec declares this as the relative "/oauth/token/", so the tenant host is required here.
+        # Auth0's own documentation gives the endpoint without the trailing slash.
+        token_url: https://YOUR_TENANT.auth0.com/oauth/token
+        client_id: ${AUTH0_CLIENT_ID}
+        client_secret: ${AUTH0_CLIENT_SECRET}
+        # Without this the token is minted for Auth0's default audience and every call 401s.
+        # The trailing slash is part of the audience, unlike base_url above.
+        audience: https://YOUR_TENANT.auth0.com/api/v2/
+        scopes:
+          - read:users
+          - read:clients
     policy:
       # The spec carries 477 operations. Read-only user and application lookups show the shape.
       allow:

@@ -96,15 +96,15 @@ class TestFilterOperations:
         assert 'createPet' in ids
         assert 'deletePet' not in ids
 
-    def test_marked_only(self):
-        """``marked_only`` keeps only operations with the ``x-mcp`` expose marker."""
-        result = filter_operations(OPERATIONS, marked_only=True)
+    def test_annotated_only(self):
+        """``annotated_only`` keeps only operations with the ``x-mcp`` expose marker."""
+        result = filter_operations(OPERATIONS, annotated_only=True)
         assert len(result) == 1
         assert result[0].operation_id == 'adminListPets'
 
-    def test_marked_only_with_allow(self):
-        """``marked_only`` and ``allow`` intersect, not union."""
-        result = filter_operations(OPERATIONS, allow=['admin*'], marked_only=True)
+    def test_annotated_only_with_allow(self):
+        """``annotated_only`` and ``allow`` intersect, not union."""
+        result = filter_operations(OPERATIONS, allow=['admin*'], annotated_only=True)
         assert len(result) == 1
 
     def test_allow_matches_nothing(self):

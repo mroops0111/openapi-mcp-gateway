@@ -21,8 +21,8 @@ class ClientCredentialsFlowHandler(OAuthFlowHandler):
         entry = flow_context.entry
         oauth_flow = flow_context.oauth_flow
 
-        client_id = entry.auth.resolve_client_id()
-        client_secret = entry.auth.resolve_client_secret()
+        client_id = entry.auth.upstream.resolve_client_id()
+        client_secret = entry.auth.upstream.resolve_client_secret()
         if not client_id or not client_secret:
             raise ValueError(
                 f'Server "{entry.name}": client_credentials flow requires client_id and client_secret. '
@@ -31,11 +31,11 @@ class ClientCredentialsFlowHandler(OAuthFlowHandler):
         if not oauth_flow.token_url:
             raise ValueError(
                 f'Server "{entry.name}": client_credentials flow requires token_url. '
-                'Provide auth.token_url or add it to the spec securitySchemes.'
+                'Provide auth.upstream.token_url or add it to the spec securitySchemes.'
             )
 
-        scopes = entry.auth.upstream_scopes or list(oauth_flow.scopes.keys())
-        audience_params = entry.auth.resolve_upstream_audience_params()
+        scopes = entry.auth.upstream.scopes or list(oauth_flow.scopes.keys())
+        audience_params = entry.auth.upstream.resolve_audience_params()
         token_source = ClientCredentialsTokenSource(
             token_url=oauth_flow.token_url,
             client_id=client_id,

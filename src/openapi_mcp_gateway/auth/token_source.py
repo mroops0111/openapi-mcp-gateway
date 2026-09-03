@@ -51,15 +51,15 @@ class ClientCredentialsTokenSource(TokenSource):
         client_id: str,
         client_secret: str,
         scopes: list[str] | None = None,
-        refresh_skew_seconds: float = DEFAULT_REFRESH_SKEW_SECONDS,
         audience_params: dict[str, str] | None = None,
+        refresh_skew_seconds: float = DEFAULT_REFRESH_SKEW_SECONDS,
     ) -> None:
         self.token_url = token_url
         self.client_id = client_id
         self.client_secret = client_secret
         self.scopes = scopes or []
-        self.refresh_skew_seconds = refresh_skew_seconds
         self.audience_params = audience_params or {}
+        self.refresh_skew_seconds = refresh_skew_seconds
         self._access_token: str | None = None
         self._expires_at_monotonic: float = 0.0
         self._lock = asyncio.Lock()
@@ -158,15 +158,15 @@ class TokenExchangeTokenSource:
         token_endpoint: str,
         client_id: str,
         client_secret: str,
-        audience_params: dict[str, str],
         scopes: list[str] | None = None,
+        audience_params: dict[str, str] | None = None,
         refresh_skew_seconds: float = DEFAULT_REFRESH_SKEW_SECONDS,
     ) -> None:
         self.token_endpoint = token_endpoint
         self.client_id = client_id
         self.client_secret = client_secret
-        self.audience_params = audience_params
         self.scopes = scopes or []
+        self.audience_params = audience_params or {}
         self.refresh_skew_seconds = refresh_skew_seconds
         self._cache: dict[str, tuple[str, float]] = {}
         self._lock = asyncio.Lock()

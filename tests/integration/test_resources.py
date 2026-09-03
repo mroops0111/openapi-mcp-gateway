@@ -8,7 +8,7 @@ from mcp.types import InputRequiredResult
 
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import McpIntegration, ResourceOverride
-from openapi_mcp_gateway.settings import GatewayConfig, ServerConfig
+from openapi_mcp_gateway.settings import ExposureConfig, GatewayConfig, ServerConfig
 
 
 class _StubContext:
@@ -138,7 +138,11 @@ class TestResourceExposureEndToEnd:
     def gateway(self, tmp_path):
         spec_path = _write_spec(tmp_path, _spec_with_resource_optin())
         return Gateway.from_config(
-            GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path), mode='auto')])
+            GatewayConfig(
+                servers=[
+                    ServerConfig(name='petstore', spec=str(spec_path), exposure=ExposureConfig(promote_resources=True))
+                ]
+            )
         )
 
     async def test_path_param_resource_listed_as_template(self, gateway):
@@ -180,7 +184,11 @@ class TestDualExposureEndToEnd:
     def gateway(self, tmp_path):
         spec_path = _write_spec(tmp_path, _spec_with_dual_optin())
         return Gateway.from_config(
-            GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path), mode='auto')])
+            GatewayConfig(
+                servers=[
+                    ServerConfig(name='petstore', spec=str(spec_path), exposure=ExposureConfig(promote_resources=True))
+                ]
+            )
         )
 
     async def test_tool_and_resource_both_present(self, gateway):
@@ -201,7 +209,13 @@ class TestResourceMisconfigFailsFast:
         spec_path = _write_spec(tmp_path, _spec_with_misconfig_post_resource())
         with pytest.raises(ValueError, match='method is POST'):
             Gateway.from_config(
-                GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path), mode='auto')])
+                GatewayConfig(
+                    servers=[
+                        ServerConfig(
+                            name='petstore', spec=str(spec_path), exposure=ExposureConfig(promote_resources=True)
+                        )
+                    ]
+                )
             )
 
 
@@ -224,7 +238,11 @@ class TestResourceUpstreamCall:
 
         spec_path = _write_spec(tmp_path, _spec_with_resource_optin())
         gateway = Gateway.from_config(
-            GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path), mode='auto')])
+            GatewayConfig(
+                servers=[
+                    ServerConfig(name='petstore', spec=str(spec_path), exposure=ExposureConfig(promote_resources=True))
+                ]
+            )
         )
         mcp = gateway._servers[0].mcp
         result = await mcp.read_resource('petstore://store/inventory')
@@ -258,7 +276,11 @@ class TestResourceUpstreamCall:
 
         spec_path = _write_spec(tmp_path, _spec_with_resource_optin())
         gateway = Gateway.from_config(
-            GatewayConfig(servers=[ServerConfig(name='petstore', spec=str(spec_path), mode='auto')])
+            GatewayConfig(
+                servers=[
+                    ServerConfig(name='petstore', spec=str(spec_path), exposure=ExposureConfig(promote_resources=True))
+                ]
+            )
         )
         mcp = gateway._servers[0].mcp
         template = mcp._resource_manager._templates['petstore://pets/{petId}']
@@ -294,7 +316,7 @@ class TestYamlOverrideEndToEnd:
     """``ServerConfig.operations`` injects per-op ``x-mcp-integration`` overrides without touching the spec."""
 
     async def test_yaml_override_renames_auto_promoted_resource(self, tmp_path):
-        """YAML ``operations.<id>.expose.resource.name`` renames the resource registered by ``mode='auto'``."""
+        """YAML ``operations.<id>.expose.resource.name`` renames the resource that promotion registered."""
         spec_path = _write_spec(tmp_path, _vanilla_spec())
         gateway = Gateway.from_config(
             GatewayConfig(
@@ -302,7 +324,7 @@ class TestYamlOverrideEndToEnd:
                     ServerConfig(
                         name='petstore',
                         spec=str(spec_path),
-                        mode='auto',
+                        exposure=ExposureConfig(promote_resources=True),
                         operations={
                             'getPet': McpIntegration(
                                 resource=ResourceOverride(name='pet', mime_type='application/json'),
@@ -326,7 +348,7 @@ class TestYamlOverrideEndToEnd:
                         ServerConfig(
                             name='petstore',
                             spec=str(spec_path),
-                            mode='auto',
+                            exposure=ExposureConfig(promote_resources=True),
                             operations={
                                 'not_a_real_op': McpIntegration(
                                     resource=ResourceOverride(name='ghost'),

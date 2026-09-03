@@ -8,6 +8,11 @@ from .env import resolve_env_var
 from .openapi import McpIntegration
 
 
+# The resolver moved to the leaf ``env`` module so exposure/ can reuse it without importing settings.
+# Kept as a private alias here so AuthConfig's existing call sites need no change.
+_resolve_env_var = resolve_env_var
+
+
 def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Recursively merge ``override`` into ``base``; ``override`` wins for non-dict values.
 
@@ -24,82 +29,35 @@ def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) ->
     return result
 
 
-# The resolver moved to the leaf ``env`` module so exposure/ can reuse it without importing settings.
-# Kept as a private alias here so AuthConfig's existing call sites need no change.
-_resolve_env_var = resolve_env_var
+class UpstreamAuthConfig(pydantic.BaseModel):
+    """How the gateway authenticates to the upstream's authorization server.
 
+    Present only under ``type: oauth2``.
+    A static credential is a different mechanism rather than the other end of this conversation,
+    so ``token`` and ``api_key_header`` stay on ``AuthConfig`` itself.
 
-class AuthConfig(pydantic.BaseModel):
-    """Authentication for an upstream API.
-
-    ``token``, ``client_id``, ``client_secret``, ``issuer``, ``upstream_resource``,
-    and ``upstream_audience`` accept ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` substitution at resolve time.
-    Numeric OAuth credentials are coerced from int to str,
-    so unquoted YAML values still parse on providers that use numeric ``client_id`` (Asana, Facebook).
-
-    ``type`` groups by where the upstream credential comes from:
-    ``bearer`` and ``api_key`` hold a fixed one, ``oauth2`` obtains one, ``passthrough`` forwards the caller's,
-    and ``none`` sends nothing.
-    ``flow`` refines ``oauth2`` alone, naming the grant used to obtain that credential.
+    Everything here is outbound, which is what separates it from ``issuer`` and ``required_scopes``
+    on the parent. That split is the whole reason for the nesting,
+    since the two directions were previously told apart only by a prefix on some of the names.
     """
 
     model_config = pydantic.ConfigDict(coerce_numbers_to_str=True)
 
-    type: typing.Literal['bearer', 'api_key', 'oauth2', 'passthrough', 'none'] = 'none'
-    token: str | None = None
-    api_key_header: str = 'X-API-Key'
-
-    # OAuth2 fields
     client_id: str | None = None
     client_secret: str | None = None
     authorization_url: str | None = None
     token_url: str | None = None
-    # What the gateway asks the upstream authorization server for, on every flow.
-    upstream_scopes: list[str] = pydantic.Field(default_factory=list)
+    scopes: list[str] = pydantic.Field(default_factory=list)
 
-    # What an inbound token must already carry, for token_exchange only.
-    # Separate from upstream_scopes because the two point in opposite directions.
-    # The gateway chooses what to request upstream, but has no say in what a caller registered with,
-    # so demanding the same set of both locks out clients it never configured.
-    required_scopes: list[str] = pydantic.Field(default_factory=list)
-    flow: typing.Literal['authorization_code', 'client_credentials', 'token_exchange'] | None = None
-
-    # Issuer of the authorization server that protects this MCP endpoint, for ``token_exchange``.
-    # Set it and the gateway stops issuing credentials of its own,
-    # validating tokens minted by that issuer and exchanging them for upstream ones instead.
-    issuer: str | None = None
-
-    # Names the API the upstream token is for, when that API and its authorization server are different parties.
-    # Without it the authorization server mints for its own default audience, which the API then refuses.
-    # The prefix separates this from the gateway's own audience under token_exchange,
-    # which is derived from the mount path rather than configured.
-    upstream_resource: str | None = None
-    upstream_audience: str | None = None
-
-    # Lifetimes of the MCP-side tokens the gateway mints for authorization_code, in seconds.
-    # The refresh TTL is the practical idle window, since each refresh issues a fresh refresh token,
-    # so a client refreshing within it slides forward and never re-authorizes.
-    mcp_access_token_ttl: int = pydantic.Field(default=3600, gt=0)
-    mcp_refresh_token_ttl: int = pydantic.Field(default=86400, gt=0)
-
-    def resolve_header(self) -> str | None:
-        """Return ``Bearer <token>`` for ``bearer``, the raw token for ``api_key``, or ``None`` otherwise."""
-        token = _resolve_env_var(self.token)
-
-        if not token:
-            return None
-
-        if self.type == 'bearer':
-            return f'Bearer {token}'
-        if self.type == 'api_key':
-            return token
-        return None
-
-    def resolve_header_name(self) -> str:
-        """HTTP header that carries credentials (the configured ``api_key_header`` or ``Authorization``)."""
-        if self.type == 'api_key':
-            return self.api_key_header
-        return 'Authorization'
+    # Names the API the token is for,
+    # when that API and its authorization server are different parties.
+    # Without it the authorization server mints for its own default audience, which the API refuses.
+    # Servers disagree on the spelling, so both are offered and only what is set is sent.
+    # ``resource`` is the RFC 8707 parameter, ``audience`` is the spelling Auth0 uses.
+    # A server that does not recognise one ignores it silently rather than refusing,
+    # so setting both is the portable choice.
+    resource: str | None = None
+    audience: str | None = None
 
     def resolve_client_id(self) -> str | None:
         """OAuth client id after env-var substitution."""
@@ -109,30 +67,68 @@ class AuthConfig(pydantic.BaseModel):
         """OAuth client secret after env-var substitution."""
         return _resolve_env_var(self.client_secret)
 
-    def resolve_issuer(self) -> str | None:
-        """External authorization server issuer after env-var substitution."""
-        return _resolve_env_var(self.issuer)
+    def resolve_audience_params(self) -> dict[str, str]:
+        """Return the audience-naming parameters for authorize and token requests.
 
-    def resolve_upstream_audience_params(self) -> dict[str, str]:
-        """Return the extra parameters naming the upstream token's audience, after env-var substitution.
-
-        Authorization servers disagree on the spelling,
-        so both are offered and only what is configured is sent.
-        ``upstream_resource`` is the RFC 8707 parameter, ``upstream_audience`` is the spelling Auth0 uses.
-
-        Resolving both here keeps every flow handler out of the business of classifying vendors,
-        so a third spelling is added in this one method rather than in each component that talks upstream.
         Empty when neither is configured,
         which is the right shape for an upstream that issues its own tokens.
         """
         params: dict[str, str] = {}
-        resource = _resolve_env_var(self.upstream_resource)
-        audience = _resolve_env_var(self.upstream_audience)
+        resource = _resolve_env_var(self.resource)
+        audience = _resolve_env_var(self.audience)
         if resource:
             params['resource'] = resource
         if audience:
             params['audience'] = audience
         return params
+
+
+class AuthConfig(pydantic.BaseModel):
+    """Authentication for one server, on both sides of the gateway.
+
+    The top level answers who may call this MCP endpoint, and holds any static upstream credential.
+    ``upstream`` answers how the gateway reaches the API, and appears only under ``type: oauth2``.
+
+    ``token``, ``issuer`` and the fields under ``upstream`` accept ``${ENV_VAR}``
+    and ``${ENV_VAR:-default}`` substitution at resolve time.
+    Numeric OAuth credentials are coerced from int to str,
+    so unquoted YAML values still parse on providers that use numeric ``client_id``.
+    """
+
+    model_config = pydantic.ConfigDict(coerce_numbers_to_str=True)
+
+    type: typing.Literal['bearer', 'api_key', 'oauth2', 'passthrough', 'none'] = 'none'
+    token: str | None = None
+    api_key_header: str = 'X-API-Key'
+
+    flow: typing.Literal['authorization_code', 'client_credentials', 'token_exchange'] | None = None
+
+    # Inbound, and for ``token_exchange`` only.
+    # The authorization server that mints tokens for this MCP endpoint,
+    # and what one of its tokens must already carry.
+    issuer: str | None = None
+    required_scopes: list[str] = pydantic.Field(default_factory=list)
+
+    # Outbound.
+    upstream: UpstreamAuthConfig = UpstreamAuthConfig()
+
+    # Lifetimes of the MCP-side tokens the gateway mints for authorization_code, in seconds.
+    # The refresh TTL is the practical idle window, since each refresh issues a fresh refresh token,
+    # so a client refreshing within it slides forward and never re-authorizes.
+    mcp_access_token_ttl: int = pydantic.Field(default=3600, gt=0)
+    mcp_refresh_token_ttl: int = pydantic.Field(default=86400, gt=0)
+
+    def resolve_token(self) -> str | None:
+        """Static credential after env-var substitution.
+
+        How it is framed as a header belongs to the auth type handler rather than here,
+        since ``Bearer <token>`` is protocol knowledge rather than configuration.
+        """
+        return _resolve_env_var(self.token)
+
+    def resolve_issuer(self) -> str | None:
+        """External authorization server issuer after env-var substitution."""
+        return _resolve_env_var(self.issuer)
 
 
 class CORSConfig(pydantic.BaseModel):
@@ -168,7 +164,23 @@ class PolicyConfig(pydantic.BaseModel):
 
     allow: list[str] | None = None
     deny: list[str] | None = None
-    marked_only: bool = False
+    # Named for the spec-side annotation it filters on, ``x-mcp-integration``.
+    annotated_only: bool = False
+
+
+class ExposureConfig(pydantic.BaseModel):
+    """How a server's operations surface as MCP primitives.
+
+    The two settings interact, so they live together rather than as sibling keys.
+    ``style: dynamic`` fronts the whole spec with meta-tools and ignores ``promote_resources``,
+    since the meta-tools surface every operation uniformly.
+    """
+
+    style: typing.Literal['static', 'dynamic'] = 'static'
+    # Whether a parameterless GET may become an MCP resource instead of a tool.
+    # Named for what it does. The operations it promotes are the ones a client reads rather than calls,
+    # and an operation can still opt in per-operation regardless.
+    promote_resources: bool = False
 
 
 class ServerConfig(pydantic.BaseModel):
@@ -181,16 +193,15 @@ class ServerConfig(pydantic.BaseModel):
     auth: AuthConfig = AuthConfig()
     policy: PolicyConfig = PolicyConfig()
     timeout: float = 90
-    exposure: typing.Literal['static', 'dynamic'] = 'static'
-    mode: typing.Literal['tool_only', 'auto'] = 'tool_only'
+    exposure: ExposureConfig = ExposureConfig()
     operations: dict[str, McpIntegration] = pydantic.Field(default_factory=dict)
 
     @pydantic.field_validator('name')
     @classmethod
-    def _validate_name(cls, v: str) -> str:
-        if not v.replace('-', '').replace('_', '').isalnum():
-            raise ValueError(f'Server name must be alphanumeric (with - or _): {v}')
-        return v
+    def _validate_name(cls, name: str) -> str:
+        if not name.replace('-', '').replace('_', '').isalnum():
+            raise ValueError(f'Server name must be alphanumeric (with - or _): {name}')
+        return name
 
     @pydantic.computed_field
     @property

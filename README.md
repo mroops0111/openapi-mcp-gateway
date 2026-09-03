@@ -105,12 +105,14 @@ servers:
   - name: petstore
     spec: https://petstore3.swagger.io/api/v3/openapi.json
     base_url: https://petstore.swagger.io/v2
-    mode: auto
+    exposure:
+      promote_resources: true
 
   # Dynamic exposure: ~1,200 GitHub ops behind three meta-tools instead of 1,200 tool schemas.
   - name: github
     spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
-    exposure: dynamic
+    exposure:
+      style: dynamic
     auth:
       type: bearer
       token: ${GITHUB_TOKEN}
@@ -120,9 +122,10 @@ servers:
     spec: https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml
     auth:
       type: oauth2
-      client_id: ${ASANA_CLIENT_ID}
-      client_secret: ${ASANA_CLIENT_SECRET}
-      scopes: [openid, email, profile, users:read, workspaces:read]
+      upstream:
+        client_id: ${ASANA_CLIENT_ID}
+        client_secret: ${ASANA_CLIENT_SECRET}
+        scopes: [openid, email, profile, users:read, workspaces:read]
 ```
 
 That one file serves 13 tools with 3 concrete resources and 3 resource templates at `/petstore/mcp`, three meta-tools fronting ~1,200 endpoints at `/github/mcp`, and per-user OAuth2 against Asana's IdP at `/asana/mcp`. No spec edits anywhere. Run it with `uv run openapi-mcp-gateway --config servers.yml`.
@@ -152,7 +155,7 @@ Runnable configs for every scenario above live in [`examples/`](examples/), each
 
 ## Authorization
 
-Every request crosses two boundaries, and one `auth:` block settles both of them. One is who may call the MCP endpoint, the other is what credential reaches the API behind it. Setting `auth.type`, plus `auth.flow` under `oauth2`, picks a pairing of the two.
+Every request crosses two boundaries, and one `auth:` block settles both of them. One is who may call the MCP endpoint, the other is what credential reaches the API behind it. Setting `auth.type`, plus `auth.flow` under `oauth2`, picks a pairing of the two. Everything the gateway sends upstream lives under `auth.upstream`, so the indentation separates the two directions.
 
 | `auth.type` / `auth.flow` | MCP Endpoint | Credential Sent Upstream |
 | --- | --- | --- |
@@ -188,18 +191,19 @@ servers:
     auth:
       type: oauth2
       flow: authorization_code
-      authorization_url: https://you.auth0.com/authorize
-      token_url: https://you.auth0.com/oauth/token
-      client_id: ${GATEWAY_CLIENT_ID}
-      client_secret: ${GATEWAY_CLIENT_SECRET}
-      upstream_audience: https://internal.example.com
+      upstream:
+        authorization_url: https://you.auth0.com/authorize
+        token_url: https://you.auth0.com/oauth/token
+        client_id: ${GATEWAY_CLIENT_ID}
+        client_secret: ${GATEWAY_CLIENT_SECRET}
+        audience: https://internal.example.com
 ```
 
 Without it the provider mints for its own default audience and the API refuses the result. The parameter rides on the authorization request and on every token request, refreshes included, so a rotated token stays usable.
 
-Authorization servers disagree on the spelling. `upstream_audience` is what Auth0 expects, `upstream_resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter.
+Authorization servers disagree on the spelling. `upstream.audience` is what Auth0 expects, `upstream.resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter.
 
-Set the one yours reads, or set both. A server that does not recognise a parameter ignores it silently rather than refusing, so Keycloak given only `upstream_resource` returns a perfectly ordinary token whose audience is wrong, and the upstream then rejects it for reasons that look unrelated. Sending both is legal, since RFC 8707 §2.1 defines both names, and it is the portable choice.
+Set the one yours reads, or set both. A server that does not recognise a parameter ignores it silently rather than refusing, so Keycloak given only `upstream.resource` returns a perfectly ordinary token whose audience is wrong, and the upstream then rejects it for reasons that look unrelated. Sending both is legal, since RFC 8707 §2.1 defines both names, and it is the portable choice.
 
 MCP clients still authorize against the gateway and receive a gateway-issued token, while the provider-issued one is a second credential held on their behalf. End users see whatever login the provider federates to, so this works on any plan and needs nothing of the upstream but that it accept what the provider issues.
 
@@ -220,9 +224,10 @@ servers:
       type: oauth2
       flow: token_exchange
       issuer: https://auth.example.com/realms/internal
-      upstream_audience: https://internal.example.com
-      client_id: ${GATEWAY_CLIENT_ID}
-      client_secret: ${GATEWAY_CLIENT_SECRET}
+      upstream:
+        audience: https://internal.example.com
+        client_id: ${GATEWAY_CLIENT_ID}
+        client_secret: ${GATEWAY_CLIENT_SECRET}
 ```
 
 The gateway serves no `/authorize` or `/token` here. Its protected resource metadata names the issuer, clients authorize there, and the JWKS comes from the issuer's own metadata so key rotation needs no restart.
@@ -299,12 +304,12 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `auth.type` | string | `none` | `none`, `bearer`, `api_key`, `oauth2`, or `passthrough`. Says where the upstream credential comes from: a fixed one, one the gateway obtains, or the caller's own forwarded |
 | `auth.token` | string |  | Required for `bearer` / `api_key` |
 | `auth.api_key_header` | string | `X-API-Key` | Header name for `api_key` |
-| `auth.client_id`, `auth.client_secret` | string |  | Required for `oauth2` |
 | `auth.flow` | string | from spec | `authorization_code` for per-user delegation, `client_credentials` for a shared service token, `token_exchange` to delegate this endpoint's authorization to an external issuer. When unset the gateway prefers the spec's declared `authorizationCode` flow, falling back to whatever else it declares. |
 | `auth.issuer` | string |  | Required for `token_exchange`. The authorization server that mints tokens for this MCP endpoint |
-| `auth.upstream_scopes`, `auth.authorization_url`, `auth.token_url` |  | from spec | OAuth2 overrides when `securitySchemes` is incomplete. `upstream_scopes` is what the gateway requests from the upstream authorization server |
-| `auth.required_scopes` | list |  | For `token_exchange`, what an inbound token must already carry. Separate from `upstream_scopes`, which points the other way, and advertised as `scopes_supported` so a client knows what to register for |
-| `auth.upstream_resource`, `auth.upstream_audience` | string |  | Names the API the upstream token is for, when the API and its authorization server are different parties. `upstream_resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter, `upstream_audience` is the spelling Auth0 uses. Set whichever your authorization server accepts; only what you set is sent |
+| `auth.required_scopes` | list |  | For `token_exchange`, what an inbound token must already carry. Advertised as `scopes_supported`, so a client doing dynamic registration knows what to ask for |
+| `auth.upstream.client_id`, `auth.upstream.client_secret` | string |  | Required for `oauth2`. The gateway's own credential at the upstream authorization server |
+| `auth.upstream.scopes`, `auth.upstream.authorization_url`, `auth.upstream.token_url` |  | from spec | What the gateway requests from the upstream authorization server, and where. The URLs override an incomplete `securitySchemes` |
+| `auth.upstream.resource`, `auth.upstream.audience` | string |  | Names the API the upstream token is for, when the API and its authorization server are different parties. `resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter, `audience` is the spelling Auth0 uses. Only what you set is sent |
 | `auth.mcp_access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints for `authorization_code` |
 | `auth.mcp_refresh_token_ttl` | int | `86400` | Lifetime in seconds of the MCP refresh token. This is the practical re-authorization cadence, since each refresh slides the window forward |
 | `policy.allow` | list |  | Only expose matching operations |
@@ -329,7 +334,7 @@ policy:
   deny:  ["GET /repos/*/actions/secrets*"]
 ```
 
-Operations can also be opted in from the spec side with `x-mcp-integration: {tool: {}}` plus `policy.marked_only: true`. Filters apply in the order `marked_only`, then `allow`, then `deny`.
+Operations can also be opted in from the spec side with `x-mcp-integration: {tool: {}}` plus `policy.annotated_only: true`. Filters apply in the order `annotated_only`, then `allow`, then `deny`.
 
 </details>
 
@@ -337,7 +342,7 @@ Operations can also be opted in from the spec side with `x-mcp-integration: {too
 
 Read-only `GET` operations are a better fit for the MCP **resource** primitive than for a tool. Tools are model-controlled, so the LLM decides when to call one. Resources are application-controlled, surfaced by the client or picked by the user. A `GET` that is fully identified by its URL is a thing that exists at an address, which is what a URI is for.
 
-Set `mode: auto` and every eligible GET promotes automatically. Eligible means no required `query`, `header`, or body parameter. Required path parameters are fine and turn the operation into a resource template. Against the vanilla Petstore3 spec that yields 13 tools, 3 concrete resources, and 3 resource templates with zero spec edits.
+Set `exposure.promote_resources: true` and every eligible GET promotes automatically. Eligible means no required `query`, `header`, or body parameter. Required path parameters are fine and turn the operation into a resource template. Against the vanilla Petstore3 spec that yields 13 tools, 3 concrete resources, and 3 resource templates with zero spec edits.
 
 Keeping those endpoints off the tool list also saves context, since most clients do not auto-load resources. Resource support is uneven across the ecosystem, though, and an agent framework that ignores resources entirely will not reach a promoted operation at all. Stay on the default `mode: tool_only` when that is your target.
 
@@ -350,7 +355,8 @@ To rename a resource, set a custom URI template, or set a non-JSON MIME type, us
 servers:
   - name: petstore
     spec: https://petstore3.swagger.io/api/v3/openapi.json
-    mode: auto
+    exposure:
+      promote_resources: true
     operations:
       getPetById:
         resource:
@@ -383,7 +389,7 @@ An unknown `operationId` raises at startup so typos do not silently no-op. Resou
 
 ### Tool Shaping
 
-A raw operation rarely makes a good tool. Its `operationId` is ugly (GitHub's `actions/list-jobs-for-workflow-run-attempt`), its description is empty (most of `gists/*`), it takes a cryptic filter DSL alongside a dozen knobs the model should never touch, and it wraps the few useful fields in a large envelope. `x-mcp-integration.tool` fixes all of that without forking the spec. `name` and `description` fix how the tool presents itself, while `params`, `strategy`, `request`, and `response` reshape the interface behind it.
+A raw operation rarely makes a good tool. Its `operationId` is ugly (GitHub's `actions/list-jobs-for-workflow-run-attempt`), its description is empty (most of `gists/*`), it takes a cryptic filter DSL alongside a dozen knobs the model should never touch, and it wraps the few useful fields in a large envelope. `x-mcp-integration.tool` fixes all of that without forking the spec. `name` and `description` fix how the tool presents itself, while `params`, `params_strategy`, `request`, and `response` reshape the interface behind it.
 
 <details>
 <summary><b>Renaming a GitHub Operation</b></summary>
@@ -407,11 +413,11 @@ If you own the upstream spec, write the same block inline as `x-mcp-integration.
 </details>
 
 <details>
-<summary><b>Reshaping the Interface with <code>params</code>, <code>strategy</code>, <code>request</code>, and <code>response</code></b></summary>
+<summary><b>Reshaping the Interface with <code>params</code>, <code>params_strategy</code>, <code>request</code>, and <code>response</code></b></summary>
 
 The input layer is declarative and the value transforms are [JSONata](https://jsonata.org/) expressions.
 
-**`params` and `strategy` shape what the model sees.** Each `params` entry is a JSON Schema fragment (`type`, `enum`, `default`, `description`, `format`, `minimum`, `items`, and so on) plus two flags. `required` lifts the parameter into the schema's required list, and `hidden` removes a spec parameter from the surface. `strategy` is mandatory whenever `params` is set:
+**`params` and `params_strategy` shape what the model sees.** Each `params` entry is a JSON Schema fragment (`type`, `enum`, `default`, `description`, `format`, `minimum`, `items`, and so on) plus two flags. `required` lifts the parameter into the schema's required list, and `hidden` removes a spec parameter from the surface. `params_strategy` is mandatory whenever `params` is set:
 
 - **`merge`**: tweaks the operation's existing parameters and keeps the rest visible, so declaring a parameter the spec does not define is an error.
 - **`replace`**: makes the declared entries the whole schema and drops every spec parameter, so it always needs a `request` to route the friendly arguments upstream.
@@ -420,7 +426,7 @@ The input layer is declarative and the value transforms are [JSONata](https://js
 operations:
   searchIssues:
     tool:
-      strategy: merge
+      params_strategy: merge
       params:
         internal_flag: { hidden: true }
         per_page: { default: 30 }
@@ -450,7 +456,7 @@ For a full `replace` example, where the declared `params` are the entire surface
 
 ### Dynamic Exposure
 
-For APIs with hundreds of operations (GitHub, Stripe, etc.), registering each as its own tool can blow the LLM's context window before the agent does anything. Set `exposure: dynamic` and the client sees three meta-tools instead, which the LLM walks as `list → get → call` to discover and invoke operations on demand. It is per-server, so `/github/mcp` can run `dynamic` while `/petstore/mcp` runs `static` in the same process.
+For APIs with hundreds of operations (GitHub, Stripe, etc.), registering each as its own tool can blow the LLM's context window before the agent does anything. Set `exposure.style: dynamic` and the client sees three meta-tools instead, which the LLM walks as `list → get → call` to discover and invoke operations on demand. It is per-server, so `/github/mcp` can run `dynamic` while `/petstore/mcp` runs `static` in the same process.
 
 <details>
 <summary><b>The Three Meta-Tools</b></summary>

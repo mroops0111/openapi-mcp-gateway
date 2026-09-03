@@ -37,17 +37,17 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
                 'the authorization server that mints tokens for this MCP endpoint.'
             )
 
-        audience_params = entry.auth.resolve_upstream_audience_params()
+        audience_params = entry.auth.upstream.resolve_audience_params()
         if not audience_params:
             raise ValueError(
-                f'Server "{entry.name}": token_exchange flow requires auth.upstream_resource or auth.upstream_audience, '
+                f'Server "{entry.name}": token_exchange flow requires auth.upstream.resource or auth.upstream.audience, '
                 'naming the upstream API that exchanged tokens are for. '
                 'Without it the authorization server mints a token for its own default audience, '
                 'which the upstream refuses.'
             )
 
-        client_id = entry.auth.resolve_client_id()
-        client_secret = entry.auth.resolve_client_secret()
+        client_id = entry.auth.upstream.resolve_client_id()
+        client_secret = entry.auth.upstream.resolve_client_secret()
         if not client_id or not client_secret:
             raise ValueError(
                 f'Server "{entry.name}": token_exchange flow requires client_id and client_secret. '
@@ -68,7 +68,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
         canonical_uri = f'{gateway_url}{flow_context.mount_path}/mcp'
 
         # The two scope lists point in opposite directions and must not be conflated.
-        # Demanding upstream_scopes of the caller would lock out every client that did not match,
+        # Demanding the upstream scopes of the caller would lock out every client that did not match,
         # since the deployment picks what to request from the issuer but not what a caller registered with.
         required_scopes = list(entry.auth.required_scopes)
         verifier = JWKSTokenVerifier(
@@ -82,7 +82,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
             client_id=client_id,
             client_secret=client_secret,
             audience_params=audience_params,
-            scopes=entry.auth.upstream_scopes,
+            scopes=entry.auth.upstream.scopes,
         )
 
         settings = AuthSettings(
@@ -99,7 +99,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
             canonical_uri,
             audience_params,
             required_scopes,
-            entry.auth.upstream_scopes,
+            entry.auth.upstream.scopes,
         )
 
         return OAuthFlowSetup(

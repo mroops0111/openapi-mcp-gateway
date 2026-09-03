@@ -18,14 +18,15 @@ servers:
     spec: https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml
     auth:
       type: oauth2
-      client_id: ${ASANA_CLIENT_ID}
-      client_secret: ${ASANA_CLIENT_SECRET}
-      upstream_scopes:
-        - openid
-        - email
-        - profile
-        - users:read
-        - workspaces:read
+      upstream:
+        client_id: ${ASANA_CLIENT_ID}
+        client_secret: ${ASANA_CLIENT_SECRET}
+        scopes:
+          - openid
+          - email
+          - profile
+          - users:read
+          - workspaces:read
       # Optional: lifetimes of the MCP tokens the gateway mints, in seconds (defaults shown).
       # The refresh TTL is the practical re-authorization cadence, since each refresh slides the window.
       # mcp_access_token_ttl: 3600     # 1 hour

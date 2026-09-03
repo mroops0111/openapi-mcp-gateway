@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 import secrets
 import time
@@ -28,48 +29,66 @@ from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 logger = logging.getLogger(__name__)
 
 
-MCP_SCOPES = ['api']
+# The scope the gateway issues and demands when it is the authorization server.
+# It has no upstream meaning, since the gateway mints these tokens itself,
+# and exists only so the OAuth machinery has a scope to name.
+DEFAULT_MCP_SCOPE = 'api'
+
+
+@dataclasses.dataclass(frozen=True)
+class UpstreamOAuthClient:
+    """What the gateway needs to act as an OAuth client at the upstream authorization server.
+
+    ``callback_url`` is the gateway's own address, and belongs here because it is only ever
+    meaningful as the ``redirect_uri`` of this conversation.
+    """
+
+    authorization_url: str
+    token_url: str
+    client_id: str
+    client_secret: str
+    callback_url: str
+    scopes: list[str] = dataclasses.field(default_factory=list)
+    audience_params: dict[str, str] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass(frozen=True)
+class IssuedTokenPolicy:
+    """What the gateway grants on the ``mcp_...`` tokens it mints for MCP clients.
+
+    Separate from ``UpstreamOAuthClient`` because the two describe opposite directions,
+    and both carry a ``scopes`` that would otherwise need a prefix to tell apart.
+    """
+
+    scopes: list[str] = dataclasses.field(default_factory=lambda: [DEFAULT_MCP_SCOPE])
+    access_token_ttl: int = 3600
+    refresh_token_ttl: int = 86400
 
 
 class AuthorizationCodeProvider:
     """MCP OAuth server provider that fronts an upstream ``authorization_code`` API.
 
     Registers MCP clients, forwards browser authorization to the upstream IdP,
-    exchanges grants at ``upstream_token_url``, and keeps the MCP-to-upstream token mappings inside ``store``.
+    exchanges grants at the upstream token endpoint, and keeps the MCP-to-upstream token mappings inside ``store``.
     Each MCP access token corresponds to one user's upstream token.
 
     The upstream token is a separate credential from the ``mcp_...`` token handed to the MCP client,
     which is what the MCP authorization spec requires of a server calling an upstream API.
-    ``audience_params`` names the API that upstream token is for,
+    ``upstream.audience_params`` names the API that token is for,
     for an upstream whose API and authorization server are different parties.
     """
 
     def __init__(
         self,
         store: TokenStore,
-        upstream_auth_url: str,
-        upstream_token_url: str,
-        client_id: str,
-        client_secret: str,
-        callback_url: str,
-        scopes: list[str] | None = None,
+        upstream: UpstreamOAuthClient,
+        issued_tokens: IssuedTokenPolicy,
         prefix: str = 'gateway',
-        audience_params: dict[str, str] | None = None,
-        *,
-        mcp_access_token_ttl: int,
-        mcp_refresh_token_ttl: int,
     ) -> None:
         self.store = store
-        self.upstream_auth_url = upstream_auth_url
-        self.upstream_token_url = upstream_token_url
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.callback_url = callback_url
-        self.scopes = scopes or []
-        self.audience_params = audience_params or {}
+        self.upstream = upstream
+        self.issued_tokens = issued_tokens
         self._prefix = prefix
-        self.mcp_access_token_ttl = mcp_access_token_ttl
-        self.mcp_refresh_token_ttl = mcp_refresh_token_ttl
 
     # MCP SDK OAuthAuthorizationServerProvider interface
 
@@ -103,20 +122,24 @@ class AuthorizationCodeProvider:
         await self.store.set('mcp_auth_state', state, state_data, ttl=900)
 
         query_params = {
-            'client_id': self.client_id,
-            'redirect_uri': self.callback_url,
+            'client_id': self.upstream.client_id,
+            'redirect_uri': self.upstream.callback_url,
             'state': state,
             'response_type': 'code',
         }
-        if self.scopes:
-            query_params['scope'] = ' '.join(self.scopes)
+        if self.upstream.scopes:
+            query_params['scope'] = ' '.join(self.upstream.scopes)
         # Sent on the authorization request as well as the token request,
         # since an authorization server binds the audience at consent time,
         # and RFC 8707 §2 requires the parameter on both.
-        query_params.update(self.audience_params)
+        query_params.update(self.upstream.audience_params)
 
-        logger.info('Upstream OAuth authorize: scopes=%s audience_params=%s', self.scopes, self.audience_params)
-        return f'{self.upstream_auth_url}?{urllib.parse.urlencode(query_params)}'
+        logger.info(
+            'Upstream OAuth authorize: scopes=%s audience_params=%s',
+            self.upstream.scopes,
+            self.upstream.audience_params,
+        )
+        return f'{self.upstream.authorization_url}?{urllib.parse.urlencode(query_params)}'
 
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
@@ -198,8 +221,8 @@ class AuthorizationCodeProvider:
                 )
             api_access_token, new_refresh, expires_in = await self._request_upstream_token(
                 {
-                    'client_id': self.client_id,
-                    'client_secret': self.client_secret,
+                    'client_id': self.upstream.client_id,
+                    'client_secret': self.upstream.client_secret,
                     'refresh_token': api_refresh_token,
                     'grant_type': 'refresh_token',
                 }
@@ -256,7 +279,7 @@ class AuthorizationCodeProvider:
     async def handle_upstream_callback(self, code: str, state: str) -> str:
         """Finish the browser redirect by swapping the upstream ``code`` for MCP auth artefacts.
 
-        Validates ``state``, exchanges tokens at ``upstream_token_url``, persists the upstream credentials,
+        Validates ``state``, exchanges tokens at the upstream token endpoint, persists the upstream credentials,
         builds an MCP authorization code, and returns the client redirect URI.
         """
         state_data = await self.store.get('mcp_auth_state', state)
@@ -271,10 +294,10 @@ class AuthorizationCodeProvider:
 
         api_access_token, api_refresh_token, expires_in = await self._request_upstream_token(
             {
-                'client_id': self.client_id,
-                'client_secret': self.client_secret,
+                'client_id': self.upstream.client_id,
+                'client_secret': self.upstream.client_secret,
                 'code': code,
-                'redirect_uri': self.callback_url,
+                'redirect_uri': self.upstream.callback_url,
                 'grant_type': 'authorization_code',
             }
         )
@@ -289,7 +312,7 @@ class AuthorizationCodeProvider:
                 'redirect_uri': redirect_uri,
                 'redirect_uri_provided_explicitly': redirect_uri_provided_explicitly,
                 'expires_at': time.time() + 300,
-                'scopes': MCP_SCOPES,
+                'scopes': list(self.issued_tokens.scopes),
                 'code_challenge': code_challenge,
             },
             ttl=300,
@@ -348,9 +371,9 @@ class AuthorizationCodeProvider:
                 'token': mcp_access,
                 'client_id': client_id,
                 'scopes': scopes,
-                'expires_at': now + self.mcp_access_token_ttl,
+                'expires_at': now + self.issued_tokens.access_token_ttl,
             },
-            ttl=self.mcp_access_token_ttl,
+            ttl=self.issued_tokens.access_token_ttl,
         )
 
         await self.store.set(
@@ -360,35 +383,47 @@ class AuthorizationCodeProvider:
                 'token': mcp_refresh,
                 'client_id': client_id,
                 'scopes': scopes,
-                'expires_at': now + self.mcp_refresh_token_ttl,
+                'expires_at': now + self.issued_tokens.refresh_token_ttl,
             },
-            ttl=self.mcp_refresh_token_ttl,
+            ttl=self.issued_tokens.refresh_token_ttl,
         )
 
         # mcp_access -> api_access drives tool calls.
         await self.store.set_mapping(
-            'mcp_access_token', mcp_access, 'api_access_token', api_access_token, ttl=self.mcp_access_token_ttl
+            'mcp_access_token',
+            mcp_access,
+            'api_access_token',
+            api_access_token,
+            ttl=self.issued_tokens.access_token_ttl,
         )
         # mcp_refresh -> api_access keeps the upstream token reachable through the refresh chain.
         await self.store.set_mapping(
-            'mcp_refresh_token', mcp_refresh, 'api_access_token', api_access_token, ttl=self.mcp_refresh_token_ttl
+            'mcp_refresh_token',
+            mcp_refresh,
+            'api_access_token',
+            api_access_token,
+            ttl=self.issued_tokens.refresh_token_ttl,
         )
         if api_refresh_token:
             await self.store.set_mapping(
-                'mcp_refresh_token', mcp_refresh, 'api_refresh_token', api_refresh_token, ttl=self.mcp_refresh_token_ttl
+                'mcp_refresh_token',
+                mcp_refresh,
+                'api_refresh_token',
+                api_refresh_token,
+                ttl=self.issued_tokens.refresh_token_ttl,
             )
         # Pair access and refresh in both directions for revoke lookup.
         await self.store.set_mapping(
-            'mcp_access_token', mcp_access, 'mcp_refresh_token', mcp_refresh, ttl=self.mcp_access_token_ttl
+            'mcp_access_token', mcp_access, 'mcp_refresh_token', mcp_refresh, ttl=self.issued_tokens.access_token_ttl
         )
         await self.store.set_mapping(
-            'mcp_refresh_token', mcp_refresh, 'mcp_access_token', mcp_access, ttl=self.mcp_refresh_token_ttl
+            'mcp_refresh_token', mcp_refresh, 'mcp_access_token', mcp_access, ttl=self.issued_tokens.refresh_token_ttl
         )
 
         return OAuthToken(
             access_token=mcp_access,
             refresh_token=mcp_refresh,
-            expires_in=self.mcp_access_token_ttl,
+            expires_in=self.issued_tokens.access_token_ttl,
         )
 
     async def _store_api_token(self, client_id: str, token: str, expires_in: int) -> None:
@@ -418,8 +453,8 @@ class AuthorizationCodeProvider:
         # Grant fields last, so a stray audience key can never displace ``grant_type`` or the credentials.
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                self.upstream_token_url,
-                data={**self.audience_params, **request_data},
+                self.upstream.token_url,
+                data={**self.upstream.audience_params, **request_data},
                 headers={'Accept': 'application/json'},
             )
 
@@ -427,14 +462,14 @@ class AuthorizationCodeProvider:
                 logger.warning(
                     'Upstream token exchange failed: status=%d url=%s',
                     response.status_code,
-                    self.upstream_token_url,
+                    self.upstream.token_url,
                 )
                 raise HTTPException(400, f'Upstream token exchange failed: {response.text}')
 
             data = response.json()
             access_token = data.get('access_token')
             if not access_token:
-                logger.warning('Upstream token exchange returned no access_token: url=%s', self.upstream_token_url)
+                logger.warning('Upstream token exchange returned no access_token: url=%s', self.upstream.token_url)
                 raise HTTPException(400, 'Upstream returned no access_token')
 
             logger.info(
@@ -450,8 +485,8 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         entry = flow_context.entry
         oauth_flow = flow_context.oauth_flow
 
-        client_id = entry.auth.resolve_client_id()
-        client_secret = entry.auth.resolve_client_secret()
+        client_id = entry.auth.upstream.resolve_client_id()
+        client_secret = entry.auth.upstream.resolve_client_secret()
         if not client_id or not client_secret:
             raise ValueError(
                 f'Server "{entry.name}": authorization_code flow requires client_id and client_secret. '
@@ -461,7 +496,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         if not oauth_flow.authorization_url:
             raise ValueError(
                 f'Server "{entry.name}": authorization_code flow requires authorization_url. '
-                'Provide auth.authorization_url or add it to the spec securitySchemes.'
+                'Provide auth.upstream.authorization_url or add it to the spec securitySchemes.'
             )
         if not oauth_flow.token_url:
             raise ValueError(f'Server "{entry.name}": authorization_code flow requires token_url.')
@@ -469,18 +504,27 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         gateway_url = flow_context.gateway_url.rstrip('/')
         callback_url = f'{gateway_url}{flow_context.mount_path}/auth/callback'
 
+        # auth.required_scopes names what a caller must hold. The gateway is the issuer here,
+        # so it is also what the gateway advertises and grants, rather than something it merely checks.
+        mcp_scopes = list(entry.auth.required_scopes) or [DEFAULT_MCP_SCOPE]
+
         provider = AuthorizationCodeProvider(
             store=flow_context.store,
-            upstream_auth_url=oauth_flow.authorization_url,
-            upstream_token_url=oauth_flow.token_url,
-            client_id=client_id,
-            client_secret=client_secret,
-            callback_url=callback_url,
-            scopes=entry.auth.upstream_scopes,
+            upstream=UpstreamOAuthClient(
+                authorization_url=oauth_flow.authorization_url,
+                token_url=oauth_flow.token_url,
+                client_id=client_id,
+                client_secret=client_secret,
+                callback_url=callback_url,
+                scopes=list(entry.auth.upstream.scopes),
+                audience_params=entry.auth.upstream.resolve_audience_params(),
+            ),
+            issued_tokens=IssuedTokenPolicy(
+                scopes=mcp_scopes,
+                access_token_ttl=entry.auth.mcp_access_token_ttl,
+                refresh_token_ttl=entry.auth.mcp_refresh_token_ttl,
+            ),
             prefix=entry.name,
-            audience_params=entry.auth.resolve_upstream_audience_params(),
-            mcp_access_token_ttl=entry.auth.mcp_access_token_ttl,
-            mcp_refresh_token_ttl=entry.auth.mcp_refresh_token_ttl,
         )
 
         server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')
@@ -490,10 +534,10 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             revocation_options=RevocationOptions(enabled=True),
             client_registration_options=ClientRegistrationOptions(
                 enabled=True,
-                valid_scopes=['api'],
-                default_scopes=['api'],
+                valid_scopes=mcp_scopes,
+                default_scopes=mcp_scopes,
             ),
-            required_scopes=['api'],
+            required_scopes=mcp_scopes,
         )
 
         logger.debug(
@@ -501,8 +545,8 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             entry.name,
             oauth_flow.authorization_url,
             oauth_flow.token_url,
-            entry.auth.upstream_scopes,
-            entry.auth.resolve_upstream_audience_params(),
+            entry.auth.upstream.scopes,
+            entry.auth.upstream.resolve_audience_params(),
         )
 
         return OAuthFlowSetup(

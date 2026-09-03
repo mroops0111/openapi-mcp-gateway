@@ -105,14 +105,14 @@ def setup(level: str = 'INFO', format: str = 'text', file: str | None = None) ->
     root = logging.getLogger()
     root.handlers.clear()
     root.setLevel(level.upper())
-    for h in handlers:
-        root.addHandler(h)
+    for handler in handlers:
+        root.addHandler(handler)
 
     # Strip third-party loggers' own handlers (uvicorn's column-aligned format,
     # mcp's rich format) so they propagate up to our root.
     for name in list(logging.Logger.manager.loggerDict):
         if name.startswith(THIRD_PARTY_PREFIXES):
-            lib = logging.getLogger(name)
-            lib.handlers.clear()
-            lib.propagate = True
-            lib.setLevel(logging.NOTSET)
+            library_logger = logging.getLogger(name)
+            library_logger.handlers.clear()
+            library_logger.propagate = True
+            library_logger.setLevel(logging.NOTSET)

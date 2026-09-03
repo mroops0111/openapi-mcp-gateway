@@ -12,6 +12,15 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+# JSON Schema keywords whose value is a single nested schema.
+_SUBSCHEMA_KEYS = ('items', 'not', 'additionalProperties', 'propertyNames', 'contains', 'if', 'then', 'else')
+# Keywords whose value is a list of nested schemas.
+# ``allOf`` is absent here because it is flattened separately, not recursed in place.
+_SUBSCHEMA_LIST_KEYS = ('oneOf', 'anyOf', 'prefixItems')
+# Keywords whose value maps a name to a nested schema.
+_SUBSCHEMA_MAP_KEYS = ('properties', 'patternProperties', 'dependentSchemas')
+
+
 class ParameterInfo(pydantic.BaseModel):
     """One OpenAPI parameter (path, query, header, cookie, or body) with its schema."""
 
@@ -47,7 +56,7 @@ class ParamOverride(pydantic.BaseModel):
     (``type``, ``enum``, ``format``, ``default``, ``description``, ``minimum`` and so on),
     describing the value exactly as it appears in the tool's advertised input schema.
 
-    How the entry is applied depends on ``ToolOverride.strategy``.
+    How the entry is applied depends on ``ToolOverride.params_strategy``.
     An entry carrying a ``type`` declares the parameter's schema, either replacing a matching
     spec parameter's schema or introducing a brand-new friendly parameter.
     An entry without a ``type`` tweaks a matching spec parameter through ``default`` or ``description``.
@@ -75,10 +84,10 @@ class ParamOverride(pydantic.BaseModel):
 class ToolOverride(pydantic.BaseModel):
     """Spec-author overrides for the MCP tool generated from an operation.
 
-    ``params`` shapes the LLM-facing input schema, and ``strategy`` says how it relates to the spec.
+    ``params`` shapes the LLM-facing input schema, and ``params_strategy`` says how it relates to the spec.
     With ``merge`` the entries tweak existing spec parameters and the rest stay visible.
     With ``replace`` the entries are the whole surface and every undeclared spec parameter is dropped.
-    ``strategy`` is required whenever ``params`` is set.
+    ``params_strategy`` is required whenever ``params`` is set.
 
     ``request`` and ``response`` are JSONata expressions that transform the values,
     ``request`` mapping the friendly arguments into the upstream request,
@@ -89,7 +98,7 @@ class ToolOverride(pydantic.BaseModel):
     description: str | None = None
     annotations: dict[str, typing.Any] | None = None
     params: dict[str, ParamOverride] = pydantic.Field(default_factory=dict)
-    strategy: typing.Literal['merge', 'replace'] | None = None
+    params_strategy: typing.Literal['merge', 'replace'] | None = None
     request: str | None = None
     response: str | None = None
 
@@ -263,15 +272,6 @@ def _normalize_to_2020_12(schema: dict[str, typing.Any]) -> dict[str, typing.Any
     return _normalize_exclusive_bounds(_normalize_nullable(schema))
 
 
-# JSON Schema keywords whose value is a single nested schema.
-_SUBSCHEMA_KEYS = ('items', 'not', 'additionalProperties', 'propertyNames', 'contains', 'if', 'then', 'else')
-# Keywords whose value is a list of nested schemas.
-# ``allOf`` is absent here because it is flattened separately, not recursed in place.
-_SUBSCHEMA_LIST_KEYS = ('oneOf', 'anyOf', 'prefixItems')
-# Keywords whose value maps a name to a nested schema.
-_SUBSCHEMA_MAP_KEYS = ('properties', 'patternProperties', 'dependentSchemas')
-
-
 def _truncate_at_cycle(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Describe ``schema`` without any of the keywords that could lead back into it.
 
@@ -313,8 +313,8 @@ def _expand_schema(
 
     if 'allOf' in schema:
         merged: dict[str, typing.Any] = {}
-        for sub in schema['allOf']:
-            merged = _deep_merge(merged, _expand_schema(raw, sub, expanding))
+        for branch in schema['allOf']:
+            merged = _deep_merge(merged, _expand_schema(raw, branch, expanding))
         return merged
 
     result = schema.copy()

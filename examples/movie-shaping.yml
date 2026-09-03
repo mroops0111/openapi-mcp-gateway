@@ -24,7 +24,7 @@ servers:
     operations:
       discover_movies:
         tool:
-          strategy: replace  # the declared params are the whole surface
+          params_strategy: replace  # the declared params are the whole surface
           params:  # this is the whole LLM-facing input schema
             sort:
               type: string
@@ -57,7 +57,7 @@ servers:
             }]
       get_movie_details:
         tool:
-          strategy: replace
+          params_strategy: replace
           params:
             movie_id:
               type: integer
