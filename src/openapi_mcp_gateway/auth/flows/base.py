@@ -3,6 +3,7 @@ import dataclasses
 import typing
 
 from mcp.server.auth.settings import AuthSettings
+from mcp.shared.auth import ProtectedResourceMetadata
 
 from ...openapi import OpenAPISpec
 from ...settings import ServerConfig
@@ -30,21 +31,6 @@ class OAuthFlowContext:
     mount_path: str
 
 
-@dataclasses.dataclass(frozen=True)
-class AdvertisedResource:
-    """What the gateway's RFC 9728 document says about one server.
-
-    ``resource`` is always this MCP endpoint's own canonical URI,
-    since a client must request its token for the server it is calling.
-    ``authorization_servers`` names whoever mints those tokens,
-    which is the gateway itself under ``authorization_code`` and an external issuer under ``token_exchange``.
-    """
-
-    resource: str
-    authorization_servers: tuple[str, ...]
-    scopes_supported: tuple[str, ...] = ()
-
-
 @dataclasses.dataclass
 class OAuthFlowSetup:
     """Result of an ``OAuthFlowHandler.build`` call, consumed by ``Gateway``.
@@ -54,7 +40,10 @@ class OAuthFlowSetup:
     currently only ``authorization_code``.
     ``verifier`` is populated instead when the gateway validates tokens it did not issue.
     The two are mutually exclusive, and the MCP SDK rejects a server given both.
-    ``settings`` and ``advertised_resource`` accompany either one and drive the discovery documents.
+    ``settings`` and ``protected_resource`` accompany either one and drive the discovery documents.
+    ``protected_resource`` is the RFC 9728 document this server publishes:
+    its ``resource`` is always the endpoint's own canonical URI,
+    while ``authorization_servers`` names whoever mints tokens for it.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
@@ -62,7 +51,7 @@ class OAuthFlowSetup:
     provider: 'AuthorizationCodeProvider | None' = None
     settings: AuthSettings | None = None
     verifier: typing.Any | None = None
-    advertised_resource: AdvertisedResource | None = None
+    protected_resource: ProtectedResourceMetadata | None = None
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
 
 

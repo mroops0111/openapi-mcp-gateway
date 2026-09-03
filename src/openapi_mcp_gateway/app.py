@@ -2,7 +2,6 @@ import contextlib
 import logging
 import typing
 
-import pydantic
 from fastapi import FastAPI
 from mcp.server import MCPServer
 from mcp.server.auth.handlers.metadata import MetadataHandler, ProtectedResourceMetadataHandler
@@ -14,7 +13,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .auth.flows import AdvertisedResource, AuthorizationCodeProvider
+from .auth.flows import AuthorizationCodeProvider
 from .openapi import ExposedTool, OpenAPISpec
 from .settings import GatewayConfig
 from .stores.base import TokenStore
@@ -36,7 +35,7 @@ class _ServerBundle(typing.NamedTuple):
     auth_provider: AuthorizationCodeProvider | None
     auth_settings: AuthSettings | None = None
     token_verifier: typing.Any | None = None
-    advertised_resource: AdvertisedResource | None = None
+    protected_resource: ProtectedResourceMetadata | None = None
     # Captured at registration for the --dry-run summary.
     base_url: str = ''
     auth_summary: str = 'none'
@@ -131,11 +130,11 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                 name=route.name,
             )
 
-        advertised = _advertised_resource(bundle)
+        advertised = _protected_resource(bundle)
         pr_routes = create_protected_resource_routes(
-            resource_url=pydantic.AnyHttpUrl(advertised.resource),
-            authorization_servers=_authorization_server_urls(advertised.authorization_servers),
-            scopes_supported=list(advertised.scopes_supported) or None,
+            resource_url=advertised.resource,
+            authorization_servers=advertised.authorization_servers,
+            scopes_supported=advertised.scopes_supported,
         )
         for route in pr_routes:
             app.router.add_route(
@@ -189,51 +188,33 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                 status_code=404,
                 content={'error': f'Server not found: {server_name}'},
             )
-        advertised = _advertised_resource(bundle)
-        metadata = ProtectedResourceMetadata.model_validate(
-            {
-                'resource': advertised.resource,
-                'authorization_servers': list(advertised.authorization_servers),
-                'scopes_supported': list(advertised.scopes_supported) or None,
-            }
-        )
-        handler = ProtectedResourceMetadataHandler(metadata)
+        handler = ProtectedResourceMetadataHandler(_protected_resource(bundle))
         return await handler.handle(request)
 
 
-def _authorization_server_urls(issuers: tuple[str, ...]) -> list[pydantic.AnyHttpUrl]:
-    """Parse issuer strings while keeping a path-less issuer path-less.
-
-    RFC 8414 §2 compares issuers by exact string, and a client matching the value it discovered here
-    against the ``iss`` its authorization server publishes would fail on a spurious trailing slash.
-    ``AnyHttpUrl`` adds one unless told otherwise, hence the explicit config.
-    """
-    adapter = pydantic.TypeAdapter(
-        pydantic.AnyHttpUrl,
-        config=pydantic.ConfigDict(url_preserve_empty_path=True),
-    )
-    return [adapter.validate_python(issuer) for issuer in issuers]
-
-
-def _advertised_resource(bundle: _ServerBundle) -> AdvertisedResource:
-    """Return what this server's RFC 9728 document should say.
+def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:
+    """Return the RFC 9728 document this server publishes.
 
     A flow that delegates to an external issuer supplies its own,
     since only it knows which issuer to name.
     Otherwise the gateway is both issuer and resource,
     and the document is derived from the settings it built for itself.
-    """
-    if bundle.advertised_resource is not None or bundle.auth_settings is None:
-        # Callers only reach here for a bundle carrying one or the other,
-        # so the fallback stands in for a shape that cannot occur rather than describing a real server.
-        return bundle.advertised_resource or AdvertisedResource(resource='', authorization_servers=())
 
+    Callers reach this only for a bundle carrying ``auth_settings``,
+    which the surrounding checks have already established.
+    """
+    if bundle.protected_resource is not None:
+        return bundle.protected_resource
+
+    assert bundle.auth_settings is not None  # noqa: S101
     issuer = str(bundle.auth_settings.issuer_url).rstrip('/')
     registration = bundle.auth_settings.client_registration_options
-    return AdvertisedResource(
-        resource=f'{issuer}/mcp',
-        authorization_servers=(issuer,),
-        scopes_supported=tuple(registration.valid_scopes or ()) if registration else (),
+    return ProtectedResourceMetadata.model_validate(
+        {
+            'resource': f'{issuer}/mcp',
+            'authorization_servers': [issuer],
+            'scopes_supported': registration.valid_scopes if registration else None,
+        }
     )
 
 

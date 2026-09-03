@@ -2,11 +2,12 @@ import logging
 
 import pydantic
 from mcp.server.auth.settings import AuthSettings
+from mcp.shared.auth import ProtectedResourceMetadata
 
 from ..oidc import JWKSTokenVerifier, fetch_issuer_metadata
 from ..resolver import TokenExchangeAuthResolver
 from ..token_source import TokenExchangeTokenSource
-from .base import AdvertisedResource, OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
+from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 
 
 logger = logging.getLogger(__name__)
@@ -98,10 +99,14 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
             resolver=TokenExchangeAuthResolver(token_source),
             settings=settings,
             verifier=verifier,
-            advertised_resource=AdvertisedResource(
-                resource=canonical_uri,
-                authorization_servers=(metadata.issuer,),
-                scopes_supported=tuple(entry.auth.scopes),
+            # Validated from strings so a path-less issuer keeps its exact form.
+            # RFC 8414 §2 compares issuers by exact string, and ``AnyHttpUrl`` would append a slash.
+            protected_resource=ProtectedResourceMetadata.model_validate(
+                {
+                    'resource': canonical_uri,
+                    'authorization_servers': [metadata.issuer],
+                    'scopes_supported': list(entry.auth.scopes) or None,
+                }
             ),
             on_shutdown=token_source.aclose,
         )

@@ -479,9 +479,11 @@ class TestTokenExchangeFlowHandler:
         """
         setup = _build_token_exchange(_token_exchange_entry())
 
-        assert setup.advertised_resource is not None
-        assert setup.advertised_resource.resource == 'http://localhost:8000/srv/mcp'
-        assert setup.advertised_resource.authorization_servers == ('https://auth.example.com',)
+        assert setup.protected_resource is not None
+        assert str(setup.protected_resource.resource) == 'http://localhost:8000/srv/mcp'
+        assert [str(server) for server in setup.protected_resource.authorization_servers] == [
+            'https://auth.example.com'
+        ]
 
     def test_produces_a_verifier_and_no_provider(self):
         """The gateway validates rather than issues, which is what the SDK's two modes are."""

@@ -517,7 +517,7 @@ class Gateway:
                 auth_provider=auth.provider,
                 auth_settings=auth.settings,
                 token_verifier=auth.verifier,
-                advertised_resource=auth.advertised_resource,
+                protected_resource=auth.protected_resource,
                 base_url=base_url,
                 auth_summary=_auth_summary(server_config.auth),
                 exposure=server_config.exposure,
