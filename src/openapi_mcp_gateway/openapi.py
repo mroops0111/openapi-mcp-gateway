@@ -300,8 +300,9 @@ def _expand_schema(
 
     ``expanding`` holds the pointers on the current path, and callers leave it empty.
     Re-entering one means the schema refers to itself, so that branch is truncated instead of expanded.
-    The set is passed down rather than mutated, so a schema referenced twice in sibling branches
-    still expands fully in both, and only an actual cycle is cut.
+    The set is passed down rather than mutated, so it holds only the current path.
+    A schema referenced twice in sibling branches still expands fully in both,
+    and only an actual cycle is cut.
     """
     if '$ref' in schema:
         pointer = schema['$ref']
