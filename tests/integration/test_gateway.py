@@ -607,7 +607,7 @@ class TestMovieShapingExample:
         }
 
 
-class TestResourceServerDiscovery:
+class TestTokenExchangeDiscovery:
     """Discovery documents for a server whose authorization is delegated to an external issuer."""
 
     @pytest.fixture
@@ -626,9 +626,9 @@ class TestResourceServerDiscovery:
                     spec=str(petstore_json_path),
                     auth=AuthConfig(
                         type='oauth2',
-                        flow='resource_server',
+                        flow='token_exchange',
                         issuer='https://auth.example.com',
-                        audience='https://api.example.com',
+                        upstream_audience='https://api.example.com',
                         client_id='gateway',
                         client_secret='secret',
                         scopes=['read'],
@@ -637,7 +637,7 @@ class TestResourceServerDiscovery:
             ],
         )
         with (
-            patch('openapi_mcp_gateway.auth.flows.resource_server.fetch_issuer_metadata', return_value=metadata),
+            patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
             patch('openapi_mcp_gateway.auth.oidc._build_jwk_client'),
         ):
             gateway = Gateway.from_config(config)

@@ -12,7 +12,7 @@ from .base import AdvertisedResource, OAuthFlowContext, OAuthFlowHandler, OAuthF
 logger = logging.getLogger(__name__)
 
 
-class ResourceServerFlowHandler(OAuthFlowHandler):
+class TokenExchangeFlowHandler(OAuthFlowHandler):
     """Delegate this MCP endpoint's authorization to an issuer the gateway does not own.
 
     The gateway issues no credentials here.
@@ -32,14 +32,14 @@ class ResourceServerFlowHandler(OAuthFlowHandler):
         issuer = entry.auth.resolve_issuer()
         if not issuer:
             raise ValueError(
-                f'Server "{entry.name}": resource_server flow requires auth.issuer, '
+                f'Server "{entry.name}": token_exchange flow requires auth.issuer, '
                 'the authorization server that mints tokens for this MCP endpoint.'
             )
 
         audience_params = entry.auth.resolve_upstream_audience_params()
         if not audience_params:
             raise ValueError(
-                f'Server "{entry.name}": resource_server flow requires auth.resource or auth.audience, '
+                f'Server "{entry.name}": token_exchange flow requires auth.upstream_resource or auth.upstream_audience, '
                 'naming the upstream API that exchanged tokens are for. '
                 'Without it the authorization server mints a token for its own default audience, '
                 'which the upstream refuses.'
@@ -49,7 +49,7 @@ class ResourceServerFlowHandler(OAuthFlowHandler):
         client_secret = entry.auth.resolve_client_secret()
         if not client_id or not client_secret:
             raise ValueError(
-                f'Server "{entry.name}": resource_server flow requires client_id and client_secret. '
+                f'Server "{entry.name}": token_exchange flow requires client_id and client_secret. '
                 'The gateway authenticates as itself to exchange the caller\'s token, '
                 'and authorization servers require a confidential client for that grant.'
             )

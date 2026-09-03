@@ -8,7 +8,7 @@ from .authorization_code import AuthorizationCodeFlowHandler
 from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 from .client_credentials import ClientCredentialsFlowHandler
 from .passthrough import PassthroughFlowHandler
-from .resource_server import ResourceServerFlowHandler
+from .token_exchange import TokenExchangeFlowHandler
 
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ OAUTH_FLOW_HANDLERS: dict[str, type[OAuthFlowHandler]] = {
     'authorization_code': AuthorizationCodeFlowHandler,
     'client_credentials': ClientCredentialsFlowHandler,
     'passthrough': PassthroughFlowHandler,
-    'resource_server': ResourceServerFlowHandler,
+    'token_exchange': TokenExchangeFlowHandler,
 }
 
 
@@ -76,7 +76,7 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
 
     # Neither can be declared in a spec, so the detector has nothing to contribute
     # and consulting it would only produce a misleading "flow not declared" error.
-    if explicit_flow_type in ('passthrough', 'resource_server'):
+    if explicit_flow_type in ('passthrough', 'token_exchange'):
         return DetectedOAuthFlow(flow_type=explicit_flow_type)
 
     declared_flows = detect_oauth_flows(spec)
@@ -146,9 +146,8 @@ def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None)
     """Build a ``DetectedOAuthFlow`` from explicit config when the spec declares none."""
     if not entry.auth.token_url:
         raise ValueError(
-            f'Server "{entry.name}": auth type is oauth2 but the spec has no OAuth2 flow '
-            'and no token_url is provided. Set auth.token_url (and authorization_url if '
-            'using authorization_code), or add a securitySchemes section to the spec.'
+            f'Server "{entry.name}": auth type is oauth2 but the spec has no OAuth2 flow and no token_url is provided. '
+            'Set auth.token_url (and authorization_url if using authorization_code), or add a securitySchemes section to the spec.'
         )
 
     if explicit_flow_type is not None:

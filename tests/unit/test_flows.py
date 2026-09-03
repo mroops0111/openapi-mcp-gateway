@@ -7,7 +7,7 @@ from openapi_mcp_gateway.auth.flows import (
     ClientCredentialsFlowHandler,
     OAuthFlowContext,
     PassthroughFlowHandler,
-    ResourceServerFlowHandler,
+    TokenExchangeFlowHandler,
     build_oauth_flow,
 )
 from openapi_mcp_gateway.auth.flows.factory import resolve_oauth_flow
@@ -404,7 +404,7 @@ class TestUpstreamAudienceWiring:
                 type='oauth2',
                 client_id='cid',
                 client_secret='sec',
-                audience='https://api.example.com',
+                upstream_audience='https://api.example.com',
             ),
         )
         spec = _spec_with_authorization_code()
@@ -431,7 +431,7 @@ class TestUpstreamAudienceWiring:
                 client_id='cid',
                 client_secret='sec',
                 flow='client_credentials',
-                resource='https://api.example.com',
+                upstream_resource='https://api.example.com',
             ),
         )
         spec = _spec_with_client_credentials()
@@ -453,20 +453,20 @@ class TestUpstreamAudienceWiring:
         assert token_source.audience_params == {'resource': 'https://api.example.com'}
 
 
-def _resource_server_entry(**auth_overrides) -> ServerConfig:
-    """Entry configured for the resource_server flow, with every requirement satisfied by default."""
+def _token_exchange_entry(**auth_overrides) -> ServerConfig:
+    """Entry configured for the token_exchange flow, with every requirement satisfied by default."""
     defaults = {
         'type': 'oauth2',
-        'flow': 'resource_server',
+        'flow': 'token_exchange',
         'issuer': 'https://auth.example.com',
-        'audience': 'https://api.example.com',
+        'upstream_audience': 'https://api.example.com',
         'client_id': 'gateway',
         'client_secret': 'secret',
     }
     return _entry(AuthConfig(**{**defaults, **auth_overrides}))
 
 
-def _build_resource_server(entry: ServerConfig):
+def _build_token_exchange(entry: ServerConfig):
     """Run the handler with issuer discovery stubbed out."""
     metadata = IssuerMetadata(
         issuer='https://auth.example.com',
@@ -474,10 +474,10 @@ def _build_resource_server(entry: ServerConfig):
         token_endpoint='https://auth.example.com/token',
     )
     with (
-        patch('openapi_mcp_gateway.auth.flows.resource_server.fetch_issuer_metadata', return_value=metadata),
+        patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
         patch('openapi_mcp_gateway.auth.oidc._build_jwk_client'),
     ):
-        return ResourceServerFlowHandler().build(
+        return TokenExchangeFlowHandler().build(
             OAuthFlowContext(
                 entry=entry,
                 spec=_build_spec(),
@@ -489,8 +489,8 @@ def _build_resource_server(entry: ServerConfig):
         )
 
 
-class TestResourceServerFlowHandler:
-    """The resource_server flow delegates issuance and exchanges the caller's token."""
+class TestTokenExchangeFlowHandler:
+    """The token_exchange flow delegates issuance and exchanges the caller's token."""
 
     def test_advertises_the_gateway_as_the_resource_and_the_issuer_as_the_as(self):
         """The document names this endpoint's canonical URI, and the external issuer that mints for it.
@@ -498,7 +498,7 @@ class TestResourceServerFlowHandler:
         Advertising the upstream's identifier instead would make clients request a token
         the gateway must then refuse, since the MCP spec forbids accepting one minted for another resource.
         """
-        setup = _build_resource_server(_resource_server_entry())
+        setup = _build_token_exchange(_token_exchange_entry())
 
         assert setup.advertised_resource is not None
         assert setup.advertised_resource.resource == 'http://localhost:8000/srv/mcp'
@@ -506,7 +506,7 @@ class TestResourceServerFlowHandler:
 
     def test_produces_a_verifier_and_no_provider(self):
         """The gateway validates rather than issues, which is what the SDK's two modes are."""
-        setup = _build_resource_server(_resource_server_entry())
+        setup = _build_token_exchange(_token_exchange_entry())
 
         assert setup.provider is None
         assert setup.verifier is not None
@@ -514,30 +514,30 @@ class TestResourceServerFlowHandler:
 
     def test_verifier_audience_is_the_gateway_not_the_upstream(self):
         """Inbound tokens must name this endpoint, even though the exchange targets the upstream."""
-        setup = _build_resource_server(_resource_server_entry())
+        setup = _build_token_exchange(_token_exchange_entry())
 
         assert setup.verifier.audience == 'http://localhost:8000/srv/mcp'
 
     def test_requires_issuer(self):
         """Without an issuer there is nothing to validate tokens against."""
         with pytest.raises(ValueError, match=r'requires auth\.issuer'):
-            _build_resource_server(_resource_server_entry(issuer=None))
+            _build_token_exchange(_token_exchange_entry(issuer=None))
 
     def test_requires_an_upstream_audience(self):
         """Without a target the issuer mints for its own default, which the upstream refuses."""
-        with pytest.raises(ValueError, match=r'requires auth\.resource or auth\.audience'):
-            _build_resource_server(_resource_server_entry(audience=None))
+        with pytest.raises(ValueError, match=r'requires auth\.upstream_resource or auth\.upstream_audience'):
+            _build_token_exchange(_token_exchange_entry(upstream_audience=None))
 
     def test_requires_client_credentials_for_the_exchange(self):
         """Authorization servers require a confidential client for the token-exchange grant."""
         with pytest.raises(ValueError, match='requires client_id and client_secret'):
-            _build_resource_server(_resource_server_entry(client_secret=None))
+            _build_token_exchange(_token_exchange_entry(client_secret=None))
 
     def test_short_circuits_before_reading_the_spec(self):
         """``securitySchemes`` cannot declare this flow, so the detector is never consulted.
 
         Consulting it would raise a misleading "flow not declared" error on every spec.
         """
-        entry = _resource_server_entry()
+        entry = _token_exchange_entry()
 
-        assert resolve_oauth_flow(entry, _spec_with_authorization_code()).flow_type == 'resource_server'
+        assert resolve_oauth_flow(entry, _spec_with_authorization_code()).flow_type == 'token_exchange'

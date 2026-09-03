@@ -37,7 +37,7 @@ class AdvertisedResource:
     ``resource`` is always this MCP endpoint's own canonical URI,
     since a client must request its token for the server it is calling.
     ``authorization_servers`` names whoever mints those tokens,
-    which is the gateway itself under ``authorization_code`` and an external issuer under ``resource_server``.
+    which is the gateway itself under ``authorization_code`` and an external issuer under ``token_exchange``.
     """
 
     resource: str

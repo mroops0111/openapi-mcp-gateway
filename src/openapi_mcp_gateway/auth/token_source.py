@@ -140,7 +140,7 @@ ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token'  # noqa: S10
 class TokenExchangeTokenSource:
     """Exchange a caller's access token for one the upstream API accepts, per RFC 8693.
 
-    Used by the ``resource_server`` flow, where the gateway holds no credential of its own
+    Used by the ``token_exchange`` flow, where the gateway holds no credential of its own
     for the person making the call.
     The MCP spec forbids relaying the caller's token to an upstream API,
     so the gateway asks the issuer for a second token naming that API instead.

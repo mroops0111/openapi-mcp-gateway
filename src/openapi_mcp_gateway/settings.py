@@ -32,8 +32,8 @@ _resolve_env_var = resolve_env_var
 class AuthConfig(pydantic.BaseModel):
     """Authentication for an upstream API.
 
-    ``token``, ``client_id``, ``client_secret``, ``issuer``, ``resource``,
-    and ``audience`` accept ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` substitution at resolve time.
+    ``token``, ``client_id``, ``client_secret``, ``issuer``, ``upstream_resource``,
+    and ``upstream_audience`` accept ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` substitution at resolve time.
     Numeric OAuth credentials are coerced from int to str,
     so unquoted YAML values still parse on providers that use numeric ``client_id`` (Asana, Facebook).
     """
@@ -50,9 +50,9 @@ class AuthConfig(pydantic.BaseModel):
     authorization_url: str | None = None
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
-    flow: typing.Literal['authorization_code', 'client_credentials', 'passthrough', 'resource_server'] | None = None
+    flow: typing.Literal['authorization_code', 'client_credentials', 'passthrough', 'token_exchange'] | None = None
 
-    # Issuer of the authorization server that protects this MCP endpoint, for ``resource_server``.
+    # Issuer of the authorization server that protects this MCP endpoint, for ``token_exchange``.
     # Set it and the gateway stops issuing credentials of its own,
     # validating tokens minted by that issuer and exchanging them for upstream ones instead.
     issuer: str | None = None
@@ -61,8 +61,10 @@ class AuthConfig(pydantic.BaseModel):
     # for an upstream whose API and authorization server are different parties.
     # Without it the authorization server mints a token for its own default audience,
     # which an API that merely trusts that issuer refuses.
-    resource: str | None = None
-    audience: str | None = None
+    # Prefixed because the gateway's own audience is a separate value under token_exchange,
+    # and is derived from the mount path rather than configured.
+    upstream_resource: str | None = None
+    upstream_audience: str | None = None
 
     # Lifetimes of the MCP-side tokens the gateway mints for authorization_code, in seconds.
     # The refresh TTL is the practical idle window, since each refresh issues a fresh refresh token,
@@ -106,7 +108,7 @@ class AuthConfig(pydantic.BaseModel):
 
         Authorization servers disagree on the spelling,
         so both are offered and only what is configured is sent.
-        ``resource`` is the RFC 8707 parameter, ``audience`` is the spelling Auth0 uses.
+        ``upstream_resource`` is the RFC 8707 parameter, ``upstream_audience`` is the spelling Auth0 uses.
 
         Resolving both here keeps every flow handler out of the business of classifying vendors,
         so a third spelling is added in this one method rather than in each component that talks upstream.
@@ -114,8 +116,8 @@ class AuthConfig(pydantic.BaseModel):
         which is the right shape for an upstream that issues its own tokens.
         """
         params: dict[str, str] = {}
-        resource = _resolve_env_var(self.resource)
-        audience = _resolve_env_var(self.audience)
+        resource = _resolve_env_var(self.upstream_resource)
+        audience = _resolve_env_var(self.upstream_audience)
         if resource:
             params['resource'] = resource
         if audience:

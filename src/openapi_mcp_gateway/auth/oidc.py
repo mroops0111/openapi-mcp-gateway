@@ -1,6 +1,6 @@
 """Discovery and token verification for an authorization server the gateway does not own.
 
-Used by the ``resource_server`` flow, where the gateway issues no credentials of its own.
+Used by the ``token_exchange`` flow, where the gateway issues no credentials of its own.
 It validates tokens minted for it by an external issuer,
 then exchanges each one for a separate upstream token under RFC 8693.
 
@@ -192,7 +192,7 @@ def _build_jwk_client(jwks_uri: str) -> typing.Any:
         from jwt import PyJWKClient
     except ImportError as exc:  # pragma: no cover - only reachable without the extra installed
         raise OIDCConfigurationError(
-            'auth.flow "resource_server" needs the "oidc" extra for JWT signature verification. '
+            'auth.flow "token_exchange" needs the "oidc" extra for JWT signature verification. '
             'Install it with: pip install "openapi-mcp-gateway[oidc]" '
             '(or uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway).'
         ) from exc
