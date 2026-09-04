@@ -273,7 +273,7 @@ Run `uv run openapi-mcp-gateway --help` for the CLI reference. The [Quick Start]
 
 Configuration merges in this order, with each layer overriding the previous one. **Defaults → YAML (`--config`) → CLI flags → `Gateway.run(...)` kwargs**. A layer only overrides the fields it actually sets, so `--log-level=DEBUG` won't reset `logging.format` from your YAML. Nested objects like `logging` and per-server `auth` merge field-by-field. The `servers` list is the exception, replaced wholesale rather than merged entry-by-entry.
 
-`${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`, and the `auth.*` fields below override them when the spec is incomplete.
+`${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. An unrecognised key is refused at startup rather than ignored, so a typo in a field that narrows access fails closed. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`, and the `auth.*` fields below override them when the spec is incomplete.
 
 <details>
 <summary><b>Top-Level Fields</b></summary>

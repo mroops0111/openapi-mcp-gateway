@@ -194,6 +194,22 @@ class _AppContext:
     auth_provider: AuthorizationCodeProvider | None = None
 
 
+def _policy_summary(policy: PolicyConfig) -> str:
+    """A short human label for which operations a server exposes.
+
+    Printed so a tool count reads as the result of a decision rather than a bare number.
+    An unfiltered server says so outright, since that is the case worth noticing.
+    """
+    filters = []
+    if policy.annotated_only:
+        filters.append('annotated only')
+    if policy.allow:
+        filters.append(f'allow {policy.allow}')
+    if policy.deny:
+        filters.append(f'deny {policy.deny}')
+    return ', '.join(filters) if filters else 'no filter, every operation exposed'
+
+
 def _auth_summary(auth: AuthConfig) -> str:
     """A short human label for a server's auth, naming the header for api_key and the OAuth flow."""
     if auth.type == 'api_key':
@@ -524,6 +540,7 @@ class Gateway:
                 protected_resource=auth.protected_resource,
                 base_url=base_url,
                 auth_summary=_auth_summary(server_config.auth),
+                policy_summary=_policy_summary(server_config.policy),
                 exposure=server_config.exposure.style,
                 tools=tuple(exposed_tools),
                 resource_names=tuple(resource_names),

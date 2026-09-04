@@ -1,5 +1,6 @@
 import typing
 
+import pydantic
 import pytest
 
 from openapi_mcp_gateway.auth.resolver import (
@@ -71,10 +72,15 @@ class TestOtherTypes:
     """The remaining types need no credential of the gateway's own."""
 
     def test_none_sends_nothing(self):
-        """A public API needs no header, and any stray token is ignored."""
-        setup = build_auth(_context(AuthConfig(type='none', token='ignored')))
+        """A public API needs no header."""
+        setup = build_auth(_context(AuthConfig(type='none')))
 
         assert isinstance(setup.resolver, NullAuthResolver)
+
+    def test_a_token_alongside_none_is_refused(self):
+        """Previously the token was quietly ignored, which read as auth that was never applied."""
+        with pytest.raises(pydantic.ValidationError, match='no effect'):
+            AuthConfig(type='none', token='ignored')
 
     def test_passthrough_forwards_the_caller_header(self):
         """The caller's own credential travels on, which only the in-process case may do."""

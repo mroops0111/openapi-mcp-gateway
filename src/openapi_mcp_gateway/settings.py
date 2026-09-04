@@ -8,6 +8,13 @@ from .env import resolve_env_var
 from .openapi import McpIntegration
 
 
+# Every model below sets extra='forbid'.
+# An unknown key is a mistake rather than a preference,
+# and silently dropping one is worse than refusing it.
+# policy.annotated_only decides which operations a caller may invoke,
+# so a typo there once widened a curated surface to the whole spec with no signal at all.
+
+
 # The resolver moved to the leaf ``env`` module so exposure/ can reuse it without importing settings.
 # Kept as a private alias here so AuthConfig's existing call sites need no change.
 _resolve_env_var = resolve_env_var
@@ -41,7 +48,7 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     since the two directions were previously told apart only by a prefix on some of the names.
     """
 
-    model_config = pydantic.ConfigDict(coerce_numbers_to_str=True)
+    model_config = pydantic.ConfigDict(coerce_numbers_to_str=True, extra='forbid')
 
     client_id: str | None = None
     client_secret: str | None = None
@@ -95,7 +102,7 @@ class AuthConfig(pydantic.BaseModel):
     so unquoted YAML values still parse on providers that use numeric ``client_id``.
     """
 
-    model_config = pydantic.ConfigDict(coerce_numbers_to_str=True)
+    model_config = pydantic.ConfigDict(coerce_numbers_to_str=True, extra='forbid')
 
     type: typing.Literal['bearer', 'api_key', 'oauth2', 'passthrough', 'none'] = 'none'
     token: str | None = None
@@ -118,6 +125,51 @@ class AuthConfig(pydantic.BaseModel):
     mcp_access_token_ttl: int = pydantic.Field(default=3600, gt=0)
     mcp_refresh_token_ttl: int = pydantic.Field(default=86400, gt=0)
 
+    @pydantic.model_validator(mode='after')
+    def _reject_settings_that_cannot_take_effect(self) -> typing.Self:
+        """Refuse a field this combination will never read.
+
+        An unknown key is already refused,
+        and a known key in the wrong place is the same mistake wearing a better disguise.
+        Both leave an operator believing they configured something.
+        ``required_scopes`` is the sharp case.
+        Setting it where nothing verifies an inbound token
+        reads as a restriction on an endpoint that has none.
+
+        Only explicitly-set fields are checked, so defaults never trip this.
+        """
+        oauth = self.type == 'oauth2'
+        # ``token_exchange`` is never inferred from a spec, so an unset flow rules it out.
+        # ``authorization_code`` is, so an unset flow leaves its fields plausible.
+        flow_unresolved = oauth and self.flow is None
+
+        applicable: dict[str, tuple[bool, str]] = {
+            'token': (self.type in ('bearer', 'api_key'), 'auth.type bearer or api_key'),
+            'api_key_header': (self.type == 'api_key', 'auth.type api_key'),
+            'flow': (oauth, 'auth.type oauth2'),
+            'issuer': (self.flow == 'token_exchange', 'auth.flow token_exchange'),
+            'required_scopes': (
+                self.flow in ('authorization_code', 'token_exchange') or flow_unresolved,
+                'auth.flow authorization_code or token_exchange, the flows that verify an inbound token',
+            ),
+            'mcp_access_token_ttl': (
+                self.flow == 'authorization_code' or flow_unresolved,
+                'auth.flow authorization_code, the only flow where the gateway mints tokens',
+            ),
+            'mcp_refresh_token_ttl': (
+                self.flow == 'authorization_code' or flow_unresolved,
+                'auth.flow authorization_code, the only flow where the gateway mints tokens',
+            ),
+        }
+        for field, (is_applicable, requirement) in applicable.items():
+            if field in self.model_fields_set and not is_applicable:
+                raise ValueError(f'auth.{field} needs {requirement}, so it would have no effect here.')
+
+        if self.upstream.model_fields_set and not oauth:
+            named = ', '.join(sorted(self.upstream.model_fields_set))
+            raise ValueError(f'auth.upstream ({named}) needs auth.type oauth2, so it would have no effect here.')
+        return self
+
     def resolve_token(self) -> str | None:
         """Static credential after env-var substitution.
 
@@ -134,6 +186,8 @@ class AuthConfig(pydantic.BaseModel):
 class CORSConfig(pydantic.BaseModel):
     """Starlette CORS middleware settings for the gateway HTTP app."""
 
+    model_config = pydantic.ConfigDict(extra='forbid')
+
     allow_origins: list[str] = ['*']
     allow_methods: list[str] = ['*']
     allow_headers: list[str] = ['*']
@@ -142,6 +196,8 @@ class CORSConfig(pydantic.BaseModel):
 
 class StoreConfig(pydantic.BaseModel):
     """Selects the ``TokenStore`` backend (in-process memory or Redis)."""
+
+    model_config = pydantic.ConfigDict(extra='forbid')
 
     type: typing.Literal['memory', 'redis'] = 'memory'
     redis_url: str = 'redis://localhost:6379'
@@ -154,6 +210,8 @@ class LoggingConfig(pydantic.BaseModel):
     CLI flags (``--log-level``, ``--log-format``, ``--log-file``, ``-v`` / ``-q``) override these.
     """
 
+    model_config = pydantic.ConfigDict(extra='forbid')
+
     level: typing.Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] = 'INFO'
     format: typing.Literal['text', 'json'] = 'text'
     file: str | None = None
@@ -161,6 +219,8 @@ class LoggingConfig(pydantic.BaseModel):
 
 class PolicyConfig(pydantic.BaseModel):
     """Glob filters that decide which operations become MCP tools."""
+
+    model_config = pydantic.ConfigDict(extra='forbid')
 
     allow: list[str] | None = None
     deny: list[str] | None = None
@@ -176,6 +236,8 @@ class ExposureConfig(pydantic.BaseModel):
     since the meta-tools surface every operation uniformly.
     """
 
+    model_config = pydantic.ConfigDict(extra='forbid')
+
     style: typing.Literal['static', 'dynamic'] = 'static'
     # Whether a parameterless GET may become an MCP resource instead of a tool.
     # Named for what it does. The operations it promotes are the ones a client reads rather than calls,
@@ -185,6 +247,8 @@ class ExposureConfig(pydantic.BaseModel):
 
 class ServerConfig(pydantic.BaseModel):
     """One upstream API: OpenAPI location, auth, policy, and HTTP timeout."""
+
+    model_config = pydantic.ConfigDict(extra='forbid')
 
     name: str
     spec: str
@@ -214,6 +278,8 @@ class ServerConfig(pydantic.BaseModel):
 
 class GatewayConfig(pydantic.BaseModel):
     """Process-wide gateway settings: listen address, transports, store, logging, and registered servers."""
+
+    model_config = pydantic.ConfigDict(extra='forbid')
 
     host: str = '0.0.0.0'
     port: int = 8000
@@ -294,7 +360,10 @@ def single_spec_layer(
     server: dict[str, typing.Any] = {'name': name, 'spec': spec}
     if base_url is not None:
         server['base_url'] = base_url
-    server['auth'] = (auth or AuthConfig()).model_dump()
+    # Only what the caller actually set, so a default never arrives looking like a choice.
+    # Dumping everything would also make every field count as explicitly set on the way back in,
+    # which is what the applicability check reads to tell a decision from a default.
+    server['auth'] = (auth or AuthConfig()).model_dump(exclude_unset=True)
     return {'servers': [server]}
 
 
