@@ -472,7 +472,7 @@ class TestPartitioning:
     """``_partition_operations`` slots each op into resource / tool / both based on ``promote_resources``."""
 
     def test_no_opt_in_under_auto_promotes_eligible_get(self):
-        """Under ``mode=auto``, an eligible GET with no opt-in is auto-promoted to a resource."""
+        """Under ``exposure.promote_resources``, an eligible GET with no opt-in is auto-promoted to a resource."""
         op = OperationInfo(operation_id='get_pet', method='get', path='/pets/{petId}')
         resources, tools = _partition_operations([op], 'petstore', promote_resources=True)
         assert resources == [op]
@@ -565,7 +565,7 @@ class TestPartitioning:
         assert tools == [op]
 
     def test_auto_skips_ineligible_get(self):
-        """Under ``mode=auto``, a GET with a required non-path parameter stays a tool."""
+        """Under ``exposure.promote_resources``, a GET with a required non-path parameter stays a tool."""
         op = OperationInfo(
             operation_id='find_pets',
             method='get',
@@ -577,14 +577,14 @@ class TestPartitioning:
         assert tools == [op]
 
     def test_auto_skips_non_get(self):
-        """Under ``mode=auto``, a non-GET operation stays a tool."""
+        """Under ``exposure.promote_resources``, a non-GET operation stays a tool."""
         op = OperationInfo(operation_id='create_pet', method='post', path='/pets')
         resources, tools = _partition_operations([op], 'petstore', promote_resources=True)
         assert resources == []
         assert tools == [op]
 
     def test_auto_respects_explicit_tool_optin(self):
-        """Under ``mode=auto``, an eligible GET with explicit ``expose.tool`` stays a tool (explicit beats implicit)."""
+        """Under ``exposure.promote_resources``, an eligible GET with explicit ``expose.tool`` stays a tool (explicit beats implicit)."""
         op = OperationInfo(
             operation_id='get_pet',
             method='get',

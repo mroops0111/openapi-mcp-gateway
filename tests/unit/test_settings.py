@@ -1,4 +1,5 @@
 import pathlib
+import typing
 
 import pydantic
 import pytest
@@ -258,17 +259,14 @@ class TestLayerHelpers:
             yaml_layer('/nonexistent/path.yml')
 
     def test_single_spec_layer_minimal(self):
-        """The minimum spec entry produces a well-shaped one-server layer."""
-        layer = single_spec_layer(spec='petstore.json', name='pets')
-        assert layer == {
-            'servers': [
-                {
-                    'name': 'pets',
-                    'spec': 'petstore.json',
-                    'auth': AuthConfig().model_dump(),
-                },
-            ],
-        }
+        """The layer carries only what the caller supplied, so defaults stay defaults.
+
+        Materialising every field would make each one look explicitly chosen,
+        which is what ``AuthConfig`` reads to tell a real setting from a default it can ignore.
+        """
+        layer = single_spec_layer(spec='api.json', name='api')
+
+        assert layer == {'servers': [{'name': 'api', 'spec': 'api.json', 'auth': {}}]}
 
     def test_single_spec_layer_carries_base_url_and_auth(self):
         """``base_url`` and a custom ``auth`` flow through into the server dict."""
@@ -323,3 +321,113 @@ class TestAuthConfigUpstreamAudience:
         auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(audience='${UPSTREAM_AUD}'))
 
         assert auth.upstream.resolve_audience_params() == {'audience': 'https://from-env.example.com'}
+
+
+class TestUnknownKeysAreRefused:
+    """A key the model does not know is a mistake, and dropping it silently can widen access.
+
+    ``policy.annotated_only`` decides which operations a caller may invoke. When it was renamed,
+    configs carrying the old spelling kept starting and reporting valid,
+    while exposing the whole spec rather than the curated subset,
+    with nothing to read but a longer tool list.
+    """
+
+    def test_a_renamed_policy_key_is_refused_rather_than_dropped(self):
+        """The exact case that shipped. The old name must fail loudly, not widen the surface."""
+        with pytest.raises(pydantic.ValidationError, match='marked_only'):
+            build_gateway_config({'servers': [{'name': 'b', 'spec': 'x.json', 'policy': {'marked_only': True}}]})
+
+    @pytest.mark.parametrize(
+        ('section', 'payload'),
+        [
+            ('auth', {'scopes': ['read']}),
+            ('auth.upstream', {'upstream_audience': 'https://api.example.com'}),
+            ('exposure', {'mode': 'auto'}),
+            ('policy', {'marked_only': True}),
+        ],
+    )
+    def test_every_renamed_key_is_refused(self, section, payload):
+        """Each rename from the 0.7.0 batch fails closed rather than silently doing nothing."""
+        server: dict[str, typing.Any] = {'name': 'b', 'spec': 'x.json'}
+        if section == 'auth.upstream':
+            server['auth'] = {'type': 'oauth2', 'upstream': payload}
+        else:
+            server[section] = payload
+
+        with pytest.raises(pydantic.ValidationError):
+            build_gateway_config({'servers': [server]})
+
+    def test_a_typo_at_the_top_level_is_refused(self):
+        """The rule covers the whole config tree, not only the sections that were renamed."""
+        with pytest.raises(pydantic.ValidationError, match='transprot'):
+            build_gateway_config({'transprot': 'stdio', 'servers': []})
+
+    def test_valid_configs_are_unaffected(self):
+        """Refusing the unknown must not refuse the known."""
+        config = build_gateway_config(
+            {
+                'servers': [
+                    {
+                        'name': 'b',
+                        'spec': 'x.json',
+                        'policy': {'annotated_only': True, 'allow': ['safe_*']},
+                        'exposure': {'style': 'static', 'promote_resources': True},
+                    }
+                ]
+            }
+        )
+
+        assert config.servers[0].policy.annotated_only is True
+        assert config.servers[0].exposure.promote_resources is True
+
+
+class TestSettingsThatCannotTakeEffect:
+    """A known key in the wrong place is refused, like an unknown one.
+
+    Both leave an operator believing they configured something.
+    ``required_scopes`` is the sharp one.
+    Setting it where nothing verifies an inbound token
+    reads as a restriction on an endpoint that has none.
+    """
+
+    @pytest.mark.parametrize(
+        ('payload', 'offending'),
+        [
+            ({'type': 'oauth2', 'flow': 'authorization_code', 'issuer': 'https://kc'}, 'issuer'),
+            ({'type': 'oauth2', 'flow': 'client_credentials', 'required_scopes': ['x']}, 'required_scopes'),
+            ({'type': 'bearer', 'token': 't', 'required_scopes': ['x']}, 'required_scopes'),
+            ({'type': 'bearer', 'token': 't', 'api_key_header': 'X-Custom'}, 'api_key_header'),
+            ({'type': 'oauth2', 'flow': 'client_credentials', 'token': 'ignored'}, 'token'),
+            ({'type': 'oauth2', 'flow': 'client_credentials', 'mcp_access_token_ttl': 60}, 'mcp_access_token_ttl'),
+            ({'type': 'bearer', 'token': 't', 'upstream': {'audience': 'https://api'}}, 'upstream'),
+        ],
+    )
+    def test_inapplicable_settings_are_refused(self, payload, offending):
+        """Each names the field and what it would need, rather than only rejecting the input."""
+        with pytest.raises(pydantic.ValidationError, match=rf'{offending}.*no effect'):
+            AuthConfig.model_validate(payload)
+
+    @pytest.mark.parametrize(
+        'payload',
+        [
+            {'type': 'bearer', 'token': 't'},
+            {'type': 'api_key', 'token': 'k', 'api_key_header': 'X-Custom'},
+            {'type': 'oauth2', 'flow': 'token_exchange', 'issuer': 'https://kc', 'required_scopes': ['x']},
+            {'type': 'oauth2', 'flow': 'authorization_code', 'mcp_access_token_ttl': 60},
+            {'type': 'oauth2', 'upstream': {'client_id': 'c'}},
+            {'type': 'none'},
+        ],
+    )
+    def test_applicable_settings_are_accepted(self, payload):
+        """Refusing the inapplicable must not refuse the ordinary."""
+        assert AuthConfig.model_validate(payload)
+
+    def test_an_unresolved_flow_leaves_its_fields_plausible(self):
+        """``authorization_code`` can be inferred from a spec, so its fields cannot be ruled out yet.
+
+        ``token_exchange`` is never inferred, so ``issuer`` still is.
+        """
+        assert AuthConfig.model_validate({'type': 'oauth2', 'mcp_access_token_ttl': 60})
+
+        with pytest.raises(pydantic.ValidationError, match=r'issuer.*no effect'):
+            AuthConfig.model_validate({'type': 'oauth2', 'issuer': 'https://kc'})

@@ -152,7 +152,7 @@ Both JSONata expressions compile when the gateway loads the config, so a broken 
 uvx openapi-mcp-gateway --config <config.yml> --dry-run
 ```
 
-It loads every spec, applies the policy, and compiles the shaping, then exits without serving and prints a summary of what would run. Exit 0 means the config is valid. On failure, read the named side (request or response), fix the JSONata, and re-run until it validates clean.
+It loads every spec, applies the policy, and compiles the shaping, then exits without serving and prints a summary of what would run, the resolved filter included. Exit 0 means the config is valid. An unrecognised key is a hard error, so a misspelled field is caught here rather than silently ignored. On failure, read the named side (request or response), fix the JSONata, and re-run until it validates clean.
 
 One config shape cannot be validated offline. `flow: token_exchange` contacts the issuer during startup to discover its JWKS and token endpoints, so `--dry-run` needs that provider reachable. Say so rather than reporting the config unverified.
 

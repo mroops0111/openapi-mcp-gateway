@@ -27,8 +27,8 @@ def _stub_context() -> Context:
 def _spec_with_resource_optin() -> dict:
     """OpenAPI spec exercising both kinds of resource exposure plus eligibility edge cases.
 
-    - ``listPets`` (GET /pets, no opt-in, no required params): under ``mode=auto`` auto-promotes to a resource.
-    - ``findPets`` (GET /pets/find, no opt-in, required query): not eligible, stays a tool even under ``mode=auto``.
+    - ``listPets`` (GET /pets, no opt-in, no required params): under ``exposure.promote_resources`` auto-promotes to a resource.
+    - ``findPets`` (GET /pets/find, no opt-in, required query): not eligible, stays a tool even under ``exposure.promote_resources``.
     - ``getPet`` (GET /pets/{petId}, explicit ``expose.resource``): templated resource.
     - ``getInventory`` (GET /store/inventory, explicit ``expose.resource``): concrete resource.
     """
@@ -160,7 +160,7 @@ class TestResourceExposureEndToEnd:
         assert 'petstore://store/inventory' in uris
 
     async def test_resources_excluded_from_tools(self, gateway):
-        """Under ``mode=auto``, every eligible GET (opt-in or not) leaves ``tools/list``; ineligible GETs stay."""
+        """Under ``exposure.promote_resources``, every eligible GET (opt-in or not) leaves ``tools/list``; ineligible GETs stay."""
         mcp = gateway._servers[0].mcp
         tool_names = {t.name for t in mcp._tool_manager.list_tools()}
         assert 'get_pet' not in tool_names

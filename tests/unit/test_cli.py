@@ -9,7 +9,8 @@ import yaml
 from click.testing import CliRunner
 
 from openapi_mcp_gateway import cli
-from openapi_mcp_gateway.settings import GatewayConfig
+from openapi_mcp_gateway.gateway import _policy_summary
+from openapi_mcp_gateway.settings import GatewayConfig, PolicyConfig
 
 
 PACKAGE_LOGGER = 'openapi_mcp_gateway'
@@ -304,3 +305,19 @@ class TestDryRun:
         assert 'mount' in result.output
         assert 'auth' in result.output
         assert 'exposure' in result.output
+
+
+class TestPolicySummary:
+    """The dry-run names the filter it resolved, so a tool count reads as a decision."""
+
+    def test_an_unfiltered_server_says_so(self):
+        """The case worth noticing is the one with nothing narrowing it."""
+        assert _policy_summary(PolicyConfig()) == 'no filter, every operation exposed'
+
+    def test_each_filter_is_named(self):
+        """An operator comparing intent against reality needs the actual values, not a flag."""
+        summary = _policy_summary(PolicyConfig(annotated_only=True, allow=['safe_*'], deny=['*_admin']))
+
+        assert 'annotated only' in summary
+        assert "allow ['safe_*']" in summary
+        assert "deny ['*_admin']" in summary

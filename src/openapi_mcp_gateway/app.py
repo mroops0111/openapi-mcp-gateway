@@ -39,6 +39,7 @@ class _ServerBundle(typing.NamedTuple):
     # Captured at registration for the --dry-run summary.
     base_url: str = ''
     auth_summary: str = 'none'
+    policy_summary: str = 'no filter'
     exposure: str = 'static'
     tools: tuple[ExposedTool, ...] = ()
     resource_names: tuple[str, ...] = ()

@@ -6,7 +6,7 @@ import click
 from .gateway import Gateway
 from .logger import FORMATS, LEVELS, setup
 from .openapi import ExposedTool
-from .settings import AuthConfig, GatewayConfig, UpstreamAuthConfig, build_gateway_config, single_spec_layer, yaml_layer
+from .settings import AuthConfig, GatewayConfig, build_gateway_config, single_spec_layer, yaml_layer
 
 
 logger = logging.getLogger(__name__)
@@ -279,18 +279,28 @@ def _build_auth_config(
 
     scopes = [scope.strip() for scope in auth_upstream_scopes.split(',')] if auth_upstream_scopes else []
 
-    return AuthConfig(
-        type=auth_type,
-        token=auth_token,
-        flow=auth_flow,
-        upstream=UpstreamAuthConfig(
-            client_id=auth_client_id,
-            client_secret=auth_client_secret,
-            authorization_url=auth_authorization_url,
-            token_url=auth_token_url,
-            scopes=scopes,
-        ),
-    )
+    # Only flags the caller actually gave.
+    # AuthConfig reads which fields were set to tell a decision from a default,
+    # so passing None for an absent flag would read as a decision.
+    upstream = {
+        key: value
+        for key, value in {
+            'client_id': auth_client_id,
+            'client_secret': auth_client_secret,
+            'authorization_url': auth_authorization_url,
+            'token_url': auth_token_url,
+            'scopes': scopes or None,
+        }.items()
+        if value is not None
+    }
+    fields: dict[str, typing.Any] = {'type': auth_type}
+    if auth_token is not None:
+        fields['token'] = auth_token
+    if auth_flow is not None:
+        fields['flow'] = auth_flow
+    if upstream:
+        fields['upstream'] = upstream
+    return AuthConfig.model_validate(fields)
 
 
 def _cli_layer(
@@ -368,6 +378,7 @@ def _echo_dry_run_summary(gateway: Gateway, config: GatewayConfig) -> None:
         _dry_run_kv('transport', config.transport)
         _dry_run_kv('base url', server.base_url)
         _dry_run_kv('auth', server.auth_summary)
+        _dry_run_kv('policy', server.policy_summary)
         _dry_run_kv('exposure', server.exposure)
         if server.tools:
             _dry_run_kv('tools', str(len(server.tools)))

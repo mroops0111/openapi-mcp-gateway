@@ -37,7 +37,7 @@ class ParameterInfo(pydantic.BaseModel):
     # which is kept for upstream assembly and default injection but omitted from the schema.
     visible: bool = True
 
-    model_config = pydantic.ConfigDict(populate_by_name=True)
+    model_config = pydantic.ConfigDict(populate_by_name=True, extra='forbid')
 
 
 class ExposedTool(typing.NamedTuple):
@@ -94,6 +94,8 @@ class ToolOverride(pydantic.BaseModel):
     and ``response`` mapping the upstream response into what the client sees.
     """
 
+    model_config = pydantic.ConfigDict(extra='forbid')
+
     name: str | None = None
     description: str | None = None
     annotations: dict[str, typing.Any] | None = None
@@ -109,6 +111,8 @@ class ResourceOverride(pydantic.BaseModel):
     ``uri_template`` overrides the auto-derived URI when set,
     and must start with ``{server_name}://`` so resources stay scoped to the owning server.
     """
+
+    model_config = pydantic.ConfigDict(extra='forbid')
 
     name: str | None = None
     description: str | None = None
