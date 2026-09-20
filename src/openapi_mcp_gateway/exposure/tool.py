@@ -18,6 +18,7 @@ from ._shared import (
     build_input_schema,
     derive_description,
     derive_name,
+    describe_parameters,
 )
 from ._upstream import UpstreamBinding, _build_success_result, _build_upstream_closure
 
@@ -240,7 +241,14 @@ class ToolGenerator:
             # build_tool_function enforces this same schema before the upstream call, so display and validation match.
             registered.parameters = build_input_schema(shaped_operation)
             exposed_tools.append(
-                ExposedTool(name, shaped_operation.method, shaped_operation.path, _shaping_label(tool_override))
+                ExposedTool(
+                    name,
+                    shaped_operation.method,
+                    shaped_operation.path,
+                    _shaping_label(tool_override),
+                    description=description,
+                    parameters=describe_parameters(shaped_operation),
+                )
             )
             logger.debug('Tool registered: %s ← %s %s', name, shaped_operation.method.upper(), shaped_operation.path)
         logger.info('Registered %d MCP tool(s) on server "%s"', len(operations), self.mcp.name)

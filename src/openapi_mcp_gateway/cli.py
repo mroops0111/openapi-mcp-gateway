@@ -1,3 +1,4 @@
+import json
 import logging
 import typing
 
@@ -23,6 +24,13 @@ logger = logging.getLogger(__name__)
         'Path to a YAML config file with multiple servers. See the README Configuration section '
         'for the full schema (policy, operations, and tool shaping).'
     ),
+)
+@click.option(
+    '--output',
+    type=click.Choice(['text', 'json']),
+    default='text',
+    show_default=True,
+    help='Format for the --dry-run summary. json emits the same facts for a program to consume.',
 )
 @click.option(
     '--dry-run',
@@ -124,6 +132,7 @@ def main(
     spec: str | None,
     config_path: str | None,
     dry_run: bool,
+    output: str,
     name: str,
     base_url: str | None,
     transport: typing.Literal['sse', 'streamable-http', 'stdio'] | None,
@@ -235,7 +244,7 @@ def main(
             click.secho('✗ Invalid', fg='red', bold=True, err=True)
             click.echo(f'  {error}', err=True)
             raise SystemExit(1) from error
-        _echo_dry_run_summary(gateway, config)
+        _echo_dry_run_summary(gateway, config, output)
         return
 
     gateway = Gateway.from_config(config)
@@ -364,9 +373,26 @@ def _dry_run_tool_table(tools: tuple[ExposedTool, ...]) -> None:
         )
 
 
-def _echo_dry_run_summary(gateway: Gateway, config: GatewayConfig) -> None:
-    """Print a structured, human-readable summary of what the config would serve."""
+def _echo_dry_run_summary(gateway: Gateway, config: GatewayConfig, output: str = 'text') -> None:
+    """Print a summary of what the config would serve, for a reader or for a program."""
     servers = gateway.describe_servers()
+    if output == 'json':
+        click.echo(
+            json.dumps(
+                {
+                    'valid': True,
+                    'transport': config.transport,
+                    'servers': [server.describe() for server in servers],
+                    'totals': {
+                        'servers': len(servers),
+                        'tools': sum(len(server.tools) for server in servers),
+                        'resources': sum(len(server.resource_names) for server in servers),
+                    },
+                },
+                indent=2,
+            )
+        )
+        return
     total_tools = sum(len(server.tools) for server in servers)
     total_resources = sum(len(server.resource_names) for server in servers)
     counts = f'{len(servers)} server(s), {total_tools} tool(s), {total_resources} resource(s)'

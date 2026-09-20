@@ -10,6 +10,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, TextContent
 
+from openapi_mcp_gateway import Gateway
 from openapi_mcp_gateway.exposure import (
     MetaToolGenerator,
     ToolGenerator,
@@ -1730,3 +1731,84 @@ class TestStrategy:
         )
         shaped = shape_operation(op)
         assert shaped.parameters[0].schema_['enum'] == ['a', 'b']
+
+
+class TestExposedToolDetail:
+    """A caller deciding what to expose reads the same strings the model will be shown."""
+
+    def _tools(self, spec_path: str) -> dict:
+        gateway = Gateway()
+        gateway.add_server(name='s', spec=spec_path)
+        return {tool.name: tool for tool in gateway.describe_servers()[0].tools}
+
+    def test_the_description_is_the_one_the_model_receives(self, petstore_json_path):
+        """Reporting anything else would let the preview and the served tool disagree."""
+        tool = self._tools(str(petstore_json_path))['get_pet_by_id']
+
+        assert tool.description
+        assert tool.description != tool.name
+
+    def test_parameters_use_the_sanitised_names(self, tmp_path):
+        """The spec name and the advertised name differ often enough that showing the spec's misleads."""
+        spec = tmp_path / 'spec.json'
+        spec.write_text(
+            json.dumps(
+                {
+                    'openapi': '3.0.0',
+                    'info': {'title': 't', 'version': '1'},
+                    'servers': [{'url': 'https://example.com'}],
+                    'paths': {
+                        '/x': {
+                            'get': {
+                                'operationId': 'getX',
+                                'parameters': [
+                                    {'name': 'include-items', 'in': 'query', 'schema': {'type': 'boolean'}},
+                                    {'name': 'X-Trace-Id', 'in': 'header', 'schema': {'type': 'string'}},
+                                ],
+                                'responses': {'200': {'description': 'ok'}},
+                            }
+                        }
+                    },
+                }
+            )
+        )
+        parameters = {p.name: p for p in self._tools(str(spec))['get_x'].parameters}
+
+        assert set(parameters) == {'include_items', 'X_Trace_Id'}
+        assert parameters['include_items'].location == 'query'
+        assert parameters['include_items'].required is False
+        assert parameters['X_Trace_Id'].type == 'string'
+
+    def test_a_hidden_parameter_is_not_reported(self, tmp_path):
+        """A parameter the model never sees must not appear in a summary of what it sees."""
+        spec = tmp_path / 'spec.json'
+        spec.write_text(
+            json.dumps(
+                {
+                    'openapi': '3.0.0',
+                    'info': {'title': 't', 'version': '1'},
+                    'servers': [{'url': 'https://example.com'}],
+                    'paths': {
+                        '/x': {
+                            'get': {
+                                'operationId': 'getX',
+                                'parameters': [
+                                    {'name': 'visible', 'in': 'query', 'schema': {'type': 'string'}},
+                                    {'name': 'internal', 'in': 'query', 'schema': {'type': 'string'}},
+                                ],
+                                'responses': {'200': {'description': 'ok'}},
+                                'x-mcp-integration': {
+                                    'tool': {
+                                        'params_strategy': 'merge',
+                                        'params': {'internal': {'hidden': True, 'default': 'fixed'}},
+                                    }
+                                },
+                            }
+                        }
+                    },
+                }
+            )
+        )
+        names = {p.name for p in self._tools(str(spec))['get_x'].parameters}
+
+        assert names == {'visible'}

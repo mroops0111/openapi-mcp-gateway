@@ -1,0 +1,23 @@
+{
+  "openapi": "3.0.0",
+  "info": {"title": "Undocumented Internal API", "version": "1.0.0"},
+  "servers": [{"url": "https://internal.example.com/api"}],
+  "paths": {
+    "/orders/{orderId}": {
+      "get": {
+        "operationId": "getOrder",
+        "parameters": [
+          {"name": "orderId", "in": "path", "required": true, "schema": {"type": "integer"}},
+          {"name": "include-items", "in": "query", "schema": {"type": "boolean"}}
+        ],
+        "responses": {"200": {"description": "ok"}}
+      }
+    },
+    "/orders/{orderId}/line-items": {
+      "get": {
+        "parameters": [{"name": "orderId", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "responses": {"200": {"description": "ok"}}
+      }
+    }
+  }
+}

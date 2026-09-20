@@ -1,3 +1,4 @@
+import json
 import logging
 import pathlib
 import typing
@@ -18,6 +19,7 @@ PACKAGE_LOGGER = 'openapi_mcp_gateway'
 
 FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures'
 PETSTORE_SPEC = FIXTURES / 'petstore.json'
+UNDOCUMENTED_SPEC = FIXTURES / 'undocumented.json'
 
 
 @pytest.fixture(autouse=True)
@@ -321,3 +323,69 @@ class TestPolicySummary:
         assert 'annotated only' in summary
         assert "allow ['safe_*']" in summary
         assert "deny ['*_admin']" in summary
+
+
+class TestDryRunJsonOutput:
+    """``--output json`` exists so a caller does not have to parse a coloured table."""
+
+    def _describe(self, *extra: str) -> dict:
+        result, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run', '--output', 'json', *extra)
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    def test_help_lists_the_option(self):
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ['--help'])
+        assert result.exit_code == 0
+        assert '--output' in result.output
+
+    def test_text_remains_the_default(self):
+        """Adding a format must not change what someone running the old command sees."""
+        without, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run')
+        explicit, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run', '--output', 'text')
+
+        assert without.stdout == explicit.stdout
+        assert 'Valid' in without.stdout
+
+    def test_stdout_carries_the_document_and_nothing_else(self):
+        """The point of the option is `... --output json | jq`, which a stray log line would break."""
+        result, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run', '--output', 'json')
+
+        assert json.loads(result.stdout)
+        assert 'Loading server' in result.stderr, 'logging should still happen, just not on stdout'
+
+    def test_the_output_is_plain_json(self):
+        """No custom encoder, because a caller in another language has none of our types."""
+        document = self._describe()
+
+        assert json.dumps(document)
+        assert document['valid'] is True
+        assert document['totals']['servers'] == 1
+        assert document['totals']['tools'] == len(document['servers'][0]['tools'])
+
+    def test_every_field_the_table_prints_is_present(self):
+        """The two views describe one thing, so neither may carry a fact the other lacks."""
+        server = self._describe()['servers'][0]
+
+        assert set(server) >= {'name', 'mount_path', 'base_url', 'auth', 'policy', 'exposure', 'tools', 'resources'}
+        assert server['name'] == 'pets'
+        assert server['mount_path'] == '/pets'
+        assert server['auth'] == 'none'
+
+    def test_tools_carry_what_a_reviewer_decides_from(self):
+        """Name, method and path alone cannot answer whether an operation should be exposed."""
+        tool = next(t for t in self._describe()['servers'][0]['tools'] if t['name'] == 'get_pet_by_id')
+
+        assert tool['description']
+        assert tool['method'] == 'get'
+        assert {'name': 'petId', 'location': 'path', 'required': True, 'type': 'integer'} in tool['parameters']
+
+    def test_a_spec_without_descriptions_still_describes_every_tool(self):
+        """Plenty of internal specs are generated and carry no prose, which must not blank the field."""
+        result, _ = _run('--spec', str(UNDOCUMENTED_SPEC), '--name', 'u', '--dry-run', '--output', 'json')
+        assert result.exit_code == 0, result.output
+        tools = json.loads(result.stdout)['servers'][0]['tools']
+
+        assert tools, 'the fixture should expose at least one tool'
+        assert all(tool['description'] for tool in tools)
+        assert any(tool['description'].startswith('GET /orders') for tool in tools)

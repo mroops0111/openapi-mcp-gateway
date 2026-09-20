@@ -7,7 +7,7 @@ import typing
 import inflection
 import pydantic
 
-from ..openapi import OperationInfo, ParameterInfo
+from ..openapi import ExposedParameter, OperationInfo, ParameterInfo
 
 
 _INVALID_IDENTIFIER_CHARS = re.compile(r'[^A-Za-z0-9_]')
@@ -155,6 +155,28 @@ def derive_description(operation: OperationInfo, override_description: str | Non
     if override_description:
         return override_description
     return operation.description or operation.summary or f'{operation.method.upper()} {operation.path}'
+
+
+def describe_parameters(operation: OperationInfo) -> tuple[ExposedParameter, ...]:
+    """Summarise the parameters ``operation`` advertises, in the order the schema lists them.
+
+    Applies the same visibility and deduplication rules as ``build_input_schema``, so a summary and
+    the advertised schema never disagree about which parameters exist or what they are called.
+    """
+    described: list[ExposedParameter] = []
+    for parameter_name, parameter in _iter_unique_sanitised_parameters(operation.parameters):
+        if not parameter.visible:
+            continue
+        declared_type = parameter.schema_.get('type', '') if parameter.schema_ else 'string'
+        described.append(
+            ExposedParameter(
+                name=parameter_name,
+                location=parameter.location,
+                required=parameter.required,
+                type=declared_type if isinstance(declared_type, str) else '',
+            )
+        )
+    return tuple(described)
 
 
 def build_input_schema(operation: OperationInfo) -> dict[str, typing.Any]:

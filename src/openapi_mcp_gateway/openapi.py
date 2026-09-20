@@ -40,13 +40,31 @@ class ParameterInfo(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(populate_by_name=True, extra='forbid')
 
 
+class ExposedParameter(typing.NamedTuple):
+    """One LLM-facing parameter of an exposed tool.
+
+    ``name`` is the sanitised name the model is shown, which is not always the name the spec uses.
+    """
+
+    name: str
+    location: str
+    required: bool
+    type: str = ''
+
+
 class ExposedTool(typing.NamedTuple):
-    """One tool a server exposes, with a compact label of how it is shaped."""
+    """One tool a server exposes, with a compact label of how it is shaped.
+
+    ``description`` and ``parameters`` carry what the model is actually advertised, so a caller
+    deciding whether to expose an operation reads the same thing the model will.
+    """
 
     name: str
     method: str
     path: str
     shaping: str
+    description: str = ''
+    parameters: tuple[ExposedParameter, ...] = ()
 
 
 class ParamOverride(pydantic.BaseModel):

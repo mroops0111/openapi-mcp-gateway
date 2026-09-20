@@ -44,6 +44,33 @@ class _ServerBundle(typing.NamedTuple):
     tools: tuple[ExposedTool, ...] = ()
     resource_names: tuple[str, ...] = ()
 
+    def describe(self) -> dict[str, typing.Any]:
+        """Return what this server would serve, as plain JSON-serialisable data.
+
+        Only the registration-time facts, never the live objects, so the result survives
+        ``json.dumps`` without a custom encoder.
+        """
+        return {
+            'name': self.name,
+            'mount_path': self.mount_path,
+            'base_url': self.base_url,
+            'auth': self.auth_summary,
+            'policy': self.policy_summary,
+            'exposure': self.exposure,
+            'tools': [
+                {
+                    'name': tool.name,
+                    'method': tool.method,
+                    'path': tool.path,
+                    'shaping': tool.shaping,
+                    'description': tool.description,
+                    'parameters': [parameter._asdict() for parameter in tool.parameters],
+                }
+                for tool in self.tools
+            ],
+            'resources': list(self.resource_names),
+        }
+
 
 def build_mcp_asgi_app(mcp: MCPServer, transport: str) -> typing.Any:
     """Build the Starlette ASGI app for ``mcp`` under ``transport``.
