@@ -23,7 +23,7 @@ venv/
 *.tokens.json
 
 # Internal docs
-docs/
+docs
 *.md
 !README.md
 # Plugin skills ship markdown that must be tracked
