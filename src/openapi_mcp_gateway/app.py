@@ -40,6 +40,14 @@ class _ServerBundle(typing.NamedTuple):
     base_url: str = ''
     auth_summary: str = 'none'
     policy_summary: str = 'no filter'
+    # Descriptive auth fields only. AuthConfig also carries the bearer token and the upstream client
+    # secret, and this bundle feeds a document that gets piped, pasted and rendered in a browser.
+    auth_type: str = 'none'
+    auth_api_key_header: str = ''
+    auth_flow: str = ''
+    policy_allow: tuple[str, ...] = ()
+    policy_deny: tuple[str, ...] = ()
+    policy_annotated_only: bool = False
     exposure: str = 'static'
     tools: tuple[ExposedTool, ...] = ()
     resource_names: tuple[str, ...] = ()
@@ -54,8 +62,18 @@ class _ServerBundle(typing.NamedTuple):
             'name': self.name,
             'mount_path': self.mount_path,
             'base_url': self.base_url,
-            'auth': self.auth_summary,
-            'policy': self.policy_summary,
+            'auth': {
+                'type': self.auth_type,
+                'flow': self.auth_flow,
+                'api_key_header': self.auth_api_key_header,
+                'summary': self.auth_summary,
+            },
+            'policy': {
+                'allow': list(self.policy_allow),
+                'deny': list(self.policy_deny),
+                'annotated_only': self.policy_annotated_only,
+                'summary': self.policy_summary,
+            },
             'exposure': self.exposure,
             'tools': [
                 {

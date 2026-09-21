@@ -377,7 +377,7 @@ class TestDryRunJsonOutput:
         assert set(server) >= {'name', 'mount_path', 'base_url', 'auth', 'policy', 'exposure', 'tools', 'resources'}
         assert server['name'] == 'pets'
         assert server['mount_path'] == '/pets'
-        assert server['auth'] == 'none'
+        assert server['auth']['type'] == 'none'
 
     def test_tools_carry_what_a_reviewer_decides_from(self):
         """Name, method and path alone cannot answer whether an operation should be exposed."""
@@ -386,6 +386,52 @@ class TestDryRunJsonOutput:
         assert tool['description']
         assert tool['method'] == 'get'
         assert {'name': 'petId', 'location': 'path', 'required': True, 'type': 'integer'} in tool['parameters']
+
+    def test_auth_and_policy_are_data_rather_than_prose(self):
+        """A caller should not have to pull a Python list repr out of an English sentence."""
+        server = self._describe()['servers'][0]
+
+        assert server['policy']['allow'] == []
+        assert server['policy']['annotated_only'] is False
+        assert server['auth']['type'] == 'none'
+        assert server['policy']['summary'], 'the readable form is kept alongside, not replaced'
+
+    def test_no_credential_reaches_the_document(self, tmp_path: pathlib.Path):
+        """This output gets piped, pasted into issues and rendered in a browser.
+
+        ``AuthConfig`` also carries the bearer token and the upstream client secret, so the
+        descriptive fields are an allow list rather than a dump, and this test is what holds
+        that line when someone later adds a field.
+        """
+        config = tmp_path / 'config.yml'
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    'servers': [
+                        {
+                            'name': 'pets',
+                            'spec': str(PETSTORE_SPEC),
+                            'auth': {
+                                'type': 'api_key',
+                                'token': 'SUPER-SECRET-VALUE',
+                                'api_key_header': 'X-Company-Key',
+                            },
+                        }
+                    ]
+                }
+            )
+        )
+        result, _ = _run('--config', str(config), '--dry-run', '--output', 'json')
+        assert result.exit_code == 0, result.output
+
+        assert 'SUPER-SECRET-VALUE' not in result.stdout
+        auth = json.loads(result.stdout)['servers'][0]['auth']
+        assert auth == {
+            'type': 'api_key',
+            'flow': '',
+            'api_key_header': 'X-Company-Key',
+            'summary': 'api_key (header X-Company-Key)',
+        }
 
     def test_a_spec_without_descriptions_still_describes_every_tool(self):
         """Plenty of internal specs are generated and carry no prose, which must not blank the field."""
