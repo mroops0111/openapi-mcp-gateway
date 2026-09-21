@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 
 from ...openapi import OpenAPISpec
@@ -52,7 +53,7 @@ def build_oauth_flow(
         gateway_url=gateway_url,
         mount_path=mount_path,
     )
-    return handler_class().build(flow_context)
+    return dataclasses.replace(handler_class().build(flow_context), flow_type=oauth_flow.flow_type)
 
 
 def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthFlow:

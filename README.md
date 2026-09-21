@@ -473,6 +473,10 @@ Auth, path templating, and per-operation request shape match static mode, so onl
 
 Configure via the `logging.*` YAML keys or via CLI flags (`--log-level`, `--log-format`, `--log-file`). `-v` and `-q` are shortcuts for `DEBUG` and `WARNING`. CLI flags override YAML field-by-field, following the precedence rule above.
 
+### Inspecting a Config
+
+`--dry-run` validates a config and prints what it would expose without starting a server. `--output json` emits the same facts as data, on stdout with logging kept to stderr, and `Gateway.describe()` returns the identical document from Python. Names in the output are the sanitised ones the model is shown, so an operation with no `operationId` appears under a name derived from its method and path.
+
 ### Authoring Configs with AI
 
 `generate-config` is a companion Claude Code skill that writes a `config.yml` from a plain-language request, deriving the operations, auth, and shaping for you. This repo doubles as its plugin marketplace:

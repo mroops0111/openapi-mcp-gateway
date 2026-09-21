@@ -32,7 +32,7 @@ from .fastapi import (
     warn_on_mixed_security_schemes,
 )
 from .openapi import ExposedTool, McpIntegration, OpenAPISpec, OperationInfo, load_spec, parse_spec
-from .policy import filter_operations
+from .policy import filter_operations, unmatched_patterns
 from .settings import AuthConfig, ExposureConfig, GatewayConfig, PolicyConfig, ServerConfig
 from .stores import create_store
 
@@ -318,6 +318,18 @@ class Gateway:
         """Return the registered server bundles, for a dry-run summary of what would be served."""
         return tuple(self._servers)
 
+    def describe(self) -> dict[str, typing.Any]:
+        """Return what this gateway would serve, as plain JSON-serialisable data.
+
+        The stable counterpart to ``--dry-run --output json``, which emits exactly this document.
+        Prefer it over ``describe_servers``, whose bundle type is internal and whose shape is not a promise.
+        Every name here is the one the model is shown, so a caller reads the same strings the model will.
+        """
+        return {
+            'transport': self._config.transport,
+            'servers': [server.describe() for server in self.describe_servers()],
+        }
+
     def run(
         self,
         transport: str | None = None,
@@ -498,6 +510,19 @@ class Gateway:
             transport=transport,
         )
         exposed_tools: list[ExposedTool] = []
+        # A policy pattern that matches no operation at all is almost always a typo,
+        # and the result is only ever a shorter list that nobody notices is short.
+        # Warned at load rather than reported in the document, so that it reaches every caller.
+        stray_patterns = unmatched_patterns(spec.operations, server_config.policy.allow, server_config.policy.deny)
+        if stray_patterns:
+            logger.warning(
+                'Server "%s": %d policy pattern(s) matched no operation (%s). '
+                'Check them against the operationIds in the spec.',
+                server_config.name,
+                len(stray_patterns),
+                ', '.join(stray_patterns),
+            )
+
         resource_names: list[str] = []
         if server_config.exposure.style == 'dynamic':
             resource_optins = [operation.operation_id for operation in operations if operation.resource_exposed]
@@ -540,6 +565,11 @@ class Gateway:
                 protected_resource=auth.protected_resource,
                 base_url=base_url,
                 auth_summary=_auth_summary(server_config.auth),
+                auth_type=server_config.auth.type,
+                auth_api_key_header=(
+                    server_config.auth.api_key_header if server_config.auth.type == 'api_key' else None
+                ),
+                auth_flow=auth.flow_type,
                 policy_summary=_policy_summary(server_config.policy),
                 exposure=server_config.exposure.style,
                 tools=tuple(exposed_tools),

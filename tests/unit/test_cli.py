@@ -1,3 +1,4 @@
+import json
 import logging
 import pathlib
 import typing
@@ -8,7 +9,7 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from openapi_mcp_gateway import cli
+from openapi_mcp_gateway import Gateway, cli
 from openapi_mcp_gateway.gateway import _policy_summary
 from openapi_mcp_gateway.settings import GatewayConfig, PolicyConfig
 
@@ -18,6 +19,7 @@ PACKAGE_LOGGER = 'openapi_mcp_gateway'
 
 FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures'
 PETSTORE_SPEC = FIXTURES / 'petstore.json'
+UNDOCUMENTED_SPEC = FIXTURES / 'undocumented.json'
 
 
 @pytest.fixture(autouse=True)
@@ -321,3 +323,199 @@ class TestPolicySummary:
         assert 'annotated only' in summary
         assert "allow ['safe_*']" in summary
         assert "deny ['*_admin']" in summary
+
+
+class TestDryRunJsonOutput:
+    """``--output json`` exists so a caller does not have to parse a coloured table."""
+
+    def _describe(self, *extra: str) -> dict:
+        result, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run', '--output', 'json', *extra)
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    def test_help_lists_the_option(self):
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ['--help'])
+        assert result.exit_code == 0
+        assert '--output' in result.output
+
+    def test_text_remains_the_default(self):
+        """Adding a format must not change what someone running the old command sees."""
+        without, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run')
+        explicit, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run', '--output', 'text')
+
+        assert without.stdout == explicit.stdout
+        assert 'Valid' in without.stdout
+
+    def test_the_cli_and_the_library_emit_the_same_document(self):
+        """Two implementations would drift, and the point of this feature is that they cannot."""
+        gateway = Gateway()
+        gateway.add_server(name='pets', spec=str(PETSTORE_SPEC))
+
+        assert self._describe() == gateway.describe()
+
+    def test_stdout_carries_the_document_and_nothing_else(self):
+        """The point of the option is `... --output json | jq`, which a stray log line would break."""
+        result, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run', '--output', 'json')
+
+        assert json.loads(result.stdout)
+        assert 'Loading server' in result.stderr, 'logging should still happen, just not on stdout'
+
+    def test_the_output_is_plain_json(self):
+        """No custom encoder, because a caller in another language has none of our types."""
+        document = self._describe()
+
+        assert json.dumps(document)
+        assert document['servers'][0]['tools']
+
+    def test_every_field_the_table_prints_is_present(self):
+        """The two views describe one thing, so neither may carry a fact the other lacks."""
+        server = self._describe()['servers'][0]
+
+        assert set(server) >= {'name', 'mount_path', 'base_url', 'auth', 'exposure', 'tools', 'resources'}
+        assert server['name'] == 'pets'
+        assert server['mount_path'] == '/pets'
+        assert server['auth']['type'] == 'none'
+
+    def test_tools_carry_what_a_reviewer_decides_from(self):
+        """Name, method and path alone cannot answer whether an operation should be exposed."""
+        tool = next(t for t in self._describe()['servers'][0]['tools'] if t['name'] == 'get_pet_by_id')
+
+        assert tool['description']
+        assert tool['method'] == 'get'
+        assert tool['input_schema']['properties']['petId'] == {'type': 'integer'}
+        assert tool['input_schema']['required'] == ['petId']
+
+    def test_the_document_carries_no_field_the_caller_could_derive(self):
+        """Echoing the config, a prose summary and a count are all things the reader already has.
+
+        They cost bytes, add noise to a diff between two versions of a config,
+        and can disagree with the data they were derived from.
+        """
+        document = self._describe()
+        server = document['servers'][0]
+
+        assert 'totals' not in document
+        assert 'valid' not in document, 'a field that can never be false says nothing'
+        assert 'policy' not in server, 'the caller holds the config already'
+        assert 'summary' not in server['auth']
+        assert server['auth']['type'] == 'none'
+        assert server['auth']['flow'] is None, 'absent, not empty'
+
+    def test_a_pattern_matching_nothing_is_warned_about(self, tmp_path: pathlib.Path):
+        """A typo in `allow` is otherwise invisible, since the result is just a shorter list.
+
+        Warned at load rather than reported in the document, so it reaches everyone who starts the gateway,
+        not only the callers who ask for JSON and then read that field.
+        """
+        config = tmp_path / 'config.yml'
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    'servers': [
+                        {
+                            'name': 'pets',
+                            'spec': str(PETSTORE_SPEC),
+                            'policy': {'allow': ['get*', 'thisMatchesNothing', 'deletePet']},
+                        }
+                    ]
+                }
+            )
+        )
+        result, _ = _run('--config', str(config), '--dry-run', '--output', 'json')
+        assert result.exit_code == 0, result.output
+
+        assert 'thisMatchesNothing' in result.stderr
+        assert 'matched no operation' in result.stderr
+        server = json.loads(result.stdout)['servers'][0]
+        assert {tool['name'] for tool in server['tools']} == {'get_pet_by_id', 'delete_pet'}
+
+    def test_the_reported_flow_is_the_one_that_was_resolved(self, tmp_path: pathlib.Path):
+        """A config naming no flow still runs one, picked from the spec.
+
+        Echoing `auth.flow` reported null while client_credentials was live,
+        which describes the config rather than what the server does.
+        """
+        spec = tmp_path / 'spec.json'
+        spec.write_text(json.dumps(_client_credentials_spec()))
+        config = tmp_path / 'config.yml'
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    'servers': [
+                        {
+                            'name': 'secure',
+                            'spec': str(spec),
+                            'auth': {'type': 'oauth2', 'upstream': {'client_id': 'cid', 'client_secret': 'sec'}},
+                        }
+                    ]
+                }
+            )
+        )
+        result, _ = _run('--config', str(config), '--dry-run', '--output', 'json')
+        assert result.exit_code == 0, result.output
+
+        auth = json.loads(result.stdout)['servers'][0]['auth']
+        assert auth['type'] == 'oauth2'
+        assert auth['flow'] == 'client_credentials'
+
+    def test_no_credential_reaches_the_document(self, tmp_path: pathlib.Path):
+        """This output gets piped, pasted into issues and rendered in a browser.
+
+        ``AuthConfig`` also carries the bearer token and the upstream client secret,
+        so the descriptive fields are an allow list rather than a dump,
+        and this test is what holds that line when someone later adds a field.
+        """
+        config = tmp_path / 'config.yml'
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    'servers': [
+                        {
+                            'name': 'pets',
+                            'spec': str(PETSTORE_SPEC),
+                            'auth': {
+                                'type': 'api_key',
+                                'token': 'SUPER-SECRET-VALUE',
+                                'api_key_header': 'X-Company-Key',
+                            },
+                        }
+                    ]
+                }
+            )
+        )
+        result, _ = _run('--config', str(config), '--dry-run', '--output', 'json')
+        assert result.exit_code == 0, result.output
+
+        assert 'SUPER-SECRET-VALUE' not in result.stdout
+        auth = json.loads(result.stdout)['servers'][0]['auth']
+        assert auth == {'type': 'api_key', 'flow': None, 'api_key_header': 'X-Company-Key'}
+
+    def test_a_spec_without_descriptions_still_describes_every_tool(self):
+        """Plenty of internal specs are generated and carry no prose, which must not blank the field."""
+        result, _ = _run('--spec', str(UNDOCUMENTED_SPEC), '--name', 'u', '--dry-run', '--output', 'json')
+        assert result.exit_code == 0, result.output
+        tools = json.loads(result.stdout)['servers'][0]['tools']
+
+        assert tools, 'the fixture should expose at least one tool'
+        assert all(tool['description'] for tool in tools)
+        assert any(tool['description'].startswith('GET /orders') for tool in tools)
+
+
+def _client_credentials_spec() -> dict:
+    """A spec declaring only clientCredentials, so the flow is resolved rather than configured."""
+    return {
+        'openapi': '3.0.0',
+        'info': {'title': 'Secure', 'version': '1.0.0'},
+        'servers': [{'url': 'https://api.example.com'}],
+        'components': {
+            'securitySchemes': {
+                'oauth': {
+                    'type': 'oauth2',
+                    'flows': {'clientCredentials': {'tokenUrl': 'https://auth.example.com/token', 'scopes': {}}},
+                }
+            }
+        },
+        'security': [{'oauth': []}],
+        'paths': {'/things': {'get': {'operationId': 'listThings', 'responses': {'200': {'description': 'ok'}}}}},
+    }

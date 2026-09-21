@@ -1,3 +1,4 @@
+import json
 import logging
 import typing
 
@@ -23,6 +24,13 @@ logger = logging.getLogger(__name__)
         'Path to a YAML config file with multiple servers. See the README Configuration section '
         'for the full schema (policy, operations, and tool shaping).'
     ),
+)
+@click.option(
+    '--output',
+    type=click.Choice(['text', 'json']),
+    default='text',
+    show_default=True,
+    help='Format for the --dry-run summary. json emits the same facts for a program to consume.',
 )
 @click.option(
     '--dry-run',
@@ -124,6 +132,7 @@ def main(
     spec: str | None,
     config_path: str | None,
     dry_run: bool,
+    output: str,
     name: str,
     base_url: str | None,
     transport: typing.Literal['sse', 'streamable-http', 'stdio'] | None,
@@ -235,7 +244,7 @@ def main(
             click.secho('✗ Invalid', fg='red', bold=True, err=True)
             click.echo(f'  {error}', err=True)
             raise SystemExit(1) from error
-        _echo_dry_run_summary(gateway, config)
+        _echo_dry_run_summary(gateway, config, output)
         return
 
     gateway = Gateway.from_config(config)
@@ -350,8 +359,18 @@ def _dry_run_kv(label: str, value: str) -> None:
     click.echo(f'    {click.style(f"{label:<9}", dim=True)}  {value}')
 
 
+def _shaping_label(tool: ExposedTool) -> str:
+    """Render a tool's shaping as the short label the table column expects."""
+    if not tool.shaping:
+        return 'passthrough'
+    parts = [tool.shaping['params']] if tool.shaping.get('params') else []
+    parts += [key for key in ('request', 'response') if tool.shaping.get(key)]
+    return ', '.join(parts)
+
+
 def _dry_run_tool_table(tools: tuple[ExposedTool, ...]) -> None:
     """Print a server's tools as an aligned table with a dim header row."""
+    labels = {tool.name: _shaping_label(tool) for tool in tools}
     name_width = max([len('NAME'), *(len(tool.name) for tool in tools)])
     method_width = max([len('METHOD'), *(len(tool.method) for tool in tools)])
     path_width = max([len('PATH'), *(len(tool.path) for tool in tools)])
@@ -360,22 +379,27 @@ def _dry_run_tool_table(tools: tuple[ExposedTool, ...]) -> None:
     for tool in tools:
         click.echo(
             f'      {tool.name:<{name_width}}  {tool.method.upper():<{method_width}}  '
-            f'{tool.path:<{path_width}}  {tool.shaping}'
+            f'{tool.path:<{path_width}}  {labels[tool.name]}'
         )
 
 
-def _echo_dry_run_summary(gateway: Gateway, config: GatewayConfig) -> None:
-    """Print a structured, human-readable summary of what the config would serve."""
+def _echo_dry_run_summary(gateway: Gateway, config: GatewayConfig, output: str = 'text') -> None:
+    """Print a summary of what the config would serve, for a reader or for a program."""
     servers = gateway.describe_servers()
+    if output == 'json':
+        click.echo(json.dumps(gateway.describe(), indent=2))
+        return
     total_tools = sum(len(server.tools) for server in servers)
     total_resources = sum(len(server.resource_names) for server in servers)
     counts = f'{len(servers)} server(s), {total_tools} tool(s), {total_resources} resource(s)'
     click.echo(f'{click.style("✓ Valid", fg="green", bold=True)}   {click.style(counts, dim=True)}')
+    # Transport is process-wide, so printing it once per server implied a per-server setting,
+    # and `ServerConfig` has no field for one.
+    _dry_run_kv('transport', config.transport)
     for server in servers:
         click.echo('')
         click.secho(f'  {server.name}', bold=True)
         _dry_run_kv('mount', server.mount_path)
-        _dry_run_kv('transport', config.transport)
         _dry_run_kv('base url', server.base_url)
         _dry_run_kv('auth', server.auth_summary)
         _dry_run_kv('policy', server.policy_summary)

@@ -41,12 +41,24 @@ class ParameterInfo(pydantic.BaseModel):
 
 
 class ExposedTool(typing.NamedTuple):
-    """One tool a server exposes, with a compact label of how it is shaped."""
+    """One tool a server exposes, the counterpart to ``OperationInfo``.
+
+    ``OperationInfo`` is the operation as the spec declares it. This is what the model is shown after naming,
+    filtering and shaping have run, so the names here can differ from the spec's.
+
+    ``input_schema`` is the advertised schema itself rather than a summary of it,
+    because a flattened list loses the nested body properties, enums, defaults and bounds a reviewer needs most.
+
+    ``shaping`` reports what took effect rather than what was declared,
+    and is ``None`` when nothing reshapes the call. A ``params_strategy`` with no ``params`` changes nothing.
+    """
 
     name: str
     method: str
     path: str
-    shaping: str
+    shaping: dict[str, typing.Any] | None = None
+    description: str = ''
+    input_schema: dict[str, typing.Any] | None = None
 
 
 class ParamOverride(pydantic.BaseModel):

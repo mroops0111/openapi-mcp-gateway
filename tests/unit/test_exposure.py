@@ -10,6 +10,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, TextContent
 
+from openapi_mcp_gateway import Gateway
 from openapi_mcp_gateway.exposure import (
     MetaToolGenerator,
     ToolGenerator,
@@ -18,8 +19,12 @@ from openapi_mcp_gateway.exposure import (
     derive_tool_title,
 )
 from openapi_mcp_gateway.exposure._shaping import shape_operation
-from openapi_mcp_gateway.exposure._shared import _sanitize_name, _schema_to_python_type
-from openapi_mcp_gateway.exposure.tool import _shaping_label, merge_tool_annotations
+from openapi_mcp_gateway.exposure._shared import (
+    _sanitize_name,
+    _schema_to_python_type,
+    build_input_schema,
+)
+from openapi_mcp_gateway.exposure.tool import _shaping, merge_tool_annotations
 from openapi_mcp_gateway.openapi import (
     McpIntegration,
     OperationInfo,
@@ -1241,23 +1246,28 @@ class TestHiddenParameterInjection:
             shape_operation(operation)
 
 
-class TestShapingLabel:
-    """``_shaping_label`` summarises a tool override for the dry-run output."""
+class TestShaping:
+    """``_shaping`` reports which reshaping took effect, for a caller rather than for a column."""
 
-    def test_no_override_is_passthrough(self):
-        """No override reshapes nothing, so the label is passthrough."""
-        assert _shaping_label(None) == 'passthrough'
+    def test_no_override_reshapes_nothing(self):
+        assert _shaping(None) is None
 
-    def test_params_strategy_and_transforms_are_listed(self):
-        """Strategy, request, and response each appear in the label."""
+    def test_each_kind_of_reshaping_is_named(self):
         override = ToolOverride.model_validate(
             {'params_strategy': 'replace', 'params': {'x': {'type': 'string'}}, 'request': '{}', 'response': 'r'}
         )
-        assert _shaping_label(override) == 'replace, request, response'
+        assert _shaping(override) == {'params': 'replace', 'request': True, 'response': True}
 
-    def test_name_only_override_is_passthrough(self):
-        """An override that only renames does not reshape the call."""
-        assert _shaping_label(ToolOverride(name='foo')) == 'passthrough'
+    def test_a_rename_alone_does_not_reshape_the_call(self):
+        """The name changes, the request and the schema do not."""
+        assert _shaping(ToolOverride(name='foo')) is None
+
+    def test_a_strategy_without_params_takes_no_effect(self):
+        """The config names a strategy, but with nothing to apply it to it changes nothing.
+
+        Reporting the declaration here would describe the config rather than the result.
+        """
+        assert _shaping(ToolOverride.model_validate({'params_strategy': 'merge'})) is None
 
 
 class TestRequestTransform:
@@ -1730,3 +1740,90 @@ class TestStrategy:
         )
         shaped = shape_operation(op)
         assert shaped.parameters[0].schema_['enum'] == ['a', 'b']
+
+
+class TestExposedToolDetail:
+    """A caller deciding what to expose reads the same contract the model is given."""
+
+    def test_the_description_is_the_one_the_model_receives(self, petstore_json_path):
+        """Reporting anything else would let the preview and the served tool disagree."""
+        gateway = Gateway()
+        gateway.add_server(name='pets', spec=str(petstore_json_path))
+        tool = next(t for t in gateway.describe_servers()[0].tools if t.name == 'get_pet_by_id')
+
+        assert tool.description
+        assert tool.description != tool.name
+
+    def test_the_schema_is_the_advertised_one_rather_than_a_copy(self, petstore_json_path):
+        """A second representation is a second thing to keep in step, so there is only one."""
+        gateway = Gateway()
+        gateway.add_server(name='pets', spec=str(petstore_json_path))
+        bundle = gateway.describe_servers()[0]
+        tool = next(t for t in bundle.tools if t.name == 'get_pet_by_id')
+        operation = next(o for o in bundle.spec.operations if o.operation_id == 'getPetById')
+
+        assert tool.input_schema == build_input_schema(operation)
+
+    def test_a_nested_body_keeps_its_shape(self, tmp_path):
+        """Flattening body properties into a list loses exactly what a reviewer needs.
+
+        An enum, a default, a pattern and a numeric bound all live below the top level,
+        and a summary that reports ``priority: string`` cannot answer what the model may send.
+        """
+        spec = tmp_path / 'spec.json'
+        spec.write_text(json.dumps(_nested_body_spec()))
+        gateway = Gateway()
+        gateway.add_server(name='o', spec=str(spec))
+        schema = gateway.describe_servers()[0].tools[0].input_schema
+
+        assert schema is not None
+        assert schema['properties']['priority']['enum'] == ['low', 'normal', 'rush']
+        assert schema['properties']['priority']['default'] == 'normal'
+        assert schema['properties']['customer']['properties']['id']['type'] == 'integer'
+        assert schema['properties']['items']['items']['properties']['qty']['minimum'] == 1
+        assert schema['required'] == ['customer']
+
+
+def _nested_body_spec() -> dict:
+    return {
+        'openapi': '3.0.0',
+        'info': {'title': 'Orders', 'version': '1.0.0'},
+        'servers': [{'url': 'https://internal.example.com/api'}],
+        'paths': {
+            '/orders': {
+                'post': {
+                    'operationId': 'createOrder',
+                    'requestBody': {
+                        'required': True,
+                        'content': {
+                            'application/json': {
+                                'schema': {
+                                    'type': 'object',
+                                    'required': ['customer'],
+                                    'properties': {
+                                        'customer': {
+                                            'type': 'object',
+                                            'properties': {'id': {'type': 'integer'}},
+                                        },
+                                        'items': {
+                                            'type': 'array',
+                                            'items': {
+                                                'type': 'object',
+                                                'properties': {'qty': {'type': 'integer', 'minimum': 1}},
+                                            },
+                                        },
+                                        'priority': {
+                                            'type': 'string',
+                                            'enum': ['low', 'normal', 'rush'],
+                                            'default': 'normal',
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    'responses': {'201': {'description': 'ok'}},
+                }
+            }
+        },
+    }

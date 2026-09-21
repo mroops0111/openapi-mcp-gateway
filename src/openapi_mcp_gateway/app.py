@@ -26,8 +26,17 @@ _TRANSPORT_SECURITY = TransportSecuritySettings(enable_dns_rebinding_protection=
 
 
 class _ServerBundle(typing.NamedTuple):
-    """Runtime objects for one registered MCP server, mounted onto the gateway FastAPI app."""
+    """One registered MCP server: the objects the gateway mounts, and what those objects would serve.
 
+    The second half is captured at registration because it cannot be recovered afterwards.
+    A tool name comes out of naming and shaping, a base URL may have come from the spec rather than the config,
+    and an OAuth flow may have been resolved rather than declared.
+
+    No credential is held here. ``AuthConfig`` carries the bearer token and the upstream client secret,
+    and this document gets piped, pasted into issues and rendered in a browser, so none should be added.
+    """
+
+    # Mounted onto the FastAPI app.
     name: str
     mount_path: str
     mcp: MCPServer
@@ -36,13 +45,50 @@ class _ServerBundle(typing.NamedTuple):
     auth_settings: AuthSettings | None = None
     token_verifier: typing.Any | None = None
     protected_resource: ProtectedResourceMetadata | None = None
-    # Captured at registration for the --dry-run summary.
+
+    # Read back by ``describe`` and by the dry-run table.
     base_url: str = ''
-    auth_summary: str = 'none'
-    policy_summary: str = 'no filter'
     exposure: str = 'static'
     tools: tuple[ExposedTool, ...] = ()
     resource_names: tuple[str, ...] = ()
+    auth_type: str = 'none'
+    auth_flow: str | None = None
+    auth_api_key_header: str | None = None
+
+    # Prose for the dry-run table only. ``describe`` reports the structured fields above instead,
+    # so that a caller never has to read a sentence to find a value.
+    auth_summary: str = 'none'
+    policy_summary: str = 'no filter'
+
+    def describe(self) -> dict[str, typing.Any]:
+        """Return what this server would serve, as plain JSON-serialisable data.
+
+        Only the registration-time facts, never the live objects, so the result needs no custom encoder.
+        ``Gateway.describe`` is the public entry point.
+        """
+        return {
+            'name': self.name,
+            'mount_path': self.mount_path,
+            'base_url': self.base_url,
+            'auth': {
+                'type': self.auth_type,
+                'flow': self.auth_flow,
+                'api_key_header': self.auth_api_key_header,
+            },
+            'exposure': self.exposure,
+            'tools': [
+                {
+                    'name': tool.name,
+                    'method': tool.method,
+                    'path': tool.path,
+                    'shaping': tool.shaping,
+                    'description': tool.description,
+                    'input_schema': tool.input_schema,
+                }
+                for tool in self.tools
+            ],
+            'resources': list(self.resource_names),
+        }
 
 
 def build_mcp_asgi_app(mcp: MCPServer, transport: str) -> typing.Any:
