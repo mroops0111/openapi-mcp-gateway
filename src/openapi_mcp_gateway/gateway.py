@@ -321,12 +321,9 @@ class Gateway:
     def describe(self) -> dict[str, typing.Any]:
         """Return what this gateway would serve, as plain JSON-serialisable data.
 
-        The stable programmatic counterpart to ``--dry-run --output json``, which emits exactly this
-        document. Prefer it over ``describe_servers`` when the caller wants data rather than the
-        runtime objects, since the bundle type is internal and its shape is not a promise.
-
-        Every name here is the one a model is actually shown, so a caller deciding which operations
-        to expose reads the same strings the model will.
+        The stable counterpart to ``--dry-run --output json``, which emits exactly this document.
+        Prefer it over ``describe_servers``, whose bundle type is internal and whose shape is not a promise.
+        Every name here is the one the model is shown, so a caller reads the same strings the model will.
         """
         servers = self.describe_servers()
         return {

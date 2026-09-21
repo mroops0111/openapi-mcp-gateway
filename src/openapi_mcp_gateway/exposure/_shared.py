@@ -160,8 +160,8 @@ def derive_description(operation: OperationInfo, override_description: str | Non
 def describe_parameters(operation: OperationInfo) -> tuple[ExposedParameter, ...]:
     """Summarise the parameters ``operation`` advertises, in the order the schema lists them.
 
-    Applies the same visibility and deduplication rules as ``build_input_schema``, so a summary and
-    the advertised schema never disagree about which parameters exist or what they are called.
+    Applies the same visibility and deduplication rules as ``build_input_schema``,
+    so a summary and the advertised schema cannot disagree about which parameters exist or what they are called.
     """
     described: list[ExposedParameter] = []
     for parameter_name, parameter in _iter_unique_sanitised_parameters(operation.parameters):

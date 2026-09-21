@@ -47,8 +47,8 @@ class _ServerBundle(typing.NamedTuple):
     def describe(self) -> dict[str, typing.Any]:
         """Return what this server would serve, as plain JSON-serialisable data.
 
-        Only the registration-time facts, never the live objects, so the result survives
-        ``json.dumps`` without a custom encoder.
+        Only the registration-time facts, never the live objects, so the result needs no custom encoder.
+        ``Gateway.describe`` is the public entry point.
         """
         return {
             'name': self.name,
