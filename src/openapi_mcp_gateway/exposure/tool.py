@@ -43,18 +43,20 @@ _CALL_OPERATION_DESCRIPTION = (
 )
 
 
-def _shaping_label(tool_override: ToolOverride | None) -> str:
-    """Summarise a tool override as a short label, or "passthrough" when nothing reshapes the call."""
+def _shaping(tool_override: ToolOverride | None) -> dict[str, typing.Any] | None:
+    """Report which reshaping took effect, or ``None`` when the call passes through untouched.
+
+    A ``params_strategy`` declared without ``params`` beside it reshapes nothing, so it is absent
+    here even though the config names it.
+    """
     if tool_override is None:
-        return 'passthrough'
-    parts: list[str] = []
-    if tool_override.params and tool_override.params_strategy:
-        parts.append(tool_override.params_strategy)
-    if tool_override.request:
-        parts.append('request')
-    if tool_override.response:
-        parts.append('response')
-    return ', '.join(parts) if parts else 'passthrough'
+        return None
+    shaping: dict[str, typing.Any] = {
+        'params': tool_override.params_strategy if tool_override.params and tool_override.params_strategy else None,
+        'request': bool(tool_override.request),
+        'response': bool(tool_override.response),
+    }
+    return shaping if any(shaping.values()) else None
 
 
 def derive_tool_title(operation: OperationInfo) -> str | None:
@@ -245,7 +247,7 @@ class ToolGenerator:
                     name,
                     shaped_operation.method,
                     shaped_operation.path,
-                    _shaping_label(tool_override),
+                    _shaping(tool_override),
                     description=description,
                     input_schema=input_schema,
                 )
@@ -290,11 +292,10 @@ class MetaToolGenerator:
             len(self._registry),
             self.mcp.name,
         )
-        operation_count = len(self._registry)
         return [
-            ExposedTool('list_operations', '-', '-', f'dynamic, {operation_count} operation(s)'),
-            ExposedTool('get_operation', '-', '-', 'dynamic'),
-            ExposedTool('call_operation', '-', '-', 'dynamic'),
+            ExposedTool('list_operations', '-', '-'),
+            ExposedTool('get_operation', '-', '-'),
+            ExposedTool('call_operation', '-', '-'),
         ]
 
     def _bind_meta_tools(self) -> None:

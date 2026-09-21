@@ -48,12 +48,15 @@ class ExposedTool(typing.NamedTuple):
 
     ``input_schema`` is the advertised schema itself rather than a summary of it. A flattened list would
     lose nested body properties, enums, defaults and bounds, which are the parts a reviewer needs most.
+
+    ``shaping`` is ``None`` when nothing reshapes the call, and otherwise reports what took effect
+    rather than what was declared. A ``params_strategy`` with no ``params`` beside it changes nothing.
     """
 
     name: str
     method: str
     path: str
-    shaping: str
+    shaping: dict[str, typing.Any] | None = None
     description: str = ''
     input_schema: dict[str, typing.Any] | None = None
 

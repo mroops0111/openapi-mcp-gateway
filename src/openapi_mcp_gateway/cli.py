@@ -359,8 +359,18 @@ def _dry_run_kv(label: str, value: str) -> None:
     click.echo(f'    {click.style(f"{label:<9}", dim=True)}  {value}')
 
 
+def _shaping_label(tool: ExposedTool) -> str:
+    """Render a tool's shaping as the short label the table column expects."""
+    if not tool.shaping:
+        return 'passthrough'
+    parts = [tool.shaping['params']] if tool.shaping.get('params') else []
+    parts += [key for key in ('request', 'response') if tool.shaping.get(key)]
+    return ', '.join(parts)
+
+
 def _dry_run_tool_table(tools: tuple[ExposedTool, ...]) -> None:
     """Print a server's tools as an aligned table with a dim header row."""
+    labels = {tool.name: _shaping_label(tool) for tool in tools}
     name_width = max([len('NAME'), *(len(tool.name) for tool in tools)])
     method_width = max([len('METHOD'), *(len(tool.method) for tool in tools)])
     path_width = max([len('PATH'), *(len(tool.path) for tool in tools)])
@@ -369,7 +379,7 @@ def _dry_run_tool_table(tools: tuple[ExposedTool, ...]) -> None:
     for tool in tools:
         click.echo(
             f'      {tool.name:<{name_width}}  {tool.method.upper():<{method_width}}  '
-            f'{tool.path:<{path_width}}  {tool.shaping}'
+            f'{tool.path:<{path_width}}  {labels[tool.name]}'
         )
 
 

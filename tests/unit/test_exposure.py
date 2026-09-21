@@ -24,7 +24,7 @@ from openapi_mcp_gateway.exposure._shared import (
     _schema_to_python_type,
     build_input_schema,
 )
-from openapi_mcp_gateway.exposure.tool import _shaping_label, merge_tool_annotations
+from openapi_mcp_gateway.exposure.tool import _shaping, merge_tool_annotations
 from openapi_mcp_gateway.openapi import (
     McpIntegration,
     OperationInfo,
@@ -1246,23 +1246,28 @@ class TestHiddenParameterInjection:
             shape_operation(operation)
 
 
-class TestShapingLabel:
-    """``_shaping_label`` summarises a tool override for the dry-run output."""
+class TestShaping:
+    """``_shaping`` reports which reshaping took effect, for a caller rather than for a column."""
 
-    def test_no_override_is_passthrough(self):
-        """No override reshapes nothing, so the label is passthrough."""
-        assert _shaping_label(None) == 'passthrough'
+    def test_no_override_reshapes_nothing(self):
+        assert _shaping(None) is None
 
-    def test_params_strategy_and_transforms_are_listed(self):
-        """Strategy, request, and response each appear in the label."""
+    def test_each_kind_of_reshaping_is_named(self):
         override = ToolOverride.model_validate(
             {'params_strategy': 'replace', 'params': {'x': {'type': 'string'}}, 'request': '{}', 'response': 'r'}
         )
-        assert _shaping_label(override) == 'replace, request, response'
+        assert _shaping(override) == {'params': 'replace', 'request': True, 'response': True}
 
-    def test_name_only_override_is_passthrough(self):
-        """An override that only renames does not reshape the call."""
-        assert _shaping_label(ToolOverride(name='foo')) == 'passthrough'
+    def test_a_rename_alone_does_not_reshape_the_call(self):
+        """The name changes, the request and the schema do not."""
+        assert _shaping(ToolOverride(name='foo')) is None
+
+    def test_a_strategy_without_params_takes_no_effect(self):
+        """The config names a strategy, but with nothing to apply it to it changes nothing.
+
+        Reporting the declaration here would describe the config rather than the result.
+        """
+        assert _shaping(ToolOverride.model_validate({'params_strategy': 'merge'})) is None
 
 
 class TestRequestTransform:
