@@ -26,8 +26,18 @@ _TRANSPORT_SECURITY = TransportSecuritySettings(enable_dns_rebinding_protection=
 
 
 class _ServerBundle(typing.NamedTuple):
-    """Runtime objects for one registered MCP server, mounted onto the gateway FastAPI app."""
+    """One registered MCP server: the objects the gateway mounts, and what those objects would serve.
 
+    The second half is captured at registration because it cannot be recovered afterwards. A tool
+    name comes out of naming and shaping, a base URL may have come from the spec rather than the
+    config, and an OAuth flow may have been resolved rather than declared.
+
+    No credential is held here, and none should be added. ``AuthConfig`` carries the bearer token
+    and the upstream client secret, and this feeds a document that gets piped, pasted into issues
+    and rendered in a browser.
+    """
+
+    # Mounted onto the FastAPI app.
     name: str
     mount_path: str
     mcp: MCPServer
@@ -36,21 +46,20 @@ class _ServerBundle(typing.NamedTuple):
     auth_settings: AuthSettings | None = None
     token_verifier: typing.Any | None = None
     protected_resource: ProtectedResourceMetadata | None = None
-    # Captured at registration for the --dry-run summary.
+
+    # Read back by ``describe`` and by the dry-run table.
     base_url: str = ''
-    auth_summary: str = 'none'
-    policy_summary: str = 'no filter'
-    # Descriptive auth fields only. AuthConfig also carries the bearer token and the upstream client
-    # secret, and this bundle feeds a document that gets piped, pasted and rendered in a browser.
-    auth_type: str = 'none'
-    auth_api_key_header: str | None = None
-    auth_flow: str | None = None
-    policy_allow: tuple[str, ...] = ()
-    policy_deny: tuple[str, ...] = ()
-    policy_annotated_only: bool = False
     exposure: str = 'static'
     tools: tuple[ExposedTool, ...] = ()
     resource_names: tuple[str, ...] = ()
+    auth_type: str = 'none'
+    auth_flow: str | None = None
+    auth_api_key_header: str | None = None
+
+    # Prose for the dry-run table only. ``describe`` reports the structured fields above instead,
+    # so that a caller never has to read a sentence to find a value.
+    auth_summary: str = 'none'
+    policy_summary: str = 'no filter'
 
     def describe(self) -> dict[str, typing.Any]:
         """Return what this server would serve, as plain JSON-serialisable data.

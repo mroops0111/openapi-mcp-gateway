@@ -510,9 +510,9 @@ class Gateway:
             transport=transport,
         )
         exposed_tools: list[ExposedTool] = []
-        # A pattern matching nothing is almost always a typo, and the result is only ever a shorter
-        # list that nobody notices is short. Warned at load so it reaches every caller, not only the
-        # ones who read a description document.
+        # A policy pattern that matches no operation at all is almost always a typo,
+        # and the result is only ever a shorter list that nobody notices is short.
+        # Warned at load rather than reported in the document, so that it reaches every caller.
         stray_patterns = unmatched_patterns(spec.operations, server_config.policy.allow, server_config.policy.deny)
         if stray_patterns:
             logger.warning(
@@ -571,9 +571,6 @@ class Gateway:
                 ),
                 auth_flow=auth.flow_type,
                 policy_summary=_policy_summary(server_config.policy),
-                policy_allow=tuple(server_config.policy.allow or ()),
-                policy_deny=tuple(server_config.policy.deny or ()),
-                policy_annotated_only=server_config.policy.annotated_only,
                 exposure=server_config.exposure.style,
                 tools=tuple(exposed_tools),
                 resource_names=tuple(resource_names),

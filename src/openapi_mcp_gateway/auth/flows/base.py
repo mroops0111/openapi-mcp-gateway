@@ -53,8 +53,8 @@ class OAuthFlowSetup:
     verifier: typing.Any | None = None
     protected_resource: ProtectedResourceMetadata | None = None
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
-    # The flow that was resolved, which is not always the one the config named. Set by the
-    # factory so that every handler stays unaware of it.
+    # The flow that was resolved, which is not always the one the config named.
+    # Set by the factory, so that every handler stays unaware of it.
     flow_type: str | None = None
 
 
