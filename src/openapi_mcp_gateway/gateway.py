@@ -32,7 +32,7 @@ from .fastapi import (
     warn_on_mixed_security_schemes,
 )
 from .openapi import ExposedTool, McpIntegration, OpenAPISpec, OperationInfo, load_spec, parse_spec
-from .policy import filter_operations
+from .policy import filter_operations, unmatched_patterns
 from .settings import AuthConfig, ExposureConfig, GatewayConfig, PolicyConfig, ServerConfig
 from .stores import create_store
 
@@ -560,12 +560,17 @@ class Gateway:
                 base_url=base_url,
                 auth_summary=_auth_summary(server_config.auth),
                 auth_type=server_config.auth.type,
-                auth_api_key_header=(server_config.auth.api_key_header if server_config.auth.type == 'api_key' else ''),
-                auth_flow=server_config.auth.flow or '',
+                auth_api_key_header=(
+                    server_config.auth.api_key_header if server_config.auth.type == 'api_key' else None
+                ),
+                auth_flow=server_config.auth.flow,
                 policy_summary=_policy_summary(server_config.policy),
                 policy_allow=tuple(server_config.policy.allow or ()),
                 policy_deny=tuple(server_config.policy.deny or ()),
                 policy_annotated_only=server_config.policy.annotated_only,
+                policy_unmatched=unmatched_patterns(
+                    spec.operations, server_config.policy.allow, server_config.policy.deny
+                ),
                 exposure=server_config.exposure.style,
                 tools=tuple(exposed_tools),
                 resource_names=tuple(resource_names),

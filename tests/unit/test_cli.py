@@ -394,7 +394,35 @@ class TestDryRunJsonOutput:
         assert server['policy']['allow'] == []
         assert server['policy']['annotated_only'] is False
         assert server['auth']['type'] == 'none'
+        assert server['auth']['flow'] is None, 'absent, not empty'
         assert server['policy']['summary'], 'the readable form is kept alongside, not replaced'
+
+    def test_a_pattern_matching_nothing_is_named(self, tmp_path: pathlib.Path):
+        """A typo in `allow` is otherwise invisible, since the result is just a shorter list.
+
+        `policy.allow` echoes the request, so on its own it cannot say whether an entry did any
+        work. Reporting what matched nothing is what turns the echo into information.
+        """
+        config = tmp_path / 'config.yml'
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    'servers': [
+                        {
+                            'name': 'pets',
+                            'spec': str(PETSTORE_SPEC),
+                            'policy': {'allow': ['get*', 'thisMatchesNothing', 'deletePet']},
+                        }
+                    ]
+                }
+            )
+        )
+        result, _ = _run('--config', str(config), '--dry-run', '--output', 'json')
+        assert result.exit_code == 0, result.output
+        server = json.loads(result.stdout)['servers'][0]
+
+        assert server['policy']['unmatched'] == ['thisMatchesNothing']
+        assert {tool['name'] for tool in server['tools']} == {'get_pet_by_id', 'delete_pet'}
 
     def test_no_credential_reaches_the_document(self, tmp_path: pathlib.Path):
         """This output gets piped, pasted into issues and rendered in a browser.
@@ -428,7 +456,7 @@ class TestDryRunJsonOutput:
         auth = json.loads(result.stdout)['servers'][0]['auth']
         assert auth == {
             'type': 'api_key',
-            'flow': '',
+            'flow': None,
             'api_key_header': 'X-Company-Key',
             'summary': 'api_key (header X-Company-Key)',
         }

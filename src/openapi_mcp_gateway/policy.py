@@ -17,6 +17,20 @@ def matches_pattern(operation: OperationInfo, pattern: str) -> bool:
     return fnmatch.fnmatch(operation.operation_id, pattern)
 
 
+def unmatched_patterns(operations: list[OperationInfo], *pattern_lists: list[str] | None) -> tuple[str, ...]:
+    """Return the patterns that matched no operation at all, in the order they were written.
+
+    A pattern matching nothing is almost always a typo, and it is invisible in the result:
+    the filtered list simply lacks an operation nobody notices is missing.
+    """
+    unmatched: list[str] = []
+    for patterns in pattern_lists:
+        for pattern in patterns or ():
+            if not any(matches_pattern(operation, pattern) for operation in operations):
+                unmatched.append(pattern)
+    return tuple(unmatched)
+
+
 def filter_operations(
     operations: list[OperationInfo],
     allow: list[str] | None = None,
