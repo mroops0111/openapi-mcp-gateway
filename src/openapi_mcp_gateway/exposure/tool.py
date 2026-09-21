@@ -44,11 +44,7 @@ _CALL_OPERATION_DESCRIPTION = (
 
 
 def _shaping(tool_override: ToolOverride | None) -> dict[str, typing.Any] | None:
-    """Report which reshaping took effect, or ``None`` when the call passes through untouched.
-
-    A ``params_strategy`` declared without ``params`` beside it reshapes nothing, so it is absent
-    here even though the config names it.
-    """
+    """Report which reshaping took effect, or ``None`` when the call passes through untouched."""
     if tool_override is None:
         return None
     shaping: dict[str, typing.Any] = {

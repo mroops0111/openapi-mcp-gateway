@@ -1767,8 +1767,8 @@ class TestExposedToolDetail:
     def test_a_nested_body_keeps_its_shape(self, tmp_path):
         """Flattening body properties into a list loses exactly what a reviewer needs.
 
-        An enum, a default, a pattern and a numeric bound all live below the top level, and a
-        summary that reports ``priority: string`` cannot answer what the model may send.
+        An enum, a default, a pattern and a numeric bound all live below the top level,
+        and a summary that reports ``priority: string`` cannot answer what the model may send.
         """
         spec = tmp_path / 'spec.json'
         spec.write_text(json.dumps(_nested_body_spec()))

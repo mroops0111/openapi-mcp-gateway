@@ -20,8 +20,8 @@ def matches_pattern(operation: OperationInfo, pattern: str) -> bool:
 def unmatched_patterns(operations: list[OperationInfo], *pattern_lists: list[str] | None) -> tuple[str, ...]:
     """Return the patterns that matched no operation at all, in the order they were written.
 
-    A pattern matching nothing is almost always a typo, and it is invisible in the result:
-    the filtered list simply lacks an operation nobody notices is missing.
+    A pattern matching nothing is almost always a typo, and it is invisible in the result,
+    since the filtered list simply lacks an operation nobody notices is missing.
     """
     unmatched: list[str] = []
     for patterns in pattern_lists:

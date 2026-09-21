@@ -389,8 +389,8 @@ class TestDryRunJsonOutput:
     def test_the_document_carries_no_field_the_caller_could_derive(self):
         """Echoing the config, a prose summary and a count are all things the reader already has.
 
-        They cost bytes, add noise to a diff between two versions of a config, and can disagree
-        with the data they were derived from.
+        They cost bytes, add noise to a diff between two versions of a config,
+        and can disagree with the data they were derived from.
         """
         document = self._describe()
         server = document['servers'][0]
@@ -405,8 +405,8 @@ class TestDryRunJsonOutput:
     def test_a_pattern_matching_nothing_is_warned_about(self, tmp_path: pathlib.Path):
         """A typo in `allow` is otherwise invisible, since the result is just a shorter list.
 
-        Warned at load rather than reported in the document, so it reaches everyone who starts the
-        gateway and not only the callers who ask for JSON and then read that field.
+        Warned at load rather than reported in the document, so it reaches everyone who starts the gateway,
+        not only the callers who ask for JSON and then read that field.
         """
         config = tmp_path / 'config.yml'
         config.write_text(
@@ -433,8 +433,8 @@ class TestDryRunJsonOutput:
     def test_the_reported_flow_is_the_one_that_was_resolved(self, tmp_path: pathlib.Path):
         """A config naming no flow still runs one, picked from the spec.
 
-        Echoing `auth.flow` reported null while client_credentials was live, which describes the
-        config rather than what the server does.
+        Echoing `auth.flow` reported null while client_credentials was live,
+        which describes the config rather than what the server does.
         """
         spec = tmp_path / 'spec.json'
         spec.write_text(json.dumps(_client_credentials_spec()))
@@ -462,9 +462,9 @@ class TestDryRunJsonOutput:
     def test_no_credential_reaches_the_document(self, tmp_path: pathlib.Path):
         """This output gets piped, pasted into issues and rendered in a browser.
 
-        ``AuthConfig`` also carries the bearer token and the upstream client secret, so the
-        descriptive fields are an allow list rather than a dump, and this test is what holds
-        that line when someone later adds a field.
+        ``AuthConfig`` also carries the bearer token and the upstream client secret,
+        so the descriptive fields are an allow list rather than a dump,
+        and this test is what holds that line when someone later adds a field.
         """
         config = tmp_path / 'config.yml'
         config.write_text(

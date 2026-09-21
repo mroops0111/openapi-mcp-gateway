@@ -46,11 +46,11 @@ class ExposedTool(typing.NamedTuple):
     ``OperationInfo`` is the operation as the spec declares it. This is what the model is shown after naming,
     filtering and shaping have run, so the names here can differ from the spec's.
 
-    ``input_schema`` is the advertised schema itself rather than a summary of it. A flattened list would
-    lose nested body properties, enums, defaults and bounds, which are the parts a reviewer needs most.
+    ``input_schema`` is the advertised schema itself rather than a summary of it,
+    because a flattened list loses the nested body properties, enums, defaults and bounds a reviewer needs most.
 
-    ``shaping`` is ``None`` when nothing reshapes the call, and otherwise reports what took effect
-    rather than what was declared. A ``params_strategy`` with no ``params`` beside it changes nothing.
+    ``shaping`` reports what took effect rather than what was declared,
+    and is ``None`` when nothing reshapes the call. A ``params_strategy`` with no ``params`` changes nothing.
     """
 
     name: str

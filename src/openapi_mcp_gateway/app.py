@@ -28,13 +28,12 @@ _TRANSPORT_SECURITY = TransportSecuritySettings(enable_dns_rebinding_protection=
 class _ServerBundle(typing.NamedTuple):
     """One registered MCP server: the objects the gateway mounts, and what those objects would serve.
 
-    The second half is captured at registration because it cannot be recovered afterwards. A tool
-    name comes out of naming and shaping, a base URL may have come from the spec rather than the
-    config, and an OAuth flow may have been resolved rather than declared.
+    The second half is captured at registration because it cannot be recovered afterwards.
+    A tool name comes out of naming and shaping, a base URL may have come from the spec rather than the config,
+    and an OAuth flow may have been resolved rather than declared.
 
-    No credential is held here, and none should be added. ``AuthConfig`` carries the bearer token
-    and the upstream client secret, and this feeds a document that gets piped, pasted into issues
-    and rendered in a browser.
+    No credential is held here. ``AuthConfig`` carries the bearer token and the upstream client secret,
+    and this document gets piped, pasted into issues and rendered in a browser, so none should be added.
     """
 
     # Mounted onto the FastAPI app.
