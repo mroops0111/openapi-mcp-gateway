@@ -48,7 +48,6 @@ class _ServerBundle(typing.NamedTuple):
     policy_allow: tuple[str, ...] = ()
     policy_deny: tuple[str, ...] = ()
     policy_annotated_only: bool = False
-    policy_unmatched: tuple[str, ...] = ()
     exposure: str = 'static'
     tools: tuple[ExposedTool, ...] = ()
     resource_names: tuple[str, ...] = ()
@@ -68,10 +67,6 @@ class _ServerBundle(typing.NamedTuple):
                 'flow': self.auth_flow,
                 'api_key_header': self.auth_api_key_header,
             },
-            # The config the caller already holds is not echoed. What it cannot work out for
-            # itself is which of its patterns matched no operation, which is almost always a typo
-            # and is otherwise invisible, since the result is only ever a shorter list.
-            'unmatched_policy_patterns': list(self.policy_unmatched),
             'exposure': self.exposure,
             'tools': [
                 {

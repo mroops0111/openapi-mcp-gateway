@@ -402,11 +402,11 @@ class TestDryRunJsonOutput:
         assert server['auth']['type'] == 'none'
         assert server['auth']['flow'] is None, 'absent, not empty'
 
-    def test_a_pattern_matching_nothing_is_named(self, tmp_path: pathlib.Path):
+    def test_a_pattern_matching_nothing_is_warned_about(self, tmp_path: pathlib.Path):
         """A typo in `allow` is otherwise invisible, since the result is just a shorter list.
 
-        `policy.allow` echoes the request, so on its own it cannot say whether an entry did any
-        work. Reporting what matched nothing is what turns the echo into information.
+        Warned at load rather than reported in the document, so it reaches everyone who starts the
+        gateway and not only the callers who ask for JSON and then read that field.
         """
         config = tmp_path / 'config.yml'
         config.write_text(
@@ -424,9 +424,10 @@ class TestDryRunJsonOutput:
         )
         result, _ = _run('--config', str(config), '--dry-run', '--output', 'json')
         assert result.exit_code == 0, result.output
-        server = json.loads(result.stdout)['servers'][0]
 
-        assert server['unmatched_policy_patterns'] == ['thisMatchesNothing']
+        assert 'thisMatchesNothing' in result.stderr
+        assert 'matched no operation' in result.stderr
+        server = json.loads(result.stdout)['servers'][0]
         assert {tool['name'] for tool in server['tools']} == {'get_pet_by_id', 'delete_pet'}
 
     def test_no_credential_reaches_the_document(self, tmp_path: pathlib.Path):
