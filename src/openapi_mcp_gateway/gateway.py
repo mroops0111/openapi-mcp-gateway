@@ -318,6 +318,28 @@ class Gateway:
         """Return the registered server bundles, for a dry-run summary of what would be served."""
         return tuple(self._servers)
 
+    def describe(self) -> dict[str, typing.Any]:
+        """Return what this gateway would serve, as plain JSON-serialisable data.
+
+        The stable programmatic counterpart to ``--dry-run --output json``, which emits exactly this
+        document. Prefer it over ``describe_servers`` when the caller wants data rather than the
+        runtime objects, since the bundle type is internal and its shape is not a promise.
+
+        Every name here is the one a model is actually shown, so a caller deciding which operations
+        to expose reads the same strings the model will.
+        """
+        servers = self.describe_servers()
+        return {
+            'valid': True,
+            'transport': self._config.transport,
+            'servers': [server.describe() for server in servers],
+            'totals': {
+                'servers': len(servers),
+                'tools': sum(len(server.tools) for server in servers),
+                'resources': sum(len(server.resource_names) for server in servers),
+            },
+        }
+
     def run(
         self,
         transport: str | None = None,

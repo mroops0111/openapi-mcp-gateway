@@ -1,5 +1,6 @@
 from .fastapi import mark_tool, mcp_tool
 from .gateway import Gateway
+from .openapi import ExposedParameter, ExposedTool
 from .settings import (
     AuthConfig,
     CORSConfig,
@@ -20,6 +21,8 @@ from .stores import MemoryTokenStore, TokenStore
 __all__ = [
     'AuthConfig',
     'CORSConfig',
+    'ExposedParameter',
+    'ExposedTool',
     'ExposureConfig',
     'Gateway',
     'GatewayConfig',

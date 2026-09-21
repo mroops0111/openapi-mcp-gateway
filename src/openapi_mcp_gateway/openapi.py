@@ -41,9 +41,11 @@ class ParameterInfo(pydantic.BaseModel):
 
 
 class ExposedParameter(typing.NamedTuple):
-    """One LLM-facing parameter of an exposed tool.
+    """One parameter as the model is advertised it, the counterpart to ``ParameterInfo``.
 
-    ``name`` is the sanitised name the model is shown, which is not always the name the spec uses.
+    ``ParameterInfo`` is what the spec declares. This is what survives shaping and reaches the
+    model, so ``name`` is the sanitised form, a hidden parameter has no entry at all, and the
+    fields are limited to what a caller needs in order to decide whether to expose an operation.
     """
 
     name: str
@@ -53,10 +55,11 @@ class ExposedParameter(typing.NamedTuple):
 
 
 class ExposedTool(typing.NamedTuple):
-    """One tool a server exposes, with a compact label of how it is shaped.
+    """One tool a server exposes, the counterpart to ``OperationInfo``.
 
-    ``description`` and ``parameters`` carry what the model is actually advertised, so a caller
-    deciding whether to expose an operation reads the same thing the model will.
+    ``OperationInfo`` is the operation as the spec declares it. This is what the model is
+    advertised after naming, filtering and shaping have run, which is why ``name`` and every
+    parameter name here can differ from the spec's.
     """
 
     name: str

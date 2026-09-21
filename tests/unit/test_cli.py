@@ -9,7 +9,7 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from openapi_mcp_gateway import cli
+from openapi_mcp_gateway import Gateway, cli
 from openapi_mcp_gateway.gateway import _policy_summary
 from openapi_mcp_gateway.settings import GatewayConfig, PolicyConfig
 
@@ -346,6 +346,13 @@ class TestDryRunJsonOutput:
 
         assert without.stdout == explicit.stdout
         assert 'Valid' in without.stdout
+
+    def test_the_cli_and_the_library_emit_the_same_document(self):
+        """Two implementations would drift, and the point of this feature is that they cannot."""
+        gateway = Gateway()
+        gateway.add_server(name='pets', spec=str(PETSTORE_SPEC))
+
+        assert self._describe() == gateway.describe()
 
     def test_stdout_carries_the_document_and_nothing_else(self):
         """The point of the option is `... --output json | jq`, which a stray log line would break."""

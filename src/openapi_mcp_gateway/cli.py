@@ -377,21 +377,7 @@ def _echo_dry_run_summary(gateway: Gateway, config: GatewayConfig, output: str =
     """Print a summary of what the config would serve, for a reader or for a program."""
     servers = gateway.describe_servers()
     if output == 'json':
-        click.echo(
-            json.dumps(
-                {
-                    'valid': True,
-                    'transport': config.transport,
-                    'servers': [server.describe() for server in servers],
-                    'totals': {
-                        'servers': len(servers),
-                        'tools': sum(len(server.tools) for server in servers),
-                        'resources': sum(len(server.resource_names) for server in servers),
-                    },
-                },
-                indent=2,
-            )
-        )
+        click.echo(json.dumps(gateway.describe(), indent=2))
         return
     total_tools = sum(len(server.tools) for server in servers)
     total_resources = sum(len(server.resource_names) for server in servers)

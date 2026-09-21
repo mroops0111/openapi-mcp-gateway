@@ -475,47 +475,18 @@ Configure via the `logging.*` YAML keys or via CLI flags (`--log-level`, `--log-
 
 ### Inspecting What a Config Would Serve
 
-`--dry-run` validates a config and prints what it would expose, without starting a server.
-
-```bash
-uvx openapi-mcp-gateway --config servers.yml --dry-run
-```
-
-```
-✓ Valid   1 server(s), 19 tool(s), 0 resource(s)
-
-  petstore
-    mount      /petstore
-    tools      19
-      NAME             METHOD  PATH          SHAPING
-      add_pet          POST    /pet          passthrough
-      get_pet_by_id    GET     /pet/{petId}  passthrough
-```
-
-Add `--output json` for the same facts in a form a program can consume, including each tool's
-description and its parameters. The document goes to stdout and logging stays on stderr, so it
-pipes straight into `jq`.
+`--dry-run` validates a config and prints what it would expose, without starting a server. Add
+`--output json` for the same facts as data, including each tool's description and parameters. The
+document goes to stdout and logging stays on stderr, so it pipes into `jq`. `Gateway.describe()`
+returns the identical document from Python.
 
 ```bash
 uvx openapi-mcp-gateway --config servers.yml --dry-run --output json | jq '.totals'
 ```
 
-```json
-{
-  "name": "get_pet_by_id",
-  "method": "get",
-  "path": "/pet/{petId}",
-  "shaping": "passthrough",
-  "description": "Returns a single pet",
-  "parameters": [{"name": "petId", "location": "path", "required": true, "type": "integer"}]
-}
-```
-
-Tool and parameter names are the sanitised ones the model is actually shown, which are not always
-the names the spec uses: an operation with no `operationId` is named from its method and path, and
-`include-items` reaches the model as `include_items`. That makes the JSON output usable as a CI
-gate, asserting that a config change still exposes the operations you expect and has not quietly
-turned on a destructive one.
+Names in the output are the sanitised ones the model is shown, which are not always the spec's:
+an operation with no `operationId` is named from its method and path, and `include-items` reaches
+the model as `include_items`.
 
 ### Authoring Configs with AI
 
