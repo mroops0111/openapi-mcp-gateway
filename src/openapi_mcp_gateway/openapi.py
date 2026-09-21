@@ -40,24 +40,14 @@ class ParameterInfo(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(populate_by_name=True, extra='forbid')
 
 
-class ExposedParameter(typing.NamedTuple):
-    """One parameter as the model is shown it, the counterpart to ``ParameterInfo``.
-
-    ``ParameterInfo`` is what the spec declares. This is what survives shaping and reaches the model,
-    so ``name`` is the sanitised form and a hidden parameter has no entry at all.
-    """
-
-    name: str
-    location: str
-    required: bool
-    type: str = ''
-
-
 class ExposedTool(typing.NamedTuple):
     """One tool a server exposes, the counterpart to ``OperationInfo``.
 
     ``OperationInfo`` is the operation as the spec declares it. This is what the model is shown after naming,
     filtering and shaping have run, so the names here can differ from the spec's.
+
+    ``input_schema`` is the advertised schema itself rather than a summary of it. A flattened list would
+    lose nested body properties, enums, defaults and bounds, which are the parts a reviewer needs most.
     """
 
     name: str
@@ -65,7 +55,7 @@ class ExposedTool(typing.NamedTuple):
     path: str
     shaping: str
     description: str = ''
-    parameters: tuple[ExposedParameter, ...] = ()
+    input_schema: dict[str, typing.Any] | None = None
 
 
 class ParamOverride(pydantic.BaseModel):

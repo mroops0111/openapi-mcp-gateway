@@ -84,7 +84,7 @@ class _ServerBundle(typing.NamedTuple):
                     'path': tool.path,
                     'shaping': tool.shaping,
                     'description': tool.description,
-                    'parameters': [parameter._asdict() for parameter in tool.parameters],
+                    'input_schema': tool.input_schema,
                 }
                 for tool in self.tools
             ],

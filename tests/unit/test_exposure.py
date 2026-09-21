@@ -23,7 +23,6 @@ from openapi_mcp_gateway.exposure._shared import (
     _sanitize_name,
     _schema_to_python_type,
     build_input_schema,
-    describe_parameters,
 )
 from openapi_mcp_gateway.exposure.tool import _shaping_label, merge_tool_annotations
 from openapi_mcp_gateway.openapi import (
@@ -1739,10 +1738,7 @@ class TestStrategy:
 
 
 class TestExposedToolDetail:
-    """A caller deciding what to expose reads the same strings the model will be shown."""
-
-    def _operation(self, *parameters: ParameterInfo, **fields) -> OperationInfo:
-        return OperationInfo(operation_id='get_x', method='get', path='/x', parameters=list(parameters), **fields)
+    """A caller deciding what to expose reads the same contract the model is given."""
 
     def test_the_description_is_the_one_the_model_receives(self, petstore_json_path):
         """Reporting anything else would let the preview and the served tool disagree."""
@@ -1753,48 +1749,76 @@ class TestExposedToolDetail:
         assert tool.description
         assert tool.description != tool.name
 
-    def test_parameters_use_the_sanitised_names(self):
-        """The spec name and the advertised name differ often enough that showing the spec's misleads."""
-        described = describe_parameters(
-            self._operation(
-                ParameterInfo(name='include-items', location='query', schema={'type': 'boolean'}),
-                ParameterInfo(name='X-Trace-Id', location='header', schema={'type': 'string'}),
-            )
-        )
-        by_name = {parameter.name: parameter for parameter in described}
+    def test_the_schema_is_the_advertised_one_rather_than_a_copy(self, petstore_json_path):
+        """A second representation is a second thing to keep in step, so there is only one."""
+        gateway = Gateway()
+        gateway.add_server(name='pets', spec=str(petstore_json_path))
+        bundle = gateway.describe_servers()[0]
+        tool = next(t for t in bundle.tools if t.name == 'get_pet_by_id')
+        operation = next(o for o in bundle.spec.operations if o.operation_id == 'getPetById')
 
-        assert set(by_name) == {'include_items', 'X_Trace_Id'}
-        assert by_name['include_items'].location == 'query'
-        assert by_name['include_items'].required is False
-        assert by_name['X_Trace_Id'].type == 'string'
+        assert tool.input_schema == build_input_schema(operation)
 
-    def test_a_parameter_with_no_schema_is_reported_as_a_string(self):
-        """``build_input_schema`` makes the same assumption, and the two must not disagree."""
-        described = describe_parameters(self._operation(ParameterInfo(name='q', location='query')))
+    def test_a_nested_body_keeps_its_shape(self, tmp_path):
+        """Flattening body properties into a list loses exactly what a reviewer needs.
 
-        assert described[0].type == 'string'
+        An enum, a default, a pattern and a numeric bound all live below the top level, and a
+        summary that reports ``priority: string`` cannot answer what the model may send.
+        """
+        spec = tmp_path / 'spec.json'
+        spec.write_text(json.dumps(_nested_body_spec()))
+        gateway = Gateway()
+        gateway.add_server(name='o', spec=str(spec))
+        schema = gateway.describe_servers()[0].tools[0].input_schema
 
-    def test_a_hidden_parameter_is_not_reported(self):
-        """A parameter the model never sees must not appear in a summary of what it sees."""
-        operation = self._operation(
-            ParameterInfo(name='visible', location='query', schema={'type': 'string'}),
-            ParameterInfo(name='internal', location='query', schema={'type': 'string'}),
-            x_mcp_integration=McpIntegration.model_validate(
-                {'tool': {'params_strategy': 'merge', 'params': {'internal': {'hidden': True}}}}
-            ),
-        )
-        described = describe_parameters(shape_operation(operation))
+        assert schema is not None
+        assert schema['properties']['priority']['enum'] == ['low', 'normal', 'rush']
+        assert schema['properties']['priority']['default'] == 'normal'
+        assert schema['properties']['customer']['properties']['id']['type'] == 'integer'
+        assert schema['properties']['items']['items']['properties']['qty']['minimum'] == 1
+        assert schema['required'] == ['customer']
 
-        assert [parameter.name for parameter in described] == ['visible']
 
-    def test_the_summary_agrees_with_the_advertised_schema(self):
-        """These are two views of one contract, so a parameter in one must be in the other."""
-        operation = self._operation(
-            ParameterInfo(name='order-id', location='path', required=True, schema={'type': 'integer'}),
-            ParameterInfo(name='verbose', location='query', schema={'type': 'boolean'}),
-        )
-        described = describe_parameters(operation)
-        schema = build_input_schema(operation)
-
-        assert {parameter.name for parameter in described} == set(schema['properties'])
-        assert {p.name for p in described if p.required} == set(schema.get('required', []))
+def _nested_body_spec() -> dict:
+    return {
+        'openapi': '3.0.0',
+        'info': {'title': 'Orders', 'version': '1.0.0'},
+        'servers': [{'url': 'https://internal.example.com/api'}],
+        'paths': {
+            '/orders': {
+                'post': {
+                    'operationId': 'createOrder',
+                    'requestBody': {
+                        'required': True,
+                        'content': {
+                            'application/json': {
+                                'schema': {
+                                    'type': 'object',
+                                    'required': ['customer'],
+                                    'properties': {
+                                        'customer': {
+                                            'type': 'object',
+                                            'properties': {'id': {'type': 'integer'}},
+                                        },
+                                        'items': {
+                                            'type': 'array',
+                                            'items': {
+                                                'type': 'object',
+                                                'properties': {'qty': {'type': 'integer', 'minimum': 1}},
+                                            },
+                                        },
+                                        'priority': {
+                                            'type': 'string',
+                                            'enum': ['low', 'normal', 'rush'],
+                                            'default': 'normal',
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    'responses': {'201': {'description': 'ok'}},
+                }
+            }
+        },
+    }

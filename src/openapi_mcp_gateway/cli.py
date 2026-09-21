@@ -383,11 +383,13 @@ def _echo_dry_run_summary(gateway: Gateway, config: GatewayConfig, output: str =
     total_resources = sum(len(server.resource_names) for server in servers)
     counts = f'{len(servers)} server(s), {total_tools} tool(s), {total_resources} resource(s)'
     click.echo(f'{click.style("✓ Valid", fg="green", bold=True)}   {click.style(counts, dim=True)}')
+    # Transport is process-wide, so printing it once per server implied a per-server setting that
+    # `ServerConfig` has no field for.
+    _dry_run_kv('transport', config.transport)
     for server in servers:
         click.echo('')
         click.secho(f'  {server.name}', bold=True)
         _dry_run_kv('mount', server.mount_path)
-        _dry_run_kv('transport', config.transport)
         _dry_run_kv('base url', server.base_url)
         _dry_run_kv('auth', server.auth_summary)
         _dry_run_kv('policy', server.policy_summary)

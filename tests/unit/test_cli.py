@@ -385,7 +385,8 @@ class TestDryRunJsonOutput:
 
         assert tool['description']
         assert tool['method'] == 'get'
-        assert {'name': 'petId', 'location': 'path', 'required': True, 'type': 'integer'} in tool['parameters']
+        assert tool['input_schema']['properties']['petId'] == {'type': 'integer'}
+        assert tool['input_schema']['required'] == ['petId']
 
     def test_auth_and_policy_are_data_rather_than_prose(self):
         """A caller should not have to pull a Python list repr out of an English sentence."""

@@ -18,7 +18,6 @@ from ._shared import (
     build_input_schema,
     derive_description,
     derive_name,
-    describe_parameters,
 )
 from ._upstream import UpstreamBinding, _build_success_result, _build_upstream_closure
 
@@ -239,7 +238,8 @@ class ToolGenerator:
             # which cannot carry OpenAPI keywords such as format, numeric bounds, pattern, enum, or composition.
             # Overwrite it with the schema built straight from the operation, so the LLM sees the real contract.
             # build_tool_function enforces this same schema before the upstream call, so display and validation match.
-            registered.parameters = build_input_schema(shaped_operation)
+            input_schema = build_input_schema(shaped_operation)
+            registered.parameters = input_schema
             exposed_tools.append(
                 ExposedTool(
                     name,
@@ -247,7 +247,7 @@ class ToolGenerator:
                     shaped_operation.path,
                     _shaping_label(tool_override),
                     description=description,
-                    parameters=describe_parameters(shaped_operation),
+                    input_schema=input_schema,
                 )
             )
             logger.debug('Tool registered: %s ← %s %s', name, shaped_operation.method.upper(), shaped_operation.path)
