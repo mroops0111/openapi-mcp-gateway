@@ -326,7 +326,6 @@ class Gateway:
         Every name here is the one the model is shown, so a caller reads the same strings the model will.
         """
         return {
-            'valid': True,
             'transport': self._config.transport,
             'servers': [server.describe() for server in self.describe_servers()],
         }
@@ -570,7 +569,7 @@ class Gateway:
                 auth_api_key_header=(
                     server_config.auth.api_key_header if server_config.auth.type == 'api_key' else None
                 ),
-                auth_flow=server_config.auth.flow,
+                auth_flow=auth.flow_type,
                 policy_summary=_policy_summary(server_config.policy),
                 policy_allow=tuple(server_config.policy.allow or ()),
                 policy_deny=tuple(server_config.policy.deny or ()),

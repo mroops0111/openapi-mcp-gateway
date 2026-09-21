@@ -366,7 +366,6 @@ class TestDryRunJsonOutput:
         document = self._describe()
 
         assert json.dumps(document)
-        assert document['valid'] is True
         assert document['servers'][0]['tools']
 
     def test_every_field_the_table_prints_is_present(self):
@@ -397,6 +396,7 @@ class TestDryRunJsonOutput:
         server = document['servers'][0]
 
         assert 'totals' not in document
+        assert 'valid' not in document, 'a field that can never be false says nothing'
         assert 'policy' not in server, 'the caller holds the config already'
         assert 'summary' not in server['auth']
         assert server['auth']['type'] == 'none'
@@ -429,6 +429,35 @@ class TestDryRunJsonOutput:
         assert 'matched no operation' in result.stderr
         server = json.loads(result.stdout)['servers'][0]
         assert {tool['name'] for tool in server['tools']} == {'get_pet_by_id', 'delete_pet'}
+
+    def test_the_reported_flow_is_the_one_that_was_resolved(self, tmp_path: pathlib.Path):
+        """A config naming no flow still runs one, picked from the spec.
+
+        Echoing `auth.flow` reported null while client_credentials was live, which describes the
+        config rather than what the server does.
+        """
+        spec = tmp_path / 'spec.json'
+        spec.write_text(json.dumps(_client_credentials_spec()))
+        config = tmp_path / 'config.yml'
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    'servers': [
+                        {
+                            'name': 'secure',
+                            'spec': str(spec),
+                            'auth': {'type': 'oauth2', 'upstream': {'client_id': 'cid', 'client_secret': 'sec'}},
+                        }
+                    ]
+                }
+            )
+        )
+        result, _ = _run('--config', str(config), '--dry-run', '--output', 'json')
+        assert result.exit_code == 0, result.output
+
+        auth = json.loads(result.stdout)['servers'][0]['auth']
+        assert auth['type'] == 'oauth2'
+        assert auth['flow'] == 'client_credentials'
 
     def test_no_credential_reaches_the_document(self, tmp_path: pathlib.Path):
         """This output gets piped, pasted into issues and rendered in a browser.
@@ -471,3 +500,22 @@ class TestDryRunJsonOutput:
         assert tools, 'the fixture should expose at least one tool'
         assert all(tool['description'] for tool in tools)
         assert any(tool['description'].startswith('GET /orders') for tool in tools)
+
+
+def _client_credentials_spec() -> dict:
+    """A spec declaring only clientCredentials, so the flow is resolved rather than configured."""
+    return {
+        'openapi': '3.0.0',
+        'info': {'title': 'Secure', 'version': '1.0.0'},
+        'servers': [{'url': 'https://api.example.com'}],
+        'components': {
+            'securitySchemes': {
+                'oauth': {
+                    'type': 'oauth2',
+                    'flows': {'clientCredentials': {'tokenUrl': 'https://auth.example.com/token', 'scopes': {}}},
+                }
+            }
+        },
+        'security': [{'oauth': []}],
+        'paths': {'/things': {'get': {'operationId': 'listThings', 'responses': {'200': {'description': 'ok'}}}}},
+    }
