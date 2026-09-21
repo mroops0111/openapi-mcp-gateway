@@ -67,15 +67,11 @@ class _ServerBundle(typing.NamedTuple):
                 'type': self.auth_type,
                 'flow': self.auth_flow,
                 'api_key_header': self.auth_api_key_header,
-                'summary': self.auth_summary,
             },
-            'policy': {
-                'allow': list(self.policy_allow),
-                'deny': list(self.policy_deny),
-                'annotated_only': self.policy_annotated_only,
-                'unmatched': list(self.policy_unmatched),
-                'summary': self.policy_summary,
-            },
+            # The config the caller already holds is not echoed. What it cannot work out for
+            # itself is which of its patterns matched no operation, which is almost always a typo
+            # and is otherwise invisible, since the result is only ever a shorter list.
+            'unmatched_policy_patterns': list(self.policy_unmatched),
             'exposure': self.exposure,
             'tools': [
                 {

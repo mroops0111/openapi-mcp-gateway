@@ -367,14 +367,13 @@ class TestDryRunJsonOutput:
 
         assert json.dumps(document)
         assert document['valid'] is True
-        assert document['totals']['servers'] == 1
-        assert document['totals']['tools'] == len(document['servers'][0]['tools'])
+        assert document['servers'][0]['tools']
 
     def test_every_field_the_table_prints_is_present(self):
         """The two views describe one thing, so neither may carry a fact the other lacks."""
         server = self._describe()['servers'][0]
 
-        assert set(server) >= {'name', 'mount_path', 'base_url', 'auth', 'policy', 'exposure', 'tools', 'resources'}
+        assert set(server) >= {'name', 'mount_path', 'base_url', 'auth', 'exposure', 'tools', 'resources'}
         assert server['name'] == 'pets'
         assert server['mount_path'] == '/pets'
         assert server['auth']['type'] == 'none'
@@ -388,15 +387,20 @@ class TestDryRunJsonOutput:
         assert tool['input_schema']['properties']['petId'] == {'type': 'integer'}
         assert tool['input_schema']['required'] == ['petId']
 
-    def test_auth_and_policy_are_data_rather_than_prose(self):
-        """A caller should not have to pull a Python list repr out of an English sentence."""
-        server = self._describe()['servers'][0]
+    def test_the_document_carries_no_field_the_caller_could_derive(self):
+        """Echoing the config, a prose summary and a count are all things the reader already has.
 
-        assert server['policy']['allow'] == []
-        assert server['policy']['annotated_only'] is False
+        They cost bytes, add noise to a diff between two versions of a config, and can disagree
+        with the data they were derived from.
+        """
+        document = self._describe()
+        server = document['servers'][0]
+
+        assert 'totals' not in document
+        assert 'policy' not in server, 'the caller holds the config already'
+        assert 'summary' not in server['auth']
         assert server['auth']['type'] == 'none'
         assert server['auth']['flow'] is None, 'absent, not empty'
-        assert server['policy']['summary'], 'the readable form is kept alongside, not replaced'
 
     def test_a_pattern_matching_nothing_is_named(self, tmp_path: pathlib.Path):
         """A typo in `allow` is otherwise invisible, since the result is just a shorter list.
@@ -422,7 +426,7 @@ class TestDryRunJsonOutput:
         assert result.exit_code == 0, result.output
         server = json.loads(result.stdout)['servers'][0]
 
-        assert server['policy']['unmatched'] == ['thisMatchesNothing']
+        assert server['unmatched_policy_patterns'] == ['thisMatchesNothing']
         assert {tool['name'] for tool in server['tools']} == {'get_pet_by_id', 'delete_pet'}
 
     def test_no_credential_reaches_the_document(self, tmp_path: pathlib.Path):
@@ -455,12 +459,7 @@ class TestDryRunJsonOutput:
 
         assert 'SUPER-SECRET-VALUE' not in result.stdout
         auth = json.loads(result.stdout)['servers'][0]['auth']
-        assert auth == {
-            'type': 'api_key',
-            'flow': None,
-            'api_key_header': 'X-Company-Key',
-            'summary': 'api_key (header X-Company-Key)',
-        }
+        assert auth == {'type': 'api_key', 'flow': None, 'api_key_header': 'X-Company-Key'}
 
     def test_a_spec_without_descriptions_still_describes_every_tool(self):
         """Plenty of internal specs are generated and carry no prose, which must not blank the field."""

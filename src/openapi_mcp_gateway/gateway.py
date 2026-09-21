@@ -325,16 +325,10 @@ class Gateway:
         Prefer it over ``describe_servers``, whose bundle type is internal and whose shape is not a promise.
         Every name here is the one the model is shown, so a caller reads the same strings the model will.
         """
-        servers = self.describe_servers()
         return {
             'valid': True,
             'transport': self._config.transport,
-            'servers': [server.describe() for server in servers],
-            'totals': {
-                'servers': len(servers),
-                'tools': sum(len(server.tools) for server in servers),
-                'resources': sum(len(server.resource_names) for server in servers),
-            },
+            'servers': [server.describe() for server in self.describe_servers()],
         }
 
     def run(
