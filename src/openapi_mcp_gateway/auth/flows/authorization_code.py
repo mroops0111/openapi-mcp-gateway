@@ -41,6 +41,10 @@ class UpstreamOAuthClient:
 
     ``callback_url`` is the gateway's own address, and belongs here because it is only ever
     meaningful as the ``redirect_uri`` of this conversation.
+
+    ``issuer`` is the upstream authorization server's RFC 8414 issuer identifier.
+    It is what an RFC 9207 ``iss`` on the authorization response is compared against,
+    so without it a present ``iss`` cannot be checked at all.
     """
 
     authorization_url: str
@@ -50,6 +54,17 @@ class UpstreamOAuthClient:
     callback_url: str
     scopes: list[str] = dataclasses.field(default_factory=list)
     audience_params: dict[str, str] = dataclasses.field(default_factory=dict)
+    issuer: str | None = None
+
+    @property
+    def authorization_server(self) -> str:
+        """Identify the upstream authorization server that persisted upstream tokens belong to.
+
+        The issuer when one is configured, since that is the identifier the MCP spec keys credentials by.
+        Otherwise the token endpoint, the one place every stored upstream token is redeemed or refreshed,
+        so that pointing the gateway at another server still invalidates what the old one issued.
+        """
+        return self.issuer or self.token_url
 
 
 @dataclasses.dataclass(frozen=True)
@@ -76,6 +91,15 @@ class AuthorizationCodeProvider:
     which is what the MCP authorization spec requires of a server calling an upstream API.
     ``upstream.audience_params`` names the API that token is for,
     for an upstream whose API and authorization server are different parties.
+
+    ``issuer`` is the gateway's own issuer identifier for this server, the one its metadata publishes.
+    Every record the provider persists is bound to it and to ``upstream.authorization_server``,
+    because one store serves every server in the gateway and outlives configuration changes.
+    Without that binding a client registered with one server's authorization server is honoured by another's,
+    and a token minted for one server unlocks the upstream credential of the next,
+    which is the cross-server credential reuse the MCP spec forbids.
+    A record that names a different issuer or upstream, or none at all, is treated as absent,
+    so the client re-registers or re-authorizes rather than failing outright.
     """
 
     def __init__(
@@ -83,17 +107,21 @@ class AuthorizationCodeProvider:
         store: TokenStore,
         upstream: UpstreamOAuthClient,
         issued_tokens: IssuedTokenPolicy,
+        issuer: str,
         prefix: str = 'gateway',
     ) -> None:
         self.store = store
         self.upstream = upstream
         self.issued_tokens = issued_tokens
+        self.issuer = issuer
         self._prefix = prefix
 
     # MCP SDK OAuthAuthorizationServerProvider interface
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        data = await self.store.get('mcp_client', client_id)
+        # A registration stored before issuer binding lives under the bare client_id and is never read here.
+        # The client is then unknown to this server and registers again, which is the migration path.
+        data = await self.store.get('mcp_client', self._client_key(client_id))
         if data:
             return OAuthClientInformationFull(**data)
         return None
@@ -103,21 +131,31 @@ class AuthorizationCodeProvider:
             raise ValueError('client_id is required')
         await self.store.set(
             'mcp_client',
-            client_info.client_id,
+            self._client_key(client_info.client_id),
             client_info.model_dump(exclude_none=True, mode='json'),
         )
-        logger.info('Registered MCP client: client_id=%s prefix=%s', client_info.client_id, self._prefix)
+        logger.info(
+            'Registered MCP client: client_id=%s application_type=%s prefix=%s',
+            client_info.client_id,
+            client_info.application_type,
+            self._prefix,
+        )
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         """Return the upstream authorize URL after stashing PKCE/state payload in ``store``."""
         client_id = self._require_client_id(client)
         state = params.state or secrets.token_hex(16)
 
+        # The expected issuer is recorded with the request it belongs to, as the MCP spec requires,
+        # so the callback checks the response against the server this request was sent to,
+        # even if configuration changed in between.
         state_data = {
             'redirect_uri': str(params.redirect_uri),
             'code_challenge': params.code_challenge,
             'redirect_uri_provided_explicitly': params.redirect_uri_provided_explicitly,
             'client_id': client_id,
+            'upstream_issuer': self.upstream.issuer,
+            'upstream_authorization_server': self.upstream.authorization_server,
         }
         await self.store.set('mcp_auth_state', state, state_data, ttl=900)
 
@@ -146,7 +184,7 @@ class AuthorizationCodeProvider:
     ) -> AuthorizationCode | None:
         client_id = self._require_client_id(client)
         data = await self.store.get('mcp_auth_code', authorization_code)
-        if data and data['client_id'] == client_id:
+        if data and data['client_id'] == client_id and self._is_bound_here(data):
             return AuthorizationCode(**data)
         return None
 
@@ -157,13 +195,14 @@ class AuthorizationCodeProvider:
         client_id = self._require_client_id(client)
         data = await self.store.get('mcp_auth_code', authorization_code.code)
 
-        if not data or data['client_id'] != client_id:
+        if not data or data['client_id'] != client_id or not self._is_bound_here(data):
             logger.warning('OAuth code exchange rejected: reason=invalid_code client_id=%s', client_id)
             raise TokenError(error='invalid_grant', error_description='Invalid authorization code')
 
-        api_access_token = await self.store.get_mapping(
-            'mcp_auth_code', authorization_code.code, 'api_access_token'
-        ) or await self.store.get_mapping('client', client_id, 'api_access_token')
+        # Only the code's own mapping, written beside the code with the same TTL.
+        # Falling back to the client's most recent upstream token, as this once did,
+        # could hand one user's upstream credential to another user of the same client_id.
+        api_access_token = await self.store.get_mapping('mcp_auth_code', authorization_code.code, 'api_access_token')
 
         if not api_access_token:
             logger.warning('OAuth code exchange rejected: reason=no_upstream_token client_id=%s', client_id)
@@ -180,14 +219,14 @@ class AuthorizationCodeProvider:
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         data = await self.store.get('mcp_access_token', token)
-        if data:
+        if data and self._is_bound_here(data):
             return AccessToken(**data)
         return None
 
     async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
         client_id = self._require_client_id(client)
         data = await self.store.get('mcp_refresh_token', refresh_token)
-        if data and data['client_id'] == client_id:
+        if data and data['client_id'] == client_id and self._is_bound_here(data):
             return RefreshToken(**data)
         return None
 
@@ -201,7 +240,7 @@ class AuthorizationCodeProvider:
         client_id = self._require_client_id(client)
         data = await self.store.get('mcp_refresh_token', refresh_token.token)
 
-        if not data or data['client_id'] != client_id:
+        if not data or data['client_id'] != client_id or not self._is_bound_here(data):
             logger.warning('OAuth refresh rejected: reason=invalid_refresh_token client_id=%s', client_id)
             raise TokenError(error='invalid_grant', error_description='Invalid refresh token')
 
@@ -276,16 +315,20 @@ class AuthorizationCodeProvider:
 
     # Gateway-specific methods
 
-    async def handle_upstream_callback(self, code: str, state: str) -> str:
+    async def handle_upstream_callback(self, code: str, state: str, iss: str | None = None) -> str:
         """Finish the browser redirect by swapping the upstream ``code`` for MCP auth artefacts.
 
-        Validates ``state``, exchanges tokens at the upstream token endpoint, persists the upstream credentials,
-        builds an MCP authorization code, and returns the client redirect URI.
+        Validates ``state`` and the RFC 9207 ``iss``, exchanges tokens at the upstream token endpoint,
+        persists the upstream credentials, builds an MCP authorization code, and returns the client redirect URI.
+        The ``iss`` check runs before the code leaves the gateway,
+        since a mix-up attack succeeds the moment the code reaches the wrong token endpoint.
         """
         state_data = await self.store.get('mcp_auth_state', state)
         if not state_data:
             logger.warning('OAuth callback rejected: reason=invalid_state state=%s', state)
             raise HTTPException(400, 'Invalid state parameter')
+
+        self._validate_upstream_response_issuer(state_data, iss)
 
         redirect_uri = state_data['redirect_uri']
         code_challenge = state_data['code_challenge']
@@ -314,6 +357,7 @@ class AuthorizationCodeProvider:
                 'expires_at': time.time() + 300,
                 'scopes': list(self.issued_tokens.scopes),
                 'code_challenge': code_challenge,
+                **self._binding(),
             },
             ttl=300,
         )
@@ -325,7 +369,6 @@ class AuthorizationCodeProvider:
             await self.store.set_mapping(
                 'mcp_auth_code', mcp_auth_code, 'api_refresh_token', api_refresh_token, ttl=300
             )
-        await self.store.set_mapping('client', client_id, 'api_access_token', api_access_token)
 
         await self.store.delete('mcp_auth_state', state)
 
@@ -335,7 +378,9 @@ class AuthorizationCodeProvider:
             expires_in,
             bool(api_refresh_token),
         )
-        return construct_redirect_uri(redirect_uri, code=mcp_auth_code, state=state)
+        # RFC 9207: name this authorization server in its own response, as its metadata advertises,
+        # so an MCP client talking to several authorization servers can tell which one answered.
+        return construct_redirect_uri(redirect_uri, code=mcp_auth_code, state=state, iss=self.issuer)
 
     async def get_api_access_token(self) -> str | None:
         """Map the active MCP access token (from request context) to the upstream bearer."""
@@ -351,6 +396,52 @@ class AuthorizationCodeProvider:
         if not client.client_id:
             raise ValueError('client_id is required')
         return client.client_id
+
+    def _client_key(self, client_id: str) -> str:
+        """Key a registration by this server's issuer as well as its ``client_id``.
+
+        The MCP spec keys client credentials by issuer.
+        Keying the record, rather than only checking a field in it,
+        also keeps two servers from overwriting each other's registration of the same ``client_id``.
+        """
+        return f'{self.issuer} {client_id}'
+
+    def _binding(self) -> dict[str, str]:
+        """The fields that tie a persisted code or token to this issuer and this upstream."""
+        return {'issuer': self.issuer, 'upstream_authorization_server': self.upstream.authorization_server}
+
+    def _is_bound_here(self, data: dict[str, typing.Any]) -> bool:
+        """Whether a stored code or token was minted by this server against the current upstream.
+
+        A record from before binding existed carries neither field and so never matches.
+        Accepting it would leave the cross-server hole open for as long as such records live.
+        """
+        return all(data.get(field) == value for field, value in self._binding().items())
+
+    def _validate_upstream_response_issuer(self, state_data: dict[str, typing.Any], iss: str | None) -> None:
+        """Apply RFC 9207 to the upstream's authorization response, before its code is redeemed.
+
+        A present ``iss`` must equal the issuer recorded for this request, compared exactly as the RFC requires.
+        A response to a request recorded against another upstream is refused outright,
+        since its code would otherwise be redeemed at a token endpoint that never issued it.
+        """
+        if state_data.get('upstream_authorization_server') != self.upstream.authorization_server:
+            logger.warning('OAuth callback rejected: reason=upstream_changed')
+            raise HTTPException(400, 'The upstream authorization server changed during sign-in; start again')
+
+        recorded_issuer = state_data.get('upstream_issuer')
+        if iss is None:
+            return
+        if not recorded_issuer:
+            logger.warning(
+                'Upstream authorization response carries iss=%s but auth.upstream.issuer is not set, '
+                'so it cannot be checked. Set auth.upstream.issuer to enable RFC 9207 mix-up protection.',
+                iss,
+            )
+            return
+        if iss != recorded_issuer:
+            logger.warning('OAuth callback rejected: reason=iss_mismatch iss=%s expected=%s', iss, recorded_issuer)
+            raise HTTPException(400, 'Authorization response rejected: iss does not match the upstream issuer')
 
     async def _issue_mcp_token(
         self,
@@ -372,6 +463,7 @@ class AuthorizationCodeProvider:
                 'client_id': client_id,
                 'scopes': scopes,
                 'expires_at': now + self.issued_tokens.access_token_ttl,
+                **self._binding(),
             },
             ttl=self.issued_tokens.access_token_ttl,
         )
@@ -384,6 +476,7 @@ class AuthorizationCodeProvider:
                 'client_id': client_id,
                 'scopes': scopes,
                 'expires_at': now + self.issued_tokens.refresh_token_ttl,
+                **self._binding(),
             },
             ttl=self.issued_tokens.refresh_token_ttl,
         )
@@ -507,6 +600,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         # auth.required_scopes names what a caller must hold. The gateway is the issuer here,
         # so it is also what the gateway advertises and grants, rather than something it merely checks.
         mcp_scopes = list(entry.auth.required_scopes) or [DEFAULT_MCP_SCOPE]
+        server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')
 
         provider = AuthorizationCodeProvider(
             store=flow_context.store,
@@ -518,16 +612,18 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
                 callback_url=callback_url,
                 scopes=list(entry.auth.upstream.scopes),
                 audience_params=entry.auth.upstream.resolve_audience_params(),
+                issuer=entry.auth.upstream.resolve_issuer(),
             ),
             issued_tokens=IssuedTokenPolicy(
                 scopes=mcp_scopes,
                 access_token_ttl=entry.auth.mcp_access_token_ttl,
                 refresh_token_ttl=entry.auth.mcp_refresh_token_ttl,
             ),
+            # The same string the metadata publishes as ``issuer``,
+            # since RFC 9207 compares the two without any normalisation.
+            issuer=str(server_url),
             prefix=entry.name,
         )
-
-        server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')
         settings = AuthSettings(
             issuer_url=server_url,
             resource_server_url=server_url,

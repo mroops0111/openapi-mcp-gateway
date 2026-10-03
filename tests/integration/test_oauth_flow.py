@@ -13,7 +13,7 @@ from openapi_mcp_gateway.auth.flows.authorization_code import (
     UpstreamOAuthClient,
 )
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
-from tests.constants import API_URL, AUTHORIZE_URL, TOKEN_URL
+from tests.constants import API_URL, AUTHORIZE_URL, GATEWAY_ISSUER, TOKEN_URL
 
 
 @pytest.fixture
@@ -36,6 +36,7 @@ def provider(store):
             scopes=['read', 'write'],
         ),
         issued_tokens=IssuedTokenPolicy(access_token_ttl=3600, refresh_token_ttl=86400),
+        issuer=GATEWAY_ISSUER,
         prefix='petstore',
     )
 
@@ -182,6 +183,7 @@ class TestConfigurableTokenTtl:
                 scopes=['read'],
             ),
             issued_tokens=IssuedTokenPolicy(access_token_ttl=7200, refresh_token_ttl=604800),
+            issuer=GATEWAY_ISSUER,
             prefix='petstore',
         )
         await provider.register_client(mcp_client_info)
@@ -321,6 +323,7 @@ def audience_provider(store):
             audience_params={'audience': API_URL},
         ),
         issued_tokens=IssuedTokenPolicy(access_token_ttl=3600, refresh_token_ttl=86400),
+        issuer=GATEWAY_ISSUER,
         prefix='petstore',
     )
 

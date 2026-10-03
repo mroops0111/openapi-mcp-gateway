@@ -312,6 +312,7 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `auth.upstream.client_id`, `auth.upstream.client_secret` | string |  | Required for `oauth2`. The gateway's own credential at the upstream authorization server |
 | `auth.upstream.scopes`, `auth.upstream.authorization_url`, `auth.upstream.token_url` |  | from spec | What the gateway requests from the upstream authorization server, and where. The URLs override an incomplete `securitySchemes` |
 | `auth.upstream.resource`, `auth.upstream.audience` | string |  | Names the API the upstream token is for, when the API and its authorization server are different parties. `resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter, `audience` is the spelling Auth0 uses. Only what you set is sent |
+| `auth.upstream.issuer` | string |  | For `authorization_code`. The upstream authorization server's issuer identifier, exactly as its metadata publishes it. Enables the [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207) `iss` check on its authorization responses |
 | `auth.mcp_access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints for `authorization_code` |
 | `auth.mcp_refresh_token_ttl` | int | `86400` | Lifetime in seconds of the MCP refresh token. This is the practical re-authorization cadence, since each refresh slides the window forward |
 | `policy.allow` | list |  | Only expose matching operations |

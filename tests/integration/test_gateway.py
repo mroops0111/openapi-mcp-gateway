@@ -303,6 +303,16 @@ class TestWellKnownOAuth:
         assert data['token_endpoint'].endswith('/token')
         assert 'S256' in data['code_challenge_methods_supported']
 
+    @pytest.mark.parametrize(
+        'path',
+        ['/.well-known/oauth-authorization-server/petstore', '/petstore/.well-known/oauth-authorization-server'],
+    )
+    def test_metadata_advertises_the_iss_parameter(self, oauth_client, path):
+        """Both metadata locations promise ``iss`` on authorization responses, which the provider sends (RFC 9207)."""
+        response = oauth_client.get(path)
+        assert response.status_code == 200
+        assert response.json()['authorization_response_iss_parameter_supported'] is True
+
     def test_authorization_server_with_mcp(self, oauth_client):
         """Suffixing ``/mcp`` on the metadata path is also served."""
         response = oauth_client.get('/.well-known/oauth-authorization-server/petstore/mcp')

@@ -10,9 +10,11 @@ JWKS_URL = f'{ISSUER}/jwks'
 API_URL = 'https://api.example.com'
 PETSTORE_URL = 'https://petstore.example.com/v1'
 
-# The gateway's own public address, which MCP clients reach and tokens are issued for.
+# The gateway's own public address, which MCP clients reach and tokens are issued for,
+# and the issuer it publishes for a server mounted at ``/petstore``.
 GATEWAY_HOST = 'mcp.example.com'
 GATEWAY_URL = f'https://{GATEWAY_HOST}'
+GATEWAY_ISSUER = f'{GATEWAY_URL}/petstore'
 
 # A web page allowed to call the gateway from a browser.
 BROWSER_ORIGIN = 'https://app.example.com'

@@ -389,6 +389,9 @@ class TestAuthorizationCodeFlowHandler:
         assert setup.provider.upstream.callback_url == 'http://localhost:8000/srv/auth/callback'
         assert setup.provider.upstream.authorization_url == AUTHORIZE_URL
         assert setup.provider.upstream.token_url == TOKEN_URL
+        # The provider's issuer is the string the metadata publishes, which RFC 9207 compares exactly.
+        assert setup.settings is not None
+        assert setup.provider.issuer == str(setup.settings.issuer_url) == 'http://localhost:8000/srv'
 
 
 class TestUpstreamAudienceWiring:
@@ -417,6 +420,31 @@ class TestUpstreamAudienceWiring:
 
         assert setup.provider is not None
         assert setup.provider.upstream.audience_params == {'audience': API_URL}
+
+    def test_authorization_code_provider_receives_upstream_issuer(self):
+        """``upstream.issuer`` reaches the provider, which checks the authorization response's ``iss`` against it."""
+        entry = _entry(
+            AuthConfig(
+                type='oauth2',
+                upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', issuer=ISSUER),
+            ),
+        )
+        spec = _spec_with_authorization_code()
+
+        setup = AuthorizationCodeFlowHandler().build(
+            OAuthFlowContext(
+                entry=entry,
+                spec=spec,
+                oauth_flow=resolve_oauth_flow(entry, spec),
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                mount_path='/srv',
+            )
+        )
+
+        assert setup.provider is not None
+        assert setup.provider.upstream.issuer == ISSUER
+        assert setup.provider.upstream.authorization_server == ISSUER
 
     def test_client_credentials_token_source_receives_resource(self):
         """``ClientCredentialsFlowHandler`` hands the resolved parameters to the token source."""

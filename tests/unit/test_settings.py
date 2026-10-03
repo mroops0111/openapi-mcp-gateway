@@ -14,7 +14,7 @@ from openapi_mcp_gateway.settings import (
     single_spec_layer,
     yaml_layer,
 )
-from tests.constants import API_URL, GATEWAY_URL
+from tests.constants import API_URL, GATEWAY_URL, ISSUER
 
 
 EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[2] / 'examples'
@@ -324,6 +324,20 @@ class TestAuthConfigUpstreamAudience:
         assert auth.upstream.resolve_audience_params() == {'audience': 'https://from-env.example.com'}
 
 
+class TestAuthConfigUpstreamIssuer:
+    """``upstream.resolve_issuer`` names the upstream authorization server an ``iss`` is checked against."""
+
+    def test_unset_by_default(self):
+        """Without it the gateway has nothing to compare a present ``iss`` with."""
+        assert AuthConfig(type='oauth2').upstream.resolve_issuer() is None
+
+    def test_resolves_env_var(self, monkeypatch):
+        """Accepts ``${ENV_VAR}`` like the other upstream fields."""
+        monkeypatch.setenv('UPSTREAM_ISSUER', ISSUER)
+        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(issuer='${UPSTREAM_ISSUER}'))
+        assert auth.upstream.resolve_issuer() == ISSUER
+
+
 class TestUnknownKeysAreRefused:
     """A key the model does not know is a mistake, and dropping it silently can widen access.
 
@@ -401,6 +415,10 @@ class TestSettingsThatCannotTakeEffect:
             ({'type': 'oauth2', 'flow': 'client_credentials', 'token': 'ignored'}, 'token'),
             ({'type': 'oauth2', 'flow': 'client_credentials', 'mcp_access_token_ttl': 60}, 'mcp_access_token_ttl'),
             ({'type': 'bearer', 'token': 't', 'upstream': {'audience': 'https://api'}}, 'upstream'),
+            (
+                {'type': 'oauth2', 'flow': 'client_credentials', 'upstream': {'issuer': ISSUER}},
+                'upstream.issuer',
+            ),
         ],
     )
     def test_inapplicable_settings_are_refused(self, payload, offending):
@@ -416,6 +434,8 @@ class TestSettingsThatCannotTakeEffect:
             {'type': 'oauth2', 'flow': 'token_exchange', 'issuer': 'https://kc', 'required_scopes': ['x']},
             {'type': 'oauth2', 'flow': 'authorization_code', 'mcp_access_token_ttl': 60},
             {'type': 'oauth2', 'upstream': {'client_id': 'c'}},
+            {'type': 'oauth2', 'upstream': {'issuer': ISSUER}},
+            {'type': 'oauth2', 'flow': 'authorization_code', 'upstream': {'issuer': ISSUER}},
             {'type': 'none'},
         ],
     )
