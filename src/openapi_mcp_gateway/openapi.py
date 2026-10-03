@@ -1,6 +1,7 @@
 import json
 import logging
 import pathlib
+import re
 import typing
 import urllib.parse
 
@@ -20,9 +21,19 @@ _SUBSCHEMA_LIST_KEYS = ('oneOf', 'anyOf', 'prefixItems')
 # Keywords whose value maps a name to a nested schema.
 _SUBSCHEMA_MAP_KEYS = ('properties', 'patternProperties', 'dependentSchemas')
 
+_COMPONENT_SCHEMA_PREFIX = '#/components/schemas/'
+# Where an expanded fragment points for a component schema, relative to the advertised input schema's root.
+DEFS_REF_PREFIX = '#/$defs/'
+# The component name grammar OpenAPI allows, which needs no JSON Pointer or URI escaping.
+_COMPONENT_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
+
 
 class ParameterInfo(pydantic.BaseModel):
-    """One OpenAPI parameter (path, query, header, cookie, or body) with its schema."""
+    """One OpenAPI parameter (path, query, header, cookie, or body) with its schema.
+
+    A component schema anywhere in ``schema_`` stays a ``{"$ref": "#/$defs/<Name>"}``,
+    resolved against the owning operation's ``schema_defs``.
+    """
 
     name: str
     location: typing.Literal['path', 'query', 'header', 'cookie', 'body']
@@ -155,6 +166,9 @@ class OperationInfo(pydantic.BaseModel):
     parameters: list[ParameterInfo] = pydantic.Field(default_factory=list)
     security: list[dict[str, list[str]]] = pydantic.Field(default_factory=list)
     x_mcp_integration: McpIntegration = pydantic.Field(default_factory=McpIntegration)
+    # The expanded component schemas the parameters reach, keyed by component name,
+    # for resolving their ``#/$defs/<Name>`` references.
+    schema_defs: dict[str, dict[str, typing.Any]] = pydantic.Field(default_factory=dict)
 
     @property
     def tool_exposed(self) -> bool:
@@ -291,64 +305,158 @@ def _normalize_to_2020_12(schema: dict[str, typing.Any]) -> dict[str, typing.Any
 def _truncate_at_cycle(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Describe ``schema`` without any of the keywords that could lead back into it.
 
-    A recursive schema has no finite expansion, so re-entering one has to stop somewhere.
+    A component schema that refers to itself is expressed through ``$defs`` and never reaches here.
+    What does is a cycle that can only be described by inlining itself,
+    such as an ``allOf`` that comes back round to its own schema, or a pointer into the middle of a component.
     Stopping here keeps every scalar keyword the fragment carries, ``type`` and ``title`` and the rest,
-    and drops only the keywords that nest further.
-    A self-referencing ``Node`` therefore still advertises itself as an object,
-    rather than collapsing to "anything" and leaving the model to guess.
+    and drops only the keywords that nest further,
+    so the fragment still advertises itself as an object rather than collapsing to "anything".
     """
     dropped = {'$ref', 'allOf', *_SUBSCHEMA_KEYS, *_SUBSCHEMA_LIST_KEYS, *_SUBSCHEMA_MAP_KEYS}
     return {key: value for key, value in schema.items() if key not in dropped}
 
 
+def _component_name(pointer: str) -> str | None:
+    """Return the name of the component schema ``pointer`` addresses, or ``None`` when it addresses anything else.
+
+    A pointer into the middle of a component, or a name outside the grammar OpenAPI allows, returns ``None``,
+    so that fragment is inlined rather than referenced.
+    """
+    if not pointer.startswith(_COMPONENT_SCHEMA_PREFIX):
+        return None
+    name = pointer.removeprefix(_COMPONENT_SCHEMA_PREFIX)
+    return name if _COMPONENT_NAME.match(name) else None
+
+
+def iter_subschemas(schema: dict[str, typing.Any]) -> typing.Iterator[dict[str, typing.Any]]:
+    """Yield every schema nested one level below ``schema``, through each nested-schema keyword.
+
+    ``allOf`` is included, unlike in the expansion keyword lists, since a walk has to see every branch.
+    """
+    for key in _SUBSCHEMA_KEYS:
+        if isinstance(schema.get(key), dict):
+            yield schema[key]
+    for key in (*_SUBSCHEMA_LIST_KEYS, 'allOf'):
+        if isinstance(schema.get(key), list):
+            yield from (item for item in schema[key] if isinstance(item, dict))
+    for key in _SUBSCHEMA_MAP_KEYS:
+        if isinstance(schema.get(key), dict):
+            yield from (sub for sub in schema[key].values() if isinstance(sub, dict))
+
+
+def map_subschemas(
+    schema: dict[str, typing.Any],
+    transform: typing.Callable[[dict[str, typing.Any]], dict[str, typing.Any]],
+) -> dict[str, typing.Any]:
+    """Return a copy of ``schema`` with ``transform`` applied to every schema nested one level below it.
+
+    Walks the same keywords as ``iter_subschemas``, leaving any non-schema value in their place untouched.
+    """
+    result = schema.copy()
+    for key in _SUBSCHEMA_KEYS:
+        if isinstance(result.get(key), dict):
+            result[key] = transform(result[key])
+    for key in (*_SUBSCHEMA_LIST_KEYS, 'allOf'):
+        if isinstance(result.get(key), list):
+            result[key] = [transform(item) if isinstance(item, dict) else item for item in result[key]]
+    for key in _SUBSCHEMA_MAP_KEYS:
+        if isinstance(result.get(key), dict):
+            result[key] = {name: transform(sub) if isinstance(sub, dict) else sub for name, sub in result[key].items()}
+    return result
+
+
+def defs_reference(schema: dict[str, typing.Any]) -> str | None:
+    """Return the name of the ``$defs`` entry ``schema`` refers to, or ``None`` when it is not such a reference."""
+    pointer = schema.get('$ref')
+    if isinstance(pointer, str) and pointer.startswith(DEFS_REF_PREFIX):
+        return pointer.removeprefix(DEFS_REF_PREFIX)
+    return None
+
+
+def _expand_inline(
+    raw: dict[str, typing.Any],
+    schema: dict[str, typing.Any],
+    defs: dict[str, dict[str, typing.Any]],
+    expanding: frozenset[str] = frozenset(),
+) -> dict[str, typing.Any]:
+    """Expand ``schema`` like ``_expand_schema``, but resolve a ``$ref`` at its root in place.
+
+    For the places a reference cannot stand: an ``allOf`` branch, which is merged key by key,
+    a request body, whose properties become parameters, and a component's own ``$defs`` entry.
+    References below the root still become ``$defs`` references.
+
+    ``expanding`` holds the pointers resolved in place on the current path, and callers leave it empty.
+    Re-entering one means the schema can only be described by inlining itself, so that branch is truncated.
+    The set is passed down rather than mutated, so it holds only the current path.
+    """
+    if '$ref' not in schema:
+        return _expand_schema(raw, schema, defs, expanding)
+    pointer = schema['$ref']
+    resolved = _resolve_ref(raw, pointer)
+    if pointer in expanding:
+        return _truncate_at_cycle(resolved)
+    return _expand_inline(raw, resolved, defs, expanding | {pointer})
+
+
 def _expand_schema(
     raw: dict[str, typing.Any],
     schema: dict[str, typing.Any],
+    defs: dict[str, dict[str, typing.Any]],
     expanding: frozenset[str] = frozenset(),
 ) -> dict[str, typing.Any]:
     """Expand a JSON Schema fragment into the form the gateway advertises.
 
-    Resolves ``$ref`` and flattens ``allOf`` via ``_deep_merge``,
-    then recurses into every nested-schema keyword so a construct buried at any depth is expanded too,
-    and finally rewrites OpenAPI 3.0 keywords into their JSON Schema 2020-12 equivalents.
+    A ``$ref`` to a component schema stays a reference, rewritten to ``#/$defs/<Name>``,
+    and the component itself is expanded once into ``defs`` under its name.
+    So one shape reached through several paths can be described once rather than once per path,
+    and a component that refers to itself needs no truncation, since the reference stops at its own entry.
+    Whether an entry is advertised under ``$defs`` or inlined back is decided per tool, by ``build_input_schema``.
+    Any other ``$ref`` is resolved in place.
+
+    ``allOf`` is flattened via ``_deep_merge``,
+    then every nested-schema keyword is recursed into so a construct buried at any depth is expanded too,
+    and finally OpenAPI 3.0 keywords are rewritten into their JSON Schema 2020-12 equivalents.
     Recursion keys off each keyword's presence rather than off ``type``,
     since ``type`` is optional and a fragment may carry ``properties`` or ``items`` without declaring it.
 
-    ``expanding`` holds the pointers on the current path, and callers leave it empty.
-    Re-entering one means the schema refers to itself, so that branch is truncated instead of expanded.
-    The set is passed down rather than mutated, so it holds only the current path.
-    A schema referenced twice in sibling branches still expands fully in both,
-    and only an actual cycle is cut.
+    ``defs`` is shared across a whole spec, so each component is expanded once however many operations reach it.
     """
     if '$ref' in schema:
-        pointer = schema['$ref']
-        resolved = _resolve_ref(raw, pointer)
-        if pointer in expanding:
-            return _truncate_at_cycle(resolved)
-        return _expand_schema(raw, resolved, expanding | {pointer})
+        name = _component_name(schema['$ref'])
+        if name is None:
+            return _expand_inline(raw, schema, defs, expanding)
+        if name not in defs:
+            # Reserve the entry first, so a reference back into the component while it expands stops here.
+            defs[name] = {}
+            # A component is a document of its own, so the in-place path of whoever reached it does not carry over.
+            defs[name] = _expand_inline(raw, schema, defs)
+        return {'$ref': DEFS_REF_PREFIX + name}
 
     if 'allOf' in schema:
         merged: dict[str, typing.Any] = {}
         for branch in schema['allOf']:
-            merged = _deep_merge(merged, _expand_schema(raw, branch, expanding))
+            merged = _deep_merge(merged, _expand_inline(raw, branch, defs, expanding))
         return merged
 
-    result = schema.copy()
-    for key in _SUBSCHEMA_KEYS:
-        if isinstance(result.get(key), dict):
-            result[key] = _expand_schema(raw, result[key], expanding)
-    for key in _SUBSCHEMA_LIST_KEYS:
-        if isinstance(result.get(key), list):
-            result[key] = [
-                _expand_schema(raw, item, expanding) if isinstance(item, dict) else item for item in result[key]
-            ]
-    for key in _SUBSCHEMA_MAP_KEYS:
-        if isinstance(result.get(key), dict):
-            result[key] = {
-                name: _expand_schema(raw, sub, expanding) if isinstance(sub, dict) else sub
-                for name, sub in result[key].items()
-            }
+    result = map_subschemas(schema, lambda subschema: _expand_schema(raw, subschema, defs, expanding))
     return _normalize_to_2020_12(result)
+
+
+def _reachable_defs(
+    schemas: typing.Iterable[dict[str, typing.Any]],
+    defs: dict[str, dict[str, typing.Any]],
+) -> dict[str, dict[str, typing.Any]]:
+    """Return the entries of ``defs`` that ``schemas`` reach, directly or through other entries."""
+    reached: dict[str, dict[str, typing.Any]] = {}
+    pending = list(schemas)
+    while pending:
+        schema = pending.pop()
+        name = defs_reference(schema)
+        if name is not None and name not in reached and name in defs:
+            reached[name] = defs[name]
+            pending.append(defs[name])
+        pending.extend(iter_subschemas(schema))
+    return reached
 
 
 def _declares_object_properties(schema: dict[str, typing.Any]) -> bool:
@@ -395,6 +503,8 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
     global_security = raw.get('security', [])
 
     operations: list[OperationInfo] = []
+    # Every component expanded so far, shared by all operations so each is expanded once.
+    defs: dict[str, dict[str, typing.Any]] = {}
 
     for path, path_item in raw.get('paths', {}).items():
         if not isinstance(path_item, dict):
@@ -419,7 +529,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                 if param_key in seen_params:
                     continue
                 seen_params.add(param_key)
-                param_schema = _expand_schema(raw, param.get('schema', {}))
+                param_schema = _expand_schema(raw, param.get('schema', {}), defs)
                 params.append(
                     ParameterInfo(
                         name=param['name'],
@@ -435,7 +545,8 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                 request_body = _resolve_ref(raw, request_body['$ref'])
             if request_body and method in ('post', 'put', 'patch'):
                 content = request_body.get('content', {}).get('application/json', {})
-                schema = _expand_schema(raw, content.get('schema', {}))
+                # The body is split into one parameter per property, so its own root reference is resolved in place.
+                schema = _expand_inline(raw, content.get('schema', {}), defs)
 
                 if _declares_object_properties(schema):
                     required_props = schema.get('required', [])
@@ -461,6 +572,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                     parameters=params,
                     security=operation.get('security', global_security),
                     x_mcp_integration=operation.get('x-mcp-integration', {}),
+                    schema_defs=_reachable_defs((parameter.schema_ for parameter in params), defs),
                 )
             )
 

@@ -4,6 +4,7 @@ import pytest
 
 from openapi_mcp_gateway.openapi import (
     _deep_merge,
+    _expand_inline,
     _expand_schema,
     _resolve_ref,
     load_spec,
@@ -70,17 +71,41 @@ class TestDeepMerge:
 class TestExpandSchema:
     """``$ref`` / ``allOf`` / ``oneOf`` / ``anyOf`` expansion on schema nodes."""
 
-    def test_direct_ref(self, petstore_spec_raw):
-        """A bare ``$ref`` is replaced by the resolved schema."""
-        schema = {'$ref': '#/components/schemas/Pet'}
-        result = _expand_schema(petstore_spec_raw, schema)
-        assert result['type'] == 'object'
-        assert 'name' in result['properties']
+    def test_component_ref_becomes_a_defs_reference(self, petstore_spec_raw):
+        """A component ``$ref`` stays a reference, now into ``$defs``, with the component expanded under its name."""
+        defs: dict = {}
+        result = _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/Pet'}, defs)
+        assert result == {'$ref': '#/$defs/Pet'}
+        assert defs['Pet']['type'] == 'object'
+        assert 'name' in defs['Pet']['properties']
+
+    def test_component_expanded_once_however_often_reached(self, petstore_spec_raw):
+        """``NestedOwner`` reaches ``Pet`` twice, both as references to the one entry."""
+        defs: dict = {}
+        _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/NestedOwner'}, defs)
+        assert defs['NestedOwner']['properties']['pet'] == {'$ref': '#/$defs/Pet'}
+        assert defs['NestedOwner']['properties']['pets']['items'] == {'$ref': '#/$defs/Pet'}
+        assert set(defs) == {'NestedOwner', 'Pet'}
+
+    def test_pointer_into_a_component_is_inlined(self, petstore_spec_raw):
+        """Only a whole component becomes an entry, a pointer to part of one resolves in place."""
+        defs: dict = {}
+        result = _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/Pet/properties/name'}, defs)
+        assert result == {'type': 'string'}
+        assert defs == {}
+
+    def test_inline_resolves_the_root_reference(self, petstore_spec_raw):
+        """``_expand_inline`` resolves a root reference in place, so a request body can be split into properties."""
+        defs: dict = {}
+        result = _expand_inline(petstore_spec_raw, {'$ref': '#/components/schemas/NestedOwner'}, defs)
+        assert result['properties']['pet'] == {'$ref': '#/$defs/Pet'}
+        assert set(defs) == {'Pet'}
 
     def test_allof_merge(self, petstore_spec_raw):
-        """``allOf`` branches are merged into a single schema with combined required."""
-        schema = {'$ref': '#/components/schemas/PetWithOwner'}
-        result = _expand_schema(petstore_spec_raw, schema)
+        """``allOf`` branches are merged into a single schema with combined required, references resolved in place."""
+        defs: dict = {}
+        _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/PetWithOwner'}, defs)
+        result = defs['PetWithOwner']
         assert 'id' in result['properties']
         assert 'name' in result['properties']
         assert 'owner' in result['properties']
@@ -88,39 +113,22 @@ class TestExpandSchema:
 
     def test_oneof(self, petstore_spec_raw):
         """``oneOf`` branches are kept as a list with each branch independently expanded."""
-        schema = {'$ref': '#/components/schemas/PetOrError'}
-        result = _expand_schema(petstore_spec_raw, schema)
-        assert len(result['oneOf']) == 2
-        assert result['oneOf'][0]['properties']['name']['type'] == 'string'
-        assert result['oneOf'][1]['properties']['code']['type'] == 'integer'
+        defs: dict = {}
+        _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/PetOrError'}, defs)
+        assert defs['PetOrError']['oneOf'] == [{'$ref': '#/$defs/Pet'}, {'$ref': '#/$defs/Error'}]
+        assert defs['Pet']['properties']['name']['type'] == 'string'
+        assert defs['Error']['properties']['code']['type'] == 'integer'
 
     def test_anyof(self, petstore_spec_raw):
         """``anyOf`` branches expand independently, including non-object branches like ``null``."""
-        schema = {'$ref': '#/components/schemas/MaybePet'}
-        result = _expand_schema(petstore_spec_raw, schema)
-        assert len(result['anyOf']) == 2
-        assert result['anyOf'][0]['properties']['name']['type'] == 'string'
-        assert result['anyOf'][1] == {'type': 'null'}
-
-    def test_nested_object_properties(self, petstore_spec_raw):
-        """Nested object properties are recursively expanded."""
-        schema = {'$ref': '#/components/schemas/NestedOwner'}
-        result = _expand_schema(petstore_spec_raw, schema)
-        assert result['properties']['pet']['type'] == 'object'
-        assert 'name' in result['properties']['pet']['properties']
-
-    def test_nested_array_items(self, petstore_spec_raw):
-        """Array ``items`` schemas are recursively expanded."""
-        schema = {'$ref': '#/components/schemas/NestedOwner'}
-        result = _expand_schema(petstore_spec_raw, schema)
-        assert result['properties']['pets']['type'] == 'array'
-        assert result['properties']['pets']['items']['type'] == 'object'
-        assert 'name' in result['properties']['pets']['items']['properties']
+        defs: dict = {}
+        _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/MaybePet'}, defs)
+        assert defs['MaybePet']['anyOf'] == [{'$ref': '#/$defs/Pet'}, {'type': 'null'}]
 
     def test_plain_schema_unchanged(self, petstore_spec_raw):
         """A schema without refs or composite keywords is returned unchanged."""
         schema = {'type': 'string', 'description': 'A name'}
-        result = _expand_schema(petstore_spec_raw, schema)
+        result = _expand_schema(petstore_spec_raw, schema, {})
         assert result == schema
 
     def test_inline_allof(self, petstore_spec_raw):
@@ -131,21 +139,21 @@ class TestExpandSchema:
                 {'type': 'object', 'properties': {'color': {'type': 'string'}}},
             ],
         }
-        result = _expand_schema(petstore_spec_raw, schema)
+        result = _expand_schema(petstore_spec_raw, schema, {})
         assert 'name' in result['properties']
         assert 'color' in result['properties']
 
 
 class TestRecursiveSchemas:
-    """A schema that refers to itself is truncated at the cycle rather than expanded forever."""
+    """A component that refers to itself is expressed through its ``$defs`` entry rather than truncated."""
 
     def _spec(self, schemas: dict) -> dict:
         return {'components': {'schemas': schemas}}
 
-    def test_self_reference_terminates(self):
-        """A node referring to itself expands one level, then stops.
+    def test_self_reference_points_back_at_its_own_entry(self):
+        """A node referring to itself expands once, and the inner reference stops at its own entry.
 
-        Without a guard the resolver follows the reference back into itself until the stack runs out.
+        Without the reserved entry the resolver would follow the reference back into itself until the stack ran out.
         """
         raw = self._spec(
             {
@@ -156,47 +164,31 @@ class TestRecursiveSchemas:
                 }
             }
         )
+        defs: dict = {}
 
-        result = _expand_schema(raw, {'$ref': '#/components/schemas/Node'})
+        result = _expand_schema(raw, {'$ref': '#/components/schemas/Node'}, defs)
 
-        assert result['properties']['name'] == {'type': 'string'}
-        assert result['properties']['child'] == {'type': 'object', 'title': 'Node'}
-
-    def test_truncation_keeps_the_scalar_description(self):
-        """The cut keeps what the fragment says about itself, dropping only what nests further.
-
-        Collapsing to an empty schema would advertise "anything" for a field the spec describes as an object.
-        """
-        raw = self._spec(
-            {
-                'Node': {
-                    'type': 'object',
-                    'description': 'A tree node.',
-                    'required': ['child'],
-                    'properties': {'child': {'$ref': '#/components/schemas/Node'}},
-                }
-            }
-        )
-
-        cut = _expand_schema(raw, {'$ref': '#/components/schemas/Node'})['properties']['child']
-
-        assert cut == {'type': 'object', 'description': 'A tree node.', 'required': ['child']}
+        assert result == {'$ref': '#/$defs/Node'}
+        assert defs['Node']['properties']['name'] == {'type': 'string'}
+        assert defs['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
 
     def test_mutual_recursion_terminates(self):
-        """A cycle spanning two schemas is caught the same way as a direct one."""
+        """A cycle spanning two schemas resolves to two entries referring to each other."""
         raw = self._spec(
             {
                 'A': {'type': 'object', 'properties': {'b': {'$ref': '#/components/schemas/B'}}},
                 'B': {'type': 'object', 'properties': {'a': {'$ref': '#/components/schemas/A'}}},
             }
         )
+        defs: dict = {}
 
-        result = _expand_schema(raw, {'$ref': '#/components/schemas/A'})
+        _expand_schema(raw, {'$ref': '#/components/schemas/A'}, defs)
 
-        assert result['properties']['b']['properties']['a'] == {'type': 'object'}
+        assert defs['A']['properties']['b'] == {'$ref': '#/$defs/B'}
+        assert defs['B']['properties']['a'] == {'$ref': '#/$defs/A'}
 
     def test_recursion_through_array_items_terminates(self):
-        """The cycle is cut wherever it runs, including through ``items``."""
+        """The cycle is expressed wherever it runs, including through ``items``."""
         raw = self._spec(
             {
                 'Tree': {
@@ -205,37 +197,34 @@ class TestRecursiveSchemas:
                 }
             }
         )
+        defs: dict = {}
 
-        result = _expand_schema(raw, {'$ref': '#/components/schemas/Tree'})
+        _expand_schema(raw, {'$ref': '#/components/schemas/Tree'}, defs)
 
-        assert result['properties']['kids']['items'] == {'type': 'object'}
+        assert defs['Tree']['properties']['kids']['items'] == {'$ref': '#/$defs/Tree'}
 
-    def test_repeated_reference_is_not_a_cycle(self):
-        """One schema used twice in sibling branches still expands in full on both.
+    def test_allof_cycle_is_still_truncated(self):
+        """An ``allOf`` has to be merged in place, so one that comes back round to itself is cut at the cycle.
 
-        The guard tracks the path currently being expanded, not every pointer ever seen,
-        so ordinary reuse is untouched.
+        The cut keeps what the fragment says about itself, dropping only what nests further.
         """
         raw = self._spec(
             {
-                'Money': {'type': 'object', 'properties': {'amount': {'type': 'integer'}}},
-                'Order': {
+                'Loop': {
                     'type': 'object',
-                    'properties': {
-                        'net': {'$ref': '#/components/schemas/Money'},
-                        'gross': {'$ref': '#/components/schemas/Money'},
-                    },
-                },
+                    'description': 'Extends itself.',
+                    'allOf': [{'$ref': '#/components/schemas/Loop'}],
+                }
             }
         )
+        defs: dict = {}
 
-        result = _expand_schema(raw, {'$ref': '#/components/schemas/Order'})
+        _expand_schema(raw, {'$ref': '#/components/schemas/Loop'}, defs)
 
-        assert result['properties']['net']['properties']['amount'] == {'type': 'integer'}
-        assert result['properties']['gross']['properties']['amount'] == {'type': 'integer'}
+        assert defs['Loop'] == {'type': 'object', 'description': 'Extends itself.'}
 
     def test_recursive_body_still_produces_a_tool_parameter(self):
-        """A recursive request body parses into operations rather than raising."""
+        """A recursive request body is split into parameters, its self-reference pointing at its own entry."""
         raw = {
             'openapi': '3.1.0',
             'info': {'title': 'Tree API', 'version': '1.0.0'},
@@ -260,11 +249,45 @@ class TestRecursiveSchemas:
             },
         }
 
-        spec = parse_spec(raw)
+        operation = parse_spec(raw).operations[0]
 
-        body = {p.name: p for p in spec.operations[0].parameters if p.location == 'body'}
+        body = {p.name: p for p in operation.parameters if p.location == 'body'}
         assert body['label'].schema_ == {'type': 'string'}
-        assert body['child'].schema_ == {'type': 'object'}
+        assert body['child'].schema_ == {'$ref': '#/$defs/Node'}
+        assert operation.schema_defs['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
+
+
+class TestSchemaDefs:
+    """Each operation carries exactly the component entries its parameters reach."""
+
+    def test_operation_carries_only_what_it_reaches(self):
+        """Entries reached through other entries are included, unrelated components are not."""
+        raw = {
+            'openapi': '3.1.0',
+            'info': {'title': 't', 'version': '1'},
+            'paths': {
+                '/orders': {
+                    'post': {
+                        'operationId': 'createOrder',
+                        'requestBody': {
+                            'content': {'application/json': {'schema': {'$ref': '#/components/schemas/Order'}}}
+                        },
+                    }
+                }
+            },
+            'components': {
+                'schemas': {
+                    'Order': {'type': 'object', 'properties': {'total': {'$ref': '#/components/schemas/Money'}}},
+                    'Money': {'type': 'object', 'properties': {'currency': {'$ref': '#/components/schemas/Code'}}},
+                    'Code': {'type': 'string'},
+                    'Unrelated': {'type': 'string'},
+                }
+            },
+        }
+
+        operation = parse_spec(raw).operations[0]
+
+        assert set(operation.schema_defs) == {'Money', 'Code'}
 
 
 class TestNullable:
@@ -272,21 +295,22 @@ class TestNullable:
 
     def test_v30_nullable_becomes_union(self):
         """A 3.0 ``{type, nullable: true}`` becomes ``type: [..., "null"]`` and drops ``nullable``."""
-        assert _expand_schema({}, {'type': 'string', 'nullable': True}) == {'type': ['string', 'null']}
+        assert _expand_schema({}, {'type': 'string', 'nullable': True}, {}) == {'type': ['string', 'null']}
 
     def test_v30_nullable_false_is_dropped(self):
         """``nullable: false`` is not a 2020-12 keyword, so it is dropped without touching ``type``."""
-        assert _expand_schema({}, {'type': 'string', 'nullable': False}) == {'type': 'string'}
+        assert _expand_schema({}, {'type': 'string', 'nullable': False}, {}) == {'type': 'string'}
 
     def test_v31_array_type_is_left_as_is(self):
         """A 3.1 array ``type`` is already canonical and passes through unchanged."""
-        assert _expand_schema({}, {'type': ['integer', 'null']}) == {'type': ['integer', 'null']}
+        assert _expand_schema({}, {'type': ['integer', 'null']}, {}) == {'type': ['integer', 'null']}
 
     def test_nullable_object_recurses_into_properties(self):
         """A nullable object still expands its properties, then normalizes its own type."""
         result = _expand_schema(
             {},
             {'type': 'object', 'nullable': True, 'properties': {'inner': {'type': 'string', 'nullable': True}}},
+            {},
         )
         assert result['type'] == ['object', 'null']
         assert result['properties']['inner'] == {'type': ['string', 'null']}
@@ -405,17 +429,17 @@ class TestExclusiveBounds:
 
     def test_boolean_exclusive_minimum_becomes_number(self):
         """``{minimum, exclusiveMinimum: true}`` folds the bound into a numeric ``exclusiveMinimum``."""
-        result = _expand_schema({}, {'type': 'integer', 'minimum': 0, 'exclusiveMinimum': True})
+        result = _expand_schema({}, {'type': 'integer', 'minimum': 0, 'exclusiveMinimum': True}, {})
         assert result == {'type': 'integer', 'exclusiveMinimum': 0}
 
     def test_boolean_exclusive_minimum_false_is_dropped(self):
         """``exclusiveMinimum: false`` marks an inclusive bound, so only the flag is dropped."""
-        result = _expand_schema({}, {'type': 'integer', 'minimum': 0, 'exclusiveMinimum': False})
+        result = _expand_schema({}, {'type': 'integer', 'minimum': 0, 'exclusiveMinimum': False}, {})
         assert result == {'type': 'integer', 'minimum': 0}
 
     def test_numeric_exclusive_maximum_is_left_as_is(self):
         """A 2020-12 numeric ``exclusiveMaximum`` passes through unchanged."""
-        result = _expand_schema({}, {'type': 'integer', 'exclusiveMaximum': 10})
+        result = _expand_schema({}, {'type': 'integer', 'exclusiveMaximum': 10}, {})
         assert result == {'type': 'integer', 'exclusiveMaximum': 10}
 
 
@@ -424,32 +448,34 @@ class TestDeepNormalization:
 
     def test_properties_without_type_still_recurses(self):
         """A fragment with ``properties`` but no ``type`` is a common shape and must still normalize its fields."""
-        result = _expand_schema({}, {'properties': {'inner': {'type': 'string', 'nullable': True}}})
+        result = _expand_schema({}, {'properties': {'inner': {'type': 'string', 'nullable': True}}}, {})
         assert result['properties']['inner'] == {'type': ['string', 'null']}
 
     def test_items_without_array_type_still_recurses(self):
         """An ``items`` fragment normalizes even when the parent omits ``type: array``."""
-        result = _expand_schema({}, {'items': {'type': 'integer', 'nullable': True}})
+        result = _expand_schema({}, {'items': {'type': 'integer', 'nullable': True}}, {})
         assert result['items'] == {'type': ['integer', 'null']}
 
     def test_additional_properties_value_recurses(self):
         """A map's value schema, declared through ``additionalProperties``, is normalized too."""
-        result = _expand_schema({}, {'type': 'object', 'additionalProperties': {'type': 'integer', 'nullable': True}})
+        result = _expand_schema(
+            {}, {'type': 'object', 'additionalProperties': {'type': 'integer', 'nullable': True}}, {}
+        )
         assert result['additionalProperties'] == {'type': ['integer', 'null']}
 
     def test_pattern_properties_value_recurses(self):
         """A ``patternProperties`` value schema is normalized like any other nested schema."""
-        result = _expand_schema({}, {'patternProperties': {'^x-': {'type': 'string', 'nullable': True}}})
+        result = _expand_schema({}, {'patternProperties': {'^x-': {'type': 'string', 'nullable': True}}}, {})
         assert result['patternProperties']['^x-'] == {'type': ['string', 'null']}
 
     def test_prefix_items_recurse(self):
         """Each ``prefixItems`` entry, the 2020-12 tuple form, is normalized in place."""
-        result = _expand_schema({}, {'prefixItems': [{'type': 'string', 'nullable': True}]})
+        result = _expand_schema({}, {'prefixItems': [{'type': 'string', 'nullable': True}]}, {})
         assert result['prefixItems'] == [{'type': ['string', 'null']}]
 
     def test_not_recurses(self):
         """A schema nested under ``not`` is normalized so it stays valid 2020-12."""
-        result = _expand_schema({}, {'not': {'type': 'string', 'nullable': True}})
+        result = _expand_schema({}, {'not': {'type': 'string', 'nullable': True}}, {})
         assert result['not'] == {'type': ['string', 'null']}
 
 
