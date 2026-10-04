@@ -27,6 +27,7 @@ from openapi_mcp_gateway.openapi import (
     ResourceOverride,
     ToolOverride,
 )
+from tests.constants import API_URL
 
 
 class _StubContext:
@@ -218,7 +219,7 @@ class TestResourceReadFunctionSignature:
             ],
             x_mcp_integration=_expose_resource(),
         )
-        fn = build_resource_read_function(operation, UpstreamBinding(base_url='https://api.example.com'))
+        fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
         names = list(inspect.signature(fn).parameters)
         assert names == ['petId', 'ctx']
 
@@ -230,7 +231,7 @@ class TestResourceReadFunctionSignature:
             path='/store/inventory',
             x_mcp_integration=_expose_resource(),
         )
-        fn = build_resource_read_function(operation, UpstreamBinding(base_url='https://api.example.com'))
+        fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
         assert list(inspect.signature(fn).parameters) == []
 
     def test_dashed_path_param_sanitised(self):
@@ -244,7 +245,7 @@ class TestResourceReadFunctionSignature:
             ],
             x_mcp_integration=_expose_resource(),
         )
-        fn = build_resource_read_function(operation, UpstreamBinding(base_url='https://api.example.com'))
+        fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
         assert 'enterprise_team' in inspect.signature(fn).parameters
 
 
@@ -256,7 +257,7 @@ class TestResourceGeneration:
         return (
             ResourceGenerator(
                 mcp=mcp,
-                binding=UpstreamBinding(base_url='https://api.example.com'),
+                binding=UpstreamBinding(base_url=API_URL),
                 server_name='petstore',
             ),
             mcp,
@@ -321,7 +322,7 @@ class TestResourceRead:
             parameters=[ParameterInfo(name='petId', location='path', required=True, schema={'type': 'string'})],
             x_mcp_integration=_expose_resource(),
         )
-        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url='https://api.example.com'))
+        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
         text = await read_fn(petId='123', ctx=_stub_context())
         assert captured['path'] == '/pets/123'
         assert '"id": 123' in text
@@ -342,7 +343,7 @@ class TestResourceRead:
             path='/store/inventory',
             x_mcp_integration=_expose_resource(),
         )
-        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url='https://api.example.com'))
+        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
         text = await read_fn()
         assert captured['path'] == '/store/inventory'
         assert '"available": 7' in text
@@ -366,7 +367,7 @@ class TestResourceRead:
             ],
             x_mcp_integration=_expose_resource(),
         )
-        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url='https://api.example.com'))
+        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
         await read_fn(enterprise_team='acme', ctx=_stub_context())
         assert captured['path'] == '/teams/acme'
 
@@ -385,7 +386,7 @@ class TestResourceRead:
             parameters=[ParameterInfo(name='petId', location='path', required=True, schema={'type': 'string'})],
             x_mcp_integration=_expose_resource(),
         )
-        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url='https://api.example.com'))
+        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
         with pytest.raises(RuntimeError, match='404'):
             await read_fn(petId='nope', ctx=_stub_context())
 
@@ -602,7 +603,7 @@ class TestDualExposureRegistration:
     async def test_op_appears_as_tool_and_resource(self):
         """``ToolGenerator`` and ``ResourceGenerator`` cooperate on the same MCPServer instance."""
         mcp = MCPServer('test')
-        binding = UpstreamBinding(base_url='https://api.example.com')
+        binding = UpstreamBinding(base_url=API_URL)
         op = OperationInfo(
             operation_id='getPet',
             method='get',

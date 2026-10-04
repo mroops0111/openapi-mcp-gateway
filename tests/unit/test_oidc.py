@@ -11,10 +11,10 @@ from openapi_mcp_gateway.auth.oidc import (
     TokenVerificationError,
     fetch_issuer_metadata,
 )
+from tests.constants import GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
 
 
-ISSUER = 'https://auth.example.com'
-GATEWAY_RESOURCE = 'https://gw.example.com/braid/mcp'
+GATEWAY_RESOURCE = f'{GATEWAY_URL}/braid/mcp'
 
 
 @pytest.fixture(scope='module')
@@ -56,7 +56,7 @@ def _verifier(signing_key, **kwargs) -> JWKSTokenVerifier:
         return JWKSTokenVerifier(
             issuer=ISSUER,
             audience=GATEWAY_RESOURCE,
-            jwks_uri=f'{ISSUER}/jwks',
+            jwks_uri=JWKS_URL,
             **kwargs,
         )
 
@@ -66,22 +66,22 @@ class TestFetchIssuerMetadata:
 
     def test_prefers_openid_configuration(self):
         """OpenID Connect discovery is tried first, so a provider serving both is read once."""
-        payload = {'issuer': ISSUER, 'jwks_uri': f'{ISSUER}/jwks', 'token_endpoint': f'{ISSUER}/token'}
+        payload = {'issuer': ISSUER, 'jwks_uri': JWKS_URL, 'token_endpoint': TOKEN_URL}
         with patch('httpx.get', return_value=_metadata_response(payload)) as get:
             metadata = fetch_issuer_metadata(ISSUER)
 
-        assert metadata.jwks_uri == f'{ISSUER}/jwks'
-        assert metadata.token_endpoint == f'{ISSUER}/token'
+        assert metadata.jwks_uri == JWKS_URL
+        assert metadata.token_endpoint == TOKEN_URL
         assert get.call_args_list[0].args[0] == f'{ISSUER}/.well-known/openid-configuration'
 
     def test_falls_back_to_oauth_authorization_server(self):
         """A plain OAuth server serving only RFC 8414 is still discovered."""
-        payload = {'issuer': ISSUER, 'jwks_uri': f'{ISSUER}/jwks', 'token_endpoint': f'{ISSUER}/token'}
+        payload = {'issuer': ISSUER, 'jwks_uri': JWKS_URL, 'token_endpoint': TOKEN_URL}
         responses = [_metadata_response(None, status_code=404), _metadata_response(payload)]
         with patch('httpx.get', side_effect=responses) as get:
             metadata = fetch_issuer_metadata(ISSUER)
 
-        assert metadata.jwks_uri == f'{ISSUER}/jwks'
+        assert metadata.jwks_uri == JWKS_URL
         assert get.call_args_list[1].args[0] == f'{ISSUER}/.well-known/oauth-authorization-server'
 
     def test_rejects_document_declaring_another_issuer(self):

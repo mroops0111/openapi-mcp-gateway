@@ -1,3 +1,4 @@
+import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from openapi_mcp_gateway.auth.flows.authorization_code import (
     UpstreamOAuthClient,
 )
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
+from tests.constants import API_URL, AUTHORIZE_URL, TOKEN_URL
 
 
 @pytest.fixture
@@ -22,12 +24,12 @@ def store():
 
 @pytest.fixture
 def provider(store):
-    """``AuthorizationCodeProvider`` wired against ``auth.example.com`` for the petstore prefix."""
+    """``AuthorizationCodeProvider`` wired against the shared test issuer for the petstore prefix."""
     return AuthorizationCodeProvider(
         store=store,
         upstream=UpstreamOAuthClient(
-            authorization_url='https://auth.example.com/authorize',
-            token_url='https://auth.example.com/token',
+            authorization_url=AUTHORIZE_URL,
+            token_url=TOKEN_URL,
             client_id='gateway-client-id',
             client_secret='gateway-client-secret',
             callback_url='http://localhost:8000/petstore/auth/callback',
@@ -92,7 +94,7 @@ class TestAuthorize:
             code_challenge='challenge-abc',
         )
         url = await provider.authorize(mcp_client_info, params)
-        assert url.startswith('https://auth.example.com/authorize?')
+        assert url.startswith(f'{AUTHORIZE_URL}?')
         assert 'client_id=gateway-client-id' in url
         assert 'state=test-state' in url
         assert 'scope=read+write' in url
@@ -172,8 +174,8 @@ class TestConfigurableTokenTtl:
         provider = AuthorizationCodeProvider(
             store=store,
             upstream=UpstreamOAuthClient(
-                authorization_url='https://auth.example.com/authorize',
-                token_url='https://auth.example.com/token',
+                authorization_url=AUTHORIZE_URL,
+                token_url=TOKEN_URL,
                 client_id='gateway-client-id',
                 client_secret='gateway-client-secret',
                 callback_url='http://localhost:8000/petstore/auth/callback',
@@ -310,13 +312,13 @@ def audience_provider(store):
     return AuthorizationCodeProvider(
         store=store,
         upstream=UpstreamOAuthClient(
-            authorization_url='https://auth.example.com/authorize',
-            token_url='https://auth.example.com/token',
+            authorization_url=AUTHORIZE_URL,
+            token_url=TOKEN_URL,
             client_id='gateway-client-id',
             client_secret='gateway-client-secret',
             callback_url='http://localhost:8000/petstore/auth/callback',
             scopes=['read'],
-            audience_params={'audience': 'https://api.example.com'},
+            audience_params={'audience': API_URL},
         ),
         issued_tokens=IssuedTokenPolicy(access_token_ttl=3600, refresh_token_ttl=86400),
         prefix='petstore',
@@ -355,7 +357,7 @@ class TestUpstreamAudienceParams:
 
         url = await audience_provider.authorize(mcp_client_info, params)
 
-        assert 'audience=https%3A%2F%2Fapi.example.com' in url
+        assert urllib.parse.urlencode({'audience': API_URL}) in url
 
     async def test_code_exchange_carries_audience(self, audience_provider, mcp_client_info):
         """The authorization_code grant names the API as well as the authorize request."""
@@ -376,7 +378,7 @@ class TestUpstreamAudienceParams:
         assert post_mock.await_args is not None
         posted = post_mock.await_args.kwargs['data']
         assert posted['grant_type'] == 'authorization_code'
-        assert posted['audience'] == 'https://api.example.com'
+        assert posted['audience'] == API_URL
 
     async def test_refresh_carries_audience(self, audience_provider, mcp_client_info, store):
         """A refresh names the API too, so the rotated token stays usable upstream.
@@ -411,7 +413,7 @@ class TestUpstreamAudienceParams:
         assert post_mock.await_args is not None
         posted = post_mock.await_args.kwargs['data']
         assert posted['grant_type'] == 'refresh_token'
-        assert posted['audience'] == 'https://api.example.com'
+        assert posted['audience'] == API_URL
 
     async def test_unconfigured_provider_sends_no_audience(self, provider, mcp_client_info):
         """An upstream that issues its own tokens sees no audience keys at all."""

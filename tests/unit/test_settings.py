@@ -14,6 +14,7 @@ from openapi_mcp_gateway.settings import (
     single_spec_layer,
     yaml_layer,
 )
+from tests.constants import API_URL, GATEWAY_URL
 
 
 EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[2] / 'examples'
@@ -127,8 +128,8 @@ class TestGatewayConfig:
 
     def test_custom_url(self):
         """Explicit ``url`` is preserved."""
-        config = GatewayConfig(url='https://mcp.example.com')
-        assert config.url == 'https://mcp.example.com'
+        config = GatewayConfig(url=GATEWAY_URL)
+        assert config.url == GATEWAY_URL
 
     def test_from_yaml(self, tmp_path):
         """``from_yaml`` loads host/port/servers from a YAML file."""
@@ -293,15 +294,15 @@ class TestAuthConfigUpstreamAudience:
 
     def test_resource_emits_rfc_8707_parameter(self):
         """``resource`` is passed through under its RFC 8707 name."""
-        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(resource='https://api.example.com'))
+        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(resource=API_URL))
 
-        assert auth.upstream.resolve_audience_params() == {'resource': 'https://api.example.com'}
+        assert auth.upstream.resolve_audience_params() == {'resource': API_URL}
 
     def test_audience_emits_auth0_parameter(self):
         """``audience`` is passed through under the spelling Auth0 expects."""
-        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(audience='https://api.example.com'))
+        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(audience=API_URL))
 
-        assert auth.upstream.resolve_audience_params() == {'audience': 'https://api.example.com'}
+        assert auth.upstream.resolve_audience_params() == {'audience': API_URL}
 
     def test_both_are_sent_when_both_configured(self):
         """Setting both is allowed, for an authorization server that accepts either spelling."""
@@ -341,7 +342,7 @@ class TestUnknownKeysAreRefused:
         ('section', 'payload'),
         [
             ('auth', {'scopes': ['read']}),
-            ('auth.upstream', {'upstream_audience': 'https://api.example.com'}),
+            ('auth.upstream', {'upstream_audience': API_URL}),
             ('exposure', {'mode': 'auto'}),
             ('policy', {'marked_only': True}),
         ],

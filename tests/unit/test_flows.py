@@ -23,6 +23,7 @@ from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, ServerConfig, UpstreamAuthConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
+from tests.constants import API_URL, AUTHORIZE_URL, ISSUER, JWKS_URL, TOKEN_URL
 
 
 def _build_spec(security_schemes: dict | None = None) -> OpenAPISpec:
@@ -44,8 +45,8 @@ def _spec_with_authorization_code() -> OpenAPISpec:
                 'type': 'oauth2',
                 'flows': {
                     'authorizationCode': {
-                        'authorizationUrl': 'https://auth.example.com/authorize',
-                        'tokenUrl': 'https://auth.example.com/token',
+                        'authorizationUrl': AUTHORIZE_URL,
+                        'tokenUrl': TOKEN_URL,
                         'scopes': {'read': 'r', 'write': 'w'},
                     },
                 },
@@ -62,7 +63,7 @@ def _spec_with_client_credentials() -> OpenAPISpec:
                 'type': 'oauth2',
                 'flows': {
                     'clientCredentials': {
-                        'tokenUrl': 'https://auth.example.com/token',
+                        'tokenUrl': TOKEN_URL,
                         'scopes': {'api': 'api'},
                     },
                 },
@@ -79,12 +80,12 @@ def _spec_with_both_flows() -> OpenAPISpec:
                 'type': 'oauth2',
                 'flows': {
                     'authorizationCode': {
-                        'authorizationUrl': 'https://auth.example.com/authorize',
-                        'tokenUrl': 'https://auth.example.com/token',
+                        'authorizationUrl': AUTHORIZE_URL,
+                        'tokenUrl': TOKEN_URL,
                         'scopes': {'api': 'api'},
                     },
                     'clientCredentials': {
-                        'tokenUrl': 'https://auth.example.com/token',
+                        'tokenUrl': TOKEN_URL,
                         'scopes': {'api': 'api'},
                     },
                 },
@@ -95,7 +96,7 @@ def _spec_with_both_flows() -> OpenAPISpec:
 
 def _entry(auth: AuthConfig, name: str = 'srv') -> ServerConfig:
     """Minimal ``ServerConfig`` carrying ``auth`` for factory tests."""
-    return ServerConfig(name=name, spec='dummy.json', base_url='https://api.example.com', auth=auth)
+    return ServerConfig(name=name, spec='dummy.json', base_url=API_URL, auth=auth)
 
 
 class TestResolveOAuthFlow:
@@ -142,14 +143,12 @@ class TestResolveOAuthFlow:
         entry = _entry(
             AuthConfig(
                 type='oauth2',
-                upstream=UpstreamAuthConfig(
-                    client_id='cid', client_secret='sec', token_url='https://auth.example.com/token'
-                ),
+                upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', token_url=TOKEN_URL),
             ),
         )
         flow = resolve_oauth_flow(entry, _build_spec())
         assert flow.flow_type == 'client_credentials'
-        assert flow.token_url == 'https://auth.example.com/token'
+        assert flow.token_url == TOKEN_URL
 
     def test_synthesises_authorization_code_when_authorization_url_set(self):
         """No declared flows but both URLs set → authorization_code is inferred."""
@@ -159,8 +158,8 @@ class TestResolveOAuthFlow:
                 upstream=UpstreamAuthConfig(
                     client_id='cid',
                     client_secret='sec',
-                    authorization_url='https://auth.example.com/authorize',
-                    token_url='https://auth.example.com/token',
+                    authorization_url=AUTHORIZE_URL,
+                    token_url=TOKEN_URL,
                 ),
             ),
         )
@@ -357,7 +356,7 @@ class TestClientCredentialsFlowHandler:
         assert isinstance(token_source, ClientCredentialsTokenSource)
         assert token_source.client_id == 'cid'
         assert token_source.client_secret == 'sec'
-        assert token_source.token_url == 'https://auth.example.com/token'
+        assert token_source.token_url == TOKEN_URL
         assert token_source.scopes == ['read']
 
 
@@ -388,8 +387,8 @@ class TestAuthorizationCodeFlowHandler:
 
         assert setup.provider is not None
         assert setup.provider.upstream.callback_url == 'http://localhost:8000/srv/auth/callback'
-        assert setup.provider.upstream.authorization_url == 'https://auth.example.com/authorize'
-        assert setup.provider.upstream.token_url == 'https://auth.example.com/token'
+        assert setup.provider.upstream.authorization_url == AUTHORIZE_URL
+        assert setup.provider.upstream.token_url == TOKEN_URL
 
 
 class TestUpstreamAudienceWiring:
@@ -400,7 +399,7 @@ class TestUpstreamAudienceWiring:
         entry = _entry(
             AuthConfig(
                 type='oauth2',
-                upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', audience='https://api.example.com'),
+                upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', audience=API_URL),
             ),
         )
         spec = _spec_with_authorization_code()
@@ -417,7 +416,7 @@ class TestUpstreamAudienceWiring:
         )
 
         assert setup.provider is not None
-        assert setup.provider.upstream.audience_params == {'audience': 'https://api.example.com'}
+        assert setup.provider.upstream.audience_params == {'audience': API_URL}
 
     def test_client_credentials_token_source_receives_resource(self):
         """``ClientCredentialsFlowHandler`` hands the resolved parameters to the token source."""
@@ -425,7 +424,7 @@ class TestUpstreamAudienceWiring:
             AuthConfig(
                 type='oauth2',
                 flow='client_credentials',
-                upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', resource='https://api.example.com'),
+                upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec', resource=API_URL),
             ),
         )
         spec = _spec_with_client_credentials()
@@ -444,7 +443,7 @@ class TestUpstreamAudienceWiring:
         assert isinstance(setup.resolver, TokenSourceAuthResolver)
         token_source = setup.resolver._token_source
         assert isinstance(token_source, ClientCredentialsTokenSource)
-        assert token_source.audience_params == {'resource': 'https://api.example.com'}
+        assert token_source.audience_params == {'resource': API_URL}
 
 
 def _token_exchange_entry(**overrides) -> ServerConfig:
@@ -455,11 +454,11 @@ def _token_exchange_entry(**overrides) -> ServerConfig:
     """
     upstream_keys = {'client_id', 'client_secret', 'authorization_url', 'token_url', 'scopes', 'resource', 'audience'}
     upstream: dict[str, typing.Any] = {
-        'audience': 'https://api.example.com',
+        'audience': API_URL,
         'client_id': 'gateway',
         'client_secret': 'secret',
     }
-    auth: dict[str, typing.Any] = {'type': 'oauth2', 'flow': 'token_exchange', 'issuer': 'https://auth.example.com'}
+    auth: dict[str, typing.Any] = {'type': 'oauth2', 'flow': 'token_exchange', 'issuer': ISSUER}
     for key, value in overrides.items():
         (upstream if key in upstream_keys else auth)[key] = value
     return _entry(AuthConfig.model_validate({**auth, 'upstream': upstream}))
@@ -468,9 +467,9 @@ def _token_exchange_entry(**overrides) -> ServerConfig:
 def _build_token_exchange(entry: ServerConfig):
     """Run the handler with issuer discovery stubbed out."""
     metadata = IssuerMetadata(
-        issuer='https://auth.example.com',
-        jwks_uri='https://auth.example.com/jwks',
-        token_endpoint='https://auth.example.com/token',
+        issuer=ISSUER,
+        jwks_uri=JWKS_URL,
+        token_endpoint=TOKEN_URL,
     )
     with (
         patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
@@ -501,9 +500,7 @@ class TestTokenExchangeFlowHandler:
 
         assert setup.protected_resource is not None
         assert str(setup.protected_resource.resource) == 'http://localhost:8000/srv/mcp'
-        assert [str(server) for server in setup.protected_resource.authorization_servers] == [
-            'https://auth.example.com'
-        ]
+        assert [str(server) for server in setup.protected_resource.authorization_servers] == [ISSUER]
 
     def test_produces_a_verifier_and_no_provider(self):
         """The gateway validates rather than issues, which is what the SDK's two modes are."""

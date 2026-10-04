@@ -9,6 +9,7 @@ from mcp.types import InputRequiredResult
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import McpIntegration, ResourceOverride
 from openapi_mcp_gateway.settings import ExposureConfig, GatewayConfig, ServerConfig
+from tests.constants import PETSTORE_URL
 
 
 class _StubContext:
@@ -35,7 +36,7 @@ def _spec_with_resource_optin() -> dict:
     return {
         'openapi': '3.0.0',
         'info': {'title': 'Petstore Resource', 'version': '1.0.0'},
-        'servers': [{'url': 'https://petstore.example.com/v1'}],
+        'servers': [{'url': PETSTORE_URL}],
         'paths': {
             '/pets': {
                 'get': {
@@ -112,7 +113,7 @@ def _spec_with_misconfig_post_resource() -> dict:
     return {
         'openapi': '3.0.0',
         'info': {'title': 'Bad Resource', 'version': '1.0.0'},
-        'servers': [{'url': 'https://petstore.example.com/v1'}],
+        'servers': [{'url': PETSTORE_URL}],
         'paths': {
             '/pets': {
                 'post': {
@@ -250,7 +251,7 @@ class TestResourceUpstreamCall:
         # This read never triggers one, so narrow to the resource-contents arm.
         assert not isinstance(result, InputRequiredResult)
         contents = list(result)
-        assert captured['url'].startswith('https://petstore.example.com/v1/store/inventory')
+        assert captured['url'].startswith(f'{PETSTORE_URL}/store/inventory')
         assert len(contents) == 1
         body = contents[0].content
         assert isinstance(body, str)
@@ -288,7 +289,7 @@ class TestResourceUpstreamCall:
 
         text = await raw_fn(petId='42', ctx=_stub_context())
         assert captured['method'] == 'GET'
-        assert captured['url'].startswith('https://petstore.example.com/v1/pets/42')
+        assert captured['url'].startswith(f'{PETSTORE_URL}/pets/42')
         assert '"id": 42' in text
 
 
@@ -297,7 +298,7 @@ def _vanilla_spec() -> dict:
     return {
         'openapi': '3.0.0',
         'info': {'title': 'Petstore', 'version': '1.0.0'},
-        'servers': [{'url': 'https://petstore.example.com/v1'}],
+        'servers': [{'url': PETSTORE_URL}],
         'paths': {
             '/pets/{petId}': {
                 'get': {
