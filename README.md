@@ -284,6 +284,8 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `port` | int | `8000` | Bind port |
 | `url` | string | *(empty)* | Public base URL for OAuth redirects and discovery. When unset: `http://localhost:{port}` if `host` is `0.0.0.0`, otherwise `http://{host}:{port}`. Override when your registered redirect URI uses another host (tunnel, reverse proxy, etc.). |
 | `transport` | string | `streamable-http` | `streamable-http`, `stdio`, or `sse` (deprecated) |
+| `dns_rebinding_protection.allowed_hosts` | list | `[]` | `Host` values the MCP endpoints accept, as `host` or `host:port` (`host:*` for any port), which refuses a web page reaching the gateway through DNS rebinding. Listing any turns the check on. When empty, a loopback `host` accepts only loopback names and any other bind accepts any `Host`. A mounted gateway is checked only when hosts are listed. |
+| `dns_rebinding_protection.allowed_origins` | list | `[]` | `Origin` values accepted from browser clients, as `scheme://host[:port]`. Requires `allowed_hosts`. |
 | `store.type` | string | `memory` | `memory` or `redis`. Redis shares OAuth credential state across replicas. It holds OAuth tokens and client registrations, never MCP protocol sessions, so single-replica or non-OAuth deployments can stay on `memory`. |
 | `store.redis_url` | string | `redis://localhost:6379` | Redis URL when `store.type: redis` |
 | `logging.level` | string | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |

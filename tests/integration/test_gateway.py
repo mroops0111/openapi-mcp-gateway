@@ -20,11 +20,13 @@ from mcp.server.mcpserver import Context
 from mcp.types import RequestParamsMeta, TextContent
 from starlette.testclient import TestClient
 
+from openapi_mcp_gateway.app import _transport_security
 from openapi_mcp_gateway.auth import token_source as token_source_module
 from openapi_mcp_gateway.auth.oidc import IssuerMetadata
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import (
     AuthConfig,
+    DNSRebindingProtectionConfig,
     ExposureConfig,
     GatewayConfig,
     PolicyConfig,
@@ -78,6 +80,20 @@ def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = N
     ):
         gateway = Gateway.from_config(config)
         return TestClient(gateway._build_app(transport='streamable-http'))
+
+
+def _initialize_status(test_client: TestClient, host: str, origin: str | None = None) -> int:
+    """Status of an MCP ``initialize`` POST to the petstore endpoint, sent with ``host`` and ``origin``."""
+    headers = {'Host': host, 'Accept': 'application/json, text/event-stream', 'Content-Type': 'application/json'}
+    if origin is not None:
+        headers['Origin'] = origin
+    body = {
+        'jsonrpc': '2.0',
+        'id': 1,
+        'method': 'initialize',
+        'params': {'protocolVersion': '2025-11-25', 'capabilities': {}, 'clientInfo': {'name': 'test', 'version': '1'}},
+    }
+    return test_client.post('/petstore/mcp', headers=headers, json=body).status_code
 
 
 @contextlib.asynccontextmanager
@@ -337,6 +353,55 @@ class TestTransports:
             if issubclass(warning.category, DeprecationWarning) and 'sse' in str(warning.message)
         ]
         assert not sse_warnings
+
+
+class TestDNSRebindingProtection:
+    """``Host`` / ``Origin`` checks on the MCP endpoints, which is how a DNS rebinding attack is refused."""
+
+    @pytest.fixture
+    def listed_gateway(self, petstore_json_path):
+        """Petstore gateway that lists the one host and origin it is reached by."""
+        config = GatewayConfig(
+            servers=[ServerConfig(name='petstore', spec=str(petstore_json_path))],
+            dns_rebinding_protection=DNSRebindingProtectionConfig(
+                allowed_hosts=['gateway.internal'], allowed_origins=['https://app.example.com']
+            ),
+        )
+        return Gateway.from_config(config)
+
+    def test_loopback_bind_refuses_a_foreign_host(self, gateway):
+        """A page re-pointing its own domain at 127.0.0.1 still sends that domain as ``Host``, so it is refused."""
+        with TestClient(gateway._build_app(transport='streamable-http', host='127.0.0.1')) as test_client:
+            assert _initialize_status(test_client, 'evil.example') == 421
+            assert _initialize_status(test_client, 'localhost:8000') == 200
+
+    def test_any_other_bind_accepts_any_host(self, gateway):
+        """With nothing listed, a bind behind an unknown proxy keeps accepting whatever ``Host`` arrives."""
+        with TestClient(gateway._build_app(transport='streamable-http', host='0.0.0.0')) as test_client:
+            assert _initialize_status(test_client, 'evil.example') == 200
+
+    def test_listed_hosts_and_origins_are_enforced_on_any_bind(self, listed_gateway):
+        """Listing hosts turns the check on even for a ``0.0.0.0`` bind, and accepts only what is listed."""
+        with TestClient(listed_gateway._build_app(transport='streamable-http', host='0.0.0.0')) as test_client:
+            assert _initialize_status(test_client, 'gateway.internal') == 200
+            assert _initialize_status(test_client, 'evil.example') == 421
+            assert _initialize_status(test_client, 'gateway.internal', origin='https://app.example.com') == 200
+            assert _initialize_status(test_client, 'gateway.internal', origin='https://evil.example') == 403
+
+    def test_mounted_gateway_checks_only_when_hosts_are_listed(self):
+        """A mounted gateway has no bind of its own to judge by, so only a listed host turns the check on."""
+        unlisted = _transport_security(DNSRebindingProtectionConfig(), host=None)
+        assert unlisted is not None
+        assert not unlisted.enable_dns_rebinding_protection
+        listed = _transport_security(DNSRebindingProtectionConfig(allowed_hosts=['gateway.internal']), host=None)
+        assert listed is not None
+        assert listed.enable_dns_rebinding_protection
+        assert listed.allowed_hosts == ['gateway.internal']
+
+    def test_origins_without_hosts_are_refused(self):
+        """Origins alone would turn on a check that refuses every ``Host``, so the config is refused instead."""
+        with pytest.raises(ValueError, match='allowed_hosts'):
+            DNSRebindingProtectionConfig(allowed_origins=['https://app.example.com'])
 
 
 class TestEndToEndToolInvocation:

@@ -4,6 +4,7 @@ from .openapi import ExposedTool
 from .settings import (
     AuthConfig,
     CORSConfig,
+    DNSRebindingProtectionConfig,
     ExposureConfig,
     GatewayConfig,
     LoggingConfig,
@@ -21,6 +22,7 @@ from .stores import MemoryTokenStore, TokenStore
 __all__ = [
     'AuthConfig',
     'CORSConfig',
+    'DNSRebindingProtectionConfig',
     'ExposedTool',
     'ExposureConfig',
     'Gateway',
