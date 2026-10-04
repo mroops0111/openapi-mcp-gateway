@@ -10,5 +10,13 @@ JWKS_URL = f'{ISSUER}/jwks'
 API_URL = 'https://api.example.com'
 PETSTORE_URL = 'https://petstore.example.com/v1'
 
-# The gateway's own public URL, which MCP clients reach and tokens are issued for.
-GATEWAY_URL = 'https://mcp.example.com'
+# The gateway's own public address, which MCP clients reach and tokens are issued for.
+GATEWAY_HOST = 'mcp.example.com'
+GATEWAY_URL = f'https://{GATEWAY_HOST}'
+
+# A web page allowed to call the gateway from a browser.
+BROWSER_ORIGIN = 'https://app.example.com'
+
+# An attacker's domain, which a test expects to be refused wherever it appears.
+ATTACKER_HOST = 'evil.example.com'
+ATTACKER_URL = f'https://{ATTACKER_HOST}'

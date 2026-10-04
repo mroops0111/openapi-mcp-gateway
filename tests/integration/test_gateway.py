@@ -33,7 +33,19 @@ from openapi_mcp_gateway.settings import (
     ServerConfig,
     UpstreamAuthConfig,
 )
-from tests.constants import API_URL, AUTHORIZE_URL, GATEWAY_URL, ISSUER, JWKS_URL, PETSTORE_URL, TOKEN_URL
+from tests.constants import (
+    API_URL,
+    ATTACKER_HOST,
+    ATTACKER_URL,
+    AUTHORIZE_URL,
+    BROWSER_ORIGIN,
+    GATEWAY_HOST,
+    GATEWAY_URL,
+    ISSUER,
+    JWKS_URL,
+    PETSTORE_URL,
+    TOKEN_URL,
+)
 
 
 class _StubContext:
@@ -364,7 +376,7 @@ class TestDNSRebindingProtection:
         config = GatewayConfig(
             servers=[ServerConfig(name='petstore', spec=str(petstore_json_path))],
             dns_rebinding_protection=DNSRebindingProtectionConfig(
-                allowed_hosts=['gateway.internal'], allowed_origins=['https://app.example.com']
+                allowed_hosts=[GATEWAY_HOST], allowed_origins=[BROWSER_ORIGIN]
             ),
         )
         return Gateway.from_config(config)
@@ -372,36 +384,36 @@ class TestDNSRebindingProtection:
     def test_loopback_bind_refuses_a_foreign_host(self, gateway):
         """A page re-pointing its own domain at 127.0.0.1 still sends that domain as ``Host``, so it is refused."""
         with TestClient(gateway._build_app(transport='streamable-http', host='127.0.0.1')) as test_client:
-            assert _initialize_status(test_client, 'evil.example') == 421
+            assert _initialize_status(test_client, ATTACKER_HOST) == 421
             assert _initialize_status(test_client, 'localhost:8000') == 200
 
     def test_any_other_bind_accepts_any_host(self, gateway):
         """With nothing listed, a bind behind an unknown proxy keeps accepting whatever ``Host`` arrives."""
         with TestClient(gateway._build_app(transport='streamable-http', host='0.0.0.0')) as test_client:
-            assert _initialize_status(test_client, 'evil.example') == 200
+            assert _initialize_status(test_client, ATTACKER_HOST) == 200
 
     def test_listed_hosts_and_origins_are_enforced_on_any_bind(self, listed_gateway):
         """Listing hosts turns the check on even for a ``0.0.0.0`` bind, and accepts only what is listed."""
         with TestClient(listed_gateway._build_app(transport='streamable-http', host='0.0.0.0')) as test_client:
-            assert _initialize_status(test_client, 'gateway.internal') == 200
-            assert _initialize_status(test_client, 'evil.example') == 421
-            assert _initialize_status(test_client, 'gateway.internal', origin='https://app.example.com') == 200
-            assert _initialize_status(test_client, 'gateway.internal', origin='https://evil.example') == 403
+            assert _initialize_status(test_client, GATEWAY_HOST) == 200
+            assert _initialize_status(test_client, ATTACKER_HOST) == 421
+            assert _initialize_status(test_client, GATEWAY_HOST, origin=BROWSER_ORIGIN) == 200
+            assert _initialize_status(test_client, GATEWAY_HOST, origin=ATTACKER_URL) == 403
 
     def test_mounted_gateway_checks_only_when_hosts_are_listed(self):
         """A mounted gateway has no bind of its own to judge by, so only a listed host turns the check on."""
         unlisted = _transport_security(DNSRebindingProtectionConfig(), host=None)
         assert unlisted is not None
         assert not unlisted.enable_dns_rebinding_protection
-        listed = _transport_security(DNSRebindingProtectionConfig(allowed_hosts=['gateway.internal']), host=None)
+        listed = _transport_security(DNSRebindingProtectionConfig(allowed_hosts=[GATEWAY_HOST]), host=None)
         assert listed is not None
         assert listed.enable_dns_rebinding_protection
-        assert listed.allowed_hosts == ['gateway.internal']
+        assert listed.allowed_hosts == [GATEWAY_HOST]
 
     def test_origins_without_hosts_are_refused(self):
         """Origins alone would turn on a check that refuses every ``Host``, so the config is refused instead."""
         with pytest.raises(ValueError, match='allowed_hosts'):
-            DNSRebindingProtectionConfig(allowed_origins=['https://app.example.com'])
+            DNSRebindingProtectionConfig(allowed_origins=[BROWSER_ORIGIN])
 
 
 class TestEndToEndToolInvocation:
