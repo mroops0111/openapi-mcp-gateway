@@ -15,14 +15,11 @@ from starlette.responses import JSONResponse
 
 from .auth.flows import AuthorizationCodeProvider
 from .openapi import ExposedTool, OpenAPISpec
-from .settings import GatewayConfig
+from .settings import DNSRebindingProtectionConfig, GatewayConfig
 from .stores.base import TokenStore
 
 
 logger = logging.getLogger(__name__)
-
-
-_TRANSPORT_SECURITY = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
 
 class _ServerBundle(typing.NamedTuple):
@@ -91,16 +88,37 @@ class _ServerBundle(typing.NamedTuple):
         }
 
 
-def build_mcp_asgi_app(mcp: MCPServer, transport: str) -> typing.Any:
+def build_mcp_asgi_app(
+    mcp: MCPServer, transport: str, protection: DNSRebindingProtectionConfig, host: str | None
+) -> typing.Any:
     """Build the Starlette ASGI app for ``mcp`` under ``transport``.
 
     Centralises the ``sse`` vs ``streamable-http`` choice,
     and the ``transport_security`` argument.
     mcp v2 moved that argument off the ``MCPServer`` constructor onto these factory methods.
+    ``host`` is the address the gateway binds, or ``None`` when it is mounted into an app someone else serves.
     """
+    transport_security = _transport_security(protection, host)
+    # The SDK reads ``host`` only when ``transport_security`` is ``None``, which never happens for a mounted gateway,
+    # so the empty string standing in for its missing bind is never read.
     if transport == 'sse':
-        return mcp.sse_app(transport_security=_TRANSPORT_SECURITY)
-    return mcp.streamable_http_app(transport_security=_TRANSPORT_SECURITY)
+        return mcp.sse_app(transport_security=transport_security, host=host or '')
+    return mcp.streamable_http_app(transport_security=transport_security, host=host or '')
+
+
+def _transport_security(protection: DNSRebindingProtectionConfig, host: str | None) -> TransportSecuritySettings | None:
+    """Settle the ``Host`` / ``Origin`` checks, where ``None`` leaves them to the SDK's default for ``host``."""
+    if protection.allowed_hosts:
+        return TransportSecuritySettings(
+            allowed_hosts=protection.allowed_hosts,
+            allowed_origins=protection.allowed_origins,
+        )
+    if host is None:
+        # The host app is bound by someone else, so there is no bind to judge the exposure by.
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    # The SDK checks a loopback bind against the loopback names, and leaves any other bind unchecked,
+    # since only the operator knows which names a proxy will put in ``Host``.
+    return None
 
 
 def build_app(
@@ -109,6 +127,7 @@ def build_app(
     store: TokenStore,
     on_shutdown: typing.Callable[[], typing.Awaitable[None]],
     transport: str,
+    host: str,
 ) -> FastAPI:
     """Assemble the gateway FastAPI app with CORS, OAuth, discovery, health, and MCP mounts."""
 
@@ -145,7 +164,10 @@ def build_app(
     _register_health_route(app, servers)
 
     for bundle in servers:
-        app.mount(bundle.mount_path, build_mcp_asgi_app(bundle.mcp, transport))
+        app.mount(
+            bundle.mount_path,
+            build_mcp_asgi_app(bundle.mcp, transport, config.dns_rebinding_protection, host),
+        )
 
     return app
 

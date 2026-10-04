@@ -194,6 +194,30 @@ class CORSConfig(pydantic.BaseModel):
     expose_headers: list[str] = ['*']
 
 
+class DNSRebindingProtectionConfig(pydantic.BaseModel):
+    """``Host`` and ``Origin`` allowlists for the MCP endpoints, which is how a DNS rebinding attack is refused.
+
+    Left empty, a loopback bind accepts only the loopback names, and any other bind accepts any ``Host``.
+    Listing hosts turns the check on for every bind, accepting only what is listed.
+    Entries match exactly, except that a trailing ``:*`` accepts any port.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid')
+
+    allowed_hosts: list[str] = []
+    allowed_origins: list[str] = []
+
+    @pydantic.model_validator(mode='after')
+    def _require_hosts_with_origins(self) -> typing.Self:
+        """Refuse origins without hosts, since the check they turn on would then refuse every ``Host``."""
+        if self.allowed_origins and not self.allowed_hosts:
+            raise ValueError(
+                'dns_rebinding_protection.allowed_origins needs dns_rebinding_protection.allowed_hosts, '
+                'since the check it turns on would otherwise refuse every Host.'
+            )
+        return self
+
+
 class StoreConfig(pydantic.BaseModel):
     """Selects the ``TokenStore`` backend (in-process memory or Redis)."""
 
@@ -288,6 +312,7 @@ class GatewayConfig(pydantic.BaseModel):
     debug: bool = False
     enable_docs: bool = False
     cors: CORSConfig = CORSConfig()
+    dns_rebinding_protection: DNSRebindingProtectionConfig = DNSRebindingProtectionConfig()
     store: StoreConfig = StoreConfig()
     logging: LoggingConfig = LoggingConfig()
     servers: list[ServerConfig] = pydantic.Field(default_factory=list)

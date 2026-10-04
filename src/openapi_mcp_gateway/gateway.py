@@ -357,7 +357,7 @@ class Gateway:
                 self._run_shutdown_hooks_blocking()
             return
 
-        app = self._build_app(transport=transport)
+        app = self._build_app(transport=transport, host=host)
         logger.info(
             'Starting gateway: transport=%s bind=%s:%d servers=%d',
             transport,
@@ -383,7 +383,10 @@ class Gateway:
         _warn_if_deprecated_transport(transport)
         register_auth_routes(app, self._servers)
         for bundle in self._servers:
-            app.mount(bundle.mount_path, build_mcp_asgi_app(bundle.mcp, transport))
+            app.mount(
+                bundle.mount_path,
+                build_mcp_asgi_app(bundle.mcp, transport, self._config.dns_rebinding_protection, host=None),
+            )
 
     def _add_server_from_server_config(self, server_config: ServerConfig) -> None:
         logger.info('Loading server "%s" from spec=%s', server_config.name, server_config.spec)
@@ -658,11 +661,12 @@ class Gateway:
             # Loop already running (unlikely on stdio shutdown); best-effort.
             logger.warning('Could not run shutdown hooks: event loop already running')
 
-    def _build_app(self, transport: str) -> FastAPI:
+    def _build_app(self, transport: str, host: str | None = None) -> FastAPI:
         return build_app(
             servers=self._servers,
             config=self._config,
             store=self._store,
             on_shutdown=self._run_shutdown_hooks,
             transport=transport,
+            host=host if host is not None else self._config.host,
         )
