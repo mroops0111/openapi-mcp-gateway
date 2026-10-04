@@ -11,7 +11,7 @@ from openapi_mcp_gateway.auth.oidc import (
     TokenVerificationError,
     fetch_issuer_metadata,
 )
-from tests.constants import GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
+from tests.constants import ATTACKER_URL, GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
 
 
 GATEWAY_RESOURCE = f'{GATEWAY_URL}/braid/mcp'
@@ -89,7 +89,7 @@ class TestFetchIssuerMetadata:
 
         Trusting it would let a redirect substitute one authorization server's keys for another's.
         """
-        payload = {'issuer': 'https://evil.example.com', 'jwks_uri': 'https://evil.example.com/jwks'}
+        payload = {'issuer': ATTACKER_URL, 'jwks_uri': f'{ATTACKER_URL}/jwks'}
         with (
             patch('httpx.get', return_value=_metadata_response(payload)),
             pytest.raises(OIDCConfigurationError, match='declares issuer'),
