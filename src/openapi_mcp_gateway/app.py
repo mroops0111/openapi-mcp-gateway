@@ -115,8 +115,11 @@ def build_app(
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
         async with contextlib.AsyncExitStack() as stack:
-            for bundle in servers:
-                await stack.enter_async_context(bundle.mcp.session_manager.run())
+            # Only ``streamable_http_app`` creates a session manager, and reading it before then raises.
+            # An SSE connection runs its own session inside the request, so there is nothing to start.
+            if transport != 'sse':
+                for bundle in servers:
+                    await stack.enter_async_context(bundle.mcp.session_manager.run())
             yield
         await on_shutdown()
         await store.close()

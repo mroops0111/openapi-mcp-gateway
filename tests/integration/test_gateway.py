@@ -1,15 +1,21 @@
+import contextlib
 import json
 import pathlib
+import socket
+import sys
 import time
 import typing
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import anyio
 import httpx
 import jwt
 import pytest
+import uvicorn
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
-from mcp import Client
+from mcp import Client, StdioServerParameters
+from mcp.client.sse import sse_client
 from mcp.server.mcpserver import Context
 from mcp.types import RequestParamsMeta, TextContent
 from starlette.testclient import TestClient
@@ -27,6 +33,9 @@ from openapi_mcp_gateway.settings import (
 )
 
 
+_ISSUER = 'https://auth.example.com'
+
+
 class _StubContext:
     """No-op MCP context used when invoking generated tools end-to-end."""
 
@@ -38,6 +47,116 @@ class _StubContext:
 def _stub_context() -> Context:
     """Return a ``Context``-typed stub suitable for tool invocation."""
     return typing.cast(Context, _StubContext())
+
+
+def _tool(gateway: Gateway, name: str):
+    """The registered tool called ``name`` on the gateway's only server."""
+    return next(tool for tool in gateway._servers[0].mcp._tool_manager.list_tools() if tool.name == name)
+
+
+def _write_client_credentials_spec(tmp_path: pathlib.Path) -> pathlib.Path:
+    """Persist a minimal OpenAPI spec declaring only ``clientCredentials`` security."""
+    spec = {
+        'openapi': '3.0.0',
+        'info': {'title': 'cc-petstore', 'version': '1.0.0'},
+        'servers': [{'url': 'https://petstore.example.com/v1'}],
+        'components': {
+            'securitySchemes': {
+                'oauth2': {
+                    'type': 'oauth2',
+                    'flows': {
+                        'clientCredentials': {
+                            'tokenUrl': 'https://auth.example.com/token',
+                            'scopes': {'api': 'API access'},
+                        },
+                    },
+                },
+            },
+        },
+        'paths': {
+            '/pets': {
+                'get': {
+                    'operationId': 'listPets',
+                    'summary': 'List pets',
+                    'responses': {'200': {'description': 'ok'}},
+                },
+            },
+        },
+    }
+    path = tmp_path / 'cc-petstore.json'
+    path.write_text(json.dumps(spec), encoding='utf-8')
+    return path
+
+
+def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = None) -> TestClient:
+    """Test client over a petstore server that validates tokens from ``_ISSUER``, an issuer it does not own."""
+    metadata = IssuerMetadata(issuer=_ISSUER, jwks_uri=f'{_ISSUER}/jwks', token_endpoint=f'{_ISSUER}/token')
+    config = GatewayConfig(
+        url='https://mcp.example.com',
+        servers=[
+            ServerConfig(
+                name='petstore',
+                spec=str(spec_path),
+                auth=AuthConfig(
+                    type='oauth2',
+                    flow='token_exchange',
+                    issuer=_ISSUER,
+                    upstream=UpstreamAuthConfig(
+                        audience='https://api.example.com', client_id='gateway', client_secret='secret', scopes=['read']
+                    ),
+                ),
+            ),
+        ],
+    )
+    with (
+        patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
+        patch('openapi_mcp_gateway.auth.oidc._build_jwk_client', return_value=jwk_client or MagicMock()),
+    ):
+        gateway = Gateway.from_config(config)
+        return TestClient(gateway._build_app(transport='streamable-http'))
+
+
+@contextlib.asynccontextmanager
+async def _serve(app: FastAPI) -> typing.AsyncIterator[str]:
+    """Serve ``app`` with uvicorn on a free loopback port and yield its base URL."""
+    sock = socket.socket()
+    sock.bind(('127.0.0.1', 0))
+    server = uvicorn.Server(uvicorn.Config(app, log_config=None, ws='none'))
+    served = anyio.Event()
+
+    async def serve() -> None:
+        # ``serve`` returns rather than raising when the lifespan fails, so record that it finished.
+        await server.serve([sock])
+        served.set()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(serve)
+        with anyio.fail_after(5):
+            while not server.started and not served.is_set():
+                await anyio.sleep(0.01)
+        assert server.started, 'the app failed to start'
+        try:
+            yield f'http://127.0.0.1:{sock.getsockname()[1]}'
+        finally:
+            server.should_exit = True
+
+
+@contextlib.asynccontextmanager
+async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) -> typing.AsyncIterator[Client]:
+    """Connect an MCP client over ``transport``: stdio through the CLI, the HTTP transports through ``gateway``'s app."""
+    if transport == 'stdio':
+        cli_args = ['--spec', str(spec_path), '--name', 'petstore', '--transport', 'stdio']
+        async with Client(
+            StdioServerParameters(command=sys.executable, args=['-m', 'openapi_mcp_gateway.cli', *cli_args])
+        ) as mcp_client:
+            yield mcp_client
+        return
+    async with _serve(gateway._build_app(transport=transport)) as base_url:
+        target = (
+            f'{base_url}/petstore/mcp' if transport == 'streamable-http' else sse_client(f'{base_url}/petstore/sse')
+        )
+        async with Client(target) as mcp_client:
+            yield mcp_client
 
 
 @pytest.fixture
@@ -61,6 +180,37 @@ def app(gateway):
 def client(app):
     """Test client over the no-auth gateway app."""
     return TestClient(app)
+
+
+@pytest.fixture
+def oauth_gateway(petstore_json_path):
+    """Gateway whose petstore server uses the OAuth2 authorization-code flow."""
+    config = GatewayConfig(
+        url='https://mcp.example.com',
+        servers=[
+            ServerConfig(
+                name='petstore',
+                spec=str(petstore_json_path),
+                auth=AuthConfig(
+                    type='oauth2',
+                    upstream=UpstreamAuthConfig(
+                        client_id='test-client-id',
+                        client_secret='test-client-secret',
+                        authorization_url='https://auth.example.com/authorize',
+                        token_url='https://auth.example.com/token',
+                        scopes=['read'],
+                    ),
+                ),
+            ),
+        ],
+    )
+    return Gateway.from_config(config)
+
+
+@pytest.fixture(scope='module')
+def signing_key():
+    """One RSA keypair for the module, since generation dominates the runtime."""
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
 class TestGatewayAssembly:
@@ -147,30 +297,9 @@ class TestWellKnownOAuth:
     """Well-known endpoints for an OAuth-enabled server."""
 
     @pytest.fixture
-    def oauth_client(self, petstore_json_path):
-        """Test client over a gateway whose petstore server uses OAuth2."""
-        config = GatewayConfig(
-            url='https://mcp.example.com',
-            servers=[
-                ServerConfig(
-                    name='petstore',
-                    spec=str(petstore_json_path),
-                    auth=AuthConfig(
-                        type='oauth2',
-                        upstream=UpstreamAuthConfig(
-                            client_id='test-client-id',
-                            client_secret='test-client-secret',
-                            authorization_url='https://auth.example.com/authorize',
-                            token_url='https://auth.example.com/token',
-                            scopes=['read'],
-                        ),
-                    ),
-                ),
-            ],
-        )
-        gateway = Gateway.from_config(config)
-        app = gateway._build_app(transport='streamable-http')
-        return TestClient(app)
+    def oauth_client(self, oauth_gateway):
+        """Test client over the OAuth2 gateway."""
+        return TestClient(oauth_gateway._build_app(transport='streamable-http'))
 
     def test_authorization_server_metadata(self, oauth_client):
         """OAuth metadata document advertises issuer, endpoints and PKCE method."""
@@ -204,30 +333,6 @@ class TestWellKnownOAuth:
 class TestMountEmbedding:
     """``Gateway.mount`` wires OAuth and ``.well-known`` routes onto a host FastAPI app."""
 
-    @pytest.fixture
-    def oauth_gateway(self, petstore_json_path):
-        """Gateway whose petstore server uses OAuth2, ready to embed."""
-        config = GatewayConfig(
-            url='https://mcp.example.com',
-            servers=[
-                ServerConfig(
-                    name='petstore',
-                    spec=str(petstore_json_path),
-                    auth=AuthConfig(
-                        type='oauth2',
-                        upstream=UpstreamAuthConfig(
-                            client_id='test-client-id',
-                            client_secret='test-client-secret',
-                            authorization_url='https://auth.example.com/authorize',
-                            token_url='https://auth.example.com/token',
-                            scopes=['read'],
-                        ),
-                    ),
-                ),
-            ],
-        )
-        return Gateway.from_config(config)
-
     def test_mount_registers_well_known_routes(self, oauth_gateway):
         """``mount`` makes the host app serve the OAuth discovery metadata."""
         host = FastAPI()
@@ -237,6 +342,37 @@ class TestMountEmbedding:
         response = client.get('/.well-known/oauth-authorization-server/petstore')
         assert response.status_code == 200
         assert response.json()['authorization_endpoint'].endswith('/authorize')
+
+
+class TestTransports:
+    """Every transport the CLI accepts starts and answers MCP, rather than starting far enough to log and then dying."""
+
+    @pytest.mark.parametrize('transport', ['streamable-http', 'sse', 'stdio'])
+    async def test_answers_initialize_and_lists_tools(self, gateway, petstore_json_path, transport):
+        """A client of each transport completes ``initialize`` and lists the petstore tools."""
+        with anyio.fail_after(10):
+            async with _connect(gateway, petstore_json_path, transport) as mcp_client:
+                server_info = mcp_client.server_info
+                tools = await mcp_client.list_tools()
+
+        assert server_info is not None
+        assert server_info.name.startswith('petstore')
+        assert tools.tools
+
+    def test_sse_transport_emits_deprecation_warning(self, gateway):
+        """Selecting the deprecated ``sse`` transport warns the caller."""
+        with pytest.warns(DeprecationWarning, match='sse'):
+            gateway.mount(FastAPI(), transport='sse')
+
+    def test_streamable_http_transport_does_not_warn(self, gateway, recwarn):
+        """The recommended ``streamable-http`` transport mounts without an SSE deprecation warning."""
+        gateway.mount(FastAPI(), transport='streamable-http')
+        sse_warnings = [
+            warning
+            for warning in recwarn
+            if issubclass(warning.category, DeprecationWarning) and 'sse' in str(warning.message)
+        ]
+        assert not sse_warnings
 
 
 class TestEndToEndToolInvocation:
@@ -253,8 +389,7 @@ class TestEndToEndToolInvocation:
 
         mock_upstream(handler)
 
-        mcp = gateway._servers[0].mcp
-        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'list_pets')
+        tool = _tool(gateway, 'list_pets')
         result = await tool.run({'limit': 5}, context=_stub_context())
 
         assert captured['method'] == 'GET'
@@ -311,52 +446,17 @@ class TestDynamicExposureEndToEnd:
         assert json.loads(result.content[0].text) == [{'id': 1, 'name': 'fido'}]
 
 
-def _write_client_credentials_spec(tmp_path: pathlib.Path) -> pathlib.Path:
-    """Persist a minimal OpenAPI spec declaring only ``clientCredentials`` security."""
-    spec = {
-        'openapi': '3.0.0',
-        'info': {'title': 'cc-petstore', 'version': '1.0.0'},
-        'servers': [{'url': 'https://petstore.example.com/v1'}],
-        'components': {
-            'securitySchemes': {
-                'oauth2': {
-                    'type': 'oauth2',
-                    'flows': {
-                        'clientCredentials': {
-                            'tokenUrl': 'https://auth.example.com/token',
-                            'scopes': {'api': 'API access'},
-                        },
-                    },
-                },
-            },
-        },
-        'paths': {
-            '/pets': {
-                'get': {
-                    'operationId': 'listPets',
-                    'summary': 'List pets',
-                    'responses': {'200': {'description': 'ok'}},
-                },
-            },
-        },
-    }
-    path = tmp_path / 'cc-petstore.json'
-    path.write_text(json.dumps(spec), encoding='utf-8')
-    return path
-
-
 class TestClientCredentialsFlowEndToEnd:
     """End-to-end behaviour of the ``client_credentials`` OAuth flow."""
 
     @pytest.fixture
-    def cc_gateway_config(self, tmp_path):
-        """Config for a single-server gateway whose spec declares only clientCredentials."""
-        spec_path = _write_client_credentials_spec(tmp_path)
-        return GatewayConfig(
+    def cc_gateway(self, tmp_path):
+        """Single-server gateway whose spec declares only clientCredentials."""
+        config = GatewayConfig(
             servers=[
                 ServerConfig(
                     name='petstore',
-                    spec=str(spec_path),
+                    spec=str(_write_client_credentials_spec(tmp_path)),
                     auth=AuthConfig(
                         type='oauth2',
                         upstream=UpstreamAuthConfig(
@@ -366,48 +466,41 @@ class TestClientCredentialsFlowEndToEnd:
                 ),
             ],
         )
+        return Gateway.from_config(config)
 
-    def test_setup_uses_client_credentials_flow(self, cc_gateway_config):
-        """The gateway picks the client_credentials flow when only that flow is declared."""
-        gateway = Gateway.from_config(cc_gateway_config)
-        bundle = gateway._servers[0]
-        assert bundle.auth_provider is None
-        assert bundle.auth_settings is None
-        assert len(gateway._shutdown_hooks) == 1
-
-    async def test_tool_call_attaches_fetched_bearer(self, cc_gateway_config, mock_upstream, monkeypatch):
-        """A tool call fetches a token from the IdP, then forwards it as ``Authorization`` upstream."""
+    @pytest.fixture
+    def token_post(self, monkeypatch):
+        """Replace the IdP's token endpoint with one that always issues ``cc-bearer-xyz``."""
         token_response = MagicMock()
         token_response.status_code = 200
         token_response.json.return_value = {'access_token': 'cc-bearer-xyz', 'expires_in': 3600}
         token_response.text = ''
-
         token_post_mock = AsyncMock(return_value=token_response)
-        monkeypatch.setattr(
-            token_source_module.httpx.AsyncClient,
-            'post',
-            token_post_mock,
-            raising=False,
-        )
+        monkeypatch.setattr(token_source_module.httpx.AsyncClient, 'post', token_post_mock, raising=False)
+        return token_post_mock
 
-        gateway = Gateway.from_config(cc_gateway_config)
+    def test_setup_uses_client_credentials_flow(self, cc_gateway):
+        """The gateway picks the client_credentials flow when only that flow is declared."""
+        bundle = cc_gateway._servers[0]
+        assert bundle.auth_provider is None
+        assert bundle.auth_settings is None
+        assert len(cc_gateway._shutdown_hooks) == 1
 
+    async def test_tool_call_attaches_fetched_bearer(self, cc_gateway, token_post, mock_upstream):
+        """A tool call fetches a token from the IdP, then forwards it as ``Authorization`` upstream."""
         captured: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
             captured['authorization'] = request.headers.get('authorization')
-            captured['url'] = str(request.url)
             return httpx.Response(200, json=[{'id': 1, 'name': 'fido'}])
 
         mock_upstream(handler)
 
-        mcp = gateway._servers[0].mcp
-        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'list_pets')
-        await tool.run({}, context=_stub_context())
+        await _tool(cc_gateway, 'list_pets').run({}, context=_stub_context())
 
         assert captured['authorization'] == 'Bearer cc-bearer-xyz'
-        token_post_mock.assert_awaited_once()
-        post_args = token_post_mock.await_args
+        token_post.assert_awaited_once()
+        post_args = token_post.await_args
         assert post_args is not None
         # The first positional arg is the URL, second positional or kwargs carry data.
         assert (
@@ -416,35 +509,19 @@ class TestClientCredentialsFlowEndToEnd:
         )
         assert post_args.kwargs['data']['grant_type'] == 'client_credentials'
 
-    async def test_token_is_cached_across_tool_calls(self, cc_gateway_config, mock_upstream, monkeypatch):
+    async def test_token_is_cached_across_tool_calls(self, cc_gateway, token_post, mock_upstream):
         """Multiple tool calls share a single cached token (one POST to the IdP)."""
-        token_response = MagicMock()
-        token_response.status_code = 200
-        token_response.json.return_value = {'access_token': 'cached', 'expires_in': 3600}
-        token_response.text = ''
-
-        token_post_mock = AsyncMock(return_value=token_response)
-        monkeypatch.setattr(
-            token_source_module.httpx.AsyncClient,
-            'post',
-            token_post_mock,
-            raising=False,
-        )
-
-        gateway = Gateway.from_config(cc_gateway_config)
         mock_upstream(lambda request: httpx.Response(200, json=[]))
 
-        mcp = gateway._servers[0].mcp
-        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'list_pets')
-        await tool.run({}, context=_stub_context())
-        await tool.run({}, context=_stub_context())
-        await tool.run({}, context=_stub_context())
+        tool = _tool(cc_gateway, 'list_pets')
+        for _ in range(3):
+            await tool.run({}, context=_stub_context())
 
-        assert token_post_mock.await_count == 1
+        assert token_post.await_count == 1
 
 
 class TestSpec20260728Adoption:
-    """2026-07-28 spec adoptions layered on the v2 SDK: cache hints, stable ordering, SSE deprecation."""
+    """2026-07-28 spec adoptions layered on the v2 SDK: cache hints and stable ordering."""
 
     async def test_static_lists_carry_cache_hints(self, gateway):
         """``tools/list`` advertises the gateway's public, minutes-long freshness hint."""
@@ -466,21 +543,6 @@ class TestSpec20260728Adoption:
         first = tool_names()
         assert first, 'petstore should register at least one tool'
         assert first == tool_names()
-
-    def test_sse_transport_emits_deprecation_warning(self, gateway):
-        """Selecting the deprecated ``sse`` transport warns the caller."""
-        with pytest.warns(DeprecationWarning, match='sse'):
-            gateway.mount(FastAPI(), transport='sse')
-
-    def test_streamable_http_transport_does_not_warn(self, gateway, recwarn):
-        """The recommended ``streamable-http`` transport mounts without an SSE deprecation warning."""
-        gateway.mount(FastAPI(), transport='streamable-http')
-        sse_warnings = [
-            warning
-            for warning in recwarn
-            if issubclass(warning.category, DeprecationWarning) and 'sse' in str(warning.message)
-        ]
-        assert not sse_warnings
 
 
 class TestTraceContextPropagation:
@@ -627,38 +689,7 @@ class TestTokenExchangeDiscovery:
     @pytest.fixture
     def delegating_client(self, petstore_json_path):
         """Gateway whose petstore server validates tokens from an issuer it does not own."""
-        metadata = IssuerMetadata(
-            issuer='https://auth.example.com',
-            jwks_uri='https://auth.example.com/jwks',
-            token_endpoint='https://auth.example.com/token',
-        )
-        config = GatewayConfig(
-            url='https://mcp.example.com',
-            servers=[
-                ServerConfig(
-                    name='petstore',
-                    spec=str(petstore_json_path),
-                    auth=AuthConfig(
-                        type='oauth2',
-                        flow='token_exchange',
-                        issuer='https://auth.example.com',
-                        upstream=UpstreamAuthConfig(
-                            audience='https://api.example.com',
-                            client_id='gateway',
-                            client_secret='secret',
-                            scopes=['read'],
-                        ),
-                    ),
-                ),
-            ],
-        )
-        with (
-            patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
-            patch('openapi_mcp_gateway.auth.oidc._build_jwk_client'),
-        ):
-            gateway = Gateway.from_config(config)
-            app = gateway._build_app(transport='streamable-http')
-        return TestClient(app)
+        return _delegating_client(petstore_json_path)
 
     def test_protected_resource_names_the_external_issuer(self, delegating_client):
         """The document points clients at the issuer, and names this endpoint as the resource."""
@@ -667,7 +698,7 @@ class TestTokenExchangeDiscovery:
         assert response.status_code == 200
         data = response.json()
         assert data['resource'] == 'https://mcp.example.com/petstore/mcp'
-        assert data['authorization_servers'] == ['https://auth.example.com']
+        assert data['authorization_servers'] == [_ISSUER]
 
     def test_gateway_does_not_claim_to_be_an_authorization_server(self, delegating_client):
         """The AS metadata path 404s, since the gateway serves no /authorize or /token here.
@@ -691,12 +722,6 @@ class TestTokenExchangeDiscovery:
         assert servers[0]['auth'] == 'oauth2'
 
 
-@pytest.fixture(scope='module')
-def signing_key():
-    """One RSA keypair for the module, since generation dominates the runtime."""
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
-
-
 class TestRejectedTokenResponse:
     """A token the gateway refuses produces a 401 challenge, not a server error.
 
@@ -706,57 +731,22 @@ class TestRejectedTokenResponse:
     where a 401 would have sent it to re-authorize.
     """
 
-    ISSUER = 'https://auth.example.com'
     RESOURCE = 'https://mcp.example.com/petstore/mcp'
 
     @pytest.fixture
     def delegating_app(self, petstore_json_path, signing_key):
         """Gateway delegating to an external issuer, with that issuer's key resolvable."""
-        metadata = IssuerMetadata(
-            issuer=self.ISSUER,
-            jwks_uri=f'{self.ISSUER}/jwks',
-            token_endpoint=f'{self.ISSUER}/token',
-        )
         jwk = MagicMock()
         jwk.key = signing_key.public_key()
         jwk.key_type = 'RSA'
         jwk_client = MagicMock()
         jwk_client.get_signing_key_from_jwt.return_value = jwk
-
-        config = GatewayConfig(
-            url='https://mcp.example.com',
-            servers=[
-                ServerConfig(
-                    name='petstore',
-                    spec=str(petstore_json_path),
-                    auth=AuthConfig(
-                        type='oauth2',
-                        flow='token_exchange',
-                        issuer=self.ISSUER,
-                        upstream=UpstreamAuthConfig(
-                            audience='https://api.example.com', client_id='gateway', client_secret='secret'
-                        ),
-                    ),
-                ),
-            ],
-        )
-        with (
-            patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
-            patch('openapi_mcp_gateway.auth.oidc._build_jwk_client', return_value=jwk_client),
-        ):
-            gateway = Gateway.from_config(config)
-            app = gateway._build_app(transport='streamable-http')
-        return TestClient(app)
+        return _delegating_client(petstore_json_path, jwk_client)
 
     def _token(self, signing_key, **claims) -> str:
-        payload = {
-            'iss': self.ISSUER,
-            'aud': self.RESOURCE,
-            'sub': 'user-1',
-            'exp': int(time.time()) + 300,
-            **claims,
-        }
-        return jwt.encode(payload, signing_key, algorithm='RS256')
+        """A token signed by the issuer's key, where a claim set to ``None`` is left out."""
+        payload = {'iss': _ISSUER, 'aud': self.RESOURCE, 'sub': 'user-1', 'exp': int(time.time()) + 300, **claims}
+        return jwt.encode({k: v for k, v in payload.items() if v is not None}, signing_key, algorithm='RS256')
 
     def _post(self, client, token: str):
         return client.post(
@@ -792,14 +782,7 @@ class TestRejectedTokenResponse:
     )
     def test_every_rejection_reason_is_a_challenge(self, delegating_app, signing_key, claims, reason):
         """No rejection path may reach the client as a server error."""
-        payload = {k: v for k, v in claims.items() if v is not None}
-        token = self._token(signing_key, **payload)
-        if claims.get('aud') is None and 'aud' in claims:
-            token = jwt.encode(
-                {'iss': self.ISSUER, 'sub': 'user-1', 'exp': int(time.time()) + 300},
-                signing_key,
-                algorithm='RS256',
-            )
+        token = self._token(signing_key, **claims)
 
         response = self._post(delegating_app, token)
 
