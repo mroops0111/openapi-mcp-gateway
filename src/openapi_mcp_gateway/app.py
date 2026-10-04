@@ -5,10 +5,15 @@ import typing
 from fastapi import FastAPI
 from mcp.server import MCPServer
 from mcp.server.auth.handlers.metadata import MetadataHandler, ProtectedResourceMetadataHandler
-from mcp.server.auth.routes import build_metadata, create_auth_routes, create_protected_resource_routes
+from mcp.server.auth.routes import (
+    build_metadata,
+    cors_middleware,
+    create_auth_routes,
+    create_protected_resource_routes,
+)
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.shared.auth import ProtectedResourceMetadata
+from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -194,9 +199,15 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
         )
         for route in oauth_routes:
             prefixed_path = f'{bundle.mount_path.rstrip("/")}{route.path}'
+            endpoint: typing.Callable[..., typing.Any] = route.endpoint
+            if route.path == '/.well-known/oauth-authorization-server':
+                # The SDK's document omits what this provider adds to the protocol, so serve the gateway's own.
+                endpoint = cors_middleware(
+                    MetadataHandler(_authorization_server_metadata(bundle)).handle, ['GET', 'OPTIONS']
+                )
             app.router.add_route(
                 path=prefixed_path,
-                endpoint=route.endpoint,
+                endpoint=endpoint,
                 methods=route.methods,
                 name=route.name,
             )
@@ -239,13 +250,7 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                     'Read its protected resource metadata for the issuer that is.'
                 },
             )
-        metadata = build_metadata(
-            issuer_url=bundle.auth_settings.issuer_url,
-            service_documentation_url=bundle.auth_settings.service_documentation_url,
-            client_registration_options=bundle.auth_settings.client_registration_options or ClientRegistrationOptions(),
-            revocation_options=bundle.auth_settings.revocation_options or RevocationOptions(),
-        )
-        handler = MetadataHandler(metadata)
+        handler = MetadataHandler(_authorization_server_metadata(bundle))
         return await handler.handle(request)
 
     @app.get('/.well-known/oauth-protected-resource/{server_name}')
@@ -282,6 +287,27 @@ def _register_health_route(app: FastAPI, servers: list[_ServerBundle]) -> None:
                 for bundle in servers
             ],
         }
+
+
+def _authorization_server_metadata(bundle: _ServerBundle) -> OAuthMetadata:
+    """Return the RFC 8414 document for a server where the gateway is the authorization server.
+
+    The SDK builds the document, and the gateway adds what its provider does beyond the SDK.
+    ``authorization_response_iss_parameter_supported`` is required of any server that sends ``iss``
+    on its authorization responses (RFC 9207 §2.3), as ``AuthorizationCodeProvider`` does,
+    and is what lets a client refuse a response that arrives without one.
+
+    Callers reach this only for a bundle carrying ``auth_settings``.
+    """
+    assert bundle.auth_settings is not None  # noqa: S101
+    metadata = build_metadata(
+        issuer_url=bundle.auth_settings.issuer_url,
+        service_documentation_url=bundle.auth_settings.service_documentation_url,
+        client_registration_options=bundle.auth_settings.client_registration_options or ClientRegistrationOptions(),
+        revocation_options=bundle.auth_settings.revocation_options or RevocationOptions(),
+    )
+    metadata.authorization_response_iss_parameter_supported = True
+    return metadata
 
 
 def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:

@@ -641,7 +641,7 @@ class Gateway:
             state = request.query_params.get('state')
             if not code or not state:
                 raise HTTPException(400, 'Missing code or state parameter')
-            redirect_uri = await _provider.handle_upstream_callback(code, state)
+            redirect_uri = await _provider.handle_upstream_callback(code, state, request.query_params.get('iss'))
             return RedirectResponse(status_code=302, url=redirect_uri)
 
     async def _run_shutdown_hooks(self) -> None:

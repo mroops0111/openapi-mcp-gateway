@@ -56,6 +56,11 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
 
+    # The upstream authorization server's issuer identifier, exactly as its metadata publishes it.
+    # It is what an RFC 9207 ``iss`` on the authorization response must equal.
+    # Unset, a present ``iss`` cannot be checked, so the mix-up defence is off.
+    issuer: str | None = None
+
     # Names the API the token is for,
     # when that API and its authorization server are different parties.
     # Without it the authorization server mints for its own default audience, which the API refuses.
@@ -73,6 +78,10 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     def resolve_client_secret(self) -> str | None:
         """OAuth client secret after env-var substitution."""
         return _resolve_env_var(self.client_secret)
+
+    def resolve_issuer(self) -> str | None:
+        """Upstream authorization server issuer after env-var substitution."""
+        return _resolve_env_var(self.issuer)
 
     def resolve_audience_params(self) -> dict[str, str]:
         """Return the audience-naming parameters for authorize and token requests.
@@ -168,6 +177,12 @@ class AuthConfig(pydantic.BaseModel):
         if self.upstream.model_fields_set and not oauth:
             named = ', '.join(sorted(self.upstream.model_fields_set))
             raise ValueError(f'auth.upstream ({named}) needs auth.type oauth2, so it would have no effect here.')
+        # Only authorization_code receives an authorization response, the one place ``iss`` arrives.
+        if 'issuer' in self.upstream.model_fields_set and not (self.flow == 'authorization_code' or flow_unresolved):
+            raise ValueError(
+                'auth.upstream.issuer needs auth.flow authorization_code, '
+                'the only flow with an authorization response to check, so it would have no effect here.'
+            )
         return self
 
     def resolve_token(self) -> str | None:
