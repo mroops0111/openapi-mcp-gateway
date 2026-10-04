@@ -9,6 +9,7 @@ from openapi_mcp_gateway.openapi import (
     load_spec,
     parse_spec,
 )
+from tests.constants import API_URL, PETSTORE_URL
 
 
 class TestResolveRef:
@@ -464,7 +465,7 @@ class TestParseSpec:
         """Title, version, and default base URL are surfaced from the spec."""
         assert self.spec.title == 'Petstore'
         assert self.spec.version == '1.0.0'
-        assert self.spec.default_base_url == 'https://petstore.example.com/v1'
+        assert self.spec.default_base_url == PETSTORE_URL
 
     def test_operation_count(self):
         """All declared operations show up by id."""
@@ -567,11 +568,11 @@ class TestRelativeServerResolution:
         raw = {
             'openapi': '3.0.0',
             'info': {'title': 'T', 'version': '1'},
-            'servers': [{'url': 'https://api.example.com/v1'}],
+            'servers': [{'url': f'{API_URL}/v1'}],
             'paths': {},
         }
         spec = parse_spec(raw, source='https://other.com/spec.json')
-        assert spec.default_base_url == 'https://api.example.com/v1'
+        assert spec.default_base_url == f'{API_URL}/v1'
 
     def test_no_source_passes_through(self, relative_spec_raw):
         """Without a source URL, a relative server URL is left as-is."""

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from openapi_mcp_gateway.auth.token_source import ClientCredentialsTokenSource, TokenExchangeTokenSource
+from tests.constants import API_URL, TOKEN_URL
 
 
 def _build_response(status_code: int, payload: dict | None = None, text: str = '') -> MagicMock:
@@ -22,7 +23,7 @@ class TestClientCredentialsTokenSourceFetch:
     async def test_first_call_posts_client_credentials(self):
         """The first ``get_token`` POSTs ``grant_type=client_credentials`` to ``token_url``."""
         source = ClientCredentialsTokenSource(
-            token_url='https://auth.example.com/token',
+            token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
             scopes=['read', 'write'],
@@ -45,7 +46,7 @@ class TestClientCredentialsTokenSourceFetch:
     async def test_second_call_uses_cached_token(self):
         """A still-fresh token is returned from cache without a second POST."""
         source = ClientCredentialsTokenSource(
-            token_url='https://auth.example.com/token',
+            token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
         )
@@ -62,7 +63,7 @@ class TestClientCredentialsTokenSourceFetch:
     async def test_expired_token_triggers_refresh(self):
         """When the cached token is past the refresh skew, a fresh token is fetched."""
         source = ClientCredentialsTokenSource(
-            token_url='https://auth.example.com/token',
+            token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
             refresh_skew_seconds=30,
@@ -87,7 +88,7 @@ class TestClientCredentialsTokenSourceFetch:
     async def test_concurrent_callers_share_one_fetch(self):
         """N parallel ``get_token`` calls trigger exactly one upstream fetch."""
         source = ClientCredentialsTokenSource(
-            token_url='https://auth.example.com/token',
+            token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
         )
@@ -114,7 +115,7 @@ class TestClientCredentialsTokenSourceErrors:
     async def test_non_200_raises(self):
         """A non-200 token response raises ``RuntimeError`` and does not cache anything."""
         source = ClientCredentialsTokenSource(
-            token_url='https://auth.example.com/token',
+            token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
         )
@@ -127,7 +128,7 @@ class TestClientCredentialsTokenSourceErrors:
     async def test_missing_access_token_raises(self):
         """A 200 response without ``access_token`` raises ``RuntimeError``."""
         source = ClientCredentialsTokenSource(
-            token_url='https://auth.example.com/token',
+            token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
         )
@@ -144,7 +145,7 @@ class TestClientCredentialsTokenSourceClose:
     async def test_aclose_closes_http_client(self):
         """``aclose`` calls ``aclose`` on the internal ``httpx.AsyncClient`` if present."""
         source = ClientCredentialsTokenSource(
-            token_url='https://auth.example.com/token',
+            token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
         )
@@ -160,7 +161,7 @@ class TestClientCredentialsTokenSourceClose:
     async def test_aclose_is_safe_when_unused(self):
         """``aclose`` on a never-used source is a no-op."""
         source = ClientCredentialsTokenSource(
-            token_url='https://auth.example.com/token',
+            token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
         )
@@ -173,10 +174,10 @@ class TestClientCredentialsTokenSourceAudience:
     async def test_audience_params_are_posted(self):
         """Configured audience parameters ride along with the client_credentials grant."""
         source = ClientCredentialsTokenSource(
-            token_url='https://auth.example.com/token',
+            token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
-            audience_params={'audience': 'https://api.example.com'},
+            audience_params={'audience': API_URL},
         )
         post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'tok', 'expires_in': 3600}))
         source._http_client = MagicMock()
@@ -185,12 +186,12 @@ class TestClientCredentialsTokenSourceAudience:
         await source.get_token()
 
         assert post_mock.await_args is not None
-        assert post_mock.await_args.kwargs['data']['audience'] == 'https://api.example.com'
+        assert post_mock.await_args.kwargs['data']['audience'] == API_URL
 
     async def test_no_audience_params_leaves_request_unchanged(self):
         """Without configuration the grant carries no audience keys at all."""
         source = ClientCredentialsTokenSource(
-            token_url='https://auth.example.com/token',
+            token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
         )
@@ -210,10 +211,10 @@ class TestTokenExchangeTokenSource:
 
     def _source(self, **kwargs) -> TokenExchangeTokenSource:
         defaults = {
-            'token_endpoint': 'https://auth.example.com/token',
+            'token_endpoint': TOKEN_URL,
             'client_id': 'gateway',
             'client_secret': 'secret',
-            'audience_params': {'audience': 'https://api.example.com'},
+            'audience_params': {'audience': API_URL},
         }
         return TokenExchangeTokenSource(**{**defaults, **kwargs})
 
@@ -232,7 +233,7 @@ class TestTokenExchangeTokenSource:
         assert posted['grant_type'] == 'urn:ietf:params:oauth:grant-type:token-exchange'
         assert posted['subject_token'] == 'caller-token'
         assert posted['subject_token_type'] == 'urn:ietf:params:oauth:token-type:access_token'
-        assert posted['audience'] == 'https://api.example.com'
+        assert posted['audience'] == API_URL
         assert posted['client_id'] == 'gateway'
 
     async def test_repeat_exchange_is_cached(self):

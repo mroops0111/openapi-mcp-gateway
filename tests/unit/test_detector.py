@@ -4,6 +4,7 @@ from openapi_mcp_gateway.auth.detector import (
     detect_unsupported_oauth_flows,
 )
 from openapi_mcp_gateway.openapi import OpenAPISpec
+from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
 
 def _spec(security_schemes: dict) -> OpenAPISpec:
@@ -15,8 +16,8 @@ AUTH_CODE_SCHEME = {
     'type': 'oauth2',
     'flows': {
         'authorizationCode': {
-            'authorizationUrl': 'https://auth.example.com/authorize',
-            'tokenUrl': 'https://auth.example.com/token',
+            'authorizationUrl': AUTHORIZE_URL,
+            'tokenUrl': TOKEN_URL,
             'scopes': {'read': 'Read', 'write': 'Write'},
         },
     },
@@ -27,7 +28,7 @@ CLIENT_CREDS_SCHEME = {
     'type': 'oauth2',
     'flows': {
         'clientCredentials': {
-            'tokenUrl': 'https://auth.example.com/token',
+            'tokenUrl': TOKEN_URL,
             'scopes': {'api': 'API access'},
         },
     },
@@ -52,8 +53,8 @@ class TestDetectOAuthFlows:
         assert len(flows) == 1
         flow = flows[0]
         assert flow.flow_type == 'authorization_code'
-        assert flow.authorization_url == 'https://auth.example.com/authorize'
-        assert flow.token_url == 'https://auth.example.com/token'
+        assert flow.authorization_url == AUTHORIZE_URL
+        assert flow.token_url == TOKEN_URL
         assert flow.scopes == {'read': 'Read', 'write': 'Write'}
 
     def test_client_credentials_flow(self):
@@ -63,7 +64,7 @@ class TestDetectOAuthFlows:
         flow = flows[0]
         assert flow.flow_type == 'client_credentials'
         assert flow.authorization_url is None
-        assert flow.token_url == 'https://auth.example.com/token'
+        assert flow.token_url == TOKEN_URL
 
     def test_both_flows_in_one_scheme(self):
         """Both flows declared under one scheme are returned independently."""
@@ -116,8 +117,8 @@ class TestDetectUnsupportedOAuthFlows:
         scheme = {
             'type': 'oauth2',
             'flows': {
-                'password': {'tokenUrl': 'https://auth.example.com/token', 'scopes': {}},
-                'implicit': {'authorizationUrl': 'https://auth.example.com/authorize', 'scopes': {}},
+                'password': {'tokenUrl': TOKEN_URL, 'scopes': {}},
+                'implicit': {'authorizationUrl': AUTHORIZE_URL, 'scopes': {}},
             },
         }
         unsupported = detect_unsupported_oauth_flows(_spec({'oauth2': scheme}))

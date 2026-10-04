@@ -12,15 +12,16 @@ from openapi_mcp_gateway.auth.types import AUTH_TYPE_HANDLERS, AuthTypeContext, 
 from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
+from tests.constants import API_URL, GATEWAY_URL
 
 
 def _context(auth: AuthConfig) -> AuthTypeContext:
     """Build the one shape every handler receives, for a server carrying ``auth``."""
     return AuthTypeContext(
-        entry=ServerConfig(name='srv', spec='dummy.json', base_url='https://api.example.com', auth=auth),
+        entry=ServerConfig(name='srv', spec='dummy.json', base_url=API_URL, auth=auth),
         spec=OpenAPISpec(raw={}, title='test', version='1.0.0', operations=[], security_schemes={}),
         store=MemoryTokenStore(),
-        gateway_url='https://gw.example.com',
+        gateway_url=GATEWAY_URL,
     )
 
 

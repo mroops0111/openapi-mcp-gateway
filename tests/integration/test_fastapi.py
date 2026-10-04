@@ -9,6 +9,7 @@ from mcp.server.mcpserver import Context
 from openapi_mcp_gateway import Gateway, mcp_tool
 from openapi_mcp_gateway.auth import token_source as token_source_module
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
+from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
 
 class _StubRequestContext:
@@ -55,8 +56,8 @@ class TestGatewayFromFastapiAssembly:
     def test_authorization_code_without_creds_picks_passthrough(self):
         """No client credentials but an authorizationCode scheme falls back to passthrough."""
         oauth = OAuth2AuthorizationCodeBearer(
-            authorizationUrl='https://auth.example.com/authorize',
-            tokenUrl='https://auth.example.com/token',
+            authorizationUrl=AUTHORIZE_URL,
+            tokenUrl=TOKEN_URL,
         )
         app = FastAPI()
 
@@ -90,7 +91,7 @@ class TestGatewayFromFastapiAssembly:
                     'type': 'oauth2',
                     'flows': {
                         'clientCredentials': {
-                            'tokenUrl': 'https://auth.example.com/token',
+                            'tokenUrl': TOKEN_URL,
                             'scopes': {'api': 'API access'},
                         },
                     },
@@ -137,7 +138,7 @@ class TestGatewayFromFastapiAssembly:
                     'type': 'oauth2',
                     'flows': {
                         'password': {
-                            'tokenUrl': 'https://auth.example.com/token',
+                            'tokenUrl': TOKEN_URL,
                             'scopes': {},
                         },
                     },
@@ -174,8 +175,8 @@ class TestGatewayFromFastapiToolCall:
     async def test_passthrough_forwards_authorization_header(self):
         """Passthrough mode delivers the MCP client's Authorization header to the FastAPI route."""
         oauth = OAuth2AuthorizationCodeBearer(
-            authorizationUrl='https://auth.example.com/authorize',
-            tokenUrl='https://auth.example.com/token',
+            authorizationUrl=AUTHORIZE_URL,
+            tokenUrl=TOKEN_URL,
             auto_error=False,
         )
         app = FastAPI()
@@ -258,7 +259,7 @@ class TestGatewayFromFastapiToolCall:
                     'type': 'oauth2',
                     'flows': {
                         'clientCredentials': {
-                            'tokenUrl': 'https://auth.example.com/token',
+                            'tokenUrl': TOKEN_URL,
                             'scopes': {'api': 'API access'},
                         },
                     },
@@ -310,8 +311,8 @@ class TestGatewayFromFastapiToolCall:
     async def test_mixed_security_emits_warning(self, caplog):
         """Mixed security schemes across marked routes log a single startup warning."""
         oauth = OAuth2AuthorizationCodeBearer(
-            authorizationUrl='https://auth.example.com/authorize',
-            tokenUrl='https://auth.example.com/token',
+            authorizationUrl=AUTHORIZE_URL,
+            tokenUrl=TOKEN_URL,
             auto_error=False,
         )
         api_key = APIKeyHeader(name='X-API-Key', auto_error=False)

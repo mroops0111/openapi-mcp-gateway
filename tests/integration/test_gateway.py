@@ -31,9 +31,7 @@ from openapi_mcp_gateway.settings import (
     ServerConfig,
     UpstreamAuthConfig,
 )
-
-
-_ISSUER = 'https://auth.example.com'
+from tests.constants import API_URL, AUTHORIZE_URL, GATEWAY_URL, ISSUER, JWKS_URL, PETSTORE_URL, TOKEN_URL
 
 
 class _StubContext:
@@ -54,45 +52,11 @@ def _tool(gateway: Gateway, name: str):
     return next(tool for tool in gateway._servers[0].mcp._tool_manager.list_tools() if tool.name == name)
 
 
-def _write_client_credentials_spec(tmp_path: pathlib.Path) -> pathlib.Path:
-    """Persist a minimal OpenAPI spec declaring only ``clientCredentials`` security."""
-    spec = {
-        'openapi': '3.0.0',
-        'info': {'title': 'cc-petstore', 'version': '1.0.0'},
-        'servers': [{'url': 'https://petstore.example.com/v1'}],
-        'components': {
-            'securitySchemes': {
-                'oauth2': {
-                    'type': 'oauth2',
-                    'flows': {
-                        'clientCredentials': {
-                            'tokenUrl': 'https://auth.example.com/token',
-                            'scopes': {'api': 'API access'},
-                        },
-                    },
-                },
-            },
-        },
-        'paths': {
-            '/pets': {
-                'get': {
-                    'operationId': 'listPets',
-                    'summary': 'List pets',
-                    'responses': {'200': {'description': 'ok'}},
-                },
-            },
-        },
-    }
-    path = tmp_path / 'cc-petstore.json'
-    path.write_text(json.dumps(spec), encoding='utf-8')
-    return path
-
-
 def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = None) -> TestClient:
-    """Test client over a petstore server that validates tokens from ``_ISSUER``, an issuer it does not own."""
-    metadata = IssuerMetadata(issuer=_ISSUER, jwks_uri=f'{_ISSUER}/jwks', token_endpoint=f'{_ISSUER}/token')
+    """Test client over a petstore server that validates tokens from ``ISSUER``, an issuer it does not own."""
+    metadata = IssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
     config = GatewayConfig(
-        url='https://mcp.example.com',
+        url=GATEWAY_URL,
         servers=[
             ServerConfig(
                 name='petstore',
@@ -100,9 +64,9 @@ def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = N
                 auth=AuthConfig(
                     type='oauth2',
                     flow='token_exchange',
-                    issuer=_ISSUER,
+                    issuer=ISSUER,
                     upstream=UpstreamAuthConfig(
-                        audience='https://api.example.com', client_id='gateway', client_secret='secret', scopes=['read']
+                        audience=API_URL, client_id='gateway', client_secret='secret', scopes=['read']
                     ),
                 ),
             ),
@@ -186,7 +150,7 @@ def client(app):
 def oauth_gateway(petstore_json_path):
     """Gateway whose petstore server uses the OAuth2 authorization-code flow."""
     config = GatewayConfig(
-        url='https://mcp.example.com',
+        url=GATEWAY_URL,
         servers=[
             ServerConfig(
                 name='petstore',
@@ -196,8 +160,8 @@ def oauth_gateway(petstore_json_path):
                     upstream=UpstreamAuthConfig(
                         client_id='test-client-id',
                         client_secret='test-client-secret',
-                        authorization_url='https://auth.example.com/authorize',
-                        token_url='https://auth.example.com/token',
+                        authorization_url=AUTHORIZE_URL,
+                        token_url=TOKEN_URL,
                         scopes=['read'],
                     ),
                 ),
@@ -394,7 +358,7 @@ class TestEndToEndToolInvocation:
 
         assert captured['method'] == 'GET'
         assert 'limit=5' in captured['url']
-        assert captured['url'].startswith('https://petstore.example.com/v1/pets')
+        assert captured['url'].startswith(f'{PETSTORE_URL}/pets')
 
         assert result.is_error is False
         assert json.loads(result.content[0].text) == [{'id': 1, 'name': 'fido'}]
@@ -450,13 +414,13 @@ class TestClientCredentialsFlowEndToEnd:
     """End-to-end behaviour of the ``client_credentials`` OAuth flow."""
 
     @pytest.fixture
-    def cc_gateway(self, tmp_path):
+    def cc_gateway(self, client_credentials_spec_path):
         """Single-server gateway whose spec declares only clientCredentials."""
         config = GatewayConfig(
             servers=[
                 ServerConfig(
                     name='petstore',
-                    spec=str(_write_client_credentials_spec(tmp_path)),
+                    spec=str(client_credentials_spec_path),
                     auth=AuthConfig(
                         type='oauth2',
                         upstream=UpstreamAuthConfig(
@@ -503,10 +467,7 @@ class TestClientCredentialsFlowEndToEnd:
         post_args = token_post.await_args
         assert post_args is not None
         # The first positional arg is the URL, second positional or kwargs carry data.
-        assert (
-            post_args.args[0] == 'https://auth.example.com/token'
-            or post_args.kwargs.get('url') == 'https://auth.example.com/token'
-        )
+        assert post_args.args[0] == TOKEN_URL or post_args.kwargs.get('url') == TOKEN_URL
         assert post_args.kwargs['data']['grant_type'] == 'client_credentials'
 
     async def test_token_is_cached_across_tool_calls(self, cc_gateway, token_post, mock_upstream):
@@ -697,8 +658,8 @@ class TestTokenExchangeDiscovery:
 
         assert response.status_code == 200
         data = response.json()
-        assert data['resource'] == 'https://mcp.example.com/petstore/mcp'
-        assert data['authorization_servers'] == [_ISSUER]
+        assert data['resource'] == f'{GATEWAY_URL}/petstore/mcp'
+        assert data['authorization_servers'] == [ISSUER]
 
     def test_gateway_does_not_claim_to_be_an_authorization_server(self, delegating_client):
         """The AS metadata path 404s, since the gateway serves no /authorize or /token here.
@@ -731,7 +692,7 @@ class TestRejectedTokenResponse:
     where a 401 would have sent it to re-authorize.
     """
 
-    RESOURCE = 'https://mcp.example.com/petstore/mcp'
+    RESOURCE = f'{GATEWAY_URL}/petstore/mcp'
 
     @pytest.fixture
     def delegating_app(self, petstore_json_path, signing_key):
@@ -745,7 +706,7 @@ class TestRejectedTokenResponse:
 
     def _token(self, signing_key, **claims) -> str:
         """A token signed by the issuer's key, where a claim set to ``None`` is left out."""
-        payload = {'iss': _ISSUER, 'aud': self.RESOURCE, 'sub': 'user-1', 'exp': int(time.time()) + 300, **claims}
+        payload = {'iss': ISSUER, 'aud': self.RESOURCE, 'sub': 'user-1', 'exp': int(time.time()) + 300, **claims}
         return jwt.encode({k: v for k, v in payload.items() if v is not None}, signing_key, algorithm='RS256')
 
     def _post(self, client, token: str):
@@ -775,7 +736,7 @@ class TestRejectedTokenResponse:
     @pytest.mark.parametrize(
         ('claims', 'reason'),
         [
-            ({'aud': 'https://api.example.com'}, 'audience naming the upstream instead of this endpoint'),
+            ({'aud': API_URL}, 'audience naming the upstream instead of this endpoint'),
             ({'iss': 'https://other.example.com'}, 'another issuer'),
             ({'aud': None}, 'no audience at all'),
         ],

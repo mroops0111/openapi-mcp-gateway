@@ -29,6 +29,12 @@ def petstore_yml_path() -> pathlib.Path:
 
 
 @pytest.fixture
+def client_credentials_spec_path() -> pathlib.Path:
+    """A spec declaring only the ``clientCredentials`` flow, so the flow is resolved rather than configured."""
+    return FIXTURES_DIR / 'client_credentials.json'
+
+
+@pytest.fixture
 def petstore_spec_raw() -> dict:
     return json.loads((FIXTURES_DIR / 'petstore.json').read_text())
 

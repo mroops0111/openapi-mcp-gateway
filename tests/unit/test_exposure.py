@@ -32,6 +32,7 @@ from openapi_mcp_gateway.openapi import (
     ParamOverride,
     ToolOverride,
 )
+from tests.constants import API_URL
 
 
 class _StubContext:
@@ -182,7 +183,7 @@ class TestToolGeneration:
     def _generator(self) -> tuple[ToolGenerator, MCPServer]:
         """Build a fresh generator + MCPServer pair for each test."""
         mcp = MCPServer('test')
-        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
+        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)), mcp
 
     def test_tool_name_with_slash_sanitized(self):
         """A slash in ``operation_id`` is sanitised before tool registration."""
@@ -271,7 +272,7 @@ class TestGeneratedSignature:
     def _generator(self) -> tuple[ToolGenerator, MCPServer]:
         """Fresh generator + MCPServer for each test."""
         mcp = MCPServer('test')
-        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
+        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)), mcp
 
     def test_param_order_required_then_ctx_then_optional(self):
         """Required params come first, then ``ctx``, then optional params with default ``None``."""
@@ -368,7 +369,7 @@ class TestGeneratedSignature:
 def _meta_generator() -> tuple[MetaToolGenerator, MCPServer]:
     """Build a fresh MetaToolGenerator + MCPServer pair for each test."""
     mcp = MCPServer('test')
-    return MetaToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
+    return MetaToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)), mcp
 
 
 def _ops() -> list[OperationInfo]:
@@ -640,7 +641,7 @@ class TestToolRegistrationMetadata:
     def _generator(self) -> tuple[ToolGenerator, MCPServer]:
         """Build a fresh generator + MCPServer pair for each test."""
         mcp = MCPServer('test')
-        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
+        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)), mcp
 
     def test_tool_advertises_title_and_annotations(self):
         """Registered tool carries ``title`` from ``summary`` and ``annotations`` from method."""
@@ -668,7 +669,7 @@ class TestStructuredContent:
     def _generator(self) -> tuple[ToolGenerator, MCPServer]:
         """Build a fresh generator + MCPServer pair for each test."""
         mcp = MCPServer('test')
-        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
+        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)), mcp
 
     async def test_dict_body_populates_structured_content(self, mock_upstream):
         """A JSON object response lands in both ``content[0].text`` and ``structuredContent``."""
@@ -706,7 +707,7 @@ class TestBodySerialization:
     def _generator(self) -> tuple[ToolGenerator, MCPServer]:
         """Build a fresh generator + MCPServer pair for each test."""
         mcp = MCPServer('test')
-        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
+        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)), mcp
 
     async def test_array_of_objects_body_serialised_to_json(self, mock_upstream):
         """An ``array<object>`` body param is sent as a JSON array of plain dicts."""
@@ -792,14 +793,14 @@ class TestErrorResult:
     def _generator(self) -> tuple[ToolGenerator, MCPServer]:
         """Build a fresh generator + MCPServer pair for each test."""
         mcp = MCPServer('test')
-        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')), mcp
+        return ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)), mcp
 
     async def test_json_error_body_in_structured_content(self, mock_upstream):
         """A JSON error body populates ``structuredContent`` and the text contains the status line."""
         mock_upstream(
             lambda _request: httpx.Response(
                 404,
-                json={'message': 'Not Found', 'documentation_url': 'https://api.example.com/docs'},
+                json={'message': 'Not Found', 'documentation_url': f'{API_URL}/docs'},
             )
         )
         generator, mcp = self._generator()
@@ -810,7 +811,7 @@ class TestErrorResult:
         assert result.is_error is True
         assert result.structured_content == {
             'message': 'Not Found',
-            'documentation_url': 'https://api.example.com/docs',
+            'documentation_url': f'{API_URL}/docs',
         }
         assert '404' in result.content[0].text
         assert 'Not Found' in result.content[0].text
@@ -857,7 +858,7 @@ class TestFaithfulInputSchema:
     def _schema_for(self, *parameters: ParameterInfo) -> dict:
         """Register one operation carrying ``parameters`` and return its advertised input schema."""
         mcp = MCPServer('test')
-        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com'))
+        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL))
         operation = OperationInfo(operation_id='do_thing', method='post', path='/things', parameters=list(parameters))
         generator.register([operation])
         tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'do_thing')
@@ -966,7 +967,7 @@ class TestFaithfulInputSchema:
     async def test_faithful_schema_visible_to_client(self):
         """The faithful schema reaches the client's tools/list, not just the internal Tool object."""
         mcp = MCPServer('test')
-        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com'))
+        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL))
         operation = OperationInfo(
             operation_id='do_thing',
             method='get',
@@ -985,7 +986,7 @@ class TestFaithfulInputSchema:
     async def test_validation_still_rejects_wrong_type(self):
         """Faithful display does not weaken validation: a type mismatch is still rejected."""
         mcp = MCPServer('test')
-        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com'))
+        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL))
         operation = OperationInfo(
             operation_id='do_thing',
             method='get',
@@ -1007,7 +1008,7 @@ class TestInputSchemaEnforcement:
 
     def _register_single_param(self, mcp: MCPServer, name: str, param_schema: dict) -> None:
         """Register a one-parameter ``do_thing`` tool carrying ``param_schema``."""
-        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com'))
+        generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL))
         operation = OperationInfo(
             operation_id='do_thing',
             method='get',
@@ -1106,7 +1107,7 @@ def _shaped_op(
 def _register(operation: OperationInfo):
     """Register ``operation`` as a static tool and return the registered Tool named ``do_thing``."""
     mcp = MCPServer('test')
-    ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')).register([operation])
+    ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)).register([operation])
     return next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'do_thing')
 
 
@@ -1587,7 +1588,7 @@ class TestDynamicParamShaping:
             params={'secret': {'hidden': True}},
         )
         mcp = MCPServer('test')
-        MetaToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')).register([op])
+        MetaToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)).register([op])
         get_operation = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'get_operation')
         payload = (await get_operation.fn(name='do_thing', ctx=_stub_context())).structured_content
         schema = payload['input_schema']
@@ -1612,7 +1613,7 @@ class TestDynamicParamShaping:
             request='{"op[status_id]": $lookup({"open": "o"}, status)}',
         )
         mcp = MCPServer('test')
-        MetaToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url='https://api.example.com')).register([op])
+        MetaToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)).register([op])
         call_operation = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'call_operation')
         await call_operation.fn(name='do_thing', arguments={'status': 'open'}, ctx=_stub_context())
         assert captured['params']['op[status_id]'] == 'o'

@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from openapi_mcp_gateway import Gateway, cli
 from openapi_mcp_gateway.gateway import _policy_summary
 from openapi_mcp_gateway.settings import GatewayConfig, PolicyConfig
+from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
 
 PACKAGE_LOGGER = 'openapi_mcp_gateway'
@@ -20,6 +21,7 @@ PACKAGE_LOGGER = 'openapi_mcp_gateway'
 FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures'
 PETSTORE_SPEC = FIXTURES / 'petstore.json'
 UNDOCUMENTED_SPEC = FIXTURES / 'undocumented.json'
+CLIENT_CREDENTIALS_SPEC = FIXTURES / 'client_credentials.json'
 
 
 @pytest.fixture(autouse=True)
@@ -219,12 +221,12 @@ class TestAuthInference:
             auth_client_id='cid',
             auth_client_secret='sec',
             auth_upstream_scopes=None,
-            auth_authorization_url='https://auth.example.com/authorize',
-            auth_token_url='https://auth.example.com/token',
+            auth_authorization_url=AUTHORIZE_URL,
+            auth_token_url=TOKEN_URL,
             auth_flow=None,
         )
-        assert auth.upstream.authorization_url == 'https://auth.example.com/authorize'
-        assert auth.upstream.token_url == 'https://auth.example.com/token'
+        assert auth.upstream.authorization_url == AUTHORIZE_URL
+        assert auth.upstream.token_url == TOKEN_URL
 
 
 class TestConfigPrecedence:
@@ -436,8 +438,6 @@ class TestDryRunJsonOutput:
         Echoing `auth.flow` reported null while client_credentials was live,
         which describes the config rather than what the server does.
         """
-        spec = tmp_path / 'spec.json'
-        spec.write_text(json.dumps(_client_credentials_spec()))
         config = tmp_path / 'config.yml'
         config.write_text(
             yaml.safe_dump(
@@ -445,7 +445,7 @@ class TestDryRunJsonOutput:
                     'servers': [
                         {
                             'name': 'secure',
-                            'spec': str(spec),
+                            'spec': str(CLIENT_CREDENTIALS_SPEC),
                             'auth': {'type': 'oauth2', 'upstream': {'client_id': 'cid', 'client_secret': 'sec'}},
                         }
                     ]
@@ -500,22 +500,3 @@ class TestDryRunJsonOutput:
         assert tools, 'the fixture should expose at least one tool'
         assert all(tool['description'] for tool in tools)
         assert any(tool['description'].startswith('GET /orders') for tool in tools)
-
-
-def _client_credentials_spec() -> dict:
-    """A spec declaring only clientCredentials, so the flow is resolved rather than configured."""
-    return {
-        'openapi': '3.0.0',
-        'info': {'title': 'Secure', 'version': '1.0.0'},
-        'servers': [{'url': 'https://api.example.com'}],
-        'components': {
-            'securitySchemes': {
-                'oauth': {
-                    'type': 'oauth2',
-                    'flows': {'clientCredentials': {'tokenUrl': 'https://auth.example.com/token', 'scopes': {}}},
-                }
-            }
-        },
-        'security': [{'oauth': []}],
-        'paths': {'/things': {'get': {'operationId': 'listThings', 'responses': {'200': {'description': 'ok'}}}}},
-    }
