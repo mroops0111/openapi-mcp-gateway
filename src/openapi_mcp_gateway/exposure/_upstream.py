@@ -29,6 +29,8 @@ class UpstreamBinding:
     auth_resolver: AuthResolver = dataclasses.field(default_factory=NullAuthResolver)
     timeout: float = 90
     transport: httpx.AsyncBaseTransport | None = None
+    # Static per-server headers, sent on every call beneath the auth and per-call headers.
+    headers: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
 def _build_success_result(payload: typing.Any) -> CallToolResult:
@@ -162,8 +164,7 @@ def _kwargs_to_upstream_arguments(
     """Pick non-``None`` ``kwargs`` matching ``parameters_by_name``, keyed by the original API name.
 
     Used to assemble query / header / body argument dicts for the upstream HTTP call
-    when no ``request`` JSONata expression is set (the pass-through path),
-    and the header dict on the ``request`` path too.
+    when no ``request`` JSONata expression is set (the pass-through path).
     """
     return {
         parameter.name: kwargs[parameter_name]
@@ -297,16 +298,9 @@ def _build_upstream_closure(
                 upstream_object = apply_transform(request_transform, arguments)
             except TransformError as error:
                 return _build_transform_error_result('request', error)
-            # Header parameters, hidden defaults included, still go out as headers.
-            # A header the request result names overrides the argument's value.
-            resolved_path, query_arguments, routed_headers, body_arguments = _route_upstream_object(
+            resolved_path, query_arguments, header_arguments, body_arguments = _route_upstream_object(
                 upstream_object or {}, path, method, header_parameters_by_name
             )
-            header_arguments = {
-                name: str(value)
-                for name, value in _kwargs_to_upstream_arguments(kwargs, header_parameters_by_name).items()
-            }
-            header_arguments.update(routed_headers)
         else:
             resolved_path = path
             for parameter_name, parameter in path_parameters_by_name.items():
@@ -322,6 +316,7 @@ def _build_upstream_closure(
             body_arguments = _to_jsonable(_kwargs_to_upstream_arguments(kwargs, body_parameters_by_name))
 
         request_headers: dict[str, str] = {
+            **binding.headers,
             **_trace_context_headers(context),
             **auth_headers,
             **header_arguments,

@@ -298,6 +298,8 @@ class ServerConfig(pydantic.BaseModel):
     timeout: float = 90
     exposure: ExposureConfig = ExposureConfig()
     operations: dict[str, McpIntegration] = pydantic.Field(default_factory=dict)
+    # Static headers sent on every upstream call, such as an API version the whole API requires.
+    headers: dict[str, str] = pydantic.Field(default_factory=dict)
 
     @pydantic.field_validator('name')
     @classmethod
@@ -305,6 +307,19 @@ class ServerConfig(pydantic.BaseModel):
         if not name.replace('-', '').replace('_', '').isalnum():
             raise ValueError(f'Server name must be alphanumeric (with - or _): {name}')
         return name
+
+    @pydantic.field_validator('headers')
+    @classmethod
+    def _validate_headers(cls, headers: dict[str, str]) -> dict[str, str]:
+        if any(name.lower() == 'authorization' for name in headers):
+            raise ValueError('headers cannot set Authorization. The upstream credential belongs to auth.')
+        return headers
+
+    def resolve_headers(self) -> dict[str, str]:
+        """Static upstream headers after env-var substitution."""
+        return {
+            name: resolved for name, value in self.headers.items() if (resolved := _resolve_env_var(value)) is not None
+        }
 
     @pydantic.computed_field
     @property

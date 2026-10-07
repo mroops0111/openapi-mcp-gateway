@@ -1678,28 +1678,29 @@ class TestParamDeclaration:
         assert captured['params']['sort_by'] == 'popularity.desc'
         assert 'sort' not in captured['params']
 
-    async def test_hidden_header_default_survives_request(self, mock_upstream):
-        """A hidden, defaulted header still goes out as a header when a request expression builds the call."""
-        captured: dict = {}
+    async def test_request_builds_the_headers_too(self, mock_upstream):
+        """A hidden header default reaches the upstream only when the request expression carries it."""
+        captured: list[dict] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
-            captured['headers'] = dict(request.headers)
-            captured['params'] = dict(request.url.params)
+            captured.append({'headers': dict(request.headers), 'params': dict(request.url.params)})
             return httpx.Response(200, json=[])
 
         mock_upstream(handler)
-        op = _shaped_op(
-            [
-                ParameterInfo(name='q', location='query', schema={'type': 'string'}),
-                ParameterInfo(name='Api-Version', location='header', schema={'type': 'string'}),
-            ],
-            params={'Api-Version': {'hidden': True, 'default': '2026-03-11'}},
-            params_strategy='merge',
-            request='{"q": $uppercase(q)}',
+        parameters = [
+            ParameterInfo(name='q', location='query', schema={'type': 'string'}),
+            ParameterInfo(name='Api-Version', location='header', schema={'type': 'string'}),
+        ]
+        params = {'Api-Version': {'hidden': True, 'default': '2026-03-11'}}
+        dropped = _shaped_op(parameters, params=params, params_strategy='merge', request='{"q": $uppercase(q)}')
+        carried = _shaped_op(
+            parameters, params=params, params_strategy='merge', request='$merge([$, {"q": $uppercase(q)}])'
         )
-        await _register(op).run({'q': 'abc'}, context=_stub_context())
-        assert captured['headers']['api-version'] == '2026-03-11'
-        assert captured['params'] == {'q': 'ABC'}
+        await _register(dropped).run({'q': 'abc'}, context=_stub_context())
+        await _register(carried).run({'q': 'abc'}, context=_stub_context())
+        assert 'api-version' not in captured[0]['headers']
+        assert captured[1]['headers']['api-version'] == '2026-03-11'
+        assert captured[1]['params'] == {'q': 'ABC'}
 
     async def test_request_key_naming_a_header_routes_to_header(self, mock_upstream):
         """A request result key naming a header, by spec or sanitised name, is sent as that header only."""
@@ -1726,7 +1727,7 @@ class TestParamDeclaration:
         assert captured['body'] == {'name': 'x'}
 
     async def test_replace_keeps_a_named_spec_header(self, mock_upstream):
-        """Under replace, an entry naming a spec header stays a header, hidden from the surface, and is sent."""
+        """Under replace, an entry naming a spec header stays a header, hidden from the surface, for the request to send."""
         captured: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -1745,7 +1746,7 @@ class TestParamDeclaration:
                 'Api-Version': {'hidden': True, 'default': '2026-03-11'},
             },
             params_strategy='replace',
-            request='{"page_id": $lookup({"home": "abc123"}, doc)}',
+            request='{"page_id": $lookup({"home": "abc123"}, doc), "Api_Version": Api_Version}',
             path='/pages/{page_id}',
         )
         tool = _register(op)
@@ -1753,6 +1754,28 @@ class TestParamDeclaration:
         await tool.run({'doc': 'home'}, context=_stub_context())
         assert captured['headers']['api-version'] == '2026-03-11'
         assert captured['url'].endswith('/pages/abc123')
+
+    async def test_server_headers_sit_beneath_per_call_headers(self, mock_upstream):
+        """Server headers go out on every call, and a header the call itself sends wins over them."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['headers'] = dict(request.headers)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [ParameterInfo(name='Api-Version', location='header', schema={'type': 'string'})],
+            params={'Api-Version': {'hidden': True, 'default': '2026-03-11'}},
+            params_strategy='merge',
+        )
+        mcp = MCPServer('test')
+        binding = UpstreamBinding(base_url=API_URL, headers={'Api-Version': '2025-01-01', 'X-Team': 'wren'})
+        ToolGenerator(mcp=mcp, binding=binding).register([op])
+        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'do_thing')
+        await tool.run({}, context=_stub_context())
+        assert captured['headers']['x-team'] == 'wren'
+        assert captured['headers']['api-version'] == '2026-03-11'
 
     def test_declared_without_request_fails_at_registration(self):
         """Declaring params without a request expression is rejected at build time."""
