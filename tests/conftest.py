@@ -77,16 +77,3 @@ def mock_upstream(monkeypatch):
         monkeypatch.setattr(APIClient, '__init__', patched_init)
 
     return install
-
-
-@pytest.fixture
-def upstream_requests(mock_upstream) -> list[httpx.Request]:
-    """Answer every upstream request with an empty 200 and return the list they are recorded in, in call order."""
-    requests: list[httpx.Request] = []
-
-    def record(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        return httpx.Response(200, json={})
-
-    mock_upstream(record)
-    return requests
