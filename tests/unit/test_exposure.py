@@ -1725,6 +1725,35 @@ class TestParamDeclaration:
         assert captured['headers']['api-version'] == '2026-03-11'
         assert captured['body'] == {'name': 'x'}
 
+    async def test_replace_keeps_a_named_spec_header(self, mock_upstream):
+        """Under replace, an entry naming a spec header stays a header, hidden from the surface, and is sent."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['headers'] = dict(request.headers)
+            captured['url'] = str(request.url)
+            return httpx.Response(200, json={})
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [
+                ParameterInfo(name='page_id', location='path', required=True, schema={'type': 'string'}),
+                ParameterInfo(name='Api-Version', location='header', schema={'type': 'string'}),
+            ],
+            params={
+                'doc': {'type': 'string', 'enum': ['home'], 'required': True},
+                'Api-Version': {'hidden': True, 'default': '2026-03-11'},
+            },
+            params_strategy='replace',
+            request='{"page_id": $lookup({"home": "abc123"}, doc)}',
+            path='/pages/{page_id}',
+        )
+        tool = _register(op)
+        assert list(tool.parameters['properties']) == ['doc']
+        await tool.run({'doc': 'home'}, context=_stub_context())
+        assert captured['headers']['api-version'] == '2026-03-11'
+        assert captured['url'].endswith('/pages/abc123')
+
     def test_declared_without_request_fails_at_registration(self):
         """Declaring params without a request expression is rejected at build time."""
         op = _shaped_op([], params={'q': {'type': 'string'}})

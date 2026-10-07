@@ -423,7 +423,7 @@ The input layer is declarative and the value transforms are [JSONata](https://js
 **`params` and `params_strategy` shape what the model sees.** Each `params` entry is a JSON Schema fragment (`type`, `enum`, `default`, `description`, `format`, `minimum`, `items`, and so on) plus two flags. `required` lifts the parameter into the schema's required list, and `hidden` removes a spec parameter from the surface. `params_strategy` is mandatory whenever `params` is set:
 
 - **`merge`**: tweaks the operation's existing parameters and keeps the rest visible, so declaring a parameter the spec does not define is an error.
-- **`replace`**: makes the declared entries the whole schema and drops every spec parameter, so it always needs a `request` to route the friendly arguments upstream.
+- **`replace`**: makes the declared entries the whole schema and drops every spec parameter, so it always needs a `request` to route the friendly arguments upstream. An entry that names a spec header is the exception: it is tweaked as under `merge` and stays a header, so `{hidden: true, default: ...}` pins an API version header on a replaced surface.
 
 ```yaml
 operations:

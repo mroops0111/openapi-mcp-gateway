@@ -87,7 +87,7 @@ Then decide, per operation, how much reshaping it needs. Prefer the lightest opt
   - **Default an Optional Input.** Use `merge` with `{default: <value>}`, which is sent upstream when the model omits the parameter.
   - **Rename an Input or Map a Friendly Enum.** Use `merge` with `params` and a `request` `$lookup`. Both `request` and `response` compose with `merge`, not only with `replace`. Naming a parameter the spec does not define is a startup error, so keep merged names honest.
   - **Trim or Rename the Response.** Use a `response` expression alone, which works with any strategy, including no `params` at all.
-  - **Fully Reshape the Input, or Wrap the Body.** Use `replace`, which drops the spec's parameters so you declare a fresh set of friendly params, then a `request` expression routes them upstream. Naming a param the spec never defined is fine here, the must-match rule only applies to `merge`.
+  - **Fully Reshape the Input, or Wrap the Body.** Use `replace`, which drops the spec's parameters so you declare a fresh set of friendly params, then a `request` expression routes them upstream. Naming a param the spec never defined is fine here, the must-match rule only applies to `merge`. An entry that names a spec header keeps it a header, so pin a required version header with `{hidden: true, default: <value>}` here too.
 
 The JSONata idioms you will use most:
 
