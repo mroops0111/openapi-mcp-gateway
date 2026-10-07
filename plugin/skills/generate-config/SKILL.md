@@ -110,8 +110,8 @@ servers:
   - name: <server-name>
     spec: <url-or-local-path>
     base_url: <upstream-base-url> # required, a spec with a relative server needs the real host
-    headers: # optional, static headers on every call, e.g. an API version the whole API requires
-      Api-Version: "2026-03-11"
+    headers: # optional, static headers sent on every upstream call
+      <Header-Name>: <value> # a literal, or ${SOME_VAR}
     auth:
       type: bearer # or api_key / oauth2 / passthrough / none
       token: ${SOME_TOKEN}
