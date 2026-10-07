@@ -29,6 +29,8 @@ class UpstreamBinding:
     auth_resolver: AuthResolver = dataclasses.field(default_factory=NullAuthResolver)
     timeout: float = 90
     transport: httpx.AsyncBaseTransport | None = None
+    # Static per-server headers, sent on every call beneath the auth and per-call headers.
+    headers: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
 def _build_success_result(payload: typing.Any) -> CallToolResult:
@@ -175,16 +177,24 @@ def _route_upstream_object(
     upstream_object: dict[str, typing.Any],
     path: str,
     method: str,
-) -> tuple[str, dict[str, typing.Any], dict[str, typing.Any]]:
-    """Route a ``request`` JSONata result into ``(resolved_path, query_arguments, body_arguments)``.
+    header_parameters_by_name: dict[str, ParameterInfo],
+) -> tuple[str, dict[str, typing.Any], dict[str, str], dict[str, typing.Any]]:
+    """Route a ``request`` JSONata result into ``(resolved_path, query_arguments, header_arguments, body_arguments)``.
 
     A key that names a path-template placeholder fills the path.
+    A key that names a header parameter, by its spec name or its sanitised name, becomes that header.
     Every other key becomes a query parameter for a body-less method (GET, DELETE, HEAD),
     or a JSON body field otherwise.
     ``None`` values are dropped, so an omitted friendly argument leaves no trace upstream.
     """
+    header_names = {
+        key: parameter.name
+        for sanitised_name, parameter in header_parameters_by_name.items()
+        for key in (sanitised_name, parameter.name)
+    }
     resolved_path = path
     query_arguments: dict[str, typing.Any] = {}
+    header_arguments: dict[str, str] = {}
     body_arguments: dict[str, typing.Any] = {}
     method_has_body = method.lower() in ('post', 'put', 'patch')
     for key, value in upstream_object.items():
@@ -193,11 +203,13 @@ def _route_upstream_object(
         placeholder = '{' + key + '}'
         if placeholder in resolved_path:
             resolved_path = resolved_path.replace(placeholder, str(value))
+        elif key in header_names:
+            header_arguments[header_names[key]] = str(value)
         elif method_has_body:
             body_arguments[key] = value
         else:
             query_arguments[key] = value
-    return resolved_path, query_arguments, body_arguments
+    return resolved_path, query_arguments, header_arguments, body_arguments
 
 
 def _trace_context_headers(context: Context) -> dict[str, str]:
@@ -286,8 +298,9 @@ def _build_upstream_closure(
                 upstream_object = apply_transform(request_transform, arguments)
             except TransformError as error:
                 return _build_transform_error_result('request', error)
-            resolved_path, query_arguments, body_arguments = _route_upstream_object(upstream_object or {}, path, method)
-            header_arguments: dict[str, str] = {}
+            resolved_path, query_arguments, header_arguments, body_arguments = _route_upstream_object(
+                upstream_object or {}, path, method, header_parameters_by_name
+            )
         else:
             resolved_path = path
             for parameter_name, parameter in path_parameters_by_name.items():
@@ -303,6 +316,7 @@ def _build_upstream_closure(
             body_arguments = _to_jsonable(_kwargs_to_upstream_arguments(kwargs, body_parameters_by_name))
 
         request_headers: dict[str, str] = {
+            **binding.headers,
             **_trace_context_headers(context),
             **auth_headers,
             **header_arguments,

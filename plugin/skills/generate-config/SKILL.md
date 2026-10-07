@@ -87,7 +87,7 @@ Then decide, per operation, how much reshaping it needs. Prefer the lightest opt
   - **Default an Optional Input.** Use `merge` with `{default: <value>}`, which is sent upstream when the model omits the parameter.
   - **Rename an Input or Map a Friendly Enum.** Use `merge` with `params` and a `request` `$lookup`. Both `request` and `response` compose with `merge`, not only with `replace`. Naming a parameter the spec does not define is a startup error, so keep merged names honest.
   - **Trim or Rename the Response.** Use a `response` expression alone, which works with any strategy, including no `params` at all.
-  - **Fully Reshape the Input, or Wrap the Body.** Use `replace`, which drops the spec's parameters so you declare a fresh set of friendly params, then a `request` expression routes them upstream. Naming a param the spec never defined is fine here, the must-match rule only applies to `merge`.
+  - **Fully Reshape the Input, or Wrap the Body.** Use `replace`, which drops the spec's parameters so you declare a fresh set of friendly params, then a `request` expression routes them upstream. Naming a param the spec never defined is fine here, the must-match rule only applies to `merge`. An entry that names a spec header keeps it a header, which the `request` must still carry to send it.
 
 The JSONata idioms you will use most:
 
@@ -95,7 +95,7 @@ The JSONata idioms you will use most:
 - `[ results.{ ... } ]` forces a list, because a single-match projection unwraps to one object otherwise.
 - `$merge([$, { ... }])` passes most arguments through and overrides only a few, where `$` is the whole input.
 
-The `request` result routes to the upstream call by its top-level keys. A key whose name matches a `{placeholder}` in the path fills that path segment. Of the rest, each key becomes a JSON body field for `POST` / `PUT` / `PATCH`, or a query parameter for `GET` / `DELETE`. A `null` value is dropped, so an omitted optional friendly argument leaves no trace upstream. To match an upstream that wants a wrapped body, such as `{"issue": {...}}`, nest the fields under that key in the `request` result, for example `{ "issue": { "subject": subject, "project_id": project_id } }`.
+The `request` result routes to the upstream call by its top-level keys. A key whose name matches a `{placeholder}` in the path fills that path segment. A key that names a header parameter becomes that header. Of the rest, each key becomes a JSON body field for `POST` / `PUT` / `PATCH`, or a query parameter for `GET` / `DELETE`. A `null` value is dropped, so an omitted optional friendly argument leaves no trace upstream. To match an upstream that wants a wrapped body, such as `{"issue": {...}}`, nest the fields under that key in the `request` result, for example `{ "issue": { "subject": subject, "project_id": project_id } }`.
 
 ### Stage 3: Emit and Verify
 
@@ -110,6 +110,8 @@ servers:
   - name: <server-name>
     spec: <url-or-local-path>
     base_url: <upstream-base-url> # required, a spec with a relative server needs the real host
+    headers: # optional, static headers sent on every upstream call
+      <Header-Name>: <value> # a literal, or ${SOME_VAR}
     auth:
       type: bearer # or api_key / oauth2 / passthrough / none
       token: ${SOME_TOKEN}

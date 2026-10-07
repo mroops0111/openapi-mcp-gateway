@@ -49,6 +49,20 @@ class TestServerConfig:
         with pytest.raises(ValueError, match='alphanumeric'):
             ServerConfig(name='my api!', spec='x.json')
 
+    def test_headers_resolve_env_vars_and_skip_unset(self, monkeypatch):
+        """Server headers resolve ``${VAR}``, and an unset variable leaves the header out."""
+        monkeypatch.setenv('API_VERSION', '2026-03-11')
+        monkeypatch.delenv('UNSET_HEADER', raising=False)
+        server = ServerConfig(
+            name='api', spec='x.json', headers={'Api-Version': '${API_VERSION}', 'X-Opt': '${UNSET_HEADER}'}
+        )
+        assert server.resolve_headers() == {'Api-Version': '2026-03-11'}
+
+    def test_headers_refuse_authorization(self):
+        """Authorization belongs to ``auth``, so a static header cannot set it."""
+        with pytest.raises(pydantic.ValidationError, match='Authorization'):
+            ServerConfig(name='api', spec='x.json', headers={'authorization': 'Bearer x'})
+
 
 class TestAuthConfig:
     """Env-var substitution on ``AuthConfig``. How a token becomes a header belongs to the type handler."""

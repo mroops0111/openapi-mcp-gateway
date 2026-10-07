@@ -45,6 +45,21 @@ def _apply_tweak(parameter: ParameterInfo, param_override: ParamOverride) -> Non
         parameter.description = fragment['description']
 
 
+def _tweak_spec_parameter(parameter: ParameterInfo, param_override: ParamOverride) -> ParameterInfo | None:
+    """Apply one ``params`` entry to a spec ``parameter`` in place, returning it, or ``None`` to drop it.
+
+    A hidden parameter is kept only if it has a default to inject upstream,
+    staying out of the schema but still filling its slot. Otherwise it is dropped.
+    """
+    _apply_tweak(parameter, param_override)
+    if not param_override.hidden:
+        return parameter
+    if not parameter.send_default:
+        return None
+    parameter.visible = False
+    return parameter
+
+
 def shape_operation(operation: OperationInfo) -> OperationInfo:
     """Apply ``x-mcp-integration.tool.params`` to the LLM-facing surface of ``operation``.
 
@@ -57,6 +72,8 @@ def shape_operation(operation: OperationInfo) -> OperationInfo:
     so naming a parameter the spec does not define is rejected at build time.
     With ``replace`` the declared entries are the entire surface and every spec parameter is dropped,
     so a ``request`` expression is required to route the declared parameters to the upstream.
+    The one exception is an entry that names a spec header, which is tweaked as under ``merge`` and stays a header,
+    so a required header such as an API version survives a replaced surface.
     """
     tool_override = _get_override(operation, 'tool')
     if tool_override is None or not tool_override.params:
@@ -78,7 +95,17 @@ def shape_operation(operation: OperationInfo) -> OperationInfo:
                 f'Operation "{operation.operation_id}" uses params_strategy "replace" but no tool.request. '
                 'Replaced parameters reach the upstream only through a request expression.'
             )
-        shaped_operation.parameters = [_declared_parameter(name, param) for name, param in params.items()]
+        spec_headers = {
+            parameter.name: parameter for parameter in shaped_operation.parameters if parameter.location == 'header'
+        }
+        declared_parameters: list[ParameterInfo] = []
+        for name, param_override in params.items():
+            spec_header = spec_headers.get(name)
+            if spec_header is None:
+                declared_parameters.append(_declared_parameter(name, param_override))
+            elif (header := _tweak_spec_parameter(spec_header, param_override)) is not None:
+                declared_parameters.append(header)
+        shaped_operation.parameters = declared_parameters
         return shaped_operation
 
     unknown_names = [name for name in params if name not in spec_names]
@@ -95,15 +122,8 @@ def shape_operation(operation: OperationInfo) -> OperationInfo:
         if param_override is None:
             kept_parameters.append(parameter)
             continue
-        _apply_tweak(parameter, param_override)
-        if param_override.hidden:
-            # A hidden parameter is kept only if it has a default to inject upstream,
-            # staying out of the schema but still filling its slot. Otherwise drop it.
-            if parameter.send_default:
-                parameter.visible = False
-                kept_parameters.append(parameter)
-            continue
-        kept_parameters.append(parameter)
+        if (tweaked := _tweak_spec_parameter(parameter, param_override)) is not None:
+            kept_parameters.append(tweaked)
 
     if not tool_override.request:
         kept_path_parameter_names = {parameter.name for parameter in kept_parameters if parameter.location == 'path'}

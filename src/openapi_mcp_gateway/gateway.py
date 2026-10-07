@@ -297,10 +297,11 @@ class Gateway:
         policy: dict[str, typing.Any] | None = None,
         timeout: float = 90,
         exposure: dict[str, typing.Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         """Register a server inline (convenience over building ``ServerConfig`` directly).
 
-        ``auth``, ``policy`` and ``exposure`` take the same mappings their YAML keys do.
+        ``auth``, ``policy``, ``exposure`` and ``headers`` take the same mappings their YAML keys do.
         """
         server_config = ServerConfig(
             name=name,
@@ -311,6 +312,7 @@ class Gateway:
             policy=PolicyConfig.model_validate(policy) if policy else PolicyConfig(),
             timeout=timeout,
             exposure=ExposureConfig.model_validate(exposure) if exposure else ExposureConfig(),
+            headers=headers or {},
         )
         self._add_server_from_server_config(server_config=server_config)
 
@@ -511,6 +513,7 @@ class Gateway:
             auth_resolver=auth_resolver,
             timeout=server_config.timeout,
             transport=transport,
+            headers=server_config.resolve_headers(),
         )
         exposed_tools: list[ExposedTool] = []
         # A policy pattern that matches no operation at all is almost always a typo,

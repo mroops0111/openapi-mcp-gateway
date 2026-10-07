@@ -318,6 +318,7 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `policy.allow` | list |  | Only expose matching operations |
 | `policy.deny` | list |  | Exclude matching operations |
 | `timeout` | float | `90` | HTTP timeout in seconds |
+| `headers` | map |  | Static headers sent on every upstream call, such as an API version the whole API requires. Values take `${ENV_VAR}`, and an unset variable leaves the header out. A header the call itself sends wins. `Authorization` is refused, since it belongs to `auth` |
 | `exposure` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`list_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand. |
 | `mode` | string | `tool_only` | `tool_only` forces every operation to a tool and ignores any `resource` declaration. `auto` promotes eligible GETs (no required non-path parameter) to MCP resources, and spec-side `resource` opt-ins still apply as explicit overrides. |
 | `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation. Useful when you do not control the upstream spec. |
@@ -423,7 +424,7 @@ The input layer is declarative and the value transforms are [JSONata](https://js
 **`params` and `params_strategy` shape what the model sees.** Each `params` entry is a JSON Schema fragment (`type`, `enum`, `default`, `description`, `format`, `minimum`, `items`, and so on) plus two flags. `required` lifts the parameter into the schema's required list, and `hidden` removes a spec parameter from the surface. `params_strategy` is mandatory whenever `params` is set:
 
 - **`merge`**: tweaks the operation's existing parameters and keeps the rest visible, so declaring a parameter the spec does not define is an error.
-- **`replace`**: makes the declared entries the whole schema and drops every spec parameter, so it always needs a `request` to route the friendly arguments upstream.
+- **`replace`**: makes the declared entries the whole schema and drops every spec parameter, so it always needs a `request` to route the friendly arguments upstream. An entry that names a spec header is the exception. It is adjusted the same way as under `merge` and stays a header, so the `request` can still send it.
 
 ```yaml
 operations:
@@ -448,7 +449,7 @@ operations:
         [items.{ "title": title, "url": html_url }]
 ```
 
-- **Routing**: a key that names a path placeholder fills the path, and the rest become query parameters for a body-less method or the JSON body otherwise.
+- **Routing**: a key that names a path placeholder fills the path, a key that names a header parameter becomes that header, and the rest become query parameters for a body-less method or the JSON body otherwise. Like every other location, a header goes out only if the result carries it, so pass a hidden default through with `$merge([$, ...])` or name it explicitly.
 - **Passthrough**: `$merge([$, { ... }])` forwards the incoming arguments and overrides only the keys you name, as above.
 - **Lists**: wrapping a mapping in `[ ... ]` keeps the result an array even when a single item matches.
 - **Errors**: a broken expression is rejected at startup, and a runtime failure returns an `isError` result naming the side that broke.
