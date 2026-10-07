@@ -448,7 +448,7 @@ operations:
         [items.{ "title": title, "url": html_url }]
 ```
 
-- **Routing**: a key that names a path placeholder fills the path, and the rest become query parameters for a body-less method or the JSON body otherwise.
+- **Routing**: a key that names a path placeholder fills the path, a key that names a header parameter becomes that header, and the rest become query parameters for a body-less method or the JSON body otherwise. Header parameters the call already carries, a hidden default included, are sent even when the result leaves them out.
 - **Passthrough**: `$merge([$, { ... }])` forwards the incoming arguments and overrides only the keys you name, as above.
 - **Lists**: wrapping a mapping in `[ ... ]` keeps the result an array even when a single item matches.
 - **Errors**: a broken expression is rejected at startup, and a runtime failure returns an `isError` result naming the side that broke.

@@ -95,7 +95,7 @@ The JSONata idioms you will use most:
 - `[ results.{ ... } ]` forces a list, because a single-match projection unwraps to one object otherwise.
 - `$merge([$, { ... }])` passes most arguments through and overrides only a few, where `$` is the whole input.
 
-The `request` result routes to the upstream call by its top-level keys. A key whose name matches a `{placeholder}` in the path fills that path segment. Of the rest, each key becomes a JSON body field for `POST` / `PUT` / `PATCH`, or a query parameter for `GET` / `DELETE`. A `null` value is dropped, so an omitted optional friendly argument leaves no trace upstream. To match an upstream that wants a wrapped body, such as `{"issue": {...}}`, nest the fields under that key in the `request` result, for example `{ "issue": { "subject": subject, "project_id": project_id } }`.
+The `request` result routes to the upstream call by its top-level keys. A key whose name matches a `{placeholder}` in the path fills that path segment. A key that names a header parameter becomes that header, and a header the spec requires, such as an API version, can be pinned with `merge` and `{hidden: true, default: <value>}` so it is sent even through a `request`. Of the rest, each key becomes a JSON body field for `POST` / `PUT` / `PATCH`, or a query parameter for `GET` / `DELETE`. A `null` value is dropped, so an omitted optional friendly argument leaves no trace upstream. To match an upstream that wants a wrapped body, such as `{"issue": {...}}`, nest the fields under that key in the `request` result, for example `{ "issue": { "subject": subject, "project_id": project_id } }`.
 
 ### Stage 3: Emit and Verify
 

@@ -1678,6 +1678,53 @@ class TestParamDeclaration:
         assert captured['params']['sort_by'] == 'popularity.desc'
         assert 'sort' not in captured['params']
 
+    async def test_hidden_header_default_survives_request(self, mock_upstream):
+        """A hidden, defaulted header still goes out as a header when a request expression builds the call."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['headers'] = dict(request.headers)
+            captured['params'] = dict(request.url.params)
+            return httpx.Response(200, json=[])
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [
+                ParameterInfo(name='q', location='query', schema={'type': 'string'}),
+                ParameterInfo(name='Api-Version', location='header', schema={'type': 'string'}),
+            ],
+            params={'Api-Version': {'hidden': True, 'default': '2026-03-11'}},
+            params_strategy='merge',
+            request='{"q": $uppercase(q)}',
+        )
+        await _register(op).run({'q': 'abc'}, context=_stub_context())
+        assert captured['headers']['api-version'] == '2026-03-11'
+        assert captured['params'] == {'q': 'ABC'}
+
+    async def test_request_key_naming_a_header_routes_to_header(self, mock_upstream):
+        """A request result key naming a header, by spec or sanitised name, is sent as that header only."""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['headers'] = dict(request.headers)
+            captured['body'] = json.loads(request.content)
+            return httpx.Response(200, json={})
+
+        mock_upstream(handler)
+        op = _shaped_op(
+            [
+                ParameterInfo(name='name', location='body', schema={'type': 'string'}),
+                ParameterInfo(name='Api-Version', location='header', schema={'type': 'string'}),
+            ],
+            params={'Api-Version': {'hidden': True, 'default': '2025-01-01'}},
+            params_strategy='merge',
+            request='$merge([$, {"Api_Version": "2026-03-11"}])',
+            method='post',
+        )
+        await _register(op).run({'name': 'x'}, context=_stub_context())
+        assert captured['headers']['api-version'] == '2026-03-11'
+        assert captured['body'] == {'name': 'x'}
+
     def test_declared_without_request_fails_at_registration(self):
         """Declaring params without a request expression is rejected at build time."""
         op = _shaped_op([], params={'q': {'type': 'string'}})
