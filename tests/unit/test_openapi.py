@@ -11,6 +11,7 @@ from openapi_mcp_gateway.openapi import (
     parse_spec,
 )
 from tests.constants import API_URL, PETSTORE_URL
+from tests.specs import component_ref, defs_ref, operation_spec
 
 
 class TestResolveRef:
@@ -74,17 +75,17 @@ class TestExpandSchema:
     def test_component_ref_becomes_a_defs_reference(self, petstore_spec_raw):
         """A component ``$ref`` stays a reference, now into ``$defs``, with the component expanded under its name."""
         defs: dict = {}
-        result = _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/Pet'}, defs)
-        assert result == {'$ref': '#/$defs/Pet'}
+        result = _expand_schema(petstore_spec_raw, component_ref('Pet'), defs)
+        assert result == defs_ref('Pet')
         assert defs['Pet']['type'] == 'object'
         assert 'name' in defs['Pet']['properties']
 
     def test_component_expanded_once_however_often_reached(self, petstore_spec_raw):
         """``NestedOwner`` reaches ``Pet`` twice, both as references to the one entry."""
         defs: dict = {}
-        _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/NestedOwner'}, defs)
-        assert defs['NestedOwner']['properties']['pet'] == {'$ref': '#/$defs/Pet'}
-        assert defs['NestedOwner']['properties']['pets']['items'] == {'$ref': '#/$defs/Pet'}
+        _expand_schema(petstore_spec_raw, component_ref('NestedOwner'), defs)
+        assert defs['NestedOwner']['properties']['pet'] == defs_ref('Pet')
+        assert defs['NestedOwner']['properties']['pets']['items'] == defs_ref('Pet')
         assert set(defs) == {'NestedOwner', 'Pet'}
 
     def test_pointer_into_a_component_is_inlined(self, petstore_spec_raw):
@@ -97,14 +98,14 @@ class TestExpandSchema:
     def test_inline_resolves_the_root_reference(self, petstore_spec_raw):
         """``_expand_inline`` resolves a root reference in place, so a request body can be split into properties."""
         defs: dict = {}
-        result = _expand_inline(petstore_spec_raw, {'$ref': '#/components/schemas/NestedOwner'}, defs)
-        assert result['properties']['pet'] == {'$ref': '#/$defs/Pet'}
+        result = _expand_inline(petstore_spec_raw, component_ref('NestedOwner'), defs)
+        assert result['properties']['pet'] == defs_ref('Pet')
         assert set(defs) == {'Pet'}
 
     def test_allof_merge(self, petstore_spec_raw):
         """``allOf`` branches are merged into a single schema with combined required, references resolved in place."""
         defs: dict = {}
-        _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/PetWithOwner'}, defs)
+        _expand_schema(petstore_spec_raw, component_ref('PetWithOwner'), defs)
         result = defs['PetWithOwner']
         assert 'id' in result['properties']
         assert 'name' in result['properties']
@@ -114,16 +115,16 @@ class TestExpandSchema:
     def test_oneof(self, petstore_spec_raw):
         """``oneOf`` branches are kept as a list with each branch independently expanded."""
         defs: dict = {}
-        _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/PetOrError'}, defs)
-        assert defs['PetOrError']['oneOf'] == [{'$ref': '#/$defs/Pet'}, {'$ref': '#/$defs/Error'}]
+        _expand_schema(petstore_spec_raw, component_ref('PetOrError'), defs)
+        assert defs['PetOrError']['oneOf'] == [defs_ref('Pet'), defs_ref('Error')]
         assert defs['Pet']['properties']['name']['type'] == 'string'
         assert defs['Error']['properties']['code']['type'] == 'integer'
 
     def test_anyof(self, petstore_spec_raw):
         """``anyOf`` branches expand independently, including non-object branches like ``null``."""
         defs: dict = {}
-        _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/MaybePet'}, defs)
-        assert defs['MaybePet']['anyOf'] == [{'$ref': '#/$defs/Pet'}, {'type': 'null'}]
+        _expand_schema(petstore_spec_raw, component_ref('MaybePet'), defs)
+        assert defs['MaybePet']['anyOf'] == [defs_ref('Pet'), {'type': 'null'}]
 
     def test_plain_schema_unchanged(self, petstore_spec_raw):
         """A schema without refs or composite keywords is returned unchanged."""
@@ -135,7 +136,7 @@ class TestExpandSchema:
         """Inline ``allOf`` (mixing refs and literal schemas) merges correctly."""
         schema = {
             'allOf': [
-                {'$ref': '#/components/schemas/Pet'},
+                component_ref('Pet'),
                 {'type': 'object', 'properties': {'color': {'type': 'string'}}},
             ],
         }
@@ -160,32 +161,32 @@ class TestRecursiveSchemas:
                 'Node': {
                     'type': 'object',
                     'title': 'Node',
-                    'properties': {'name': {'type': 'string'}, 'child': {'$ref': '#/components/schemas/Node'}},
+                    'properties': {'name': {'type': 'string'}, 'child': component_ref('Node')},
                 }
             }
         )
         defs: dict = {}
 
-        result = _expand_schema(raw, {'$ref': '#/components/schemas/Node'}, defs)
+        result = _expand_schema(raw, component_ref('Node'), defs)
 
-        assert result == {'$ref': '#/$defs/Node'}
+        assert result == defs_ref('Node')
         assert defs['Node']['properties']['name'] == {'type': 'string'}
-        assert defs['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
+        assert defs['Node']['properties']['child'] == defs_ref('Node')
 
     def test_mutual_recursion_terminates(self):
         """A cycle spanning two schemas resolves to two entries referring to each other."""
         raw = self._spec(
             {
-                'A': {'type': 'object', 'properties': {'b': {'$ref': '#/components/schemas/B'}}},
-                'B': {'type': 'object', 'properties': {'a': {'$ref': '#/components/schemas/A'}}},
+                'A': {'type': 'object', 'properties': {'b': component_ref('B')}},
+                'B': {'type': 'object', 'properties': {'a': component_ref('A')}},
             }
         )
         defs: dict = {}
 
-        _expand_schema(raw, {'$ref': '#/components/schemas/A'}, defs)
+        _expand_schema(raw, component_ref('A'), defs)
 
-        assert defs['A']['properties']['b'] == {'$ref': '#/$defs/B'}
-        assert defs['B']['properties']['a'] == {'$ref': '#/$defs/A'}
+        assert defs['A']['properties']['b'] == defs_ref('B')
+        assert defs['B']['properties']['a'] == defs_ref('A')
 
     def test_recursion_through_array_items_terminates(self):
         """The cycle is expressed wherever it runs, including through ``items``."""
@@ -193,15 +194,15 @@ class TestRecursiveSchemas:
             {
                 'Tree': {
                     'type': 'object',
-                    'properties': {'kids': {'type': 'array', 'items': {'$ref': '#/components/schemas/Tree'}}},
+                    'properties': {'kids': {'type': 'array', 'items': component_ref('Tree')}},
                 }
             }
         )
         defs: dict = {}
 
-        _expand_schema(raw, {'$ref': '#/components/schemas/Tree'}, defs)
+        _expand_schema(raw, component_ref('Tree'), defs)
 
-        assert defs['Tree']['properties']['kids']['items'] == {'$ref': '#/$defs/Tree'}
+        assert defs['Tree']['properties']['kids']['items'] == defs_ref('Tree')
 
     def test_allof_cycle_is_still_truncated(self):
         """An ``allOf`` has to be merged in place, so one that comes back round to itself is cut at the cycle.
@@ -213,48 +214,31 @@ class TestRecursiveSchemas:
                 'Loop': {
                     'type': 'object',
                     'description': 'Extends itself.',
-                    'allOf': [{'$ref': '#/components/schemas/Loop'}],
+                    'allOf': [component_ref('Loop')],
                 }
             }
         )
         defs: dict = {}
 
-        _expand_schema(raw, {'$ref': '#/components/schemas/Loop'}, defs)
+        _expand_schema(raw, component_ref('Loop'), defs)
 
         assert defs['Loop'] == {'type': 'object', 'description': 'Extends itself.'}
 
     def test_recursive_body_still_produces_a_tool_parameter(self):
         """A recursive request body is split into parameters, its self-reference pointing at its own entry."""
-        raw = {
-            'openapi': '3.1.0',
-            'info': {'title': 'Tree API', 'version': '1.0.0'},
-            'paths': {
-                '/trees': {
-                    'post': {
-                        'operationId': 'create_tree',
-                        'requestBody': {
-                            'content': {'application/json': {'schema': {'$ref': '#/components/schemas/Node'}}}
-                        },
-                        'responses': {'200': {'description': 'ok'}},
-                    }
-                }
+        raw = operation_spec(
+            body=component_ref('Node'),
+            schemas={
+                'Node': {'type': 'object', 'properties': {'label': {'type': 'string'}, 'child': component_ref('Node')}}
             },
-            'components': {
-                'schemas': {
-                    'Node': {
-                        'type': 'object',
-                        'properties': {'label': {'type': 'string'}, 'child': {'$ref': '#/components/schemas/Node'}},
-                    }
-                }
-            },
-        }
+        )
 
         operation = parse_spec(raw).operations[0]
 
         body = {p.name: p for p in operation.parameters if p.location == 'body'}
         assert body['label'].schema_ == {'type': 'string'}
-        assert body['child'].schema_ == {'$ref': '#/$defs/Node'}
-        assert operation.schema_defs['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
+        assert body['child'].schema_ == defs_ref('Node')
+        assert operation.schema_defs['Node']['properties']['child'] == defs_ref('Node')
 
 
 class TestSchemaDefs:
@@ -262,32 +246,54 @@ class TestSchemaDefs:
 
     def test_operation_carries_only_what_it_reaches(self):
         """Entries reached through other entries are included, unrelated components are not."""
-        raw = {
-            'openapi': '3.1.0',
-            'info': {'title': 't', 'version': '1'},
-            'paths': {
-                '/orders': {
-                    'post': {
-                        'operationId': 'createOrder',
-                        'requestBody': {
-                            'content': {'application/json': {'schema': {'$ref': '#/components/schemas/Order'}}}
-                        },
-                    }
-                }
+        raw = operation_spec(
+            body=component_ref('Order'),
+            schemas={
+                'Order': {'type': 'object', 'properties': {'total': component_ref('Money')}},
+                'Money': {'type': 'object', 'properties': {'currency': component_ref('Code')}},
+                'Code': {'type': 'string'},
+                'Unrelated': {'type': 'string'},
             },
-            'components': {
-                'schemas': {
-                    'Order': {'type': 'object', 'properties': {'total': {'$ref': '#/components/schemas/Money'}}},
-                    'Money': {'type': 'object', 'properties': {'currency': {'$ref': '#/components/schemas/Code'}}},
-                    'Code': {'type': 'string'},
-                    'Unrelated': {'type': 'string'},
-                }
-            },
-        }
+        )
 
         operation = parse_spec(raw).operations[0]
 
         assert set(operation.schema_defs) == {'Money', 'Code'}
+
+    def test_a_body_property_typed_by_a_component_keeps_its_description(self):
+        """A body property that only refers to a component takes the component's description as its own.
+
+        Splitting the body into parameters leaves each property as a bare reference,
+        so a description read off the property alone comes back empty.
+        """
+        raw = operation_spec(
+            body={'type': 'object', 'properties': {'owner': component_ref('Person')}},
+            schemas={'Person': {'type': 'object', 'description': 'Who owns the thing.', 'properties': {}}},
+        )
+
+        (owner,) = parse_spec(raw).operations[0].parameters
+
+        assert owner.description == 'Who owns the thing.'
+
+    def test_keywords_beside_a_reference_are_kept(self):
+        """OpenAPI 3.1 lets a reference carry its own keywords, which describe this use and win over the component's."""
+        raw = operation_spec(
+            parameters=[{'name': 'status', 'in': 'query', 'schema': {**component_ref('Status'), 'default': 'open'}}],
+            body={
+                'type': 'object',
+                'properties': {'approver': {**component_ref('Person'), 'description': 'Who signs the thing off.'}},
+            },
+            schemas={
+                'Person': {'type': 'object', 'description': 'Who owns the thing.', 'properties': {}},
+                'Status': {'type': 'string', 'enum': ['open', 'closed']},
+            },
+        )
+
+        status, approver = parse_spec(raw).operations[0].parameters
+
+        assert status.schema_ == {**defs_ref('Status'), 'default': 'open'}
+        assert approver.schema_ == {**defs_ref('Person'), 'description': 'Who signs the thing off.'}
+        assert approver.description == 'Who signs the thing off.'
 
 
 class TestNullable:
@@ -348,18 +354,7 @@ class TestRequestBodyDetection:
 
     @staticmethod
     def _body_param_names(body_schema: dict) -> set[str]:
-        raw = {
-            'openapi': '3.0.3',
-            'info': {'title': 't', 'version': '1'},
-            'paths': {
-                '/things': {
-                    'put': {
-                        'operationId': 'updateThing',
-                        'requestBody': {'required': False, 'content': {'application/json': {'schema': body_schema}}},
-                    }
-                }
-            },
-        }
+        raw = operation_spec(body=body_schema, method='put', version='3.0.3')
         operation = parse_spec(raw).operations[0]
         return {param.name for param in operation.parameters if param.location == 'body'}
 

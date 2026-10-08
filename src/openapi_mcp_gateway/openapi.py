@@ -1,3 +1,4 @@
+import collections
 import json
 import logging
 import pathlib
@@ -26,6 +27,9 @@ _COMPONENT_SCHEMA_PREFIX = '#/components/schemas/'
 DEFS_REF_PREFIX = '#/$defs/'
 # The component name grammar OpenAPI allows, which needs no JSON Pointer or URI escaping.
 _COMPONENT_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
+# The placeholder a component's entry holds while it expands, so a reference back into it stops there.
+# Compared by identity, so it is never mutated.
+_EXPANDING: dict[str, typing.Any] = {}
 
 
 class ParameterInfo(pydantic.BaseModel):
@@ -236,21 +240,64 @@ def _resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:
     return node
 
 
-def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
+def _deep_merge(
+    base: dict[str, typing.Any],
+    override: dict[str, typing.Any],
+    defs: dict[str, dict[str, typing.Any]] | None = None,
+) -> dict[str, typing.Any]:
     """Recursively merge ``override`` into ``base``.
 
     ``required`` lists are concatenated and deduped instead of overwritten,
     so ``allOf`` chains accumulate every required property along the way.
+
+    With ``defs``, a ``$defs`` reference meeting anything but the same reference is opened into its entry first,
+    so its fields are merged with the other side's rather than replaced by them, see ``_open_reference``.
     """
+    if defs is not None:
+        base, override = _open_reference(base, override, defs), _open_reference(override, base, defs)
     result = base.copy()
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
+            result[key] = _deep_merge(result[key], value, defs)
         elif key == 'required' and isinstance(result.get(key), list) and isinstance(value, list):
             result[key] = list(dict.fromkeys(result[key] + value))
         else:
             result[key] = value
     return result
+
+
+def _siblings(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Return the keywords beside the ``$ref`` of ``schema``."""
+    return {key: value for key, value in schema.items() if key != '$ref'}
+
+
+def _open_reference(
+    schema: dict[str, typing.Any],
+    other: dict[str, typing.Any],
+    defs: dict[str, dict[str, typing.Any]],
+) -> dict[str, typing.Any]:
+    """Return ``schema`` with its ``$defs`` reference replaced by the entry, when merging it with ``other`` needs that.
+
+    A reference can only stay one when ``other`` refers to the same entry, so only their siblings differ.
+    Otherwise a key-by-key merge would let one side's ``properties`` or reference replace the entry's wholesale,
+    so the entry is merged in with the keywords beside the reference winning.
+    An entry still expanding has nothing to open yet, so its reference stays.
+    """
+    name = defs_reference(schema)
+    if name is None or not other or defs_reference(other) == name or defs.get(name, _EXPANDING) is _EXPANDING:
+        return schema
+    return _deep_merge(defs[name], _siblings(schema), defs)
+
+
+def schema_description(schema: dict[str, typing.Any], defs: dict[str, dict[str, typing.Any]]) -> str:
+    """Return the ``description`` of ``schema``, looking through a ``$defs`` reference at its root.
+
+    A description beside the reference describes this use, so it wins over the entry's.
+    """
+    if schema.get('description'):
+        return schema['description']
+    name = defs_reference(schema)
+    return defs.get(name, {}).get('description', '') if name is not None else ''
 
 
 def _normalize_nullable(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
@@ -394,8 +441,13 @@ def _expand_inline(
     pointer = schema['$ref']
     resolved = _resolve_ref(raw, pointer)
     if pointer in expanding:
-        return _truncate_at_cycle(resolved)
-    return _expand_inline(raw, resolved, defs, expanding | {pointer})
+        expanded = _truncate_at_cycle(resolved)
+    else:
+        expanded = _expand_inline(raw, resolved, defs, expanding | {pointer})
+    siblings = _siblings(schema)
+    if not siblings:
+        return expanded
+    return _deep_merge(expanded, _expand_schema(raw, siblings, defs, expanding), defs)
 
 
 def _expand_schema(
@@ -408,12 +460,13 @@ def _expand_schema(
 
     A ``$ref`` to a component schema stays a reference, rewritten to ``#/$defs/<Name>``,
     and the component itself is expanded once into ``defs`` under its name.
+    Keywords beside the reference, which OpenAPI 3.1 allows, are kept beside it, since they describe this use.
     So one shape reached through several paths can be described once rather than once per path,
     and a component that refers to itself needs no truncation, since the reference stops at its own entry.
     Whether an entry is advertised under ``$defs`` or inlined back is decided per tool, by ``build_input_schema``.
     Any other ``$ref`` is resolved in place.
 
-    ``allOf`` is flattened via ``_deep_merge``,
+    ``allOf`` is flattened via ``_deep_merge``, opening a reference wherever two branches meet on it,
     then every nested-schema keyword is recursed into so a construct buried at any depth is expanded too,
     and finally OpenAPI 3.0 keywords are rewritten into their JSON Schema 2020-12 equivalents.
     Recursion keys off each keyword's presence rather than off ``type``,
@@ -427,36 +480,46 @@ def _expand_schema(
             return _expand_inline(raw, schema, defs, expanding)
         if name not in defs:
             # Reserve the entry first, so a reference back into the component while it expands stops here.
-            defs[name] = {}
+            defs[name] = _EXPANDING
             # A component is a document of its own, so the in-place path of whoever reached it does not carry over.
-            defs[name] = _expand_inline(raw, schema, defs)
-        return {'$ref': DEFS_REF_PREFIX + name}
+            defs[name] = _expand_inline(raw, {'$ref': schema['$ref']}, defs)
+        reference = {'$ref': DEFS_REF_PREFIX + name}
+        siblings = _siblings(schema)
+        if not siblings:
+            return reference
+        return {**reference, **_expand_schema(raw, siblings, defs, expanding)}
 
     if 'allOf' in schema:
         merged: dict[str, typing.Any] = {}
         for branch in schema['allOf']:
-            merged = _deep_merge(merged, _expand_inline(raw, branch, defs, expanding))
+            merged = _deep_merge(merged, _expand_inline(raw, branch, defs, expanding), defs)
         return merged
 
     result = map_subschemas(schema, lambda subschema: _expand_schema(raw, subschema, defs, expanding))
     return _normalize_to_2020_12(result)
 
 
-def _reachable_defs(
+def count_defs_references(
     schemas: typing.Iterable[dict[str, typing.Any]],
     defs: dict[str, dict[str, typing.Any]],
-) -> dict[str, dict[str, typing.Any]]:
-    """Return the entries of ``defs`` that ``schemas`` reach, directly or through other entries."""
-    reached: dict[str, dict[str, typing.Any]] = {}
+) -> collections.Counter[str]:
+    """Count the places in ``schemas`` that reach each entry of ``defs``, directly or through other entries.
+
+    An entry's own references are counted once, however often the entry is reached,
+    since the entry is written out once, whether under ``$defs`` or inlined at its only use.
+    The entries counted are exactly those ``schemas`` reach.
+    """
+    counts: collections.Counter[str] = collections.Counter()
     pending = list(schemas)
     while pending:
-        schema = pending.pop()
-        name = defs_reference(schema)
-        if name is not None and name not in reached and name in defs:
-            reached[name] = defs[name]
-            pending.append(defs[name])
-        pending.extend(iter_subschemas(schema))
-    return reached
+        node = pending.pop()
+        name = defs_reference(node)
+        if name is not None and name in defs:
+            if name not in counts:
+                pending.append(defs[name])
+            counts[name] += 1
+        pending.extend(iter_subschemas(node))
+    return counts
 
 
 def _declares_object_properties(schema: dict[str, typing.Any]) -> bool:
@@ -556,7 +619,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                                 name=prop_name,
                                 location='body',
                                 required=prop_name in required_props,
-                                description=prop_schema.get('description', ''),
+                                description=schema_description(prop_schema, defs),
                                 schema=prop_schema,
                             )
                         )
@@ -572,7 +635,10 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                     parameters=params,
                     security=operation.get('security', global_security),
                     x_mcp_integration=operation.get('x-mcp-integration', {}),
-                    schema_defs=_reachable_defs((parameter.schema_ for parameter in params), defs),
+                    schema_defs={
+                        name: defs[name]
+                        for name in count_defs_references((parameter.schema_ for parameter in params), defs)
+                    },
                 )
             )
 
