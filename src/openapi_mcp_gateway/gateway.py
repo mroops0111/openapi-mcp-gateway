@@ -298,6 +298,7 @@ class Gateway:
         timeout: float = 90,
         exposure: dict[str, typing.Any] | None = None,
         headers: dict[str, str] | None = None,
+        instructions: str | None = None,
     ) -> None:
         """Register a server inline (convenience over building ``ServerConfig`` directly).
 
@@ -313,6 +314,7 @@ class Gateway:
             timeout=timeout,
             exposure=ExposureConfig.model_validate(exposure) if exposure else ExposureConfig(),
             headers=headers or {},
+            instructions=instructions,
         )
         self._add_server_from_server_config(server_config=server_config)
 
@@ -504,7 +506,9 @@ class Gateway:
     ) -> None:
         auth = self._resolve_auth(server_config, spec)
         auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
-        mcp = self._build_mcp_server(server_config.name, auth.provider, auth.settings, auth.verifier)
+        mcp = self._build_mcp_server(
+            server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions
+        )
         if auth.provider is not None:
             self._register_oauth_callback(mcp, auth.provider)
 
@@ -578,6 +582,7 @@ class Gateway:
                 auth_flow=auth.flow_type,
                 policy_summary=_policy_summary(server_config.policy),
                 exposure=server_config.exposure.style,
+                instructions=server_config.instructions,
                 tools=tuple(exposed_tools),
                 resource_names=tuple(resource_names),
             )
@@ -611,6 +616,7 @@ class Gateway:
         auth_provider: AuthorizationCodeProvider | None,
         auth_settings: AuthSettings | None,
         token_verifier: typing.Any | None = None,
+        instructions: str | None = None,
     ) -> MCPServer:
         """Build the MCP server, wiring whichever of provider or verifier the flow produced.
 
@@ -630,6 +636,7 @@ class Gateway:
             auth_server_provider=auth_provider,
             token_verifier=token_verifier,
             auth=auth_settings,
+            instructions=instructions,
             lifespan=lifespan,
             cache_hints=_STATIC_CACHE_HINTS,
         )

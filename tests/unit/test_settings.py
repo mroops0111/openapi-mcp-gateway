@@ -63,6 +63,16 @@ class TestServerConfig:
         with pytest.raises(pydantic.ValidationError, match='Authorization'):
             ServerConfig(name='api', spec='x.json', headers={'authorization': 'Bearer x'})
 
+    def test_instructions_drop_the_trailing_newline_of_a_block_scalar(self):
+        """A YAML ``|`` block ends in a newline, which is not part of what the author wrote."""
+        server = ServerConfig(name='api', spec='x.json', instructions='Use read_doc first.\nThen search.\n')
+        assert server.instructions == 'Use read_doc first.\nThen search.'
+
+    @pytest.mark.parametrize('instructions', [None, '', '  \n'])
+    def test_blank_instructions_are_unset(self, instructions):
+        """Blank text would send an empty ``instructions`` field, so it is treated as not set."""
+        assert ServerConfig(name='api', spec='x.json', instructions=instructions).instructions is None
+
 
 class TestAuthConfig:
     """Env-var substitution on ``AuthConfig``. How a token becomes a header belongs to the type handler."""

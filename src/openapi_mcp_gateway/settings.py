@@ -300,6 +300,9 @@ class ServerConfig(pydantic.BaseModel):
     operations: dict[str, McpIntegration] = pydantic.Field(default_factory=dict)
     # Static headers sent on every upstream call, such as an API version the whole API requires.
     headers: dict[str, str] = pydantic.Field(default_factory=dict)
+    # Guidance about the server as a whole, such as when to use it rather than another,
+    # sent in the MCP ``initialize`` result, which clients place in the model's context.
+    instructions: str | None = None
 
     @pydantic.field_validator('name')
     @classmethod
@@ -307,6 +310,14 @@ class ServerConfig(pydantic.BaseModel):
         if not name.replace('-', '').replace('_', '').isalnum():
             raise ValueError(f'Server name must be alphanumeric (with - or _): {name}')
         return name
+
+    @pydantic.field_validator('instructions')
+    @classmethod
+    def _validate_instructions(cls, instructions: str | None) -> str | None:
+        """Trim the newline a YAML block scalar leaves, and treat blank text as unset."""
+        if instructions is None:
+            return None
+        return instructions.strip() or None
 
     @pydantic.field_validator('headers')
     @classmethod

@@ -10,6 +10,7 @@ import yaml
 from click.testing import CliRunner
 
 from openapi_mcp_gateway import Gateway, cli
+from openapi_mcp_gateway.cli import _instructions_label
 from openapi_mcp_gateway.gateway import _policy_summary
 from openapi_mcp_gateway.settings import GatewayConfig, PolicyConfig
 from tests.constants import AUTHORIZE_URL, TOKEN_URL
@@ -311,6 +312,31 @@ class TestDryRun:
         assert 'exposure' in result.output
 
 
+class TestInstructionsLabel:
+    """The dry-run table shows enough of a server's instructions to confirm they took effect."""
+
+    def test_unset_instructions_say_so(self):
+        assert _instructions_label(None) == 'none'
+
+    def test_a_single_short_line_is_shown_whole(self):
+        assert _instructions_label('Use read_doc first.') == 'Use read_doc first.'
+
+    def test_later_lines_are_marked_as_left_out(self):
+        assert _instructions_label('Use read_doc first.\nThen search.') == 'Use read_doc first. …'
+
+    def test_a_long_first_line_is_cut(self):
+        label = _instructions_label('x' * 100)
+
+        assert label == 'x' * 60 + '…'
+
+    def test_the_table_prints_the_label(self):
+        """The summary carries the line, so an author sees the setting without asking for JSON."""
+        result, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run')
+
+        assert result.exit_code == 0, result.output
+        assert 'instructions' in result.output
+
+
 class TestPolicySummary:
     """The dry-run names the filter it resolved, so a tool count reads as a decision."""
 
@@ -403,6 +429,26 @@ class TestDryRunJsonOutput:
         assert 'summary' not in server['auth']
         assert server['auth']['type'] == 'none'
         assert server['auth']['flow'] is None, 'absent, not empty'
+
+    def test_instructions_are_reported_as_the_client_receives_them(self, tmp_path: pathlib.Path):
+        """The full text is what the model reads, like a tool description, and an unset value reads null."""
+        config = tmp_path / 'config.yml'
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    'servers': [
+                        {'name': 'pets', 'spec': str(PETSTORE_SPEC), 'instructions': 'Line one.\nLine two.\n'},
+                        {'name': 'plain', 'spec': str(PETSTORE_SPEC)},
+                    ]
+                }
+            )
+        )
+        result, _ = _run('--config', str(config), '--dry-run', '--output', 'json')
+        assert result.exit_code == 0, result.output
+
+        pets, plain = json.loads(result.stdout)['servers']
+        assert pets['instructions'] == 'Line one.\nLine two.'
+        assert plain['instructions'] is None
 
     def test_a_pattern_matching_nothing_is_warned_about(self, tmp_path: pathlib.Path):
         """A typo in `allow` is otherwise invisible, since the result is just a shorter list.

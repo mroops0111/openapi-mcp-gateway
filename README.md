@@ -319,6 +319,7 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `policy.deny` | list |  | Exclude matching operations |
 | `timeout` | float | `90` | HTTP timeout in seconds |
 | `headers` | map |  | Static headers sent on every upstream call, such as an API version the whole API requires. Values take `${ENV_VAR}`, and an unset variable leaves the header out. A header the call itself sends wins. `Authorization` is refused, since it belongs to `auth` |
+| `instructions` | string |  | Guidance about the server as a whole, such as when to use it rather than another server or which tool to call first. Sent in the MCP `initialize` result, which clients place in the model's context. Unset leaves the field out |
 | `exposure` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`list_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand. |
 | `mode` | string | `tool_only` | `tool_only` forces every operation to a tool and ignores any `resource` declaration. `auto` promotes eligible GETs (no required non-path parameter) to MCP resources, and spec-side `resource` opt-ins still apply as explicit overrides. |
 | `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation. Useful when you do not control the upstream spec. |
