@@ -33,6 +33,7 @@ from openapi_mcp_gateway.openapi import (
     ToolOverride,
 )
 from tests.constants import API_URL
+from tests.specs import operation_spec
 
 
 class _StubContext:
@@ -1887,45 +1888,20 @@ class TestExposedToolDetail:
 
 
 def _nested_body_spec() -> dict:
-    return {
-        'openapi': '3.0.0',
-        'info': {'title': 'Orders', 'version': '1.0.0'},
-        'servers': [{'url': 'https://internal.example.com/api'}],
-        'paths': {
-            '/orders': {
-                'post': {
-                    'operationId': 'createOrder',
-                    'requestBody': {
-                        'required': True,
-                        'content': {
-                            'application/json': {
-                                'schema': {
-                                    'type': 'object',
-                                    'required': ['customer'],
-                                    'properties': {
-                                        'customer': {
-                                            'type': 'object',
-                                            'properties': {'id': {'type': 'integer'}},
-                                        },
-                                        'items': {
-                                            'type': 'array',
-                                            'items': {
-                                                'type': 'object',
-                                                'properties': {'qty': {'type': 'integer', 'minimum': 1}},
-                                            },
-                                        },
-                                        'priority': {
-                                            'type': 'string',
-                                            'enum': ['low', 'normal', 'rush'],
-                                            'default': 'normal',
-                                        },
-                                    },
-                                }
-                            }
-                        },
-                    },
-                    'responses': {'201': {'description': 'ok'}},
-                }
-            }
+    return operation_spec(
+        operation_id='createOrder',
+        path='/orders',
+        version='3.0.0',
+        body={
+            'type': 'object',
+            'required': ['customer'],
+            'properties': {
+                'customer': {'type': 'object', 'properties': {'id': {'type': 'integer'}}},
+                'items': {
+                    'type': 'array',
+                    'items': {'type': 'object', 'properties': {'qty': {'type': 'integer', 'minimum': 1}}},
+                },
+                'priority': {'type': 'string', 'enum': ['low', 'normal', 'rush'], 'default': 'normal'},
+            },
         },
-    }
+    )

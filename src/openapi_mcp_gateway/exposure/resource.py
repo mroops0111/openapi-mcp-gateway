@@ -12,6 +12,7 @@ from ._shared import (
     _iter_unique_sanitised_parameters,
     _sanitize_name,
     _schema_to_python_type,
+    _SignatureTypes,
     _split_by_location,
     derive_description,
     derive_name,
@@ -60,6 +61,7 @@ def _extract_text_from_result(result: CallToolResult) -> str:
 
 def _build_resource_signature(
     path_parameters: list[ParameterInfo],
+    schema_defs: dict[str, dict[str, typing.Any]],
 ) -> tuple[inspect.Signature, dict[str, typing.Any]]:
     """Build the signature MCPServer introspects to decide concrete vs template registration.
 
@@ -68,8 +70,9 @@ def _build_resource_signature(
     """
     annotations: dict[str, typing.Any] = {}
     signature_parameters: list[inspect.Parameter] = []
+    signature_types = _SignatureTypes(schema_defs, prefix='')
     for parameter_name, parameter in _iter_unique_sanitised_parameters(path_parameters):
-        python_type = _schema_to_python_type(parameter.schema_)
+        python_type = _schema_to_python_type(parameter.schema_, signature_types=signature_types)
         signature_parameters.append(
             inspect.Parameter(
                 name=parameter_name,
@@ -117,7 +120,7 @@ def build_resource_read_function(operation: OperationInfo, binding: UpstreamBind
             raise RuntimeError(text or 'Upstream error reading resource')
         return text
 
-    signature, annotations = _build_resource_signature(path_parameters)
+    signature, annotations = _build_resource_signature(path_parameters, operation.schema_defs)
     read_function.__signature__ = signature
     read_function.__annotations__ = annotations
     return read_function
