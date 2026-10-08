@@ -346,6 +346,19 @@ class TestMountEmbedding:
         assert response.json()['authorization_endpoint'].endswith('/authorize')
 
 
+class TestInstructions:
+    """A server's ``instructions`` reach the client in the ``initialize`` result."""
+
+    @pytest.mark.parametrize('instructions', ['Use get_pet_by_id before listing pets.', None])
+    async def test_initialize_carries_the_configured_instructions(self, petstore_json_path, instructions):
+        """Set instructions arrive verbatim, and unset ones leave the field out."""
+        gateway = Gateway()
+        gateway.add_server(name='pets', spec=str(petstore_json_path), instructions=instructions)
+
+        async with Client(gateway.describe_servers()[0].mcp) as mcp_client:
+            assert mcp_client.instructions == instructions
+
+
 class TestTransports:
     """Every transport the CLI accepts starts and answers MCP, rather than starting far enough to log and then dying."""
 

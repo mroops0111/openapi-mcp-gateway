@@ -112,6 +112,8 @@ servers:
     base_url: <upstream-base-url> # required, a spec with a relative server needs the real host
     headers: # optional, static headers sent on every upstream call
       <Header-Name>: <value> # a literal, or ${SOME_VAR}
+    instructions: | # optional, server-wide guidance the client places in the model's context
+      <when to use this server, and which tool to call first>
     auth:
       type: bearer # or api_key / oauth2 / passthrough / none
       token: ${SOME_TOKEN}

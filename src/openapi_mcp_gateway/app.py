@@ -51,6 +51,7 @@ class _ServerBundle(typing.NamedTuple):
     # Read back by ``describe`` and by the dry-run table.
     base_url: str = ''
     exposure: str = 'static'
+    instructions: str | None = None
     tools: tuple[ExposedTool, ...] = ()
     resource_names: tuple[str, ...] = ()
     auth_type: str = 'none'
@@ -78,6 +79,7 @@ class _ServerBundle(typing.NamedTuple):
                 'api_key_header': self.auth_api_key_header,
             },
             'exposure': self.exposure,
+            'instructions': self.instructions,
             'tools': [
                 {
                     'name': tool.name,

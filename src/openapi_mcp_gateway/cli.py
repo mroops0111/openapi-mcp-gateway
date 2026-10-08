@@ -12,6 +12,9 @@ from .settings import AuthConfig, GatewayConfig, build_gateway_config, single_sp
 
 logger = logging.getLogger(__name__)
 
+# How much of a server's instructions the dry-run table shows, enough to recognise them without wrapping the line.
+_INSTRUCTIONS_PREVIEW_LENGTH = 60
+
 
 @click.command()
 @click.option('--spec', type=str, default=None, help='Path or URL to a single OpenAPI spec.')
@@ -356,7 +359,7 @@ def _cli_layer(
 
 def _dry_run_kv(label: str, value: str) -> None:
     """Print one aligned, dim-labelled key/value line in the dry-run summary."""
-    click.echo(f'    {click.style(f"{label:<9}", dim=True)}  {value}')
+    click.echo(f'    {click.style(f"{label:<12}", dim=True)}  {value}')
 
 
 def _shaping_label(tool: ExposedTool) -> str:
@@ -366,6 +369,16 @@ def _shaping_label(tool: ExposedTool) -> str:
     parts = [tool.shaping['params']] if tool.shaping.get('params') else []
     parts += [key for key in ('request', 'response') if tool.shaping.get(key)]
     return ', '.join(parts)
+
+
+def _instructions_label(instructions: str | None) -> str:
+    """Render a server's instructions as their first line, marking anything left out."""
+    if instructions is None:
+        return 'none'
+    first_line, _, rest = instructions.partition('\n')
+    if len(first_line) > _INSTRUCTIONS_PREVIEW_LENGTH:
+        return f'{first_line[:_INSTRUCTIONS_PREVIEW_LENGTH]}…'
+    return f'{first_line} …' if rest else first_line
 
 
 def _dry_run_tool_table(tools: tuple[ExposedTool, ...]) -> None:
@@ -404,6 +417,7 @@ def _echo_dry_run_summary(gateway: Gateway, config: GatewayConfig, output: str =
         _dry_run_kv('auth', server.auth_summary)
         _dry_run_kv('policy', server.policy_summary)
         _dry_run_kv('exposure', server.exposure)
+        _dry_run_kv('instructions', _instructions_label(server.instructions))
         if server.tools:
             _dry_run_kv('tools', str(len(server.tools)))
             _dry_run_tool_table(server.tools)
