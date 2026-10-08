@@ -8,11 +8,11 @@ from mcp.types import CallToolResult, TextContent
 
 from ..openapi import OperationInfo, ParameterInfo
 from ._shared import (
-    _ComponentTypes,
     _get_override,
     _iter_unique_sanitised_parameters,
     _sanitize_name,
     _schema_to_python_type,
+    _SignatureTypes,
     _split_by_location,
     derive_description,
     derive_name,
@@ -70,9 +70,9 @@ def _build_resource_signature(
     """
     annotations: dict[str, typing.Any] = {}
     signature_parameters: list[inspect.Parameter] = []
-    components = _ComponentTypes(schema_defs, prefix='')
+    signature_types = _SignatureTypes(schema_defs, prefix='')
     for parameter_name, parameter in _iter_unique_sanitised_parameters(path_parameters):
-        python_type = _schema_to_python_type(parameter.schema_, components=components)
+        python_type = _schema_to_python_type(parameter.schema_, signature_types=signature_types)
         signature_parameters.append(
             inspect.Parameter(
                 name=parameter_name,

@@ -1,5 +1,3 @@
-"""A component reached through several paths is advertised once, under ``$defs``, and referenced from each."""
-
 import collections
 import inspect
 import json
@@ -89,7 +87,8 @@ def _extended_body_spec(*, person_shared: bool) -> dict:
 
     The extension adds a field and a required name to ``owner``, a ``Person``,
     and types ``approver``, a ``Reviewer`` in ``Base``, by a second component, ``Admin``.
-    ``person_shared`` also reaches ``Person`` from ``watchers``, so it is advertised under ``$defs`` rather than inlined.
+    ``person_shared`` also reaches ``Person`` from ``watchers``,
+    so it is advertised under ``$defs`` rather than inlined.
     """
     base_properties: dict[str, typing.Any] = {'owner': component_ref('Person'), 'approver': component_ref('Reviewer')}
     if person_shared:
@@ -250,7 +249,10 @@ def _mutual_recursion_spec(property_order: tuple[str, ...]) -> dict:
 
 
 def _union_recursion_spec() -> dict:
-    """``Expr`` is a union whose object variant holds a list of ``Expr``, so the cycle runs through no model of its own."""
+    """``Expr`` is a union whose object variant holds a list of ``Expr``.
+
+    The cycle runs through the union rather than through a model of its own.
+    """
     return operation_spec(
         body={'type': 'object', 'properties': {'filter': component_ref('Expr')}},
         schemas={
@@ -364,7 +366,10 @@ class TestAdvertisedSchema:
         assert set(schema['$defs']) == {'SourceReference', 'Node'}
 
     def test_a_description_beside_a_reference_describes_that_use(self):
-        """Two uses of one shared component each keep their own description, and an inlined use overrides the component's."""
+        """Two uses of one shared component each keep their own description.
+
+        An inlined use overrides the component's description with its own.
+        """
         raw = operation_spec(
             body={
                 'type': 'object',
@@ -474,7 +479,10 @@ class TestAllOfOverAReference:
         assert 'Added by the extension.' in json.dumps(schema)
 
     def test_two_components_typing_one_property_both_hold(self):
-        """``approver`` is a ``Reviewer`` from ``Base`` and an ``Admin`` from the extension, so each one's fields count."""
+        """``approver`` is a ``Reviewer`` from ``Base`` and an ``Admin`` from the extension.
+
+        Both components' fields count.
+        """
         schema = _advertised(_operation(_extended_body_spec(person_shared=False)))
         owner = {'id': 1, 'name': 'n'}
 

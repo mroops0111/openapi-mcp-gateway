@@ -8,13 +8,14 @@ import typing
 
 import inflection
 import pydantic
-import typing_extensions
+from typing_extensions import TypeAliasType
 
 from ..openapi import (
     DEFS_REF_PREFIX,
     OperationInfo,
     ParameterInfo,
     _deep_merge,
+    _siblings,
     count_defs_references,
     defs_reference,
     map_subschemas,
@@ -62,7 +63,7 @@ def _claim_name(candidate: str, taken: set[str], limit: int | None = None) -> st
 
 
 @dataclasses.dataclass
-class _ComponentTypes:
+class _SignatureTypes:
     """The generated types of one signature: one per ``$defs`` entry, and a distinct class name for every model.
 
     Every path reaching an entry shares its one type.
@@ -109,32 +110,36 @@ class _ComponentTypes:
         self._building[name] = class_name
         try:
             python_type = _schema_to_python_type(
-                self.defs.get(name, {}), name_hint=class_name, components=self, name_claimed=True
+                self.defs.get(name, {}), name_hint=class_name, signature_types=self, name_claimed=True
             )
         finally:
             del self._building[name]
         if name in self._recursive and getattr(python_type, '__name__', None) != class_name:
             # Built at runtime from the spec, which a static checker expects to see declared as a module-level alias.
-            python_type = typing_extensions.TypeAliasType(class_name, python_type)  # pyright: ignore[reportGeneralTypeIssues]
+            python_type = TypeAliasType(class_name, python_type)  # pyright: ignore[reportGeneralTypeIssues]
         self._namespace[class_name] = python_type
         self._built[name] = python_type
         if not self._building:
-            for model in self._models:
-                if not model.__pydantic_complete__:
-                    model.model_rebuild(_types_namespace=self._namespace)
+            self._resolve_forward_references()
         return python_type
+
+    def _resolve_forward_references(self) -> None:
+        """Rebuild every model left incomplete by a forward reference, now that what each one names exists."""
+        for model in self._models:
+            if not model.__pydantic_complete__:
+                model.model_rebuild(_types_namespace=self._namespace)
 
 
 def _schema_to_python_type(
     schema: dict[str, typing.Any],
     *,
     name_hint: str = 'NestedObject',
-    components: _ComponentTypes | None = None,
+    signature_types: _SignatureTypes | None = None,
     name_claimed: bool = False,
 ) -> typing.Any:
     """Map a JSON Schema fragment to a Python type annotation.
 
-    A ``#/$defs/<Name>`` reference resolves through ``components`` to that entry's one shared type.
+    A ``#/$defs/<Name>`` reference resolves through ``signature_types`` to that entry's one shared type.
     One carrying keywords that reshape the value, such as ``properties`` beside it, gets a type of its own instead,
     built from the entry merged with those keywords.
     Resolves ``oneOf`` / ``anyOf`` next, since union fragments often omit ``type``.
@@ -148,25 +153,25 @@ def _schema_to_python_type(
     unless ``name_claimed`` says the caller already claimed it.
     Callers should namespace it by operation and property, so the names stay readable.
     """
-    if components is None:
-        components = _ComponentTypes({}, prefix='')
+    if signature_types is None:
+        signature_types = _SignatureTypes({}, prefix='')
 
     defs_name = defs_reference(schema)
     if defs_name is not None:
-        siblings = {key: value for key, value in schema.items() if key != '$ref'}
+        siblings = _siblings(schema)
         if siblings.keys() <= _ANNOTATION_KEYWORDS:
-            return components.resolve(defs_name)
+            return signature_types.resolve(defs_name)
         return _schema_to_python_type(
-            _deep_merge(components.defs.get(defs_name, {}), siblings),
+            _deep_merge(signature_types.defs.get(defs_name, {}), siblings),
             name_hint=name_hint,
-            components=components,
+            signature_types=signature_types,
             name_claimed=name_claimed,
         )
 
     variants = schema.get('oneOf') or schema.get('anyOf')
     if variants:
         types = [
-            _schema_to_python_type(variant, name_hint=f'{name_hint}Variant{index}', components=components)
+            _schema_to_python_type(variant, name_hint=f'{name_hint}Variant{index}', signature_types=signature_types)
             for index, variant in enumerate(variants)
         ]
         if len(types) == 1:
@@ -183,7 +188,10 @@ def _schema_to_python_type(
             type(None)
             if member == 'null'
             else _schema_to_python_type(
-                {**schema, 'type': member}, name_hint=name_hint, components=components, name_claimed=name_claimed
+                {**schema, 'type': member},
+                name_hint=name_hint,
+                signature_types=signature_types,
+                name_claimed=name_claimed,
             )
             for member in schema_type
         ]
@@ -204,7 +212,7 @@ def _schema_to_python_type(
         return bool
     if schema_type == 'array':
         items = schema.get('items', {})
-        item_type = _schema_to_python_type(items, name_hint=f'{name_hint}Item', components=components)
+        item_type = _schema_to_python_type(items, name_hint=f'{name_hint}Item', signature_types=signature_types)
         return list[item_type]
     if schema_type == 'object':
         properties = schema.get('properties')
@@ -216,7 +224,7 @@ def _schema_to_python_type(
             property_type = _schema_to_python_type(
                 property_schema,
                 name_hint=f'{name_hint}{inflection.camelize(_sanitize_name(property_name))}',
-                components=components,
+                signature_types=signature_types,
             )
             field_kwargs: dict[str, typing.Any] = {}
             property_description = property_schema.get('description')
@@ -226,8 +234,8 @@ def _schema_to_python_type(
                 model_fields[property_name] = (property_type, pydantic.Field(**field_kwargs))
             else:
                 model_fields[property_name] = (property_type | None, pydantic.Field(default=None, **field_kwargs))
-        class_name = name_hint if name_claimed else components.claim(name_hint)
-        return components.create_model(class_name, model_fields)
+        class_name = name_hint if name_claimed else signature_types.claim(name_hint)
+        return signature_types.create_model(class_name, model_fields)
     return typing.Any
 
 
@@ -321,7 +329,7 @@ def _inline_single_use(
     name = defs_reference(schema)
     if name is None or name not in defs:
         return map_subschemas(schema, inline)
-    siblings = map_subschemas({key: value for key, value in schema.items() if key != '$ref'}, inline)
+    siblings = map_subschemas(_siblings(schema), inline)
     if name in shared_keys:
         return {'$ref': DEFS_REF_PREFIX + shared_keys[name], **siblings}
     return _deep_merge(inline(defs[name]), siblings)
