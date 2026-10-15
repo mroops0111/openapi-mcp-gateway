@@ -78,7 +78,7 @@ class TestAuthConfig:
     """Env-var substitution on ``AuthConfig``. How a token becomes a header belongs to the type handler."""
 
     def test_numeric_client_id_coerced_to_string(self):
-        """Unquoted numeric ``client_id`` in YAML, as Asana and Facebook issue, parses without raising."""
+        """An unquoted numeric ``client_id`` in YAML, such as Asana's or Facebook's, parses without raising."""
         auth = AuthConfig.model_validate(
             {'type': 'oauth2', 'upstream': {'client_id': 1214443090174193, 'client_secret': 'abc'}}
         )

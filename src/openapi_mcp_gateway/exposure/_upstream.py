@@ -83,7 +83,7 @@ def _build_http_error_result(exception: httpx.HTTPStatusError) -> CallToolResult
 
 
 def _build_network_error_result(exception: httpx.RequestError) -> CallToolResult:
-    """Wrap an httpx transport failure (connect, timeout, or DNS) as an ``isError`` result.
+    """Wrap an httpx transport failure (such as a connect, timeout, or DNS error) as an ``isError`` result.
 
     No ``response`` is available, so ``structuredContent`` stays ``None``,
     and the message surfaces the exception type for diagnosis.
