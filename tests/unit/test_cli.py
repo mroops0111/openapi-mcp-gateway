@@ -75,7 +75,7 @@ class TestLoggingFlags:
             assert flag in result.output
 
     def test_default_level_is_info(self):
-        """No flags → root logger ends up at ``INFO``."""
+        """With no flags, the root logger ends up at ``INFO``."""
         result, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets')
         assert result.exit_code == 0, result.output
         assert logging.getLogger().level == logging.INFO

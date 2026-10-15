@@ -4,9 +4,8 @@ Used by the ``token_exchange`` flow, where the gateway issues no credentials of 
 It validates tokens minted for it by an external issuer,
 then exchanges each one for a separate upstream token under RFC 8693.
 
-Two documents are fetched, both from the issuer:
-its RFC 8414 / OpenID Connect metadata names the JWKS and token endpoints,
-and the JWKS supplies the signing keys.
+Two documents are fetched, both from the issuer.
+Its RFC 8414 / OpenID Connect metadata names the JWKS and token endpoints, and the JWKS supplies the signing keys.
 """
 
 import dataclasses
@@ -144,11 +143,9 @@ class JWKSTokenVerifier:
         It does not guard this call, so raising here would reach the client as a server error.
         That reads as "the gateway is broken" rather than "re-authorize",
         and leaves the client resending the same dead credential.
-        Expiry makes it the common path rather than an edge case,
-        since under this flow the issuer owns the lifetimes.
+        Expiry makes it the common path rather than an edge case, since under this flow the issuer owns the lifetimes.
 
-        The reason is logged rather than returned,
-        since the 401 the caller receives carries only the generic challenge.
+        The reason is logged rather than returned, since the 401 the caller receives carries only the generic challenge.
         Rejections are ordinary traffic here, so this is not an error.
         """
         try:
@@ -163,8 +160,7 @@ class JWKSTokenVerifier:
         from mcp.server.auth.provider import AccessToken
 
         # A JWT has three dot-separated segments.
-        # Anything else is some other credential scheme,
-        # and reporting it as invalid would misdescribe what went wrong.
+        # Anything else is some other credential scheme, and reporting it as invalid would misdescribe what went wrong.
         if token.count('.') != 2:
             return None
 

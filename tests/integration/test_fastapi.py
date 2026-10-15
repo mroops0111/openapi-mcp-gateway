@@ -26,7 +26,7 @@ class _StubContext:
         self.request_context = _StubRequestContext(headers or {})
 
     async def report_progress(self, *_args, **_kwargs):
-        """Match the ``Context`` protocol; do nothing."""
+        """Match the ``Context`` protocol, doing nothing."""
         return None
 
 
@@ -282,7 +282,7 @@ class TestGatewayFromFastapiToolCall:
         mcp = gateway._servers[0].mcp
         tool = next(iter(mcp._tool_manager.list_tools()))
 
-        # MCP client tries to send its own Authorization; gateway must use gateway-token instead.
+        # MCP client tries to send its own Authorization, but gateway must use gateway-token instead.
         ctx = _stub_context({'authorization': 'Bearer client-token'})
         result = await tool.run({}, context=ctx)
         assert result.structured_content == {'authorization': 'Bearer gateway-token'}

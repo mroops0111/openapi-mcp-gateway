@@ -28,13 +28,14 @@ logger = logging.getLogger(__name__)
 
 
 class _ServerBundle(typing.NamedTuple):
-    """One registered MCP server: the objects the gateway mounts, and what those objects would serve.
+    """One registered MCP server, holding the objects the gateway mounts and what those objects would serve.
 
     The second half is captured at registration because it cannot be recovered afterwards.
     A tool name comes out of naming and shaping, a base URL may have come from the spec rather than the config,
     and an OAuth flow may have been resolved rather than declared.
 
-    No credential is held here. ``AuthConfig`` carries the bearer token and the upstream client secret,
+    No credential is held here.
+    ``AuthConfig`` carries the bearer token and the upstream client secret,
     and this document gets piped, pasted into issues and rendered in a browser, so none should be added.
     """
 
@@ -58,7 +59,8 @@ class _ServerBundle(typing.NamedTuple):
     auth_flow: str | None = None
     auth_api_key_header: str | None = None
 
-    # Prose for the dry-run table only. ``describe`` reports the structured fields above instead,
+    # Prose for the dry-run table only.
+    # ``describe`` reports the structured fields above instead,
     # so that a caller never has to read a sentence to find a value.
     auth_summary: str = 'none'
     policy_summary: str = 'no filter'
@@ -100,8 +102,7 @@ def build_mcp_asgi_app(
 ) -> typing.Any:
     """Build the Starlette ASGI app for ``mcp`` under ``transport``.
 
-    Centralises the ``sse`` vs ``streamable-http`` choice,
-    and the ``transport_security`` argument.
+    Centralises the ``sse`` vs ``streamable-http`` choice, and the ``transport_security`` argument.
     mcp v2 moved that argument off the ``MCPServer`` constructor onto these factory methods.
     ``host`` is the address the gateway binds, or ``None`` when it is mounted into an app someone else serves.
     """
@@ -187,7 +188,8 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
     """
     # Per-server OAuth endpoints and RFC 9728 protected-resource routes.
     # Only a bundle whose flow made the gateway the authorization server gets the former.
-    # Advertising /authorize and /token for a delegating server would point clients at endpoints this app does not serve.
+    # For a delegating server,
+    # advertising /authorize and /token would point clients at endpoints this app does not serve.
     for bundle in servers:
         if not bundle.auth_provider or not bundle.auth_settings:
             continue
@@ -295,9 +297,9 @@ def _authorization_server_metadata(bundle: _ServerBundle) -> OAuthMetadata:
     """Return the RFC 8414 document for a server where the gateway is the authorization server.
 
     The SDK builds the document, and the gateway adds what its provider does beyond the SDK.
-    ``authorization_response_iss_parameter_supported`` is required of any server that sends ``iss``
-    on its authorization responses (RFC 9207 §2.3), as ``AuthorizationCodeProvider`` does,
-    and is what lets a client refuse a response that arrives without one.
+    ``AuthorizationCodeProvider`` sends ``iss`` on its authorization responses,
+    so RFC 9207 §2.3 requires ``authorization_response_iss_parameter_supported``.
+    That flag is what lets a client refuse a response that arrives without one.
 
     Callers reach this only for a bundle carrying ``auth_settings``.
     """

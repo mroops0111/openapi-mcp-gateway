@@ -39,8 +39,8 @@ DEFAULT_MCP_SCOPE = 'api'
 class UpstreamOAuthClient:
     """What the gateway needs to act as an OAuth client at the upstream authorization server.
 
-    ``callback_url`` is the gateway's own address, and belongs here because it is only ever
-    meaningful as the ``redirect_uri`` of this conversation.
+    ``callback_url`` is the gateway's own address,
+    and belongs here because it is only ever meaningful as the ``redirect_uri`` of this conversation.
 
     ``issuer`` is the upstream authorization server's RFC 8414 issuer identifier.
     It is what an RFC 9207 ``iss`` on the authorization response is compared against,
@@ -378,7 +378,7 @@ class AuthorizationCodeProvider:
             expires_in,
             bool(api_refresh_token),
         )
-        # RFC 9207: name this authorization server in its own response, as its metadata advertises,
+        # Per RFC 9207, name this authorization server in its own response, as its metadata advertises,
         # so an MCP client talking to several authorization servers can tell which one answered.
         return construct_redirect_uri(redirect_uri, code=mcp_auth_code, state=state, iss=self.issuer)
 
@@ -597,7 +597,8 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         gateway_url = flow_context.gateway_url.rstrip('/')
         callback_url = f'{gateway_url}{flow_context.mount_path}/auth/callback'
 
-        # auth.required_scopes names what a caller must hold. The gateway is the issuer here,
+        # auth.required_scopes names what a caller must hold.
+        # The gateway is the issuer here,
         # so it is also what the gateway advertises and grants, rather than something it merely checks.
         mcp_scopes = list(entry.auth.required_scopes) or [DEFAULT_MCP_SCOPE]
         server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')

@@ -11,8 +11,9 @@ logger = logging.getLogger(__name__)
 def _declared_parameter(name: str, param_override: ParamOverride) -> ParameterInfo:
     """Build a friendly :class:`ParameterInfo` from a declaring ``params`` entry.
 
-    The location is a placeholder, since a declared parameter reaches the upstream through the
-    ``request`` JSONata expression rather than the spec-driven location assembly.
+    The location is a placeholder.
+    A declared parameter reaches the upstream through the ``request`` JSONata expression,
+    which bypasses the spec-driven location assembly.
     A declared ``default`` is marked to be sent upstream when the LLM omits the parameter.
     """
     fragment = param_override.schema_fragment
@@ -49,7 +50,8 @@ def _tweak_spec_parameter(parameter: ParameterInfo, param_override: ParamOverrid
     """Apply one ``params`` entry to a spec ``parameter`` in place, returning it, or ``None`` to drop it.
 
     A hidden parameter is kept only if it has a default to inject upstream,
-    staying out of the schema but still filling its slot. Otherwise it is dropped.
+    staying out of the schema but still filling its slot.
+    Otherwise it is dropped.
     """
     _apply_tweak(parameter, param_override)
     if not param_override.hidden:
@@ -63,7 +65,8 @@ def _tweak_spec_parameter(parameter: ParameterInfo, param_override: ParamOverrid
 def shape_operation(operation: OperationInfo) -> OperationInfo:
     """Apply ``x-mcp-integration.tool.params`` to the LLM-facing surface of ``operation``.
 
-    Returns a shaped copy. The input operation and its parameter schemas are never mutated.
+    Returns a shaped copy.
+    The input operation and its parameter schemas are never mutated.
     Only what the LLM sees is changed here.
     The value actually sent upstream is shaped later, by the ``request`` JSONata expression.
 

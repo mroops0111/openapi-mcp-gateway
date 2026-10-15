@@ -34,7 +34,7 @@ class _StubContext:
     """No-op MCP context for direct invocation of template-resource read functions in tests."""
 
     async def report_progress(self, *_args, **_kwargs):
-        """Match the ``Context`` protocol; do nothing."""
+        """Match the ``Context`` protocol, doing nothing."""
         return None
 
 
@@ -60,9 +60,7 @@ def _resource_override_name(operation: OperationInfo) -> str | None:
 
 
 def _resource_override_description(operation: OperationInfo) -> str | None:
-    """Pull ``resource.description`` off ``operation`` (or ``None``),
-    for passing to :func:`derive_description`.
-    """
+    """Pull ``resource.description`` off ``operation`` (or ``None``), for passing to :func:`derive_description`."""
     override = operation.x_mcp_integration.resource
     return override.description if override else None
 
@@ -201,14 +199,14 @@ class TestResourceMimeType:
 class TestResourceReadFunctionSignature:
     """Signature shape drives MCPServer's concrete-vs-template registration.
 
-    - GET with path params: signature is ``(p1, ..., ctx: Context)`` -> template registration,
+    - A GET with path params has the signature ``(p1, ..., ctx: Context)``, so it registers as a template,
       and MCPServer injects a real ``Context`` at call time.
-    - GET without path params: empty signature -> concrete registration,
+    - A GET without path params has an empty signature, so it registers as concrete,
       and ``_NullContext`` is used internally.
     """
 
     def test_path_params_signature_includes_ctx(self):
-        """Path-param signature is ``[path_params..., ctx]``; query / body parameters are dropped."""
+        """Path-param signature is ``[path_params..., ctx]``, and query / body parameters are dropped."""
         operation = OperationInfo(
             operation_id='get_pet',
             method='get',
@@ -493,7 +491,7 @@ class TestPartitioning:
         assert tools == []
 
     def test_tool_only_stays_a_tool(self):
-        """``expose.tool`` alone is the existing override path; op stays a tool."""
+        """``expose.tool`` alone is the existing override path, so op stays a tool."""
         op = OperationInfo(
             operation_id='get_pet',
             method='get',
@@ -518,7 +516,7 @@ class TestPartitioning:
         assert tools == [op]
 
     def test_non_get_resource_raises(self):
-        """Eligibility validation runs during partition; non-GET resources fail fast."""
+        """Eligibility validation runs during partition, so non-GET resources fail fast."""
         op = OperationInfo(
             operation_id='create_pet',
             method='post',
@@ -585,7 +583,9 @@ class TestPartitioning:
         assert tools == [op]
 
     def test_auto_respects_explicit_tool_optin(self):
-        """Under ``exposure.promote_resources``, an eligible GET with explicit ``expose.tool`` stays a tool (explicit beats implicit)."""
+        """Under ``exposure.promote_resources``,
+        an eligible GET with explicit ``expose.tool`` stays a tool (explicit beats implicit).
+        """
         op = OperationInfo(
             operation_id='get_pet',
             method='get',

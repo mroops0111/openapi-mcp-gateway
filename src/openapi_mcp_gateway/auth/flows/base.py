@@ -41,8 +41,8 @@ class OAuthFlowSetup:
     ``verifier`` is populated instead when the gateway validates tokens it did not issue.
     The two are mutually exclusive, and the MCP SDK rejects a server given both.
     ``settings`` and ``protected_resource`` accompany either one and drive the discovery documents.
-    ``protected_resource`` is the RFC 9728 document this server publishes:
-    its ``resource`` is always the endpoint's own canonical URI,
+    ``protected_resource`` is the RFC 9728 document this server publishes.
+    Its ``resource`` is always the endpoint's own canonical URI,
     while ``authorization_servers`` names whoever mints tokens for it.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """

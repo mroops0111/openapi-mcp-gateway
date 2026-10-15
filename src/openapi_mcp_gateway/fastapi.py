@@ -40,9 +40,9 @@ def mark_tool(
 ) -> CallableT:
     """Imperative version of ``@mcp_tool`` for routes you cannot decorate at definition.
 
-    Use when the route lives in code you do not own (third-party FastAPI app,
-    routes pulled in via ``include_router`` from another package,
-    dynamically registered endpoints) but you still want to expose it as an MCP tool.
+    Use when the route lives in code you do not own, but you still want to expose it as an MCP tool.
+    Such code includes a third-party FastAPI app, routes another package pulls in via ``include_router``,
+    and endpoints registered dynamically.
 
     Equivalent to applying ``@mcp_tool(name=..., description=..., expose=...)`` to ``func`` after the fact.
     Returns ``func`` so it can be chained or used inside a comprehension.
@@ -140,15 +140,14 @@ def override_with_metadata(operation: OperationInfo, metadata: ToolMetadata) -> 
 
 
 def infer_auth_from_declared_flows(declared: list[DetectedOAuthFlow]) -> AuthConfig:
-    """Default to ``passthrough`` when the FastAPI app declares any supported OAuth flow,
-    ``none`` otherwise.
+    """Default to ``passthrough`` when the FastAPI app declares any supported OAuth flow, ``none`` otherwise.
 
-    Passthrough is the correct default here because the gateway is mounted onto the same app it exposes:
-    gateway and upstream share the OAuth audience,
+    Passthrough is the correct default here, because the gateway is mounted onto the same app it exposes.
+    Gateway and upstream share the OAuth audience,
     so forwarding the MCP client's ``Authorization`` header verbatim does not cross an audience boundary.
 
-    For third-party APIs the gateway must mint its own upstream tokens per RFC 8707;
-    that path is selected by passing an explicit ``auth=AuthConfig(...)`` with credentials.
+    For third-party APIs the gateway must mint its own upstream tokens per RFC 8707.
+    That path is selected by passing an explicit ``auth=AuthConfig(...)`` with credentials.
     """
     if declared:
         return AuthConfig(type='passthrough')
@@ -156,7 +155,7 @@ def infer_auth_from_declared_flows(declared: list[DetectedOAuthFlow]) -> AuthCon
 
 
 def warn_on_mixed_security_schemes(server_name: str, operations: list[OperationInfo]) -> None:
-    """Warn when marked operations span multiple security schemes; one resolver may not cover all routes."""
+    """Warn when marked operations span multiple security schemes, since one resolver may not cover all routes."""
     scheme_names: set[str] = set()
     for operation in operations:
         for security_requirement in operation.security:

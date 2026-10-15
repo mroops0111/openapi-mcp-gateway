@@ -144,8 +144,8 @@ class _NullContext:
 class ResourceGenerator:
     """Register one MCP resource per ``OperationInfo`` in the input list.
 
-    Inputs are assumed to be GET operations with no required non-path parameters;
-    URI placeholders are sanitised to valid Python identifiers so MCPServer's template regex matches.
+    Inputs are assumed to be GET operations with no required non-path parameters.
+    URI placeholders are sanitised to valid Python identifiers, so MCPServer's template regex matches.
     """
 
     def __init__(self, mcp: MCPServer, binding: UpstreamBinding, server_name: str):

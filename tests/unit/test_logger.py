@@ -66,7 +66,7 @@ class TestSetup:
 
 
 class TestTextFormatter:
-    """Human-readable formatter: timestamp, level/logger colouring, mutation safety."""
+    """Human-readable formatter, covering timestamp, level/logger colouring, and mutation safety."""
 
     def _record(self) -> logging.LogRecord:
         """Build a minimal ``WARNING`` record for formatter tests."""

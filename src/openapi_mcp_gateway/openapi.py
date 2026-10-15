@@ -58,14 +58,15 @@ class ParameterInfo(pydantic.BaseModel):
 class ExposedTool(typing.NamedTuple):
     """One tool a server exposes, the counterpart to ``OperationInfo``.
 
-    ``OperationInfo`` is the operation as the spec declares it. This is what the model is shown after naming,
-    filtering and shaping have run, so the names here can differ from the spec's.
+    ``OperationInfo`` is the operation as the spec declares it.
+    This is what the model is shown after naming, filtering and shaping have run,
+    so the names here can differ from the spec's.
 
     ``input_schema`` is the advertised schema itself rather than a summary of it,
     because a flattened list loses the nested body properties, enums, defaults and bounds a reviewer needs most.
 
-    ``shaping`` reports what took effect rather than what was declared,
-    and is ``None`` when nothing reshapes the call. A ``params_strategy`` with no ``params`` changes nothing.
+    ``shaping`` reports what took effect rather than what was declared, and is ``None`` when nothing reshapes the call.
+    A ``params_strategy`` with no ``params`` changes nothing.
     """
 
     name: str
@@ -79,13 +80,13 @@ class ExposedTool(typing.NamedTuple):
 class ParamOverride(pydantic.BaseModel):
     """One LLM-facing parameter from ``x-mcp-integration.tool.params.<name>``, keyed by the friendly name.
 
-    Every key other than the two meta-flags is a JSON Schema keyword
-    (``type``, ``enum``, ``format``, ``default``, ``description``, ``minimum`` and so on),
+    Every key other than the two meta-flags is a JSON Schema keyword, such as ``type``, ``enum``, ``format``,
+    ``default``, ``description`` or ``minimum``,
     describing the value exactly as it appears in the tool's advertised input schema.
 
     How the entry is applied depends on ``ToolOverride.params_strategy``.
-    An entry carrying a ``type`` declares the parameter's schema, either replacing a matching
-    spec parameter's schema or introducing a brand-new friendly parameter.
+    An entry carrying a ``type`` declares the parameter's schema,
+    either replacing a matching spec parameter's schema or introducing a brand-new friendly parameter.
     An entry without a ``type`` tweaks a matching spec parameter through ``default`` or ``description``.
 
     ``required`` lifts the parameter into the schema's required list.
@@ -428,7 +429,7 @@ def _expand_inline(
 ) -> dict[str, typing.Any]:
     """Expand ``schema`` like ``_expand_schema``, but resolve a ``$ref`` at its root in place.
 
-    For the places a reference cannot stand: an ``allOf`` branch, which is merged key by key,
+    This serves the places a reference cannot stand, which are an ``allOf`` branch, merged key by key,
     a request body, whose properties become parameters, and a component's own ``$defs`` entry.
     References below the root still become ``$defs`` references.
 

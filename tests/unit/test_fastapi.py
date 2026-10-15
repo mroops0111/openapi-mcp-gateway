@@ -125,7 +125,7 @@ class TestOverrideWithMetadata:
     """``override_with_metadata`` rewrites operation_id / description from decorator state."""
 
     def test_applies_name_and_description(self):
-        """``metadata.name`` rewrites ``operation_id``; ``description`` replaces the OpenAPI text."""
+        """``metadata.name`` rewrites ``operation_id``, and ``description`` replaces the OpenAPI text."""
         app = _build_app()
         spec = parse_spec(app.openapi())
         selections = collect_marked_routes(app)

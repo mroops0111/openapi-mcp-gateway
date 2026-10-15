@@ -9,8 +9,8 @@ from .token_source import TokenSource
 class AuthResolver(abc.ABC):
     """Strategy that produces the upstream HTTP headers for one MCP tool call.
 
-    The contract is header-shaped, not value-shaped:
-    implementations return the full set of headers (``Authorization``, ``X-API-Key``, ...) they want on the request,
+    The contract is header-shaped, not value-shaped.
+    Implementations return every header they want on the request, such as ``Authorization`` or ``X-API-Key``,
     and ``ToolGenerator`` merges that dict in unchanged.
     """
 
@@ -44,7 +44,7 @@ class AuthorizationCodeAuthResolver(AuthResolver):
     """Resolve the upstream bearer for the per-user ``authorization_code`` flow."""
 
     def __init__(self, provider: typing.Any) -> None:
-        # provider is AuthorizationCodeProvider; Any is used to avoid a circular import.
+        # provider is AuthorizationCodeProvider, typed Any to avoid a circular import.
         self._provider = provider
 
     async def resolve(self, ctx: Context) -> dict[str, str]:
@@ -75,8 +75,8 @@ class PassthroughAuthResolver(AuthResolver):
     """Forward selected headers from the live MCP request to the upstream call.
 
     Used when the gateway and the upstream API share an OAuth realm, typically the FastAPI in-process integration.
-    ``header_names`` lists which headers to copy verbatim (case-insensitive);
-    the default forwards only ``Authorization``.
+    ``header_names`` lists which headers to copy verbatim (case-insensitive).
+    The default forwards only ``Authorization``.
     """
 
     def __init__(self, header_names: tuple[str, ...] = ('Authorization',)) -> None:
@@ -110,7 +110,7 @@ class TokenExchangeAuthResolver(AuthResolver):
     """
 
     def __init__(self, token_source: typing.Any) -> None:
-        # token_source is TokenExchangeTokenSource; Any avoids a circular import.
+        # token_source is TokenExchangeTokenSource, typed Any to avoid a circular import.
         self._token_source = token_source
 
     async def resolve(self, ctx: Context) -> dict[str, str]:
@@ -124,7 +124,7 @@ class TokenExchangeAuthResolver(AuthResolver):
 
 
 class CompositeAuthResolver(AuthResolver):
-    """Compose multiple resolvers; later resolvers override earlier ones on key collision.
+    """Compose multiple resolvers, with later resolvers overriding earlier ones on key collision.
 
     Used to combine an incoming-header forwarder (e.g. ``PassthroughAuthResolver`` for ``X-API-Key`` or ``Cookie``),
     with a credential-minting resolver (e.g. ``TokenSourceAuthResolver`` for ``client_credentials``).

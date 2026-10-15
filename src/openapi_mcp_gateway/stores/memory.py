@@ -7,7 +7,8 @@ from .base import TokenStore
 class MemoryTokenStore(TokenStore):
     """In-process ``TokenStore`` backend.
 
-    Data is lost on process restart. Use ``RedisTokenStore`` for multi-process deployments.
+    Data is lost on process restart.
+    Use ``RedisTokenStore`` for multi-process deployments.
     """
 
     def __init__(self) -> None:

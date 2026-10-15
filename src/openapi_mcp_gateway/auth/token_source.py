@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_REFRESH_SKEW_SECONDS = 30.0
 DEFAULT_TOKEN_LIFETIME_SECONDS = 3600.0
 
-# RFC 8693 §2.1 identifiers. Constants, not credentials, despite what the secret scanner reads them as.
+# RFC 8693 §2.1 identifiers.
+# Constants, not credentials, despite what the secret scanner reads them as.
 TOKEN_EXCHANGE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange'  # noqa: S105
 ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token'  # noqa: S105
 
@@ -22,7 +23,8 @@ class TokenSource(abc.ABC):
     """Abstract bearer-token provider used by per-request auth resolvers.
 
     Implementations cache the access token and refresh it transparently before expiry.
-    ``get_token`` should be cheap; concrete implementations must de-dup concurrent refreshes.
+    ``get_token`` should be cheap.
+    Concrete implementations must de-dup concurrent refreshes.
     """
 
     @abc.abstractmethod

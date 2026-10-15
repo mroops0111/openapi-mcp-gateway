@@ -124,7 +124,7 @@ class TestPassthroughAuthResolver:
 
 
 class TestCompositeAuthResolver:
-    """``CompositeAuthResolver`` merges resolvers in order; later entries override earlier ones."""
+    """``CompositeAuthResolver`` merges resolvers in order, so later entries override earlier ones."""
 
     async def test_merges_distinct_headers(self, mock_context):
         """Resolvers contributing distinct keys all show up in the result."""
