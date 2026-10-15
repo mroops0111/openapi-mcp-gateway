@@ -139,7 +139,7 @@ class TestResolveOAuthFlow:
             resolve_oauth_flow(entry, _spec_with_authorization_code())
 
     def test_synthesises_from_config_when_spec_has_none(self):
-        """No declared flows + explicit token_url → synthesised client_credentials by default."""
+        """With no declared flows and an explicit token_url, client_credentials is synthesised by default."""
         entry = _entry(
             AuthConfig(
                 type='oauth2',
@@ -151,7 +151,7 @@ class TestResolveOAuthFlow:
         assert flow.token_url == TOKEN_URL
 
     def test_synthesises_authorization_code_when_authorization_url_set(self):
-        """No declared flows but both URLs set → authorization_code is inferred."""
+        """With no declared flows but both URLs set, authorization_code is inferred."""
         entry = _entry(
             AuthConfig(
                 type='oauth2',
@@ -558,8 +558,7 @@ class TestTokenExchangeFlowHandler:
     def test_inbound_and_upstream_scopes_are_independent(self):
         """Asking the issuer for a scope must not make it mandatory on the caller's token.
 
-        A deployment chooses what to request upstream,
-        but has no say in what a caller's client registered with.
+        A deployment chooses what to request upstream, but has no say in what a caller's client registered with.
         Coupling the two locked out every client that did not happen to match.
         """
         setup = _build_token_exchange(

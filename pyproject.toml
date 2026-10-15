@@ -117,6 +117,13 @@ force-single-line = false
 lines-after-imports = 2
 split-on-trailing-comma = true
 
+[tool.subedit]
+line-width = 120
+
+# MCP names its spec versions by date, so a date here names a version.
+[tool.subedit.rules]
+"subedit.DateRef" = "off"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

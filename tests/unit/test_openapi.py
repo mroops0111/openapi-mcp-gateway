@@ -48,7 +48,7 @@ class TestDeepMerge:
         assert result == {'a': 1, 'b': 2}
 
     def test_nested_merge(self):
-        """Nested dicts merge recursively; later values override earlier."""
+        """Nested dicts merge recursively, and later values override earlier."""
         result = _deep_merge(
             {'props': {'a': 1, 'b': 2}},
             {'props': {'b': 3, 'c': 4}},
@@ -439,7 +439,9 @@ class TestExclusiveBounds:
 
 
 class TestDeepNormalization:
-    """A 3.0 construct buried inside any nested-schema keyword is still normalized, so it never reaches a client as 400."""
+    """A 3.0 construct buried inside any nested-schema keyword is still normalized,
+    so it never reaches a client as 400.
+    """
 
     def test_properties_without_type_still_recurses(self):
         """A fragment with ``properties`` but no ``type`` is a common shape and must still normalize its fields."""

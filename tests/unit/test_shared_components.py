@@ -138,10 +138,11 @@ def _extended_body_spec(*, person_shared: bool) -> dict:
 def _colliding_names_spec() -> dict:
     """A body whose properties and components all map onto a handful of generated model names.
 
-    Each pair below lands on the same ``CreatePet…`` class name under a naive scheme:
-    an inline object and a component of the same name, an inline nested object and a component named after its path,
-    the same for array items and ``anyOf`` variants, two nesting paths that camelize alike,
-    two property spellings of one word, and five component spellings OpenAPI allows of one name.
+    Each pair below lands on the same ``CreatePet…`` class name under a naive scheme.
+    They are an inline object and a component of the same name,
+    an inline nested object and a component named after its path, the same for array items and ``anyOf`` variants,
+    two nesting paths that camelize alike, two property spellings of one word,
+    and five component spellings OpenAPI allows of one name.
     """
     return operation_spec(
         operation_id='createPet',

@@ -52,7 +52,7 @@ class _StubContext:
     """No-op MCP context used when invoking generated tools end-to-end."""
 
     async def report_progress(self, *_args, **_kwargs):
-        """Match the ``Context`` protocol; do nothing."""
+        """Match the ``Context`` protocol, doing nothing."""
         return None
 
 
@@ -135,7 +135,9 @@ async def _serve(app: FastAPI) -> typing.AsyncIterator[str]:
 
 @contextlib.asynccontextmanager
 async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) -> typing.AsyncIterator[Client]:
-    """Connect an MCP client over ``transport``: stdio through the CLI, the HTTP transports through ``gateway``'s app."""
+    """Connect an MCP client over ``transport``: stdio through the CLI,
+    the HTTP transports through ``gateway``'s app.
+    """
     if transport == 'stdio':
         cli_args = ['--spec', str(spec_path), '--name', 'petstore', '--transport', 'stdio']
         async with Client(
@@ -440,7 +442,7 @@ class TestDNSRebindingProtection:
 
 
 class TestEndToEndToolInvocation:
-    """Full assembly chain: spec → operations → tool registration → upstream HTTP call."""
+    """Exercise the full assembly chain from spec to operations, tool registration, and the upstream HTTP call."""
 
     async def test_list_pets_calls_upstream_with_query_params(self, gateway, mock_upstream):
         """Invoking the generated ``listPets`` tool reaches the upstream URL with the right query."""
@@ -484,7 +486,7 @@ class TestDynamicExposureEndToEnd:
         assert names == {'list_operations', 'get_operation', 'call_operation'}
 
     async def test_list_then_get_then_call_roundtrip(self, dynamic_gateway, mock_upstream):
-        """An LLM-style ``list → get → call`` sequence drives an upstream call with correct query."""
+        """An LLM-style list, get, and call sequence drives an upstream call with correct query."""
         captured: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -582,7 +584,7 @@ class TestClientCredentialsFlowEndToEnd:
 
 
 class TestSpec20260728Adoption:
-    """2026-07-28 spec adoptions layered on the v2 SDK: cache hints and stable ordering."""
+    """Cache hints and stable ordering, adopted from the 2026-07-28 spec on top of the v2 SDK."""
 
     async def test_static_lists_carry_cache_hints(self, gateway):
         """``tools/list`` advertises the gateway's public, minutes-long freshness hint."""

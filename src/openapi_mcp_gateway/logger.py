@@ -32,8 +32,7 @@ class JsonFormatter(logging.Formatter):
     The traceback is carried in its own field rather than folded into ``message``,
     so a log pipeline can index the two separately.
     Omitting it entirely was worse than it sounds.
-    JSON is what a container deployment picks,
-    so the harder-to-diagnose environment was the one losing the diagnosis.
+    JSON is what a container deployment picks, so the harder-to-diagnose environment was the one losing the diagnosis.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -89,7 +88,8 @@ def setup(level: str = 'INFO', format: str = 'text', file: str | None = None) ->
 
     Clears existing root handlers on each call.
     Third-party loggers under ``uvicorn`` / ``mcp`` are stripped of duplicate handlers,
-    so records flow through this configuration. stderr uses color only when it is a TTY and ``NO_COLOR`` is unset.
+    so records flow through this configuration.
+    stderr uses color only when it is a TTY and ``NO_COLOR`` is unset.
     """
     is_json = format == 'json'
 
@@ -108,8 +108,8 @@ def setup(level: str = 'INFO', format: str = 'text', file: str | None = None) ->
     for handler in handlers:
         root.addHandler(handler)
 
-    # Strip third-party loggers' own handlers (uvicorn's column-aligned format,
-    # mcp's rich format) so they propagate up to our root.
+    # Strip the handlers third-party loggers bring, such as uvicorn's column-aligned format and mcp's rich format,
+    # so their records propagate up to our root.
     for name in list(logging.Logger.manager.loggerDict):
         if name.startswith(THIRD_PARTY_PREFIXES):
             library_logger = logging.getLogger(name)

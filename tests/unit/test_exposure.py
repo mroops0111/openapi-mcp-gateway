@@ -40,7 +40,7 @@ class _StubContext:
     """No-op MCP context used when invoking generated tools in tests."""
 
     async def report_progress(self, *_args, **_kwargs):
-        """Match the ``Context`` protocol; do nothing."""
+        """Match the ``Context`` protocol, doing nothing."""
         return None
 
 
@@ -179,7 +179,7 @@ class TestSchemaToPythonType:
 
 
 class TestToolGeneration:
-    """End-to-end tool registration: name sanitisation flows through to the upstream call."""
+    """In end-to-end tool registration, name sanitisation flows through to the upstream call."""
 
     def _generator(self) -> tuple[ToolGenerator, MCPServer]:
         """Build a fresh generator + MCPServer pair for each test."""
@@ -401,7 +401,7 @@ class TestMetaToolRegistration:
     """``MetaToolGenerator.register`` produces exactly three meta-tools regardless of N operations."""
 
     def test_exactly_three_tools_registered(self):
-        """Three operations in, three meta-tools out: list / get / call."""
+        """Three operations in, three meta-tools out, namely list, get, and call."""
         generator, mcp = _meta_generator()
         generator.register(_ops())
         names = {tool.name for tool in mcp._tool_manager.list_tools()}
@@ -445,7 +445,7 @@ class TestListOperations:
 
 
 class TestGetOperation:
-    """``get_operation`` returns the input schema for one operation; unknown names raise."""
+    """``get_operation`` returns the input schema for one operation, and unknown names raise."""
 
     async def test_known_returns_full_schema(self):
         """A known name yields ``{name, description, input_schema}`` with the JSON Schema for inputs."""
@@ -503,7 +503,7 @@ class TestGetOperation:
 
 
 class TestCallOperation:
-    """``call_operation`` dispatches to the underlying HTTP callable; unknown names raise."""
+    """``call_operation`` dispatches to the underlying HTTP callable, and unknown names raise."""
 
     async def test_dispatches_to_upstream(self, mock_upstream):
         """Calling a known op hits the upstream with the resolved path and query."""
@@ -536,7 +536,7 @@ class TestCallOperation:
             await tool.fn(name='no_such_op', arguments={}, ctx=_stub_context())
 
     async def test_sanitised_arg_name_reaches_upstream(self, mock_upstream):
-        """Dashed query params are exposed with sanitised keys; upstream sees the original name."""
+        """Dashed query params are exposed with sanitised keys, while upstream sees the original name."""
         captured: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -590,7 +590,7 @@ class TestDeriveToolAnnotations:
         return OperationInfo(operation_id='op', method=method, path='/r', summary=summary)
 
     def test_get_is_read_only_and_idempotent(self):
-        """``GET`` is safe and idempotent; never destructive."""
+        """``GET`` is safe and idempotent, never destructive."""
         annotations = derive_tool_annotations(self._operation('get'))
         assert annotations.read_only_hint is True
         assert annotations.idempotent_hint is True
@@ -852,8 +852,8 @@ class TestErrorResult:
 class TestFaithfulInputSchema:
     """The advertised tool input schema preserves OpenAPI keywords a Python signature cannot carry.
 
-    Static tools overwrite the signature-derived schema with ``build_input_schema``, so ``format``,
-    numeric bounds, ``pattern``, ``enum``, ``default``, composition, and nesting survive to the LLM.
+    Static tools overwrite the signature-derived schema with ``build_input_schema``,
+    so ``format``, numeric bounds, ``pattern``, ``enum``, ``default``, composition, and nesting survive to the LLM.
     """
 
     def _schema_for(self, *parameters: ParameterInfo) -> dict:
@@ -985,7 +985,7 @@ class TestFaithfulInputSchema:
         assert tool.input_schema['properties']['email']['format'] == 'email'
 
     async def test_validation_still_rejects_wrong_type(self):
-        """Faithful display does not weaken validation: a type mismatch is still rejected."""
+        """Faithful display does not weaken validation, so a type mismatch is still rejected."""
         mcp = MCPServer('test')
         generator = ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL))
         operation = OperationInfo(
@@ -1003,8 +1003,9 @@ class TestFaithfulInputSchema:
 class TestInputSchemaEnforcement:
     """Advertised constraints are enforced before the upstream call, not merely displayed.
 
-    Validation runs against the same schema the tool advertises, so what the client is shown is
-    exactly what gets checked (bounds, pattern, and format that the signature types cannot carry).
+    Validation runs against the same schema the tool advertises,
+    so what the client is shown is exactly what gets checked.
+    That covers the bounds, pattern, and format that the signature types cannot carry.
     """
 
     def _register_single_param(self, mcp: MCPServer, name: str, param_schema: dict) -> None:
@@ -1082,9 +1083,8 @@ def _shaped_op(
 ) -> OperationInfo:
     """Build an operation whose ``x-mcp-integration.tool`` carries the given overrides.
 
-    When ``params`` is set and ``params_strategy`` is not,
-    it defaults to ``replace`` if any entry declares a ``type``, else ``merge``,
-    so tests that only care about the override still read cleanly.
+    When ``params`` is set and ``params_strategy`` is not, it defaults to ``replace`` if any entry declares a ``type``,
+    else ``merge``, so tests that only care about the override still read cleanly.
     """
     if params and params_strategy is None:
         params_strategy = 'replace' if any('type' in cfg for cfg in params.values()) else 'merge'
@@ -1144,7 +1144,7 @@ class TestShapeOperation:
         assert shape_operation(op).parameters[0].description == 'new'
 
     def test_input_operation_not_mutated(self):
-        """Shaping is pure: the input operation and its parameter schema are untouched."""
+        """Shaping is pure, leaving the input operation and its parameter schema untouched."""
         op = _shaped_op(
             [ParameterInfo(name='limit', location='query', required=True, schema={'type': 'integer'})],
             params={'limit': {'default': 50}},

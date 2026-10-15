@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 class ClientCredentialsFlowHandler(OAuthFlowHandler):
     """Build the service-level ``client_credentials`` setup.
 
-    No MCP-side OAuth server is needed:
-    the gateway uses its own credentials to fetch a single upstream access token shared across all MCP clients.
+    No MCP-side OAuth server is needed.
+    The gateway uses its own credentials to fetch a single upstream access token, shared across all MCP clients.
     The resulting setup carries only an ``AuthResolver`` plus an ``on_shutdown`` hook.
     The hook closes the underlying token source's HTTP client.
     """

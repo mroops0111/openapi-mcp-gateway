@@ -16,7 +16,7 @@ class _StubContext:
     """No-op MCP context used when invoking generated resource read functions end-to-end."""
 
     async def report_progress(self, *_args, **_kwargs):
-        """Match the ``Context`` protocol; do nothing."""
+        """Match the ``Context`` protocol, doing nothing."""
         return None
 
 
@@ -161,7 +161,9 @@ class TestResourceExposureEndToEnd:
         assert 'petstore://store/inventory' in uris
 
     async def test_resources_excluded_from_tools(self, gateway):
-        """Under ``exposure.promote_resources``, every eligible GET (opt-in or not) leaves ``tools/list``; ineligible GETs stay."""
+        """Under ``exposure.promote_resources``, every eligible GET (opt-in or not) leaves ``tools/list``,
+        while ineligible GETs stay.
+        """
         mcp = gateway._servers[0].mcp
         tool_names = {t.name for t in mcp._tool_manager.list_tools()}
         assert 'get_pet' not in tool_names
@@ -203,7 +205,7 @@ class TestDualExposureEndToEnd:
 
 
 class TestResourceMisconfigFailsFast:
-    """Phase-0-style strict validation: misconfigured resources refuse to start."""
+    """Misconfigured resources refuse to start, under phase-0-style strict validation."""
 
     def test_post_with_expose_resource_raises(self, tmp_path):
         """A POST opted into ``expose.resource`` aborts ``Gateway.from_config`` with a clear error."""

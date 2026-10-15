@@ -78,7 +78,7 @@ class TestAuthConfig:
     """Env-var substitution on ``AuthConfig``. How a token becomes a header belongs to the type handler."""
 
     def test_numeric_client_id_coerced_to_string(self):
-        """Unquoted numeric ``client_id`` in YAML (Asana 18-digit, Facebook etc.) parses without raising."""
+        """An unquoted numeric ``client_id`` in YAML, such as Asana's or Facebook's, parses without raising."""
         auth = AuthConfig.model_validate(
             {'type': 'oauth2', 'upstream': {'client_id': 1214443090174193, 'client_secret': 'abc'}}
         )
@@ -143,7 +143,7 @@ class TestAuthConfig:
 
 
 class TestGatewayConfig:
-    """Top-level gateway config: defaults, YAML loading, single-spec builder."""
+    """Top-level gateway config, covering defaults, YAML loading, and the single-spec builder."""
 
     def test_default_url(self):
         """Default public URL is ``http://localhost:8000``."""
@@ -257,7 +257,7 @@ class TestBuildGatewayConfig:
         assert [s.name for s in config.servers] == ['b']
 
     def test_invalid_field_raises_validation_error(self):
-        """Pydantic validation runs once on the merged dict; bad input surfaces immediately."""
+        """Pydantic validation runs once on the merged dict, so bad input surfaces immediately."""
         with pytest.raises(ValueError):
             build_gateway_config({'port': 'not-an-int'})
 
@@ -365,10 +365,9 @@ class TestAuthConfigUpstreamIssuer:
 class TestUnknownKeysAreRefused:
     """A key the model does not know is a mistake, and dropping it silently can widen access.
 
-    ``policy.annotated_only`` decides which operations a caller may invoke. When it was renamed,
-    configs carrying the old spelling kept starting and reporting valid,
-    while exposing the whole spec rather than the curated subset,
-    with nothing to read but a longer tool list.
+    ``policy.annotated_only`` decides which operations a caller may invoke.
+    When it was renamed, configs carrying the old spelling kept starting and reporting valid,
+    while exposing the whole spec rather than the curated subset, with nothing to read but a longer tool list.
     """
 
     def test_a_renamed_policy_key_is_refused_rather_than_dropped(self):
@@ -425,8 +424,7 @@ class TestSettingsThatCannotTakeEffect:
 
     Both leave an operator believing they configured something.
     ``required_scopes`` is the sharp one.
-    Setting it where nothing verifies an inbound token
-    reads as a restriction on an endpoint that has none.
+    Setting it where nothing verifies an inbound token reads as a restriction on an endpoint that has none.
     """
 
     @pytest.mark.parametrize(

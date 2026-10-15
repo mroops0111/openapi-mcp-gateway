@@ -155,7 +155,7 @@ def main(
     verbose: bool,
     quiet: bool,
 ) -> None:
-    """Run the gateway CLI: load config from ``--spec`` or ``--config``, then serve.
+    """Run the gateway CLI, loading config from ``--spec`` or ``--config`` and then serving.
 
     \b
     Single spec (no auth):

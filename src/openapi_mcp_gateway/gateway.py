@@ -136,7 +136,7 @@ def _apply_yaml_overrides(
 ) -> list[OperationInfo]:
     """Return ``operations`` with the YAML-side ``operations.<id>`` override applied to each match.
 
-    Each override fully replaces the spec-side ``x-mcp-integration`` for that operation; no merging is attempted.
+    Each override fully replaces the spec-side ``x-mcp-integration`` for that operation, with no merging.
     Raises ``ValueError`` if an ``operation_id`` in ``yaml_overrides`` is not exposed by this server.
     """
     if not yaml_overrides:
@@ -343,7 +343,7 @@ class Gateway:
         """Serve over ``uvicorn`` (HTTP/SSE) or stdio (single-server only).
 
         ``transport`` / ``host`` / ``port`` only override ``self._config`` when explicitly set,
-        matching the precedence used by the CLI and YAML loader: non-None wins,
+        matching the precedence used by the CLI and YAML loader, where non-None wins,
         otherwise the layered config value (which already accounts for ``--config`` and Pydantic defaults) stands.
         """
         transport = transport if transport is not None else self._config.transport
@@ -668,7 +668,7 @@ class Gateway:
         try:
             asyncio.run(self._run_shutdown_hooks())
         except RuntimeError:
-            # Loop already running (unlikely on stdio shutdown); best-effort.
+            # Loop already running (unlikely on stdio shutdown), so this is best-effort.
             logger.warning('Could not run shutdown hooks: event loop already running')
 
     def _build_app(self, transport: str, host: str | None = None) -> FastAPI:

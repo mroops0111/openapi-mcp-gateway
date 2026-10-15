@@ -20,8 +20,8 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
     It validates tokens an external authorization server minted for its own canonical URI,
     then exchanges each one under RFC 8693 for a second token naming the upstream API.
 
-    Both legs stay separate, which is what the MCP spec requires:
-    the caller's token is accepted only because it names this endpoint,
+    Both legs stay separate, as the MCP spec requires.
+    The caller's token is accepted only because it names this endpoint,
     and it is never the token that reaches the upstream.
     Unlike ``authorization_code`` the gateway is not a second credential issuer,
     so revoking a user at the issuer takes effect without waiting for a gateway-minted token to expire.

@@ -9,8 +9,7 @@ from .openapi import McpIntegration
 
 
 # Every model below sets extra='forbid'.
-# An unknown key is a mistake rather than a preference,
-# and silently dropping one is worse than refusing it.
+# An unknown key is a mistake rather than a preference, and silently dropping one is worse than refusing it.
 # policy.annotated_only decides which operations a caller may invoke,
 # so a typo there once widened a curated surface to the whole spec with no signal at all.
 
@@ -21,7 +20,7 @@ _resolve_env_var = resolve_env_var
 
 
 def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
-    """Recursively merge ``override`` into ``base``; ``override`` wins for non-dict values.
+    """Recursively merge ``override`` into ``base``, with ``override`` winning for non-dict values.
 
     Keys present only in ``base`` are preserved.
     Keys whose value on both sides is a dict are merged recursively,
@@ -43,8 +42,8 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     A static credential is a different mechanism rather than the other end of this conversation,
     so ``token`` and ``api_key_header`` stay on ``AuthConfig`` itself.
 
-    Everything here is outbound, which is what separates it from ``issuer`` and ``required_scopes``
-    on the parent. That split is the whole reason for the nesting,
+    Everything here is outbound, which is what separates it from ``issuer`` and ``required_scopes`` on the parent.
+    That split is the whole reason for the nesting,
     since the two directions were previously told apart only by a prefix on some of the names.
     """
 
@@ -61,8 +60,7 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     # Unset, a present ``iss`` cannot be checked, so the mix-up defence is off.
     issuer: str | None = None
 
-    # Names the API the token is for,
-    # when that API and its authorization server are different parties.
+    # Names the API the token is for, when that API and its authorization server are different parties.
     # Without it the authorization server mints for its own default audience, which the API refuses.
     # Servers disagree on the spelling, so both are offered and only what is set is sent.
     # ``resource`` is the RFC 8707 parameter, ``audience`` is the spelling Auth0 uses.
@@ -86,8 +84,7 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     def resolve_audience_params(self) -> dict[str, str]:
         """Return the audience-naming parameters for authorize and token requests.
 
-        Empty when neither is configured,
-        which is the right shape for an upstream that issues its own tokens.
+        Empty when neither is configured, which is the right shape for an upstream that issues its own tokens.
         """
         params: dict[str, str] = {}
         resource = _resolve_env_var(self.resource)
@@ -105,8 +102,8 @@ class AuthConfig(pydantic.BaseModel):
     The top level answers who may call this MCP endpoint, and holds any static upstream credential.
     ``upstream`` answers how the gateway reaches the API, and appears only under ``type: oauth2``.
 
-    ``token``, ``issuer`` and the fields under ``upstream`` accept ``${ENV_VAR}``
-    and ``${ENV_VAR:-default}`` substitution at resolve time.
+    ``token``, ``issuer`` and the fields under ``upstream`` accept substitution at resolve time,
+    in both the ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` forms.
     Numeric OAuth credentials are coerced from int to str,
     so unquoted YAML values still parse on providers that use numeric ``client_id``.
     """
@@ -120,8 +117,7 @@ class AuthConfig(pydantic.BaseModel):
     flow: typing.Literal['authorization_code', 'client_credentials', 'token_exchange'] | None = None
 
     # Inbound, and for ``token_exchange`` only.
-    # The authorization server that mints tokens for this MCP endpoint,
-    # and what one of its tokens must already carry.
+    # The authorization server that mints tokens for this MCP endpoint, and what one of its tokens must already carry.
     issuer: str | None = None
     required_scopes: list[str] = pydantic.Field(default_factory=list)
 
@@ -142,8 +138,7 @@ class AuthConfig(pydantic.BaseModel):
         and a known key in the wrong place is the same mistake wearing a better disguise.
         Both leave an operator believing they configured something.
         ``required_scopes`` is the sharp case.
-        Setting it where nothing verifies an inbound token
-        reads as a restriction on an endpoint that has none.
+        Setting it where nothing verifies an inbound token reads as a restriction on an endpoint that has none.
 
         Only explicitly-set fields are checked, so defaults never trip this.
         """
@@ -279,13 +274,14 @@ class ExposureConfig(pydantic.BaseModel):
 
     style: typing.Literal['static', 'dynamic'] = 'static'
     # Whether a parameterless GET may become an MCP resource instead of a tool.
-    # Named for what it does. The operations it promotes are the ones a client reads rather than calls,
+    # Named for what it does.
+    # The operations it promotes are the ones a client reads rather than calls,
     # and an operation can still opt in per-operation regardless.
     promote_resources: bool = False
 
 
 class ServerConfig(pydantic.BaseModel):
-    """One upstream API: OpenAPI location, auth, policy, and HTTP timeout."""
+    """One upstream API, with its OpenAPI location, auth, policy, and HTTP timeout."""
 
     model_config = pydantic.ConfigDict(extra='forbid')
 
@@ -342,7 +338,9 @@ class ServerConfig(pydantic.BaseModel):
 
 
 class GatewayConfig(pydantic.BaseModel):
-    """Process-wide gateway settings: listen address, transports, store, logging, and registered servers."""
+    """Process-wide gateway settings,
+    covering the listen address, transports, store, logging, and registered servers.
+    """
 
     model_config = pydantic.ConfigDict(extra='forbid')
 
@@ -382,7 +380,7 @@ class GatewayConfig(pydantic.BaseModel):
         host: str | None = None,
         port: int | None = None,
     ) -> typing.Self:
-        """Build a single-server config; ``host`` / ``port`` / ``transport`` only override when set."""
+        """Build a single-server config, where ``host`` / ``port`` / ``transport`` only override when set."""
         layers: list[dict[str, typing.Any]] = [
             single_spec_layer(spec=spec, name=name, base_url=base_url, auth=auth or AuthConfig()),
         ]
@@ -438,7 +436,8 @@ def build_gateway_config(*layers: dict[str, typing.Any]) -> GatewayConfig:
 
     The contract for a *layer* is: a dict containing only the fields that source actually supplies.
     Pydantic defaults form the implicit floor, so callers never need to repeat them.
-    Order encodes precedence; typical CLI use is::
+    Order encodes precedence.
+    Typical CLI use is::
 
         build_gateway_config(yaml_layer, cli_layer)
 

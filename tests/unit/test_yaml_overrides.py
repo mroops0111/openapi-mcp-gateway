@@ -37,14 +37,14 @@ class TestApplyYamlOverrides:
         operations = [_operation('get_pet', spec_side)]
         yaml_side = McpIntegration(resource=ResourceOverride(name='yaml_name'))
         result = _apply_yaml_overrides(operations, {'get_pet': yaml_side}, 'petstore')
-        # YAML wins: resource present, original spec-side tool override gone.
+        # YAML wins, so the resource is present and the original spec-side tool override is gone.
         integration = result[0].x_mcp_integration
         assert integration.tool is None
         assert integration.resource is not None
         assert integration.resource.name == 'yaml_name'
 
     def test_multiple_overrides_applied(self):
-        """Several overrides apply to their respective ops; unmentioned ops untouched."""
+        """Several overrides apply to their respective ops, leaving unmentioned ops untouched."""
         operations = [_operation('a'), _operation('b'), _operation('c')]
         overrides = {
             'a': McpIntegration(resource=ResourceOverride(name='alpha')),

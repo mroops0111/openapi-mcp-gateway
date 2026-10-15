@@ -83,7 +83,7 @@ def _build_http_error_result(exception: httpx.HTTPStatusError) -> CallToolResult
 
 
 def _build_network_error_result(exception: httpx.RequestError) -> CallToolResult:
-    """Wrap an httpx transport failure (connect, timeout, DNS, etc.) as an ``isError`` result.
+    """Wrap an httpx transport failure (such as a connect, timeout, or DNS error) as an ``isError`` result.
 
     No ``response`` is available, so ``structuredContent`` stays ``None``,
     and the message surfaces the exception type for diagnosis.
@@ -163,8 +163,8 @@ def _kwargs_to_upstream_arguments(
 ) -> dict[str, typing.Any]:
     """Pick non-``None`` ``kwargs`` matching ``parameters_by_name``, keyed by the original API name.
 
-    Used to assemble query / header / body argument dicts for the upstream HTTP call
-    when no ``request`` JSONata expression is set (the pass-through path).
+    Used on the pass-through path, when no ``request`` JSONata expression is set,
+    to assemble the query / header / body argument dicts for the upstream HTTP call.
     """
     return {
         parameter.name: kwargs[parameter_name]

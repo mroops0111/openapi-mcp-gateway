@@ -42,4 +42,4 @@ class TokenStore(abc.ABC):
 
     @abc.abstractmethod
     async def close(self) -> None:
-        """Release resources (connections, file handles, etc.)."""
+        """Release resources such as connections and file handles."""

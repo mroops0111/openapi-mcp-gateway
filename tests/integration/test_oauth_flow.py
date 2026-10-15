@@ -200,7 +200,7 @@ class TestAuthorize:
 
 
 class TestFullOAuthLifecycle:
-    """End-to-end flow: authorize → callback → exchange → load → refresh → revoke."""
+    """Run the end-to-end flow of authorize, callback, exchange, load, refresh, and revoke."""
 
     async def test_full_flow(self, provider, mcp_client_info, memory_store):
         """Walk through every step of the OAuth lifecycle and verify token mappings."""
@@ -565,8 +565,8 @@ class TestTokenBinding:
     async def test_code_exchange_uses_only_the_codes_own_upstream_token(self, provider, mcp_client_info, memory_store):
         """A code with no upstream token of its own is refused, rather than borrowing the client's latest token.
 
-        The client-wide fallback this replaced could hand one user's upstream token to another user
-        signing in through the same ``client_id``.
+        The client-wide fallback this replaced could hand one user's upstream token to another user,
+        when both sign in through the same ``client_id``.
         """
         await _authorize(provider, mcp_client_info, 'state-lost')
         record = await memory_store.get('mcp_auth_code', _code(await _callback(provider, 'state-lost')))

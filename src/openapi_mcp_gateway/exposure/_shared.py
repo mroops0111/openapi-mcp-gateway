@@ -64,7 +64,7 @@ def _claim_name(candidate: str, taken: set[str], limit: int | None = None) -> st
 
 @dataclasses.dataclass
 class _SignatureTypes:
-    """The generated types of one signature: one per ``$defs`` entry, and a distinct class name for every model.
+    """The generated types of one signature, with one per ``$defs`` entry and a distinct class name for every model.
 
     Every path reaching an entry shares its one type.
     ``prefix`` namespaces the generated model names by operation, so two tools reusing a component stay distinct.
@@ -254,9 +254,7 @@ def _split_by_location(
 def _iter_unique_sanitised_parameters(
     parameters: typing.Iterable[ParameterInfo],
 ) -> typing.Iterator[tuple[str, ParameterInfo]]:
-    """Yield ``(sanitised_name, parameter)`` for each parameter,
-    skipping repeats of the same sanitised name.
-    """
+    """Yield ``(sanitised_name, parameter)`` for each parameter, skipping repeats of the same sanitised name."""
     seen_parameter_names: set[str] = set()
     for parameter in parameters:
         parameter_name = _sanitize_name(parameter.name)
@@ -285,7 +283,7 @@ def derive_name(operation: OperationInfo, override_name: str | None) -> str:
 def derive_description(operation: OperationInfo, override_description: str | None) -> str:
     """Return the description for ``operation``, honoring an explicit override and falling back to spec fields.
 
-    Fallback chain: spec ``description`` -> spec ``summary`` -> ``METHOD /path``.
+    Falls back from the spec ``description`` to the spec ``summary``, then to ``METHOD /path``.
     Shared by tool, resource, and meta-tool exposure modes.
     """
     if override_description:
@@ -319,8 +317,9 @@ def _inline_single_use(
     A reference to a shared entry is pointed at its advertised key.
     Keywords beside an inlined reference, such as a parameter's own ``description`` or a shaped ``default``,
     are merged into the entry and win over it.
-    This terminates on a recursive component, since a cycle is always reached at least twice
-    (once from outside it and once from within), so one of its entries is always shared.
+    This terminates on a recursive component,
+    since a cycle is always reached at least twice (once from outside it and once from within),
+    so one of its entries is always shared.
     """
 
     def inline(subschema: dict[str, typing.Any]) -> dict[str, typing.Any]:

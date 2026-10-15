@@ -54,7 +54,7 @@ def detect_oauth_flows(spec: OpenAPISpec) -> list[DetectedOAuthFlow]:
 
 
 def detect_primary_oauth_flow(spec: OpenAPISpec) -> DetectedOAuthFlow | None:
-    """Pick one OAuth2 flow, preferring ``authorization_code``; ``None`` if the spec declares none."""
+    """Pick one OAuth2 flow, preferring ``authorization_code``, or return ``None`` if the spec declares none."""
     flows = detect_oauth_flows(spec)
     if not flows:
         return None

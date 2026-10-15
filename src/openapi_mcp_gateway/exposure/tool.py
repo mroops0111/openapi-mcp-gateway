@@ -110,8 +110,8 @@ def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, 
         for name, parameter in _iter_unique_sanitised_parameters(operation.parameters)
         if parameter.visible
     ]
-    # Namespace nested model names by operationId, so two tools that expose a same-named body param
-    # get distinct generated classes in the resulting JSON Schema.
+    # Namespace nested model names by operationId,
+    # so two tools that expose a same-named body param get distinct generated classes in the resulting JSON Schema.
     operation_name_prefix = inflection.camelize(operation.operation_id)
     # One model per component for the whole tool, however many parameters or paths reach it.
     signature_types = _SignatureTypes(operation.schema_defs, operation_name_prefix)
@@ -186,7 +186,8 @@ def build_tool_function(
     """Build the async callable for ``operation``.
 
     With ``attach_signature=True`` (the default),
-    the returned callable carries an ``inspect.Signature`` and ``__annotations__`` so MCPServer can derive its input schema.
+    the returned callable carries an ``inspect.Signature`` and ``__annotations__``,
+    so MCPServer can derive its input schema.
     With ``attach_signature=False``, returns the bare upstream closure for dispatch from a registry,
     as used by :class:`MetaToolGenerator`.
     """
@@ -203,8 +204,8 @@ def build_tool_function(
 class _MetaToolEntry:
     """One operation indexed by the dynamic-exposure registry.
 
-    Internal to :class:`MetaToolGenerator`,
-    consumers interact with operations through the three meta-tools, not this dataclass.
+    Internal to :class:`MetaToolGenerator`.
+    Consumers interact with operations through the three meta-tools, not this dataclass.
     """
 
     description: str
@@ -213,7 +214,7 @@ class _MetaToolEntry:
 
 
 class ToolGenerator:
-    """Static exposure: register one MCP tool per operation onto ``mcp``."""
+    """Register one MCP tool per operation onto ``mcp``, for static exposure."""
 
     def __init__(self, mcp: MCPServer, binding: UpstreamBinding):
         self.mcp = mcp
@@ -261,9 +262,9 @@ class ToolGenerator:
 
 
 class MetaToolGenerator:
-    """Dynamic exposure: register ``list_operations`` / ``get_operation`` / ``call_operation`` meta-tools.
+    """Register the ``list_operations`` / ``get_operation`` / ``call_operation`` meta-tools, for dynamic exposure.
 
-    The LLM walks list → get → call to discover and invoke a specific operation.
+    The LLM lists, then gets, then calls, to discover and invoke a specific operation.
     Per-operation callables come from the same upstream closure the static path uses,
     so auth, path substitution, and request shape stay identical across modes.
     """

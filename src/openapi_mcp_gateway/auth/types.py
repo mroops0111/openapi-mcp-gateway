@@ -1,7 +1,6 @@
 """Strategies for assembling auth components from ``auth.type``.
 
-``auth.type`` says where the upstream credential comes from,
-and each answer needs different machinery.
+``auth.type`` says where the upstream credential comes from, and each answer needs different machinery.
 A static credential is captured once at startup, ``oauth2`` obtains one per flow,
 ``passthrough`` forwards the caller's, and ``none`` sends nothing.
 
@@ -10,8 +9,7 @@ Both exist so that adding a variant means adding a class and a registry entry,
 rather than editing a branch that every other variant also passes through.
 
 Header formats live here rather than on ``AuthConfig``.
-Knowing that a bearer token is written ``Bearer <token>`` is protocol knowledge,
-not configuration.
+Knowing that a bearer token is written ``Bearer <token>`` is protocol knowledge, not configuration.
 """
 
 import abc
@@ -124,8 +122,8 @@ class OAuth2Handler(AuthTypeHandler):
         )
 
 
-# The extension point. Adding a type means adding a handler above and one entry here,
-# and it necessarily follows the classes it names.
+# The extension point.
+# Adding a type means adding a handler above and one entry here, and it necessarily follows the classes it names.
 AUTH_TYPE_HANDLERS: dict[str, type[AuthTypeHandler]] = {
     'none': NoAuthHandler,
     'bearer': BearerTokenHandler,

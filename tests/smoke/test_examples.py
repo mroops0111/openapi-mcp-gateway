@@ -16,7 +16,7 @@ _EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[2] / 'examples'
 def _smoke_credentials(monkeypatch):
     """Provide bogus credentials so OAuth/Bearer specs build without real env vars.
 
-    The smoke only lists tools; it never calls upstream APIs.
+    The smoke only lists tools and never calls upstream APIs.
     Bogus values are sufficient for ``${ENV_VAR}`` substitution and OAuth flow assembly.
     """
     monkeypatch.setenv('ASANA_CLIENT_ID', 'smoke-test-client-id')
