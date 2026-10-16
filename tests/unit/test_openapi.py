@@ -439,9 +439,7 @@ class TestExclusiveBounds:
 
 
 class TestDeepNormalization:
-    """A 3.0 construct buried inside any nested-schema keyword is still normalized,
-    so it never reaches a client as 400.
-    """
+    """A 3.0 construct inside any nested-schema keyword is still normalized, so it never reaches a client as 400."""
 
     def test_properties_without_type_still_recurses(self):
         """A fragment with ``properties`` but no ``type`` is a common shape and must still normalize its fields."""

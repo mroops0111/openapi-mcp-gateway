@@ -583,8 +583,9 @@ class TestPartitioning:
         assert tools == [op]
 
     def test_auto_respects_explicit_tool_optin(self):
-        """Under ``exposure.promote_resources``,
-        an eligible GET with explicit ``expose.tool`` stays a tool (explicit beats implicit).
+        """Under ``exposure.promote_resources``, an eligible GET with explicit ``expose.tool`` stays a tool.
+
+        Explicit opt-in beats the implicit promotion.
         """
         op = OperationInfo(
             operation_id='get_pet',

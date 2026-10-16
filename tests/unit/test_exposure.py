@@ -94,9 +94,10 @@ class TestSchemaToPythonType:
         assert set(typing.get_args(result)) == {str, int}
 
     def test_array_of_oneof_objects_is_not_list_of_strings(self):
-        """Regression: arrays whose items are a ``oneOf`` of objects used to map to ``list[str]``,
-        because the ``oneOf`` fragment omits a top-level ``type``,
-        so the old ``'string'`` default collapsed items to ``str``.
+        """An array whose items are a ``oneOf`` of objects does not map to ``list[str]``.
+
+        Regression: the ``oneOf`` fragment omits a top-level ``type``,
+        so the old ``'string'`` default collapsed the items to ``str``.
         """
         schema = {
             'type': 'array',

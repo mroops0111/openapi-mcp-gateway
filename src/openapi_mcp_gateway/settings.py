@@ -338,9 +338,7 @@ class ServerConfig(pydantic.BaseModel):
 
 
 class GatewayConfig(pydantic.BaseModel):
-    """Process-wide gateway settings,
-    covering the listen address, transports, store, logging, and registered servers.
-    """
+    """Process-wide settings for the listen address, transports, store, logging, and registered servers."""
 
     model_config = pydantic.ConfigDict(extra='forbid')
 
