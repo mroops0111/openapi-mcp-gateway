@@ -161,8 +161,9 @@ class TestResourceExposureEndToEnd:
         assert 'petstore://store/inventory' in uris
 
     async def test_resources_excluded_from_tools(self, gateway):
-        """Under ``exposure.promote_resources``, every eligible GET (opt-in or not) leaves ``tools/list``,
-        while ineligible GETs stay.
+        """Under ``exposure.promote_resources``, eligible GETs leave ``tools/list`` and ineligible ones stay.
+
+        An eligible GET leaves whether or not it opts in.
         """
         mcp = gateway._servers[0].mcp
         tool_names = {t.name for t in mcp._tool_manager.list_tools()}

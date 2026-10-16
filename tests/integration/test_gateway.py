@@ -135,9 +135,7 @@ async def _serve(app: FastAPI) -> typing.AsyncIterator[str]:
 
 @contextlib.asynccontextmanager
 async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) -> typing.AsyncIterator[Client]:
-    """Connect an MCP client over ``transport``: stdio through the CLI,
-    the HTTP transports through ``gateway``'s app.
-    """
+    """Connect an MCP client over ``transport``, through the CLI for stdio and ``gateway``'s app for HTTP."""
     if transport == 'stdio':
         cli_args = ['--spec', str(spec_path), '--name', 'petstore', '--transport', 'stdio']
         async with Client(
