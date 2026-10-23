@@ -151,7 +151,7 @@ For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
 
 Runnable configs for every scenario above live in [`examples/`](examples/), each with its prerequisites documented at the top.
 
-## How It Works
+## Architecture
 
 Each tool call is authorized, shaped, and sent upstream in turn, and its response is reshaped on the way back.
 
