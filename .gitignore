@@ -22,8 +22,8 @@ venv/
 .env
 *.tokens.json
 
-# Internal docs
-docs
+# Internal docs, linked in from outside the repository
+.internal
 *.md
 !README.md
 # Plugin skills ship markdown that must be tracked

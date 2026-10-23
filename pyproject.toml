@@ -1,14 +1,14 @@
 [project]
 name = "openapi-mcp-gateway"
 version = "0.8.0"
-description = "Turn any OpenAPI specification into a Model Context Protocol (MCP) server with a single command."
+description = "Mount any OpenAPI/Swagger API as an MCP server from one YAML file, with per-user OAuth2 and token exchange."
 authors = [
     {name = "Yun-Tai Yang"},
 ]
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
-keywords = ["mcp", "openapi", "ai", "llm", "gateway"]
+keywords = ["mcp", "model-context-protocol", "openapi", "gateway", "oauth2", "fastapi", "jsonata", "ai", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

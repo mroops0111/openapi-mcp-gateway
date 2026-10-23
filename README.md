@@ -1,4 +1,4 @@
-# OpenAPI MCP Gateway
+![openapi-mcp-gateway. Point one YAML file at your OpenAPI specs, and each API gets its own MCP endpoint and auth.](docs/assets/cover.svg)
 
 [![CI](https://github.com/mroops0111/openapi-mcp-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/mroops0111/openapi-mcp-gateway/actions/workflows/ci.yml)
 [![PyPI version](https://img.shields.io/pypi/v/openapi-mcp-gateway.svg?v=1)](https://pypi.org/project/openapi-mcp-gateway/)
@@ -6,20 +6,18 @@
 [![Python Version](https://img.shields.io/pypi/pyversions/openapi-mcp-gateway.svg?v=1)](https://pypi.org/project/openapi-mcp-gateway/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, or expose an existing FastAPI app the same way. Multiple APIs in one process, each with its own mount path and auth.
+Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, or expose an existing FastAPI app the same way. One YAML file runs multiple APIs in one process, each with its own mount path and auth, and none of it needs Python.
 
-<p align="center">
-  <img src="architecture.png" alt="OpenAPI MCP Gateway architecture: MCP clients (Claude Desktop, Cursor, AI agents) connect over stdio / SSE / streamable-http to the gateway, which at startup ingests OpenAPI specs or FastAPI apps and exposes them as MCP tools, meta-tools, and resources, then per call authorizes with bearer / API key / OAuth2 against its own issuer or an external one, never forwarding the caller's token, shapes the request and response with JSONata, and emits MCP-native output, calling upstream REST APIs over HTTP or an in-process FastAPI app over ASGI." width="100%">
-</p>
+![openapi-mcp-gateway architecture. An MCP client calls an MCP endpoint, one per API, which servers.yml builds at startup. Each call is authorized first, by the gateway's own OAuth server or by token exchange, with per-user upstream tokens from the identity provider kept in a memory or Redis token store. The request is then shaped by params and JSONata, and the call goes out with the upstream token, over HTTP to a REST API or over ASGI to a FastAPI app in the same process. The response comes back to the client, reshaped by JSONata.](docs/assets/architecture.svg)
 
 ```bash
 uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 # Server live at http://127.0.0.1:8000/api/mcp
 ```
 
-- **Multi-Spec, Multi-Auth.** Mount GitHub, an OAuth2 SaaS, and your internal API side by side, each with its own auth and token namespace.
-- **Spec-Compliant Authorization.** The gateway runs its own OAuth server and mints audience-bound upstream tokens, so the MCP client's credential is never replayed against a third party.
-- **Tool Shaping.** Rename ugly `operationId`s, hide knobs the model should never touch, and rewrite requests and responses with JSONata, all in YAML with no fork required.
+- **Multi-Spec, Multi-Auth.** Mount GitHub, an OAuth2 SaaS, and your internal API side by side from one config file, each at its own endpoint with its own auth and token namespace.
+- **Spec-Compliant Authorization.** The gateway runs its own OAuth server, or exchanges the caller's token with an issuer you already run, and calls the API with a per-user upstream token. The MCP client's credential is never replayed against a third party.
+- **Tool Shaping.** Rename ugly `operationId`s, hide knobs the model should never touch, and rewrite requests and responses with JSONata, all in YAML with no fork required. Every expression is checked at startup.
 - **Dynamic Exposure.** Front a 1,200-operation spec with three `list → get → call` meta-tools, so connecting to it does not spend the LLM's whole context window on tool schemas.
 - **Resources, Not Just Tools.** Eligible read-only GETs register as MCP resources instead, addressable by URI and surfaced by the client rather than guessed at by the model.
 - **FastAPI-Native.** Decorate routes with `@mcp_tool` to expose them in-process over ASGI, no extra hop and no second spec to maintain.
@@ -301,6 +299,7 @@ Configuration merges in this order, with each layer overriding the previous one.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `name` | string | required | Unique identifier. Mount path defaults to `/{name}` |
+| `path_prefix` | string | `name` | Mount path for this server, when it should differ from `/{name}` |
 | `spec` | string | required | Path or URL to OpenAPI document (JSON or YAML) |
 | `base_url` | string | from spec | Override the upstream base URL |
 | `auth.type` | string | `none` | `none`, `bearer`, `api_key`, `oauth2`, or `passthrough`. Says where the upstream credential comes from: a fixed one, one the gateway obtains, or the caller's own forwarded |
@@ -320,8 +319,8 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `timeout` | float | `90` | HTTP timeout in seconds |
 | `headers` | map |  | Static headers sent on every upstream call, such as an API version the whole API requires. Values take `${ENV_VAR}`, and an unset variable leaves the header out. A header the call itself sends wins. `Authorization` is refused, since it belongs to `auth` |
 | `instructions` | string |  | Guidance about the server as a whole, such as when to use it rather than another server or which tool to call first. Sent in the MCP `initialize` result, which clients place in the model's context. Unset leaves the field out |
-| `exposure` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`list_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand. |
-| `mode` | string | `tool_only` | `tool_only` forces every operation to a tool and ignores any `resource` declaration. `auto` promotes eligible GETs (no required non-path parameter) to MCP resources, and spec-side `resource` opt-ins still apply as explicit overrides. |
+| `exposure.style` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`list_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand, and ignores `promote_resources`. |
+| `exposure.promote_resources` | bool | `false` | Promotes eligible GETs (no required non-path parameter) to MCP resources. A per-operation `resource` declaration applies either way. |
 | `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation. Useful when you do not control the upstream spec. |
 
 </details>
@@ -349,7 +348,7 @@ Read-only `GET` operations are a better fit for the MCP **resource** primitive t
 
 Set `exposure.promote_resources: true` and every eligible GET promotes automatically. Eligible means no required `query`, `header`, or body parameter. Required path parameters are fine and turn the operation into a resource template. Against the vanilla Petstore3 spec that yields 13 tools, 3 concrete resources, and 3 resource templates with zero spec edits.
 
-Keeping those endpoints off the tool list also saves context, since most clients do not auto-load resources. Resource support is uneven across the ecosystem, though, and an agent framework that ignores resources entirely will not reach a promoted operation at all. Stay on the default `mode: tool_only` when that is your target.
+Keeping those endpoints off the tool list also saves context, since most clients do not auto-load resources. Resource support is uneven across the ecosystem, though, and an agent framework that ignores resources entirely will not reach a promoted operation at all. Leave `promote_resources` off when that is your target.
 
 <details>
 <summary><b>Per-Operation Control, from YAML or from the Spec</b></summary>
