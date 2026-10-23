@@ -1,14 +1,14 @@
 ![openapi-mcp-gateway. Point one YAML file at your OpenAPI specs, and each API gets its own MCP endpoint and auth.](docs/assets/cover.svg)
 
-[![CI](https://github.com/mroops0111/openapi-mcp-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/mroops0111/openapi-mcp-gateway/actions/workflows/ci.yml)
-[![PyPI version](https://img.shields.io/pypi/v/openapi-mcp-gateway.svg?v=1)](https://pypi.org/project/openapi-mcp-gateway/)
-[![PyPI Downloads](https://static.pepy.tech/badge/openapi-mcp-gateway/month)](https://pepy.tech/projects/openapi-mcp-gateway)
-[![Python Version](https://img.shields.io/pypi/pyversions/openapi-mcp-gateway.svg?v=1)](https://pypi.org/project/openapi-mcp-gateway/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/mroops0111/openapi-mcp-gateway/actions/workflows/ci.yml"><img src="https://github.com/mroops0111/openapi-mcp-gateway/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/openapi-mcp-gateway/"><img src="https://img.shields.io/pypi/v/openapi-mcp-gateway.svg?v=1" alt="PyPI version"></a>
+  <a href="https://pepy.tech/projects/openapi-mcp-gateway"><img src="https://static.pepy.tech/badge/openapi-mcp-gateway/month" alt="PyPI Downloads"></a>
+  <a href="https://pypi.org/project/openapi-mcp-gateway/"><img src="https://img.shields.io/pypi/pyversions/openapi-mcp-gateway.svg?v=1" alt="Python Version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
 
 Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, or expose an existing FastAPI app the same way. One YAML file runs multiple APIs in one process, each with its own mount path and auth, and none of it needs Python.
-
-![openapi-mcp-gateway architecture. An MCP client calls an MCP endpoint, one per API, which servers.yml builds at startup. Each call is authorized first, by the gateway's own OAuth server or by token exchange, with per-user upstream tokens from the identity provider kept in a memory or Redis token store. The request is then shaped by params and JSONata, and the call goes out with the upstream token, over HTTP to a REST API or over ASGI to a FastAPI app in the same process. The response comes back to the client, reshaped by JSONata.](docs/assets/architecture.svg)
 
 ```bash
 uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
@@ -150,6 +150,12 @@ For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
 ### More Examples
 
 Runnable configs for every scenario above live in [`examples/`](examples/), each with its prerequisites documented at the top.
+
+## How It Works
+
+Each tool call is authorized, shaped, and sent upstream in turn, and its response is reshaped on the way back.
+
+![openapi-mcp-gateway architecture. An MCP client calls an MCP endpoint, one per API, which servers.yml builds at startup. Each call is authorized first, by the gateway's own OAuth server or by token exchange, with per-user upstream tokens from the identity provider kept in a memory or Redis token store. The request is then shaped by params and JSONata, and the call goes out with the upstream token, over HTTP to a REST API or over ASGI to a FastAPI app in the same process. The response comes back to the client, reshaped by JSONata.](docs/assets/architecture.svg)
 
 ## Authorization
 
