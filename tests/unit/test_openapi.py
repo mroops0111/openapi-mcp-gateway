@@ -3,6 +3,7 @@ import json
 import pytest
 
 from openapi_mcp_gateway.openapi import (
+    MediaField,
     _deep_merge,
     _expand_inline,
     _expand_schema,
@@ -564,6 +565,85 @@ class TestParseSpec:
     def test_security_schemes_parsed(self):
         """Top-level ``components.securitySchemes`` is exposed on the parsed spec."""
         assert 'oauth2' in self.spec.security_schemes
+
+
+class TestResponseMedia:
+    """Fields the success response declares as ``contentEncoding: base64`` become the operation's media fields."""
+
+    @staticmethod
+    def _media(response: dict, schemas: dict | None = None) -> dict[str, MediaField]:
+        """Parse a one-operation spec whose ``200`` response is ``response`` and return its media fields."""
+        return parse_spec(operation_spec(response=response, schemas=schemas)).operations[0].response_media
+
+    def test_nested_and_array_fields_are_found_through_references(self):
+        """A field inside an array of a referenced component gets a ``[*]`` path and its ``contentMediaType``."""
+        schemas = {
+            'Attachment': {
+                'type': 'object',
+                'properties': {
+                    'content': {'type': 'string', 'contentEncoding': 'base64', 'contentMediaType': 'application/pdf'},
+                },
+            },
+        }
+        response = {
+            'type': 'object',
+            'properties': {
+                'signature': {'type': 'string', 'contentEncoding': 'base64', 'contentMediaType': 'image/png'},
+                'attachments': {'type': 'array', 'items': component_ref('Attachment')},
+            },
+        }
+
+        assert self._media(response, schemas) == {
+            'signature': MediaField(encoding='base64', media_type='image/png'),
+            'attachments[*].content': MediaField(encoding='base64', media_type='application/pdf'),
+        }
+
+    def test_missing_media_type_falls_back_to_octet_stream(self):
+        """Without ``contentMediaType`` nothing says what the bytes are, so they are an octet stream."""
+        response = {'type': 'object', 'properties': {'blob': {'type': 'string', 'contentEncoding': 'base64'}}}
+
+        assert self._media(response) == {'blob': MediaField(encoding='base64')}
+
+    def test_combinators_are_searched_at_the_same_path(self):
+        """A field declared in an ``allOf`` branch keeps the path of the object it belongs to."""
+        response = {
+            'allOf': [
+                {'type': 'object', 'properties': {'id': {'type': 'integer'}}},
+                {'type': 'object', 'properties': {'photo': {'type': 'string', 'contentEncoding': 'base64'}}},
+            ],
+        }
+
+        assert set(self._media(response)) == {'photo'}
+
+    def test_recursive_schema_stops(self):
+        """A component that refers back to itself is followed once per branch, not forever."""
+        schemas = {
+            'Node': {
+                'type': 'object',
+                'properties': {
+                    'icon': {'type': 'string', 'contentEncoding': 'base64', 'contentMediaType': 'image/svg+xml'},
+                    'children': {'type': 'array', 'items': component_ref('Node')},
+                },
+            },
+        }
+
+        assert set(self._media(component_ref('Node'), schemas)) == {'icon'}
+
+    def test_undeclared_base64_is_left_alone(self):
+        """Nothing is guessed, so a plain string field is not media, whatever it holds."""
+        response = {'type': 'object', 'properties': {'data': {'type': 'string', 'format': 'byte'}}}
+
+        assert self._media(response) == {}
+
+    def test_status_range_and_integer_keys_are_read(self):
+        """A ``2XX`` range, or a status a YAML spec keyed as an integer, still names the success response."""
+        schema = {'type': 'object', 'properties': {'blob': {'type': 'string', 'contentEncoding': 'base64'}}}
+        for status in ('2XX', 201):
+            raw = operation_spec()
+            raw['paths']['/things']['post']['responses'] = {
+                status: {'description': 'ok', 'content': {'application/json': {'schema': schema}}},
+            }
+            assert set(parse_spec(raw).operations[0].response_media) == {'blob'}
 
 
 class TestRelativeServerResolution:
