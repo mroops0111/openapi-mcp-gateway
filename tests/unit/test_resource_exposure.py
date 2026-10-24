@@ -346,6 +346,20 @@ class TestResourceRead:
         assert captured['path'] == '/store/inventory'
         assert '"available": 7' in text
 
+    async def test_binary_read_returns_bytes(self, mock_upstream):
+        """A binary body comes back as the upstream's bytes, which MCPServer serves as a blob."""
+        body = b'\x89PNG\r\n\x1a\n\xff\xfe'
+        mock_upstream(lambda _request: httpx.Response(200, content=body, headers={'content-type': 'image/png'}))
+
+        operation = OperationInfo(
+            operation_id='getLogo',
+            method='get',
+            path='/logo',
+            x_mcp_integration=_expose_resource(),
+        )
+        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
+        assert await read_fn() == body
+
     async def test_dashed_path_param_substituted_with_original_name(self, mock_upstream):
         """Sanitised identifier on the signature maps back to the original placeholder on the URL."""
         captured: dict = {}

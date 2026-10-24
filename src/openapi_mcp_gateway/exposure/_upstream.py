@@ -1,3 +1,4 @@
+import base64
 import dataclasses
 import json
 import typing
@@ -6,10 +7,10 @@ import httpx
 import pydantic
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 from mcp.server.mcpserver import Context
-from mcp.types import CallToolResult, TextContent
+from mcp.types import AudioContent, BlobResourceContents, CallToolResult, EmbeddedResource, ImageContent, TextContent
 
 from ..auth.resolver import AuthResolver, NullAuthResolver
-from ..client import APIClient
+from ..client import APIClient, BinaryBody
 from ..openapi import OperationInfo, ParameterInfo
 from ._shared import _get_override, _sanitize_name, _split_by_location, build_input_schema
 from ._transform import TransformError, apply_transform, compile_expression
@@ -46,6 +47,25 @@ def _build_success_result(payload: typing.Any) -> CallToolResult:
         structured_content=structured_content,
         is_error=False,
     )
+
+
+def _build_binary_result(body: BinaryBody) -> CallToolResult:
+    """Wrap a binary upstream body as the MCP content block its media type calls for.
+
+    Images and audio get their own block types, so a client can render or play them.
+    Anything else, such as a PDF or an archive, is embedded as a blob resource under the URL it came from.
+    """
+    data = base64.b64encode(body.data).decode('ascii')
+    if body.mime_type.startswith('image/'):
+        block = ImageContent(type='image', data=data, mime_type=body.mime_type)
+    elif body.mime_type.startswith('audio/'):
+        block = AudioContent(type='audio', data=data, mime_type=body.mime_type)
+    else:
+        block = EmbeddedResource(
+            type='resource',
+            resource=BlobResourceContents(uri=body.url, blob=data, mime_type=body.mime_type),
+        )
+    return CallToolResult(content=[block], is_error=False)
 
 
 def _parse_json_object(text: str, content_type: str) -> dict[str, typing.Any] | None:
@@ -344,6 +364,9 @@ def _build_upstream_closure(
 
         await context.report_progress(1, 1, 'Request completed')
 
+        # A response transform reshapes JSON, so it has nothing to apply to in a binary body.
+        if isinstance(result, BinaryBody):
+            return _build_binary_result(result)
         if response_transform is not None:
             try:
                 result = apply_transform(response_transform, result)
