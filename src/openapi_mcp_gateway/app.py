@@ -129,6 +129,29 @@ def _transport_security(protection: DNSRebindingProtectionConfig, host: str | No
     return None
 
 
+@contextlib.asynccontextmanager
+async def serve_lifespan(
+    servers: list[_ServerBundle],
+    store: TokenStore,
+    on_shutdown: typing.Callable[[], typing.Awaitable[None]],
+    transport: str,
+) -> typing.AsyncIterator[None]:
+    """Start the servers' session managers for as long as they serve, then run the shutdown hooks and close the store.
+
+    Shared by the gateway's own app and by a host app that mounts the gateway,
+    since the session managers only start inside an app lifespan.
+    """
+    async with contextlib.AsyncExitStack() as stack:
+        # Only ``streamable_http_app`` creates a session manager, and reading it before then raises.
+        # An SSE connection runs its own session inside the request, so there is nothing to start.
+        if transport != 'sse':
+            for bundle in servers:
+                await stack.enter_async_context(bundle.mcp.session_manager.run())
+        yield
+    await on_shutdown()
+    await store.close()
+
+
 def build_app(
     servers: list[_ServerBundle],
     config: GatewayConfig,
@@ -141,15 +164,8 @@ def build_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
-        async with contextlib.AsyncExitStack() as stack:
-            # Only ``streamable_http_app`` creates a session manager, and reading it before then raises.
-            # An SSE connection runs its own session inside the request, so there is nothing to start.
-            if transport != 'sse':
-                for bundle in servers:
-                    await stack.enter_async_context(bundle.mcp.session_manager.run())
+        async with serve_lifespan(servers, store, on_shutdown, transport):
             yield
-        await on_shutdown()
-        await store.close()
 
     app = FastAPI(
         title='OpenAPI MCP Gateway',
