@@ -74,14 +74,15 @@ def _locate(node: typing.Any, steps: list[str], location: str) -> typing.Iterato
     if step == _EVERY_ITEM:
         if not isinstance(node, list):
             return
-        keys: list[str | int] = list(range(len(node)))
+        children: list[tuple[str | int, typing.Any, str]] = [
+            (index, item, f'{location}[{index}]') for index, item in enumerate(node)
+        ]
     elif isinstance(node, dict) and step in node:
-        keys = [step]
+        children = [(step, node[step], f'{location}.{step}' if location else step)]
     else:
         return
-    for key in keys:
-        child_location = f'{location}[{key}]' if isinstance(key, int) else f'{location}.{key}' if location else key
+    for key, child, child_location in children:
         if rest:
-            yield from _locate(node[key], rest, child_location)
+            yield from _locate(child, rest, child_location)
         else:
             yield node, key, child_location

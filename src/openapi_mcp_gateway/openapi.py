@@ -583,12 +583,13 @@ def _success_response_schema(raw: dict[str, typing.Any], operation: dict[str, ty
 
 def _collect_media_fields(
     raw: dict[str, typing.Any],
-    schema: dict[str, typing.Any],
+    schema: typing.Any,
     path: str = '',
     seen: frozenset[str] = frozenset(),
 ) -> dict[str, MediaField]:
     """Return every field under ``schema`` that declares ``contentEncoding: base64``, keyed by field path.
 
+    ``schema`` is whatever the spec holds at this point, so anything but a mapping contributes nothing.
     A field's ``contentMediaType`` becomes its media type.
     ``seen`` holds the references already followed on this branch, so a recursive schema stops.
     """
