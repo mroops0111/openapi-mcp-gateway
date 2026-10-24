@@ -291,6 +291,7 @@ class TestBinaryResponses:
         result = await self._call(mock_upstream, content_type)
 
         (block,) = result.content
+        assert isinstance(block, ImageContent | AudioContent)
         assert isinstance(block, block_type)
         assert block.mime_type == content_type
         assert base64.b64decode(block.data) == self._BODY
@@ -361,8 +362,9 @@ class TestMediaFields:
 
         result = await self._call(mock_upstream, body, response_media=media)
 
-        _text, first, second = result.content
-        assert [block.resource.uri for block in (first, second)] == [
+        _text, *blocks = result.content
+        assert all(isinstance(block, EmbeddedResource) for block in blocks)
+        assert [typing.cast(EmbeddedResource, block).resource.uri for block in blocks] == [
             f'{API_URL}/contracts/7#attachments[0].content',
             f'{API_URL}/contracts/7#attachments[1].content',
         ]
