@@ -367,7 +367,7 @@ def _shaping_label(tool: ExposedTool) -> str:
     if not tool.shaping:
         return 'passthrough'
     parts = [tool.shaping['params']] if tool.shaping.get('params') else []
-    parts += [key for key in ('request', 'response') if tool.shaping.get(key)]
+    parts += [key for key in ('request', 'response', 'media') if tool.shaping.get(key)]
     return ', '.join(parts)
 
 
