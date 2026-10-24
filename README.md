@@ -28,7 +28,7 @@ uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 
 ```bash
 uv add openapi-mcp-gateway
-uv add "openapi-mcp-gateway[redis]"   # optional, Redis token store for multi-replica OAuth
+uv add "openapi-mcp-gateway[redis]"  # optional, Redis token store for multi-replica OAuth
 ```
 
 Requires Python 3.11+. To skip the install entirely, `uvx openapi-mcp-gateway` runs the published package directly.
@@ -96,7 +96,7 @@ Mix public, bearer, and OAuth2 services in a single config. Each server is mount
 
 ```yaml
 # servers.yml
-url: http://127.0.0.1:8000   # public base URL for OAuth callbacks
+url: http://127.0.0.1:8000  # public base URL for OAuth callbacks
 
 servers:
   # Resource auto-promotion: eligible GETs become MCP resources, the rest stay tools.
