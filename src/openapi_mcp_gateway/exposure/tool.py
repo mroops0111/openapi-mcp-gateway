@@ -52,6 +52,7 @@ def _shaping(tool_override: ToolOverride | None) -> dict[str, typing.Any] | None
         'params': tool_override.params_strategy if tool_override.params and tool_override.params_strategy else None,
         'request': bool(tool_override.request),
         'response': bool(tool_override.response),
+        'media': bool(tool_override.media),
     }
     return shaping if any(shaping.values()) else None
 

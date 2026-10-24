@@ -9,8 +9,9 @@ from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, TextContent
 
 from ..auth.resolver import AuthResolver, NullAuthResolver
-from ..client import APIClient
+from ..client import APIClient, BinaryBody
 from ..openapi import OperationInfo, ParameterInfo
+from ._media import MediaBlock, media_block, promote_media
 from ._shared import _get_override, _sanitize_name, _split_by_location, build_input_schema
 from ._transform import TransformError, apply_transform, compile_expression
 
@@ -33,19 +34,25 @@ class UpstreamBinding:
     headers: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
-def _build_success_result(payload: typing.Any) -> CallToolResult:
+def _build_success_result(payload: typing.Any, media_blocks: typing.Sequence[MediaBlock] = ()) -> CallToolResult:
     """Wrap an upstream success body as a ``CallToolResult``.
 
     Object-shaped JSON also lands in ``structuredContent``.
     Lists and scalars stay text-only since ``structuredContent`` is object-typed in the MCP spec.
+    Media promoted out of the body follows the text, in the order its placeholders number it.
     """
     text = json.dumps(payload, indent=2, ensure_ascii=False)
     structured_content = payload if isinstance(payload, dict) else None
     return CallToolResult(
-        content=[TextContent(type='text', text=text)],
+        content=[TextContent(type='text', text=text), *media_blocks],
         structured_content=structured_content,
         is_error=False,
     )
+
+
+def _build_binary_result(body: BinaryBody) -> CallToolResult:
+    """Wrap a binary upstream body as the one content block its media type calls for."""
+    return CallToolResult(content=[media_block(body.data, body.mime_type, body.url)], is_error=False)
 
 
 def _parse_json_object(text: str, content_type: str) -> dict[str, typing.Any] | None:
@@ -273,6 +280,8 @@ def _build_upstream_closure(
     validator = (
         Draft202012Validator(build_input_schema(operation), format_checker=FormatChecker()) if validate_input else None
     )
+    # The override wins per path, so an author can correct or add to what the spec declares.
+    media_fields = {**operation.response_media, **(tool_override.media if tool_override else {})}
 
     async def upstream_callable(**kwargs: typing.Any) -> CallToolResult:
         context: Context = kwargs.pop('ctx')
@@ -344,11 +353,16 @@ def _build_upstream_closure(
 
         await context.report_progress(1, 1, 'Request completed')
 
+        # A response transform reshapes JSON, so it has nothing to apply to in a binary body.
+        if isinstance(result, BinaryBody):
+            return _build_binary_result(result)
+        # Media paths name fields of the upstream response, so they are promoted before a transform reshapes it.
+        result, media_blocks = promote_media(result, media_fields, f'{binding.base_url.rstrip("/")}{resolved_path}')
         if response_transform is not None:
             try:
                 result = apply_transform(response_transform, result)
             except TransformError as error:
                 return _build_transform_error_result('response', error)
-        return _build_success_result(result)
+        return _build_success_result(result, media_blocks)
 
     return upstream_callable

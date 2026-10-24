@@ -31,6 +31,11 @@ _COMPONENT_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
 # Compared by identity, so it is never mutated.
 _EXPANDING: dict[str, typing.Any] = {}
 
+# Keywords whose value is a list of schemas a response may match, each searched for media fields at the same path.
+_MEDIA_COMBINATOR_KEYS = ('allOf', 'oneOf', 'anyOf')
+# The media type a base64 field is promoted as when nothing names one.
+DEFAULT_MEDIA_TYPE = 'application/octet-stream'
+
 
 class ParameterInfo(pydantic.BaseModel):
     """One OpenAPI parameter (path, query, header, cookie, or body) with its schema.
@@ -109,6 +114,19 @@ class ParamOverride(pydantic.BaseModel):
         return 'type' in self.schema_fragment
 
 
+class MediaField(pydantic.BaseModel):
+    """How one response field carries media, so the gateway can promote it to an MCP content block.
+
+    ``encoding`` says how to get the bytes out of the field, and is the only thing that varies by source.
+    Only ``base64`` exists today.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid')
+
+    encoding: typing.Literal['base64']
+    media_type: str = DEFAULT_MEDIA_TYPE
+
+
 class ToolOverride(pydantic.BaseModel):
     """Spec-author overrides for the MCP tool generated from an operation.
 
@@ -120,6 +138,9 @@ class ToolOverride(pydantic.BaseModel):
     ``request`` and ``response`` are JSONata expressions that transform the values,
     ``request`` mapping the friendly arguments into the upstream request,
     and ``response`` mapping the upstream response into what the client sees.
+
+    ``media`` maps a field path in the upstream response, such as ``attachments[*].content``, to how it carries media.
+    Each entry wins over what the spec declares for the same path.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid')
@@ -131,6 +152,7 @@ class ToolOverride(pydantic.BaseModel):
     params_strategy: typing.Literal['merge', 'replace'] | None = None
     request: str | None = None
     response: str | None = None
+    media: dict[str, MediaField] = pydantic.Field(default_factory=dict)
 
 
 class ResourceOverride(pydantic.BaseModel):
@@ -174,6 +196,8 @@ class OperationInfo(pydantic.BaseModel):
     # The expanded component schemas the parameters reach, keyed by component name,
     # for resolving their ``#/$defs/<Name>`` references.
     schema_defs: dict[str, dict[str, typing.Any]] = pydantic.Field(default_factory=dict)
+    # The success response's fields the spec declares as media, keyed by field path.
+    response_media: dict[str, MediaField] = pydantic.Field(default_factory=dict)
 
     @property
     def tool_exposed(self) -> bool:
@@ -541,6 +565,55 @@ def _declares_object_properties(schema: dict[str, typing.Any]) -> bool:
     return schema_type == 'object'
 
 
+def _success_response_schema(raw: dict[str, typing.Any], operation: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Return the JSON schema of the operation's first ``2xx`` response, or ``{}`` when it declares none."""
+    # A YAML spec can key a status as an integer, so every key is read as the string the spec means.
+    responses = {str(status): response for status, response in (operation.get('responses') or {}).items()}
+    for status in sorted(responses):
+        if not status.startswith('2') or not isinstance(responses[status], dict):
+            continue
+        response = responses[status]
+        if '$ref' in response:
+            response = _resolve_ref(raw, response['$ref'])
+        for media_type, content in response.get('content', {}).items():
+            if 'json' in media_type and isinstance(content, dict):
+                return content.get('schema', {})
+    return {}
+
+
+def _collect_media_fields(
+    raw: dict[str, typing.Any],
+    schema: typing.Any,
+    path: str = '',
+    seen: frozenset[str] = frozenset(),
+) -> dict[str, MediaField]:
+    """Return every field under ``schema`` that declares ``contentEncoding: base64``, keyed by field path.
+
+    ``schema`` is whatever the spec holds at this point, so anything but a mapping contributes nothing.
+    A field's ``contentMediaType`` becomes its media type.
+    ``seen`` holds the references already followed on this branch, so a recursive schema stops.
+    """
+    if not isinstance(schema, dict):
+        return {}
+    reference = schema.get('$ref')
+    if isinstance(reference, str):
+        if reference in seen:
+            return {}
+        schema = {**_resolve_ref(raw, reference), **_siblings(schema)}
+        seen = seen | {reference}
+
+    fields: dict[str, MediaField] = {}
+    if path and schema.get('contentEncoding') == 'base64':
+        fields[path] = MediaField(encoding='base64', media_type=schema.get('contentMediaType') or DEFAULT_MEDIA_TYPE)
+    for name, property_schema in (schema.get('properties') or {}).items():
+        fields |= _collect_media_fields(raw, property_schema, f'{path}.{name}' if path else name, seen)
+    fields |= _collect_media_fields(raw, schema.get('items'), f'{path}[*]', seen)
+    for key in _MEDIA_COMBINATOR_KEYS:
+        for branch in schema.get(key) or []:
+            fields |= _collect_media_fields(raw, branch, path, seen)
+    return fields
+
+
 def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str | None) -> list[dict[str, typing.Any]]:
     """Resolve relative ``servers[].url`` against ``source`` per OpenAPI 3.0 §4.7.5."""
     if not source or not source.startswith(('http://', 'https://')):
@@ -640,6 +713,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                         name: defs[name]
                         for name in count_defs_references((parameter.schema_ for parameter in params), defs)
                     },
+                    response_media=_collect_media_fields(raw, _success_response_schema(raw, operation)),
                 )
             )
 

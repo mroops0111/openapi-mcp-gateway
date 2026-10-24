@@ -1,3 +1,4 @@
+import base64
 import inspect
 import json
 import types
@@ -8,7 +9,7 @@ import pytest
 from mcp import Client
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
-from mcp.types import CallToolResult, TextContent
+from mcp.types import AudioContent, BlobResourceContents, CallToolResult, EmbeddedResource, ImageContent, TextContent
 
 from openapi_mcp_gateway import Gateway
 from openapi_mcp_gateway.exposure import (
@@ -27,6 +28,7 @@ from openapi_mcp_gateway.exposure._shared import (
 from openapi_mcp_gateway.exposure.tool import _shaping, merge_tool_annotations
 from openapi_mcp_gateway.openapi import (
     McpIntegration,
+    MediaField,
     OperationInfo,
     ParameterInfo,
     ParamOverride,
@@ -262,6 +264,147 @@ class TestToolGeneration:
         tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'get_team')
         await tool.run({'enterprise_team': 'acme'}, context=_stub_context())
         assert captured['path'] == '/teams/acme'
+
+
+class TestBinaryResponses:
+    """A binary upstream body reaches the client as the MCP content block its media type calls for."""
+
+    _BODY = b'\x89PNG\r\n\x1a\n\xff\xfe'
+
+    async def _call(self, mock_upstream, content_type: str) -> CallToolResult:
+        """Call a one-operation tool whose upstream answers with ``_BODY`` under ``content_type``."""
+        mock_upstream(lambda _request: httpx.Response(200, content=self._BODY, headers={'content-type': content_type}))
+        mcp = MCPServer('test')
+        ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)).register(
+            [
+                OperationInfo(operation_id='download', method='get', path='/files/report'),
+            ]
+        )
+        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'download')
+        return await tool.run({}, context=_stub_context())
+
+    @pytest.mark.parametrize(
+        ('content_type', 'block_type'), [('image/png', ImageContent), ('audio/mpeg', AudioContent)]
+    )
+    async def test_image_and_audio_get_their_own_blocks(self, mock_upstream, content_type, block_type):
+        """Images and audio arrive as base64 in an image or audio block, with the upstream media type."""
+        result = await self._call(mock_upstream, content_type)
+
+        (block,) = result.content
+        assert isinstance(block, ImageContent | AudioContent)
+        assert isinstance(block, block_type)
+        assert block.mime_type == content_type
+        assert base64.b64decode(block.data) == self._BODY
+        assert result.structured_content is None
+
+    async def test_other_binary_is_an_embedded_blob(self, mock_upstream):
+        """Anything else, such as a PDF, arrives as a blob resource under the URL it was fetched from."""
+        result = await self._call(mock_upstream, 'application/pdf')
+
+        (block,) = result.content
+        assert isinstance(block, EmbeddedResource)
+        assert isinstance(block.resource, BlobResourceContents)
+        assert block.resource.uri == f'{API_URL}/files/report'
+        assert block.resource.mime_type == 'application/pdf'
+        assert base64.b64decode(block.resource.blob) == self._BODY
+
+
+class TestMediaFields:
+    """Media fields of a JSON response move into content blocks, leaving a placeholder that points at each one."""
+
+    _PNG = b'\x89PNG\r\n\x1a\n'
+    _PDF = b'%PDF-1.7'
+
+    async def _call(
+        self,
+        mock_upstream,
+        body: typing.Any,
+        response_media: dict[str, MediaField] | None = None,
+        tool: ToolOverride | None = None,
+    ) -> CallToolResult:
+        """Call a one-operation tool whose upstream answers with the JSON ``body``."""
+        mock_upstream(lambda _request: httpx.Response(200, json=body))
+        mcp = MCPServer('test')
+        operation = OperationInfo(
+            operation_id='get_contract',
+            method='get',
+            path='/contracts/7',
+            response_media=response_media or {},
+            x_mcp_integration=McpIntegration(tool=tool),
+        )
+        ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)).register([operation])
+        registered = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'get_contract')
+        return await registered.run({}, context=_stub_context())
+
+    @staticmethod
+    def _encode(data: bytes) -> str:
+        return base64.b64encode(data).decode('ascii')
+
+    async def test_declared_field_follows_the_json_as_a_block(self, mock_upstream):
+        """The JSON keeps its shape with a placeholder, and the bytes follow it as an image block."""
+        body = {'id': 7, 'signature': {'image': self._encode(self._PNG)}}
+        media = {'signature.image': MediaField(encoding='base64', media_type='image/png')}
+
+        result = await self._call(mock_upstream, body, response_media=media)
+
+        text, image = result.content
+        assert isinstance(text, TextContent)
+        assert isinstance(image, ImageContent)
+        assert base64.b64decode(image.data) == self._PNG
+        placeholder = f'<content[1]: image/png, {len(self._PNG)} bytes>'
+        assert result.structured_content == {'id': 7, 'signature': {'image': placeholder}}
+        assert placeholder in text.text
+
+    async def test_every_array_item_gets_its_own_block(self, mock_upstream):
+        """Each item under ``[*]`` becomes a separate block, numbered and addressed by its index."""
+        body = {'attachments': [{'content': self._encode(self._PDF)}, {'content': self._encode(self._PNG)}]}
+        media = {'attachments[*].content': MediaField(encoding='base64', media_type='application/pdf')}
+
+        result = await self._call(mock_upstream, body, response_media=media)
+
+        _text, *blocks = result.content
+        assert all(isinstance(block, EmbeddedResource) for block in blocks)
+        assert [typing.cast(EmbeddedResource, block).resource.uri for block in blocks] == [
+            f'{API_URL}/contracts/7#attachments[0].content',
+            f'{API_URL}/contracts/7#attachments[1].content',
+        ]
+        assert [item['content'] for item in result.structured_content['attachments']] == [
+            f'<content[1]: application/pdf, {len(self._PDF)} bytes>',
+            f'<content[2]: application/pdf, {len(self._PNG)} bytes>',
+        ]
+
+    async def test_override_wins_over_the_spec(self, mock_upstream):
+        """The YAML ``media`` entry replaces what the spec declares for the same path."""
+        body = {'photo': self._encode(self._PNG)}
+        spec_media = {'photo': MediaField(encoding='base64')}
+        override = ToolOverride(media={'photo': MediaField(encoding='base64', media_type='image/png')})
+
+        result = await self._call(mock_upstream, body, response_media=spec_media, tool=override)
+
+        assert isinstance(result.content[1], ImageContent)
+
+    async def test_value_that_is_not_base64_is_left_alone(self, mock_upstream):
+        """A declared field holding something else, or missing, keeps its value and adds no block."""
+        body = {'photo': 'not base64!', 'other': 1}
+        media = {'photo': MediaField(encoding='base64'), 'missing.path': MediaField(encoding='base64')}
+
+        result = await self._call(mock_upstream, body, response_media=media)
+
+        assert len(result.content) == 1
+        assert result.structured_content == body
+
+    async def test_response_transform_sees_the_placeholder(self, mock_upstream):
+        """Media is promoted from the upstream shape first, so a transform reshapes the placeholder, not the bytes."""
+        body = {'signature': self._encode(self._PNG)}
+        override = ToolOverride(
+            response='{"sig": signature}',
+            media={'signature': MediaField(encoding='base64', media_type='image/png')},
+        )
+
+        result = await self._call(mock_upstream, body, tool=override)
+
+        assert result.structured_content == {'sig': f'<content[1]: image/png, {len(self._PNG)} bytes>'}
+        assert isinstance(result.content[1], ImageContent)
 
 
 class TestGeneratedSignature:
@@ -1257,9 +1400,15 @@ class TestShaping:
 
     def test_each_kind_of_reshaping_is_named(self):
         override = ToolOverride.model_validate(
-            {'params_strategy': 'replace', 'params': {'x': {'type': 'string'}}, 'request': '{}', 'response': 'r'}
+            {
+                'params_strategy': 'replace',
+                'params': {'x': {'type': 'string'}},
+                'request': '{}',
+                'response': 'r',
+                'media': {'photo': {'encoding': 'base64'}},
+            }
         )
-        assert _shaping(override) == {'params': 'replace', 'request': True, 'response': True}
+        assert _shaping(override) == {'params': 'replace', 'request': True, 'response': True, 'media': True}
 
     def test_a_rename_alone_does_not_reshape_the_call(self):
         """The name changes, the request and the schema do not."""

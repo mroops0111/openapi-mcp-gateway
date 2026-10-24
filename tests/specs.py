@@ -16,6 +16,7 @@ def defs_ref(name: str) -> dict[str, str]:
 def operation_spec(
     *,
     body: dict[str, typing.Any] | None = None,
+    response: dict[str, typing.Any] | None = None,
     parameters: list[dict[str, typing.Any]] | None = None,
     schemas: dict[str, typing.Any] | None = None,
     operation_id: str = 'createThing',
@@ -25,10 +26,13 @@ def operation_spec(
 ) -> dict[str, typing.Any]:
     """A spec with a single operation, served from ``API_URL``.
 
-    ``body`` is the JSON request body schema, ``parameters`` the operation's own parameters,
-    and ``schemas`` the component schemas either may refer to.
+    ``body`` is the JSON request body schema, ``response`` the JSON schema of its ``200`` response,
+    ``parameters`` the operation's own parameters, and ``schemas`` the component schemas any of them may refer to.
     """
-    operation: dict[str, typing.Any] = {'operationId': operation_id, 'responses': {'200': {'description': 'ok'}}}
+    ok_response: dict[str, typing.Any] = {'description': 'ok'}
+    if response is not None:
+        ok_response['content'] = {'application/json': {'schema': response}}
+    operation: dict[str, typing.Any] = {'operationId': operation_id, 'responses': {'200': ok_response}}
     if parameters is not None:
         operation['parameters'] = parameters
     if body is not None:
