@@ -566,7 +566,7 @@ Because the gateway runs in-process and routes through `httpx.ASGITransport`, ga
 
 ### Mounting into an Existing App
 
-To serve MCP alongside your own routes, build a `Gateway` and mount it onto your app. `mount` attaches every MCP sub-app at its configured path and also registers the OAuth authorization-server and `.well-known` discovery routes those servers own, so an OAuth flow works end to end. Enter `gateway.lifespan()` in your app's lifespan, since the MCP session managers only start there.
+To serve MCP alongside your own routes, build a `Gateway` and mount it onto your app. `mount` attaches every MCP sub-app at its configured path and also registers the OAuth authorization-server and `.well-known` discovery routes those servers own, so an OAuth flow works end to end. Enter `gateway.lifespan()` in your app's lifespan, or MCP requests fail.
 
 <details>
 <summary><b>Mounting onto Your Own FastAPI App</b></summary>
@@ -587,15 +587,13 @@ gateway = Gateway.from_config(
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with gateway.lifespan():  # starts the MCP session managers, and closes the gateway on shutdown
+    async with gateway.lifespan():
         yield
 
 
 app = FastAPI(lifespan=lifespan)
 gateway.mount(app)  # mounts /petstore/mcp plus its OAuth and .well-known routes
 ```
-
-Without `gateway.lifespan()`, every MCP request to a mounted server fails with a 500. Call `mount` before the app starts, since `lifespan()` needs to know which transport was mounted.
 
 Set `GatewayConfig.url` to the host app's public URL so discovery documents and OAuth redirect URLs point at the right origin. The upstream OAuth callback for a server named `<server>` is fixed at `/<server>/auth/callback`, so keep it clear of your app's own callback paths.
 

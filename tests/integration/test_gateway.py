@@ -362,11 +362,6 @@ class TestMountEmbedding:
 
         assert tools.tools
 
-    def test_lifespan_before_mount_raises(self, gateway):
-        """``lifespan`` refuses to run before ``mount`` has settled the transport."""
-        with pytest.raises(RuntimeError, match='mount'):
-            gateway.lifespan()
-
 
 class TestInstructions:
     """A server's ``instructions`` reach the client in the ``initialize`` result."""

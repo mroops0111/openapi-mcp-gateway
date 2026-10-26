@@ -11,10 +11,11 @@ from fastapi import FastAPI
 from mcp.server import MCPServer
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.caching import CacheableMethod, CacheHint
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.exceptions import HTTPException
 from starlette.responses import RedirectResponse
 
-from .app import _ServerBundle, build_app, build_mcp_asgi_app, register_auth_routes, serve_lifespan
+from .app import _ServerBundle, build_app, mount_mcp_apps, register_auth_routes, serve_lifespan
 from .auth.detector import detect_oauth_flows, detect_unsupported_oauth_flows
 from .auth.flows import AuthorizationCodeProvider, OAuthFlowSetup
 from .auth.resolver import (
@@ -238,7 +239,8 @@ class Gateway:
         self._config = config or GatewayConfig()
         self._servers: list[_ServerBundle] = []
         self._shutdown_hooks: list[typing.Callable[[], typing.Awaitable[None]]] = []
-        self._mounted_transport: str | None = None
+        # The session managers ``mount`` created, which only the host app's lifespan can start.
+        self._session_managers: list[StreamableHTTPSessionManager] = []
         store_config = self._config.store
         self._store = create_store(
             store_type=store_config.type,
@@ -388,23 +390,17 @@ class Gateway:
         transport = transport if transport is not None else self._config.transport
         _warn_if_deprecated_transport(transport)
         register_auth_routes(app, self._servers)
-        for bundle in self._servers:
-            app.mount(
-                bundle.mount_path,
-                build_mcp_asgi_app(bundle.mcp, transport, self._config.dns_rebinding_protection, host=None),
-            )
-        self._mounted_transport = transport
+        self._session_managers = mount_mcp_apps(
+            app, self._servers, transport, self._config.dns_rebinding_protection, host=None
+        )
 
     def lifespan(self) -> contextlib.AbstractAsyncContextManager[None]:
         """Run a mounted gateway for as long as the host app serves, by entering this in the host app's lifespan.
 
-        The MCP session managers only start inside a lifespan, and ``mount`` has no hold on the host app's,
-        so without this every MCP request to a mounted server fails.
+        ``mount`` has no hold on the host app's lifespan, so without this every MCP request to a mounted server fails.
         On exit it runs the shutdown hooks and closes the token store, as ``run`` does.
         """
-        if self._mounted_transport is None:
-            raise RuntimeError('Call mount() before lifespan(), so the gateway knows which transport to start')
-        return serve_lifespan(self._servers, self._store, self._run_shutdown_hooks, self._mounted_transport)
+        return serve_lifespan(self._session_managers, self._store, self._run_shutdown_hooks)
 
     def _add_server_from_server_config(self, server_config: ServerConfig) -> None:
         logger.info('Loading server "%s" from spec=%s', server_config.name, server_config.spec)
