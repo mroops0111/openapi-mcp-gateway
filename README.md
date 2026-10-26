@@ -33,6 +33,16 @@ uv add "openapi-mcp-gateway[redis]"  # optional, Redis token store for multi-rep
 
 Requires Python 3.11+. To skip the install entirely, `uvx openapi-mcp-gateway` runs the published package directly.
 
+### Container Image
+
+Each release publishes a multi-arch image (`linux/amd64`, `linux/arm64`) to GHCR, tagged with the version and `latest`. It includes the `redis` and `oidc` extras, runs as a non-root user, and reads its config from `/config/config.yml`:
+
+```bash
+docker run -p 8000:8000 -v ./config.yml:/config/config.yml:ro ghcr.io/mroops0111/openapi-mcp-gateway:latest
+```
+
+The image's `HEALTHCHECK` probes `/healthz` on port 8000. [`examples/docker/`](examples/docker/) runs the gateway beside Redis with Docker Compose. To build the image yourself, build the wheel first: `uv build --wheel && docker build -t openapi-mcp-gateway .`
+
 ## Quick Start
 
 Every example below uses `uv run`, which assumes the install above.
