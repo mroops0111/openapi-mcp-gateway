@@ -1,3 +1,4 @@
+import abc
 import base64
 import binascii
 import copy
@@ -16,15 +17,15 @@ from ._content import binary_content
 _PLACEHOLDER_TEMPLATE = '<content[{index}]: {media_type}>'
 
 
-class MediaEncoding(typing.Protocol):
-    """How a field carries media, which decides how its value becomes a content block."""
+class MediaEncoding(abc.ABC):
+    """Strategy for how a field carries media, which decides how its value becomes a content block."""
 
+    @abc.abstractmethod
     def to_content(self, value: typing.Any, media_type: str, uri: str) -> ContentBlock | None:
         """Return the content block ``value`` carries, or ``None`` when it carries none in this encoding."""
-        ...
 
 
-class Base64Encoding:
+class Base64Encoding(MediaEncoding):
     """A field holding the bytes as a base64 string."""
 
     def to_content(self, value: typing.Any, media_type: str, uri: str) -> ContentBlock | None:
