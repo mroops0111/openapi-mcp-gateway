@@ -34,9 +34,14 @@ USER gateway
 
 EXPOSE 8000
 
-# Probes the default port; a config that binds another port should override this check.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"]
 
+# The config directory is mounted at /config.
+# A relative spec path resolves against the working directory, so one beside config.yml resolves too.
+WORKDIR /config
+
+# The flags pin the listen address over the config's, so EXPOSE and HEALTHCHECK always hold.
+# Publish another host port with `-p <port>:8000` rather than changing it in the config.
 ENTRYPOINT ["openapi-mcp-gateway"]
-CMD ["--config", "/config/config.yml"]
+CMD ["--config", "/config/config.yml", "--host", "0.0.0.0", "--port", "8000"]

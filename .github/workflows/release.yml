@@ -89,9 +89,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # PEP 440 rather than semver, since the tag is the Python version.
+          # A pre-release such as 1.2.0rc1 gets only its own tag, and `latest` only follows a final release.
           tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest
+            type=pep440,pattern={{version}}
+            type=pep440,pattern={{major}}.{{minor}}
 
       - uses: docker/build-push-action@v6
         with:
@@ -105,7 +107,8 @@ jobs:
 
   github-release:
     name: GitHub Release
-    needs: publish-pypi
+    # Waits for the image too, so a release never announces an image that failed to publish.
+    needs: [publish-pypi, publish-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write
