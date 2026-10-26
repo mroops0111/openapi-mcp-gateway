@@ -123,9 +123,15 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+        # A PEP 440 pre-release or dev release is marked as one, so it never becomes the repo's latest release.
         run: |
+          flags=()
+          if [[ "${GITHUB_REF_NAME#v}" =~ (a|b|rc|dev)[0-9]*$ ]]; then
+            flags+=(--prerelease)
+          fi
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes \
+            "${flags[@]}" \
             dist/*
