@@ -567,13 +567,13 @@ class TestParseSpec:
         assert 'oauth2' in self.spec.security_schemes
 
 
-class TestResponseMedia:
+class TestMediaFieldCollection:
     """Fields the success response declares as ``contentEncoding: base64`` become the operation's media fields."""
 
     @staticmethod
     def _media(response: dict, schemas: dict | None = None) -> dict[str, MediaField]:
         """Parse a one-operation spec whose ``200`` response is ``response`` and return its media fields."""
-        return parse_spec(operation_spec(response=response, schemas=schemas)).operations[0].response_media
+        return parse_spec(operation_spec(response=response, schemas=schemas)).operations[0].media_fields
 
     def test_nested_and_array_fields_are_found_through_references(self):
         """A field inside an array of a referenced component gets a ``[*]`` path and its ``contentMediaType``."""
@@ -643,7 +643,7 @@ class TestResponseMedia:
             raw['paths']['/things']['post']['responses'] = {
                 status: {'description': 'ok', 'content': {'application/json': {'schema': schema}}},
             }
-            assert set(parse_spec(raw).operations[0].response_media) == {'blob'}
+            assert set(parse_spec(raw).operations[0].media_fields) == {'blob'}
 
 
 class TestRelativeServerResolution:

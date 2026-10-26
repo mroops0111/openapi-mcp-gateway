@@ -10,6 +10,8 @@ import httpx
 import pydantic
 import yaml
 
+from .field_path import FieldPath
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +33,10 @@ _COMPONENT_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
 # Compared by identity, so it is never mutated.
 _EXPANDING: dict[str, typing.Any] = {}
 
-# Keywords whose value is a list of schemas a response may match, each searched for media fields at the same path.
-_MEDIA_COMBINATOR_KEYS = ('allOf', 'oneOf', 'anyOf')
+# Keywords whose value is a list of schemas the instance is composed from, each searched at the same field path.
+_COMPOSITION_KEYWORDS = ('allOf', 'oneOf', 'anyOf')
 # The media type a base64 field is promoted as when nothing names one.
-DEFAULT_MEDIA_TYPE = 'application/octet-stream'
+_DEFAULT_MEDIA_TYPE = 'application/octet-stream'
 
 
 class ParameterInfo(pydantic.BaseModel):
@@ -124,7 +126,7 @@ class MediaField(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra='forbid')
 
     encoding: typing.Literal['base64']
-    media_type: str = DEFAULT_MEDIA_TYPE
+    media_type: str = _DEFAULT_MEDIA_TYPE
 
 
 class ToolOverride(pydantic.BaseModel):
@@ -153,6 +155,14 @@ class ToolOverride(pydantic.BaseModel):
     request: str | None = None
     response: str | None = None
     media: dict[str, MediaField] = pydantic.Field(default_factory=dict)
+
+    @pydantic.field_validator('media')
+    @classmethod
+    def _validate_media_paths(cls, media: dict[str, MediaField]) -> dict[str, MediaField]:
+        """Reject a malformed field path when the config loads, rather than letting it match nothing."""
+        for path in media:
+            FieldPath.parse(path)
+        return media
 
 
 class ResourceOverride(pydantic.BaseModel):
@@ -196,8 +206,8 @@ class OperationInfo(pydantic.BaseModel):
     # The expanded component schemas the parameters reach, keyed by component name,
     # for resolving their ``#/$defs/<Name>`` references.
     schema_defs: dict[str, dict[str, typing.Any]] = pydantic.Field(default_factory=dict)
-    # The success response's fields the spec declares as media, keyed by field path.
-    response_media: dict[str, MediaField] = pydantic.Field(default_factory=dict)
+    # The fields the success response schema declares as media, keyed by field path.
+    media_fields: dict[str, MediaField] = pydantic.Field(default_factory=dict)
 
     @property
     def tool_exposed(self) -> bool:
@@ -584,7 +594,7 @@ def _success_response_schema(raw: dict[str, typing.Any], operation: dict[str, ty
 def _collect_media_fields(
     raw: dict[str, typing.Any],
     schema: typing.Any,
-    path: str = '',
+    path: FieldPath = FieldPath(),
     seen: frozenset[str] = frozenset(),
 ) -> dict[str, MediaField]:
     """Return every field under ``schema`` that declares ``contentEncoding: base64``, keyed by field path.
@@ -603,12 +613,13 @@ def _collect_media_fields(
         seen = seen | {reference}
 
     fields: dict[str, MediaField] = {}
-    if path and schema.get('contentEncoding') == 'base64':
-        fields[path] = MediaField(encoding='base64', media_type=schema.get('contentMediaType') or DEFAULT_MEDIA_TYPE)
+    if path.segments and schema.get('contentEncoding') == 'base64':
+        media_type = schema.get('contentMediaType') or _DEFAULT_MEDIA_TYPE
+        fields[str(path)] = MediaField(encoding='base64', media_type=media_type)
     for name, property_schema in (schema.get('properties') or {}).items():
-        fields |= _collect_media_fields(raw, property_schema, f'{path}.{name}' if path else name, seen)
-    fields |= _collect_media_fields(raw, schema.get('items'), f'{path}[*]', seen)
-    for key in _MEDIA_COMBINATOR_KEYS:
+        fields |= _collect_media_fields(raw, property_schema, path.child(name), seen)
+    fields |= _collect_media_fields(raw, schema.get('items'), path.each_item(), seen)
+    for key in _COMPOSITION_KEYWORDS:
         for branch in schema.get(key) or []:
             fields |= _collect_media_fields(raw, branch, path, seen)
     return fields
@@ -713,7 +724,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                         name: defs[name]
                         for name in count_defs_references((parameter.schema_ for parameter in params), defs)
                     },
-                    response_media=_collect_media_fields(raw, _success_response_schema(raw, operation)),
+                    media_fields=_collect_media_fields(raw, _success_response_schema(raw, operation)),
                 )
             )
 

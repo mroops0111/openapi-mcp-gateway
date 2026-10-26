@@ -30,8 +30,8 @@ _FALLBACK_BINARY_MEDIA_TYPE = 'application/octet-stream'
 class BinaryBody:
     """A non-text upstream body, kept as bytes so a file, image or PDF reaches the client intact."""
 
-    data: bytes
-    mime_type: str
+    content: bytes
+    media_type: str
     url: str
 
 
@@ -51,7 +51,7 @@ def _is_text_media_type(content_type: str) -> bool:
     )
 
 
-def _decode_body(response: httpx.Response) -> dict[str, typing.Any] | BinaryBody:
+def _decode_non_json_body(response: httpx.Response) -> dict[str, typing.Any] | BinaryBody:
     """Return a non-JSON body as ``{'data': text}`` when it is text, and as a ``BinaryBody`` otherwise.
 
     A body without a ``Content-Type`` is text when it decodes as UTF-8, since nothing else says what it is.
@@ -155,4 +155,4 @@ class APIClient:
                 return response.json()
             except json.JSONDecodeError:
                 return {'data': response.text}
-        return _decode_body(response)
+        return _decode_non_json_body(response)

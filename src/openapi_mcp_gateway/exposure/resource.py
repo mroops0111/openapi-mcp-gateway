@@ -1,13 +1,13 @@
-import base64
 import inspect
 import logging
 import typing
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
-from mcp.types import AudioContent, BlobResourceContents, CallToolResult, EmbeddedResource, ImageContent, TextContent
+from mcp.types import CallToolResult, TextContent
 
 from ..openapi import OperationInfo, ParameterInfo
+from ._content import binary_content_data
 from ._shared import (
     _get_override,
     _iter_unique_sanitised_parameters,
@@ -59,14 +59,13 @@ def _extract_body_from_result(result: CallToolResult) -> str | bytes:
 
     MCPServer serves returned bytes as a blob, so a binary body reaches the client as it left the upstream.
     """
-    first_block = result.content[0] if result.content else None
-    if isinstance(first_block, TextContent):
-        return first_block.text
-    if isinstance(first_block, ImageContent | AudioContent):
-        return base64.b64decode(first_block.data)
-    if isinstance(first_block, EmbeddedResource) and isinstance(first_block.resource, BlobResourceContents):
-        return base64.b64decode(first_block.resource.blob)
-    return ''
+    first_content = result.content[0] if result.content else None
+    if first_content is None:
+        return ''
+    if isinstance(first_content, TextContent):
+        return first_content.text
+    data = binary_content_data(first_content)
+    return data if data is not None else ''
 
 
 def _build_resource_signature(

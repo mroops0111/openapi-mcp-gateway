@@ -319,7 +319,7 @@ class TestMediaFields:
         self,
         mock_upstream,
         body: typing.Any,
-        response_media: dict[str, MediaField] | None = None,
+        media_fields: dict[str, MediaField] | None = None,
         tool: ToolOverride | None = None,
     ) -> CallToolResult:
         """Call a one-operation tool whose upstream answers with the JSON ``body``."""
@@ -329,7 +329,7 @@ class TestMediaFields:
             operation_id='get_contract',
             method='get',
             path='/contracts/7',
-            response_media=response_media or {},
+            media_fields=media_fields or {},
             x_mcp_integration=McpIntegration(tool=tool),
         )
         ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)).register([operation])
@@ -345,13 +345,13 @@ class TestMediaFields:
         body = {'id': 7, 'signature': {'image': self._encode(self._PNG)}}
         media = {'signature.image': MediaField(encoding='base64', media_type='image/png')}
 
-        result = await self._call(mock_upstream, body, response_media=media)
+        result = await self._call(mock_upstream, body, media_fields=media)
 
         text, image = result.content
         assert isinstance(text, TextContent)
         assert isinstance(image, ImageContent)
         assert base64.b64decode(image.data) == self._PNG
-        placeholder = f'<content[1]: image/png, {len(self._PNG)} bytes>'
+        placeholder = '<content[1]: image/png>'
         assert result.structured_content == {'id': 7, 'signature': {'image': placeholder}}
         assert placeholder in text.text
 
@@ -360,7 +360,7 @@ class TestMediaFields:
         body = {'attachments': [{'content': self._encode(self._PDF)}, {'content': self._encode(self._PNG)}]}
         media = {'attachments[*].content': MediaField(encoding='base64', media_type='application/pdf')}
 
-        result = await self._call(mock_upstream, body, response_media=media)
+        result = await self._call(mock_upstream, body, media_fields=media)
 
         _text, *blocks = result.content
         assert all(isinstance(block, EmbeddedResource) for block in blocks)
@@ -369,8 +369,8 @@ class TestMediaFields:
             f'{API_URL}/contracts/7#attachments[1].content',
         ]
         assert [item['content'] for item in result.structured_content['attachments']] == [
-            f'<content[1]: application/pdf, {len(self._PDF)} bytes>',
-            f'<content[2]: application/pdf, {len(self._PNG)} bytes>',
+            '<content[1]: application/pdf>',
+            '<content[2]: application/pdf>',
         ]
 
     async def test_override_wins_over_the_spec(self, mock_upstream):
@@ -379,7 +379,7 @@ class TestMediaFields:
         spec_media = {'photo': MediaField(encoding='base64')}
         override = ToolOverride(media={'photo': MediaField(encoding='base64', media_type='image/png')})
 
-        result = await self._call(mock_upstream, body, response_media=spec_media, tool=override)
+        result = await self._call(mock_upstream, body, media_fields=spec_media, tool=override)
 
         assert isinstance(result.content[1], ImageContent)
 
@@ -388,7 +388,7 @@ class TestMediaFields:
         body = {'photo': 'not base64!', 'other': 1}
         media = {'photo': MediaField(encoding='base64'), 'missing.path': MediaField(encoding='base64')}
 
-        result = await self._call(mock_upstream, body, response_media=media)
+        result = await self._call(mock_upstream, body, media_fields=media)
 
         assert len(result.content) == 1
         assert result.structured_content == body
@@ -403,7 +403,7 @@ class TestMediaFields:
 
         result = await self._call(mock_upstream, body, tool=override)
 
-        assert result.structured_content == {'sig': f'<content[1]: image/png, {len(self._PNG)} bytes>'}
+        assert result.structured_content == {'sig': '<content[1]: image/png>'}
         assert isinstance(result.content[1], ImageContent)
 
 

@@ -496,7 +496,7 @@ operations:
 ```
 
 - **Paths**: dot-separated property names, with `[*]` for every item of an array. They name fields of the upstream response, so they are promoted before a `response` transform runs.
-- **Result**: the JSON stays the first block and `structuredContent`, with each promoted value replaced by a placeholder such as `<content[1]: image/png, 48213 bytes>` that points at its block.
+- **Result**: the JSON stays the first block and `structuredContent`, with each promoted value replaced by a placeholder such as `<content[1]: image/png>` that points at its block.
 - **Defaults**: `media_type` defaults to `application/octet-stream`, and `base64` is the only `encoding` so far.
 - **Invalid Values**: a value that is not valid base64, or a path that matches nothing, is left as it is.
 

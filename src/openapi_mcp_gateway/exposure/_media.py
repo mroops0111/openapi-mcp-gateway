@@ -1,88 +1,86 @@
 import base64
 import binascii
 import copy
-import re
+import dataclasses
 import typing
 
-from mcp.types import AudioContent, BlobResourceContents, EmbeddedResource, ImageContent
+from mcp.types import ContentBlock
 
+from ..field_path import FieldPath
 from ..openapi import MediaField
+from ._content import binary_content
 
 
-# One step of a media field path, which is a property name or ``[*]`` for every item of an array.
-_PATH_STEP = re.compile(r'\[\*\]|[^.\[\]]+')
-_EVERY_ITEM = '[*]'
-
-# What a promoted field holds in the JSON once its bytes move to a content block,
-# so the model can tell which block belongs to which field.
-_PLACEHOLDER = '<content[{index}]: {media_type}, {size} bytes>'
-
-# The content blocks a piece of media can become.
-MediaBlock = ImageContent | AudioContent | EmbeddedResource
+# What a promoted field holds once its media moves to a content block, so the model can tell which block it was.
+# The JSON text is ``content[0]``, so the first promoted block is ``content[1]``.
+_PLACEHOLDER_TEMPLATE = '<content[{index}]: {media_type}>'
 
 
-def media_block(data: bytes, media_type: str, uri: str) -> MediaBlock:
-    """Wrap ``data`` as the MCP content block ``media_type`` calls for.
+class MediaEncoding(typing.Protocol):
+    """How a field carries media, which decides how its value becomes a content block."""
 
-    Images and audio get their own block types, so a client can render or play them.
-    Anything else, such as a PDF or an archive, is embedded as a blob resource under ``uri``.
+    def to_content(self, value: typing.Any, media_type: str, uri: str) -> ContentBlock | None:
+        """Return the content block ``value`` carries, or ``None`` when it carries none in this encoding."""
+        ...
+
+
+class Base64Encoding:
+    """A field holding the bytes as a base64 string."""
+
+    def to_content(self, value: typing.Any, media_type: str, uri: str) -> ContentBlock | None:
+        """Decode ``value``, leaving anything that is not a valid base64 string alone."""
+        if not isinstance(value, str):
+            return None
+        try:
+            data = base64.b64decode(value, validate=True)
+        except binascii.Error:
+            return None
+        return binary_content(data, media_type, uri)
+
+
+# The encoding behind each ``MediaField.encoding`` value.
+# A new encoding is a new class here and a new value there, with nothing else to change.
+_ENCODINGS: dict[str, MediaEncoding] = {
+    'base64': Base64Encoding(),
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class _MediaRule:
+    """One declared media field, ready to apply."""
+
+    path: FieldPath
+    media_type: str
+    encoding: MediaEncoding
+
+
+class MediaPromoter:
+    """Move the declared media fields of a JSON payload into content blocks, leaving a placeholder in each field.
+
+    Built once per operation, so every path is parsed at startup rather than on each call.
     """
-    encoded = base64.b64encode(data).decode('ascii')
-    if media_type.startswith('image/'):
-        return ImageContent(type='image', data=encoded, mime_type=media_type)
-    if media_type.startswith('audio/'):
-        return AudioContent(type='audio', data=encoded, mime_type=media_type)
-    return EmbeddedResource(
-        type='resource',
-        resource=BlobResourceContents(uri=uri, blob=encoded, mime_type=media_type),
-    )
 
-
-def promote_media(payload: typing.Any, fields: dict[str, MediaField], url: str) -> tuple[typing.Any, list[MediaBlock]]:
-    """Move the media in ``fields`` out of ``payload`` into content blocks, leaving a placeholder in each field.
-
-    Returns a copy of ``payload`` and the blocks, numbered from ``content[1]`` since the JSON text is ``content[0]``.
-    A path that matches nothing, or a value that is not valid base64, is left as it is.
-    """
-    if not fields:
-        return payload, []
-    payload = copy.deepcopy(payload)
-    blocks: list[MediaBlock] = []
-    for path, field in fields.items():
-        steps = _PATH_STEP.findall(path)
-        if not steps:
-            continue
-        for container, key, location in _locate(payload, steps, ''):
-            value = container[key]
-            if not isinstance(value, str):
-                continue
-            try:
-                data = base64.b64decode(value, validate=True)
-            except binascii.Error:
-                continue
-            blocks.append(media_block(data, field.media_type, f'{url}#{location}'))
-            container[key] = _PLACEHOLDER.format(index=len(blocks), media_type=field.media_type, size=len(data))
-    return payload, blocks
-
-
-def _locate(node: typing.Any, steps: list[str], location: str) -> typing.Iterator[tuple[typing.Any, str | int, str]]:
-    """Yield the container, key and concrete location of every value ``steps`` reaches from ``node``.
-
-    The location spells out each array index, so two attachments under one ``[*]`` path stay apart.
-    """
-    step, rest = steps[0], steps[1:]
-    if step == _EVERY_ITEM:
-        if not isinstance(node, list):
-            return
-        children: list[tuple[str | int, typing.Any, str]] = [
-            (index, item, f'{location}[{index}]') for index, item in enumerate(node)
+    def __init__(self, fields: typing.Mapping[str, MediaField]):
+        self._rules = [
+            _MediaRule(FieldPath.parse(path), field.media_type, _ENCODINGS[field.encoding])
+            for path, field in fields.items()
         ]
-    elif isinstance(node, dict) and step in node:
-        children = [(step, node[step], f'{location}.{step}' if location else step)]
-    else:
-        return
-    for key, child, child_location in children:
-        if rest:
-            yield from _locate(child, rest, child_location)
-        else:
-            yield node, key, child_location
+
+    def promote(self, payload: typing.Any, uri: str) -> tuple[typing.Any, list[ContentBlock]]:
+        """Return a copy of ``payload`` with its media replaced by placeholders, and the content blocks, in order.
+
+        ``uri`` names the upstream response, and each embedded resource is addressed by its field path within it.
+        A path that matches nothing, or a value its encoding cannot read, is left as it is.
+        """
+        if not self._rules:
+            return payload, []
+        payload = copy.deepcopy(payload)
+        contents: list[ContentBlock] = []
+        for rule in self._rules:
+            for match in rule.path.find(payload):
+                content = rule.encoding.to_content(match.value, rule.media_type, f'{uri}#{match.path}')
+                if content is None:
+                    continue
+                contents.append(content)
+                match.replace(_PLACEHOLDER_TEMPLATE.format(index=len(contents), media_type=rule.media_type))
+        return payload, contents
