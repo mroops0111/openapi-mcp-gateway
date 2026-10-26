@@ -2,12 +2,14 @@
 # Build the wheel first: `uv build --wheel && docker build -t openapi-mcp-gateway .`
 # The release workflow builds this image from the same wheel it publishes to PyPI.
 
-FROM python:3.13-slim
+FROM python:3.13-slim AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /bin/uv
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+# Bytecode compiled at build time saves the work on every container start.
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=0
 
 # The redis and oidc extras ship in the one image,
 # so every auth mode and the shared store work without a rebuild.
@@ -15,7 +17,17 @@ RUN --mount=type=bind,source=dist,target=/dist \
     set -eu; \
     wheels=$(ls /dist/openapi_mcp_gateway-*.whl); \
     [ "$(echo "$wheels" | wc -l)" -eq 1 ] || { echo "expected exactly one wheel in dist/, found: $wheels" >&2; exit 1; }; \
-    uv pip install --system --no-cache "${wheels}[redis,oidc]"
+    uv venv /opt/venv; \
+    uv pip install --python /opt/venv/bin/python --no-cache "${wheels}[redis,oidc]"
+
+# The runtime stage carries the venv alone, without uv.
+FROM python:3.13-slim
+
+COPY --from=builder /opt/venv /opt/venv
+
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin gateway
 USER gateway
