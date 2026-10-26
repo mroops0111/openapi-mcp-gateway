@@ -7,6 +7,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, TextContent
 
 from ..openapi import OperationInfo, ParameterInfo
+from ._content import binary_content_data
 from ._shared import (
     _get_override,
     _iter_unique_sanitised_parameters,
@@ -53,10 +54,18 @@ def derive_resource_uri(server_name: str, operation: OperationInfo) -> str:
     return f'{server_name}://{path}'
 
 
-def _extract_text_from_result(result: CallToolResult) -> str:
-    """Pull the text body off ``result``, narrowing ``content[0]`` to ``TextContent``."""
-    first_block = result.content[0] if result.content else None
-    return first_block.text if isinstance(first_block, TextContent) else ''
+def _extract_body_from_result(result: CallToolResult) -> str | bytes:
+    """Pull the body off ``result``, as text from a text block and as bytes from a binary one.
+
+    MCPServer serves returned bytes as a blob, so a binary body reaches the client as it left the upstream.
+    """
+    first_content = result.content[0] if result.content else None
+    if first_content is None:
+        return ''
+    if isinstance(first_content, TextContent):
+        return first_content.text
+    data = binary_content_data(first_content)
+    return data if data is not None else ''
 
 
 def _build_resource_signature(
@@ -65,7 +74,7 @@ def _build_resource_signature(
 ) -> tuple[inspect.Signature, dict[str, typing.Any]]:
     """Build the signature MCPServer introspects to decide concrete vs template registration.
 
-    With path parameters: ``(path_parameter_1, ..., ctx: Context) -> str`` (template).
+    With path parameters: ``(path_parameter_1, ..., ctx: Context) -> str | bytes`` (template).
     Without: empty signature (concrete resource).
     """
     annotations: dict[str, typing.Any] = {}
@@ -86,7 +95,7 @@ def _build_resource_signature(
             inspect.Parameter(name='ctx', kind=inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=Context)
         )
         annotations['ctx'] = Context
-    annotations['return'] = str
+    annotations['return'] = str | bytes
     return inspect.Signature(signature_parameters), annotations
 
 
@@ -112,13 +121,13 @@ def build_resource_read_function(operation: OperationInfo, binding: UpstreamBind
     path_parameters, _, _, _ = _split_by_location(operation.parameters)
     null_context = typing.cast(Context, _NullContext())
 
-    async def read_function(**kwargs: typing.Any) -> str:
+    async def read_function(**kwargs: typing.Any) -> str | bytes:
         context = kwargs.pop('ctx', null_context)
         result = await upstream_callable(ctx=context, **kwargs)
-        text = _extract_text_from_result(result)
+        body = _extract_body_from_result(result)
         if result.is_error:
-            raise RuntimeError(text or 'Upstream error reading resource')
-        return text
+            raise RuntimeError(body or 'Upstream error reading resource')
+        return body
 
     signature, annotations = _build_resource_signature(path_parameters, operation.schema_defs)
     read_function.__signature__ = signature

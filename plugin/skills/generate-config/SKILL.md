@@ -87,6 +87,7 @@ Then decide, per operation, how much reshaping it needs. Prefer the lightest opt
   - **Default an Optional Input.** Use `merge` with `{default: <value>}`, which is sent upstream when the model omits the parameter.
   - **Rename an Input or Map a Friendly Enum.** Use `merge` with `params` and a `request` `$lookup`. Both `request` and `response` compose with `merge`, not only with `replace`. Naming a parameter the spec does not define is a startup error, so keep merged names honest.
   - **Trim or Rename the Response.** Use a `response` expression alone, which works with any strategy, including no `params` at all.
+  - **Surface a File Embedded as Base64.** When the response schema shows a base64 string the model should see, such as an image or a PDF, name its path in `media`. A field the spec already marks with `contentEncoding: base64` is promoted without it, and a binary response body needs nothing at all.
   - **Fully Reshape the Input, or Wrap the Body.** Use `replace`, which drops the spec's parameters so you declare a fresh set of friendly params, then a `request` expression routes them upstream. Naming a param the spec never defined is fine here, the must-match rule only applies to `merge`. An entry that names a spec header keeps it a header, which the `request` must still carry to send it.
 
 The JSONata idioms you will use most:
@@ -139,6 +140,10 @@ servers:
             { ... JSONata ... }
           response: |
             [ ... JSONata ... ]
+          media: # optional, base64 response fields the model should see as an image or file
+            <field.path[*].name>: # names the upstream response, before the response transform
+              encoding: base64
+              media_type: image/png # defaults to application/octet-stream
 ```
 
 For API-key auth with a custom header, name the header, since it defaults to `X-API-Key`:

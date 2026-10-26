@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import logging
 import typing
@@ -6,6 +7,18 @@ import httpx
 
 
 logger = logging.getLogger(__name__)
+
+# The media type a binary body without a ``Content-Type`` is reported as.
+_FALLBACK_BINARY_MEDIA_TYPE = 'application/octet-stream'
+
+
+@dataclasses.dataclass(frozen=True)
+class BinaryBody:
+    """A non-text upstream body, kept as bytes so a file, image or PDF reaches the client intact."""
+
+    content: bytes
+    media_type: str
+    url: str
 
 
 class APIClient:
@@ -54,11 +67,11 @@ class APIClient:
         params: dict[str, typing.Any] | None = None,
         data: dict[str, typing.Any] | None = None,
         headers: dict[str, str] | None = None,
-    ) -> dict[str, typing.Any]:
+    ) -> dict[str, typing.Any] | BinaryBody:
         """Send ``method`` to ``path`` and return the decoded body.
 
         Returns decoded JSON for ``application/json`` responses, ``{'status': code}`` for empty 204 responses,
-        or ``{'data': text}`` for any other media type.
+        ``{'data': text}`` for any other body that is text, or a ``BinaryBody`` for one that is not.
         Raises ``httpx.HTTPStatusError`` on HTTP error status codes.
         """
         request_kwargs: dict[str, typing.Any] = {}
@@ -95,4 +108,20 @@ class APIClient:
                 return response.json()
             except json.JSONDecodeError:
                 return {'data': response.text}
-        return {'data': response.text}
+        return self._decode_non_json_body(response)
+
+    @staticmethod
+    def _decode_non_json_body(response: httpx.Response) -> dict[str, typing.Any] | BinaryBody:
+        """Return a non-JSON body as ``{'data': text}`` when it is text, and as a ``BinaryBody`` otherwise.
+
+        The body decides, not a list of media types.
+        A declared ``charset`` makes it text, since only text has one.
+        Otherwise it is text when it decodes as UTF-8, which real binary such as an image or an archive fails early.
+        """
+        if response.charset_encoding is not None:
+            return {'data': response.text}
+        try:
+            return {'data': response.content.decode('utf-8')}
+        except UnicodeDecodeError:
+            media_type = response.headers.get('content-type', '').partition(';')[0].strip().lower()
+            return BinaryBody(response.content, media_type or _FALLBACK_BINARY_MEDIA_TYPE, str(response.request.url))

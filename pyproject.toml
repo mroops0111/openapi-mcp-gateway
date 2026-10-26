@@ -1,7 +1,7 @@
 [project]
 name = "openapi-mcp-gateway"
 version = "0.8.0"
-description = "Mount any OpenAPI/Swagger API as an MCP server from one YAML file, with per-user OAuth2 and token exchange."
+description = "Mount any OpenAPI/Swagger API as an MCP server from one YAML file, with per-user OAuth2, token exchange, and tool shaping that turns raw endpoints into tools an LLM can actually use."
 authors = [
     {name = "Yun-Tai Yang"},
 ]

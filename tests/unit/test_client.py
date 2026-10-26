@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from openapi_mcp_gateway.client import APIClient
+from openapi_mcp_gateway.client import APIClient, BinaryBody
 
 
 def _client_with_handler(handler):
@@ -60,6 +60,68 @@ async def test_invalid_json_with_json_content_type_falls_back_to_text():
         result = await client.request('DELETE', '/pet/1')
 
     assert result == {'data': 'Pet deleted'}
+
+
+async def test_binary_body_kept_as_bytes():
+    """A binary media type comes back as a ``BinaryBody`` holding the exact bytes, not decoded text."""
+    body = b'\x89PNG\r\n\x1a\n\xff\xfe'
+
+    def handler(_request):
+        return httpx.Response(200, content=body, headers={'content-type': 'image/png'})
+
+    async with _client_with_handler(handler) as client:
+        result = await client.request('GET', '/pet/1/photo')
+
+    assert result == BinaryBody(body, 'image/png', 'https://example.com/pet/1/photo')
+
+
+@pytest.mark.parametrize(
+    'content_type',
+    ['application/xml', 'application/problem+json', 'application/toml', 'text/csv', 'application/octet-stream'],
+)
+async def test_body_that_decodes_as_utf8_stays_text(content_type):
+    """The body decides, so text under any media type keeps the ``{'data': text}`` shape."""
+
+    def handler(_request):
+        return httpx.Response(200, content=b'<pet/>', headers={'content-type': content_type})
+
+    async with _client_with_handler(handler) as client:
+        result = await client.request('GET', '/pet/1')
+
+    assert result == {'data': '<pet/>'}
+
+
+async def test_declared_charset_decodes_as_text():
+    """A ``charset`` makes the body text, decoded with that charset rather than as UTF-8."""
+
+    def handler(_request):
+        return httpx.Response(
+            200, content='café'.encode('latin-1'), headers={'content-type': 'text/plain; charset=latin-1'}
+        )
+
+    async with _client_with_handler(handler) as client:
+        result = await client.request('GET', '/menu')
+
+    assert result == {'data': 'café'}
+
+
+@pytest.mark.parametrize(
+    ('body', 'expected'),
+    [
+        (b'plain words', {'data': 'plain words'}),
+        (b'\xff\xfe', BinaryBody(b'\xff\xfe', 'application/octet-stream', 'https://example.com/blob')),
+    ],
+)
+async def test_untyped_body_is_text_only_when_it_decodes(body, expected):
+    """A body without a ``Content-Type`` is text when it decodes as UTF-8, and an octet stream otherwise."""
+
+    def handler(_request):
+        return httpx.Response(200, content=body)
+
+    async with _client_with_handler(handler) as client:
+        result = await client.request('GET', '/blob')
+
+    assert result == expected
 
 
 @pytest.mark.parametrize('status_code', [400, 401, 404, 500, 503])

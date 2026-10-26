@@ -280,7 +280,7 @@ Under `authorization_code` the gateway's own access token lives 1 hour and its r
 
 ## Tool Results
 
-Every registered tool carries a protocol-native `title` and `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), so an agent can judge a tool before calling it. Results carry `structuredContent`, so a client reads a typed body and structured error payloads without re-parsing text. None of this needs configuration.
+Every registered tool carries a protocol-native `title` and `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), so an agent can judge a tool before calling it. Results carry `structuredContent`, so a client reads a typed body and structured error payloads without re-parsing text. A binary response, such as an image or a PDF, arrives as a content block rather than decoded text. None of this needs configuration.
 
 ## Configuration
 
@@ -410,7 +410,7 @@ An unknown `operationId` raises at startup so typos do not silently no-op. Resou
 
 ### Tool Shaping
 
-A raw operation rarely makes a good tool. Its `operationId` is ugly (GitHub's `actions/list-jobs-for-workflow-run-attempt`), its description is empty (most of `gists/*`), it takes a cryptic filter DSL alongside a dozen knobs the model should never touch, and it wraps the few useful fields in a large envelope. `x-mcp-integration.tool` fixes all of that without forking the spec. `name` and `description` fix how the tool presents itself, while `params`, `params_strategy`, `request`, and `response` reshape the interface behind it.
+A raw operation rarely makes a good tool. Its `operationId` is ugly (GitHub's `actions/list-jobs-for-workflow-run-attempt`), its description is empty (most of `gists/*`), it takes a cryptic filter DSL alongside a dozen knobs the model should never touch, and it wraps the few useful fields in a large envelope. `x-mcp-integration.tool` fixes all of that without forking the spec. `name` and `description` fix how the tool presents itself, while `params`, `params_strategy`, `request`, and `response` reshape the interface behind it. `media` turns base64 fields into content blocks.
 
 <details>
 <summary><b>Renaming a GitHub Operation</b></summary>
@@ -472,6 +472,23 @@ operations:
 - **Errors**: a broken expression is rejected at startup, and a runtime failure returns an `isError` result naming the side that broke.
 
 For a full `replace` example, where the declared `params` are the entire surface and `request` maps a friendly enum onto the raw query with `$lookup`, see [`examples/movie-shaping.yml`](examples/movie-shaping.yml).
+
+</details>
+
+<details>
+<summary><b>Promoting Base64 Fields with <code>media</code></b></summary>
+
+A base64 field moves into its own image, audio, or blob content block, leaving a placeholder such as `<content[1]: image/png>` in the JSON. A field the spec marks with OpenAPI 3.1 `contentEncoding: base64` is promoted as is. Name any other field in `media`, by its path in the upstream response:
+
+```yaml
+operations:
+  getContract:
+    tool:
+      media:
+        attachments[*].content:
+          encoding: base64
+          media_type: application/pdf  # defaults to application/octet-stream
+```
 
 </details>
 
