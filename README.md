@@ -280,7 +280,7 @@ Under `authorization_code` the gateway's own access token lives 1 hour and its r
 
 ## Tool Results
 
-Every registered tool carries a protocol-native `title` and `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), so an agent can judge a tool before calling it. Results carry `structuredContent`, so a client reads a typed body and structured error payloads without re-parsing text. A binary response, such as an image, an audio clip, or a PDF, arrives as an image, audio, or embedded blob content block rather than decoded text. None of this needs configuration.
+Every registered tool carries a protocol-native `title` and `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), so an agent can judge a tool before calling it. Results carry `structuredContent`, so a client reads a typed body and structured error payloads without re-parsing text. A binary response, such as an image or a PDF, arrives as a content block rather than decoded text. None of this needs configuration.
 
 ## Configuration
 
@@ -410,7 +410,7 @@ An unknown `operationId` raises at startup so typos do not silently no-op. Resou
 
 ### Tool Shaping
 
-A raw operation rarely makes a good tool. Its `operationId` is ugly (GitHub's `actions/list-jobs-for-workflow-run-attempt`), its description is empty (most of `gists/*`), it takes a cryptic filter DSL alongside a dozen knobs the model should never touch, and it wraps the few useful fields in a large envelope. `x-mcp-integration.tool` fixes all of that without forking the spec. `name` and `description` fix how the tool presents itself, while `params`, `params_strategy`, `request`, and `response` reshape the interface behind it. `media` turns base64 fields of the response into content blocks the model can see.
+A raw operation rarely makes a good tool. Its `operationId` is ugly (GitHub's `actions/list-jobs-for-workflow-run-attempt`), its description is empty (most of `gists/*`), it takes a cryptic filter DSL alongside a dozen knobs the model should never touch, and it wraps the few useful fields in a large envelope. `x-mcp-integration.tool` fixes all of that without forking the spec. `name` and `description` fix how the tool presents itself, while `params`, `params_strategy`, `request`, and `response` reshape the interface behind it. `media` turns base64 fields into content blocks.
 
 <details>
 <summary><b>Renaming a GitHub Operation</b></summary>
@@ -476,29 +476,19 @@ For a full `replace` example, where the declared `params` are the entire surface
 </details>
 
 <details>
-<summary><b>Promoting Base64 Fields to Content Blocks with <code>media</code></b></summary>
+<summary><b>Promoting Base64 Fields with <code>media</code></b></summary>
 
-Many APIs embed a file inside JSON as a base64 string, such as a signature image or a contract PDF. The model only sees a long string there, so the gateway can move it into its own content block. An image becomes an image block, audio an audio block, and anything else an embedded blob.
-
-A field is promoted only when it is declared, never guessed. The spec declares one with OpenAPI 3.1 `contentEncoding: base64`, and `contentMediaType` gives its media type. For a spec that does not, name the field in `media`, which wins over the spec for the same path:
+A base64 field moves into its own image, audio, or blob content block, leaving a placeholder such as `<content[1]: image/png>` in the JSON. A field the spec marks with OpenAPI 3.1 `contentEncoding: base64` is promoted as is. Name any other field in `media`, by its path in the upstream response:
 
 ```yaml
 operations:
   getContract:
     tool:
       media:
-        signature.image:
-          encoding: base64
-          media_type: image/png
         attachments[*].content:
           encoding: base64
-          media_type: application/pdf
+          media_type: application/pdf  # defaults to application/octet-stream
 ```
-
-- **Paths**: dot-separated property names, with `[*]` for every item of an array. They name fields of the upstream response, so they are promoted before a `response` transform runs.
-- **Result**: the JSON stays the first block and `structuredContent`, with each promoted value replaced by a placeholder such as `<content[1]: image/png>` that points at its block.
-- **Defaults**: `media_type` defaults to `application/octet-stream`, and `base64` is the only `encoding` so far.
-- **Invalid Values**: a value that is not valid base64, or a path that matches nothing, is left as it is.
 
 </details>
 
