@@ -21,11 +21,11 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastapi>=0.136.0",
+    "fastapi>=0.161.1",
     "uvicorn[standard]>=0.54.0",
     "mcp>=2.0.0",
     "pydantic>=2.13.0",
-    "pydantic-settings>=2.14.0",
+    "pydantic-settings>=2.16.1",
     "httpx>=0.28.1",
     "pyyaml>=6.0.3",
     "inflection>=0.5.1",
@@ -43,7 +43,7 @@ dev = [
     "fakeredis>=2.35.0",
     "httpx>=0.28.1",
     "basedpyright>=1.39.0",
-    "ruff>=0.15.0",
+    "ruff>=0.17.2",
     "pyjwt[crypto]>=2.15.1",
 ]
 
