@@ -58,9 +58,57 @@ jobs:
 
       - uses: pypa/gh-action-pypi-publish@release/v1
 
+  publish-image:
+    name: Publish Image
+    # After PyPI, so `latest` never names a version pip cannot install.
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image installs the same wheel that went to PyPI.
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # PEP 440 rather than semver, since the tag is the Python version.
+          # A pre-release such as 1.2.0rc1 gets only its own tag, and `latest` only follows a final release.
+          tags: |
+            type=pep440,pattern={{version}}
+            type=pep440,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   github-release:
     name: GitHub Release
-    needs: publish-pypi
+    # Waits for the image too, so a release never announces an image that failed to publish.
+    needs: [publish-pypi, publish-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -75,9 +123,15 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+        # A PEP 440 pre-release or dev release is marked as one, so it never becomes the repo's latest release.
         run: |
+          flags=()
+          if [[ "${GITHUB_REF_NAME#v}" =~ (a|b|rc|dev)[0-9]*$ ]]; then
+            flags+=(--prerelease)
+          fi
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes \
+            "${flags[@]}" \
             dist/*

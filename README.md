@@ -33,6 +33,17 @@ uv add "openapi-mcp-gateway[redis]"  # optional, Redis token store for multi-rep
 
 Requires Python 3.11+. To skip the install entirely, `uvx openapi-mcp-gateway` runs the published package directly.
 
+### Container Image
+
+Each release publishes an image to GHCR. Mount a directory holding `config.yml` at `/config`:
+
+```bash
+docker run -p 8000:8000 --mount type=bind,src="$PWD/config",dst=/config,readonly \
+  ghcr.io/mroops0111/openapi-mcp-gateway:latest
+```
+
+[`compose.yaml`](compose.yaml) runs it beside Redis as the shared token store.
+
 ## Quick Start
 
 Every example below uses `uv run`, which assumes the install above.

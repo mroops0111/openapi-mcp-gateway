@@ -1,0 +1,45 @@
+# The gateway with Redis as the shared token store, so several replicas share one set of OAuth tokens.
+#
+# Put config.yml, and any local spec it names, in ./config, which is mounted at /config.
+# Point the config at Redis:
+#   store:
+#     type: redis
+#     redis_url: redis://redis:6379
+#
+# To run a build from source, build it and set the image instead of pulling:
+#   uv build --wheel && docker build -t openapi-mcp-gateway . && GATEWAY_IMAGE=openapi-mcp-gateway docker compose up
+
+services:
+  gateway:
+    image: ${GATEWAY_IMAGE:-ghcr.io/mroops0111/openapi-mcp-gateway:latest}
+    ports:
+      - "8000:8000"
+    volumes:
+      # A missing ./config fails fast, rather than Docker creating an empty directory in its place.
+      - type: bind
+        source: ./config
+        target: /config
+        read_only: true
+        bind:
+          create_host_path: false
+    # Secrets the config references as ${ENV_VAR}.
+    # environment:
+    #   GITHUB_TOKEN: ${GITHUB_TOKEN}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis-data:

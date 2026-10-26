@@ -1,0 +1,3 @@
+# The image installs the built wheel and nothing else.
+*
+!dist/*.whl
