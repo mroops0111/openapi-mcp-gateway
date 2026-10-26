@@ -345,6 +345,23 @@ class TestMountEmbedding:
         assert response.status_code == 200
         assert response.json()['authorization_endpoint'].endswith('/authorize')
 
+    async def test_mounted_gateway_answers_mcp_inside_the_host_lifespan(self, gateway):
+        """A host app that enters ``gateway.lifespan`` serves MCP through the mounted gateway."""
+
+        @contextlib.asynccontextmanager
+        async def lifespan(_app: FastAPI) -> typing.AsyncIterator[None]:
+            async with gateway.lifespan():
+                yield
+
+        host = FastAPI(lifespan=lifespan)
+        gateway.mount(host, transport='streamable-http')
+
+        with anyio.fail_after(10):
+            async with _serve(host) as base_url, Client(f'{base_url}/petstore/mcp') as mcp_client:
+                tools = await mcp_client.list_tools()
+
+        assert tools.tools
+
 
 class TestInstructions:
     """A server's ``instructions`` reach the client in the ``initialize`` result."""

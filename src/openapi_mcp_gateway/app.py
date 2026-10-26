@@ -12,6 +12,7 @@ from mcp.server.auth.routes import (
     create_protected_resource_routes,
 )
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 from starlette.middleware.cors import CORSMiddleware
@@ -129,6 +130,41 @@ def _transport_security(protection: DNSRebindingProtectionConfig, host: str | No
     return None
 
 
+def mount_mcp_apps(
+    app: FastAPI,
+    servers: list[_ServerBundle],
+    transport: str,
+    protection: DNSRebindingProtectionConfig,
+    host: str | None,
+) -> list[StreamableHTTPSessionManager]:
+    """Mount each server's MCP app onto ``app`` and return the session managers its lifespan must run.
+
+    Starlette runs only the root app's lifespan, so a mounted MCP app never starts its own session manager.
+    """
+    for bundle in servers:
+        app.mount(bundle.mount_path, build_mcp_asgi_app(bundle.mcp, transport, protection, host))
+    # Only ``streamable_http_app`` creates a session manager, and reading it before then raises.
+    # An SSE connection runs its own session inside the request, so there is nothing to start.
+    if transport == 'sse':
+        return []
+    return [bundle.mcp.session_manager for bundle in servers]
+
+
+@contextlib.asynccontextmanager
+async def serve_lifespan(
+    session_managers: list[StreamableHTTPSessionManager],
+    store: TokenStore,
+    on_shutdown: typing.Callable[[], typing.Awaitable[None]],
+) -> typing.AsyncIterator[None]:
+    """Run ``session_managers`` for as long as the app serves, then run the shutdown hooks and close the store."""
+    async with contextlib.AsyncExitStack() as stack:
+        for session_manager in session_managers:
+            await stack.enter_async_context(session_manager.run())
+        yield
+    await on_shutdown()
+    await store.close()
+
+
 def build_app(
     servers: list[_ServerBundle],
     config: GatewayConfig,
@@ -138,18 +174,13 @@ def build_app(
     host: str,
 ) -> FastAPI:
     """Assemble the gateway FastAPI app with CORS, OAuth, discovery, health, and MCP mounts."""
+    # Filled once the MCP apps are mounted below, which is before the lifespan runs.
+    session_managers: list[StreamableHTTPSessionManager] = []
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
-        async with contextlib.AsyncExitStack() as stack:
-            # Only ``streamable_http_app`` creates a session manager, and reading it before then raises.
-            # An SSE connection runs its own session inside the request, so there is nothing to start.
-            if transport != 'sse':
-                for bundle in servers:
-                    await stack.enter_async_context(bundle.mcp.session_manager.run())
+        async with serve_lifespan(session_managers, store, on_shutdown):
             yield
-        await on_shutdown()
-        await store.close()
 
     app = FastAPI(
         title='OpenAPI MCP Gateway',
@@ -171,11 +202,7 @@ def build_app(
     register_auth_routes(app, servers)
     _register_health_route(app, servers)
 
-    for bundle in servers:
-        app.mount(
-            bundle.mount_path,
-            build_mcp_asgi_app(bundle.mcp, transport, config.dns_rebinding_protection, host),
-        )
+    session_managers.extend(mount_mcp_apps(app, servers, transport, config.dns_rebinding_protection, host))
 
     return app
 

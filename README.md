@@ -566,16 +566,16 @@ Because the gateway runs in-process and routes through `httpx.ASGITransport`, ga
 
 ### Mounting into an Existing App
 
-To serve MCP alongside your own routes, build a `Gateway` and mount it onto your app. `mount` attaches every MCP sub-app at its configured path and also registers the OAuth authorization-server and `.well-known` discovery routes those servers own, so an OAuth flow works end to end.
+To serve MCP alongside your own routes, build a `Gateway` and mount it onto your app. `mount` attaches every MCP sub-app at its configured path and also registers the OAuth authorization-server and `.well-known` discovery routes those servers own, so an OAuth flow works end to end. Enter `gateway.lifespan()` in your app's lifespan, or MCP requests fail.
 
 <details>
 <summary><b>Mounting onto Your Own FastAPI App</b></summary>
 
 ```python
+import contextlib
+
 from fastapi import FastAPI
 from openapi_mcp_gateway import Gateway, GatewayConfig, ServerConfig
-
-app = FastAPI()
 
 gateway = Gateway.from_config(
     GatewayConfig(
@@ -583,6 +583,15 @@ gateway = Gateway.from_config(
         servers=[ServerConfig(name="petstore", spec="petstore.json")],
     )
 )
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with gateway.lifespan():
+        yield
+
+
+app = FastAPI(lifespan=lifespan)
 gateway.mount(app)  # mounts /petstore/mcp plus its OAuth and .well-known routes
 ```
 
