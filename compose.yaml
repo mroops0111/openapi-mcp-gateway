@@ -1,19 +1,23 @@
-# The gateway from its published image, with Redis as the shared token store.
+# The gateway with Redis as the shared token store.
 #
-# Usage (from this directory):
-#   docker compose up
-#   curl http://localhost:8000/healthz
+# Put your config at ./config.yml; it is mounted at /config/config.yml.
+# To share tokens through Redis, set in it:
+#   store:
+#     type: redis
+#     redis_url: redis://redis:6379
 #
-# Edit config.yml to mount your own APIs; pass any secrets it references as ${ENV_VAR}
-# through the gateway's `environment` block.
+# `docker compose up` pulls the published image.
+# To run from source instead: `uv build --wheel && docker compose up --build`.
 
 services:
   gateway:
     image: ghcr.io/mroops0111/openapi-mcp-gateway:latest
+    build: .
     ports:
       - "8000:8000"
     volumes:
       - ./config.yml:/config/config.yml:ro
+    # Secrets the config references as ${ENV_VAR}.
     # environment:
     #   GITHUB_TOKEN: ${GITHUB_TOKEN}
     depends_on:

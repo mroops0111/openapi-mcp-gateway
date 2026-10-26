@@ -41,7 +41,7 @@ Each release publishes a multi-arch image (`linux/amd64`, `linux/arm64`) to GHCR
 docker run -p 8000:8000 -v ./config.yml:/config/config.yml:ro ghcr.io/mroops0111/openapi-mcp-gateway:latest
 ```
 
-The image's `HEALTHCHECK` probes `/healthz` on port 8000. [`examples/docker/`](examples/docker/) runs the gateway beside Redis with Docker Compose. To build the image yourself, build the wheel first: `uv build --wheel && docker build -t openapi-mcp-gateway .`
+The image's `HEALTHCHECK` probes `/healthz` on port 8000. [`compose.yaml`](compose.yaml) runs it beside Redis as the shared token store. To build the image from source, build the wheel first: `uv build --wheel && docker build -t openapi-mcp-gateway .`
 
 ## Quick Start
 
