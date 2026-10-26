@@ -29,11 +29,14 @@ class Base64Encoding(MediaEncoding):
     """A field holding the bytes as a base64 string."""
 
     def to_content(self, value: typing.Any, media_type: str, uri: str) -> ContentBlock | None:
-        """Decode ``value``, leaving anything that is not a valid base64 string alone."""
+        """Decode ``value``, leaving anything that is not a valid base64 string alone.
+
+        Whitespace is dropped first, since MIME base64 breaks its lines, as GitHub's contents API does.
+        """
         if not isinstance(value, str):
             return None
         try:
-            data = base64.b64decode(value, validate=True)
+            data = base64.b64decode(''.join(value.split()), validate=True)
         except binascii.Error:
             return None
         return binary_content(data, media_type, uri)

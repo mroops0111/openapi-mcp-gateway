@@ -383,6 +383,18 @@ class TestMediaFields:
 
         assert isinstance(result.content[1], ImageContent)
 
+    async def test_line_broken_base64_is_decoded(self, mock_upstream):
+        """MIME base64 that breaks its lines, as GitHub's contents API sends it, still decodes."""
+        encoded = self._encode(self._PNG * 10)
+        body = {'photo': '\n'.join(encoded[index : index + 60] for index in range(0, len(encoded), 60))}
+        media = {'photo': MediaField(encoding='base64', media_type='image/png')}
+
+        result = await self._call(mock_upstream, body, media_fields=media)
+
+        (_text, image) = result.content
+        assert isinstance(image, ImageContent)
+        assert base64.b64decode(image.data) == self._PNG * 10
+
     async def test_value_that_is_not_base64_is_left_alone(self, mock_upstream):
         """A declared field holding something else, or missing, keeps its value and adds no block."""
         body = {'photo': 'not base64!', 'other': 1}
