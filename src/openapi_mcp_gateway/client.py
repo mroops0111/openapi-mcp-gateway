@@ -8,21 +8,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Media types outside ``text/*`` whose bodies are still text, so they keep the ``{'data': text}`` shape.
-_TEXT_MEDIA_TYPES = frozenset(
-    {
-        'application/graphql',
-        'application/javascript',
-        'application/x-ndjson',
-        'application/x-www-form-urlencoded',
-        'application/x-yaml',
-        'application/xml',
-        'application/yaml',
-    }
-)
-_TEXT_MEDIA_TYPE_SUFFIXES = ('+json', '+xml', '+yaml')
-
-# The media type a body without a usable ``Content-Type`` is reported as, once it fails to decode as UTF-8.
+# The media type a binary body without a ``Content-Type`` is reported as.
 _FALLBACK_BINARY_MEDIA_TYPE = 'application/octet-stream'
 
 
@@ -33,39 +19,6 @@ class BinaryBody:
     content: bytes
     media_type: str
     url: str
-
-
-def _is_text_media_type(content_type: str) -> bool:
-    """Say whether ``content_type`` names a body that decodes as text.
-
-    A ``charset`` parameter counts as text whatever the type, since only text has a character set.
-    """
-    media_type, _, parameters = content_type.partition(';')
-    media_type = media_type.strip().lower()
-    if 'charset=' in parameters.lower():
-        return True
-    return (
-        media_type.startswith('text/')
-        or media_type in _TEXT_MEDIA_TYPES
-        or media_type.endswith(_TEXT_MEDIA_TYPE_SUFFIXES)
-    )
-
-
-def _decode_non_json_body(response: httpx.Response) -> dict[str, typing.Any] | BinaryBody:
-    """Return a non-JSON body as ``{'data': text}`` when it is text, and as a ``BinaryBody`` otherwise.
-
-    A body without a ``Content-Type`` is text when it decodes as UTF-8, since nothing else says what it is.
-    """
-    content_type = response.headers.get('content-type', '')
-    url = str(response.request.url)
-    if not content_type.strip():
-        try:
-            return {'data': response.content.decode('utf-8')}
-        except UnicodeDecodeError:
-            return BinaryBody(response.content, _FALLBACK_BINARY_MEDIA_TYPE, url)
-    if _is_text_media_type(content_type):
-        return {'data': response.text}
-    return BinaryBody(response.content, content_type.partition(';')[0].strip().lower(), url)
 
 
 class APIClient:
@@ -118,7 +71,7 @@ class APIClient:
         """Send ``method`` to ``path`` and return the decoded body.
 
         Returns decoded JSON for ``application/json`` responses, ``{'status': code}`` for empty 204 responses,
-        ``{'data': text}`` for any other text media type, or a ``BinaryBody`` for anything else.
+        ``{'data': text}`` for any other body that is text, or a ``BinaryBody`` for one that is not.
         Raises ``httpx.HTTPStatusError`` on HTTP error status codes.
         """
         request_kwargs: dict[str, typing.Any] = {}
@@ -155,4 +108,20 @@ class APIClient:
                 return response.json()
             except json.JSONDecodeError:
                 return {'data': response.text}
-        return _decode_non_json_body(response)
+        return self._decode_non_json_body(response)
+
+    @staticmethod
+    def _decode_non_json_body(response: httpx.Response) -> dict[str, typing.Any] | BinaryBody:
+        """Return a non-JSON body as ``{'data': text}`` when it is text, and as a ``BinaryBody`` otherwise.
+
+        The body decides, not a list of media types.
+        A declared ``charset`` makes it text, since only text has one.
+        Otherwise it is text when it decodes as UTF-8, which real binary such as an image or an archive fails early.
+        """
+        if response.charset_encoding is not None:
+            return {'data': response.text}
+        try:
+            return {'data': response.content.decode('utf-8')}
+        except UnicodeDecodeError:
+            media_type = response.headers.get('content-type', '').partition(';')[0].strip().lower()
+            return BinaryBody(response.content, media_type or _FALLBACK_BINARY_MEDIA_TYPE, str(response.request.url))

@@ -39,13 +39,6 @@ class Base64Encoding(MediaEncoding):
         return binary_content(data, media_type, uri)
 
 
-# The encoding behind each ``MediaField.encoding`` value.
-# A new encoding is a new class here and a new value there, with nothing else to change.
-_ENCODINGS: dict[str, MediaEncoding] = {
-    'base64': Base64Encoding(),
-}
-
-
 @dataclasses.dataclass(frozen=True)
 class _MediaRule:
     """One declared media field, ready to apply."""
@@ -61,9 +54,15 @@ class MediaPromoter:
     Built once per operation, so every path is parsed at startup rather than on each call.
     """
 
+    # The encoding behind each ``MediaField.encoding`` value.
+    # A new encoding is a new ``MediaEncoding`` here and a new value there, with nothing else to change.
+    _ENCODINGS: typing.ClassVar[dict[str, MediaEncoding]] = {
+        'base64': Base64Encoding(),
+    }
+
     def __init__(self, fields: typing.Mapping[str, MediaField]):
         self._rules = [
-            _MediaRule(FieldPath.parse(path), field.media_type, _ENCODINGS[field.encoding])
+            _MediaRule(FieldPath.parse(path), field.media_type, self._ENCODINGS[field.encoding])
             for path, field in fields.items()
         ]
 

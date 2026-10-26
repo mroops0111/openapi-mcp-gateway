@@ -77,10 +77,10 @@ async def test_binary_body_kept_as_bytes():
 
 @pytest.mark.parametrize(
     'content_type',
-    ['application/xml', 'application/problem+json', 'text/csv', 'application/octet-stream; charset=utf-8'],
+    ['application/xml', 'application/problem+json', 'application/toml', 'text/csv', 'application/octet-stream'],
 )
-async def test_text_media_types_stay_text(content_type):
-    """Text media outside ``text/*``, or any type with a ``charset``, keeps the ``{'data': text}`` shape."""
+async def test_body_that_decodes_as_utf8_stays_text(content_type):
+    """The body decides, so text under any media type keeps the ``{'data': text}`` shape."""
 
     def handler(_request):
         return httpx.Response(200, content=b'<pet/>', headers={'content-type': content_type})
@@ -89,6 +89,20 @@ async def test_text_media_types_stay_text(content_type):
         result = await client.request('GET', '/pet/1')
 
     assert result == {'data': '<pet/>'}
+
+
+async def test_declared_charset_decodes_as_text():
+    """A ``charset`` makes the body text, decoded with that charset rather than as UTF-8."""
+
+    def handler(_request):
+        return httpx.Response(
+            200, content='café'.encode('latin-1'), headers={'content-type': 'text/plain; charset=latin-1'}
+        )
+
+    async with _client_with_handler(handler) as client:
+        result = await client.request('GET', '/menu')
+
+    assert result == {'data': 'café'}
 
 
 @pytest.mark.parametrize(

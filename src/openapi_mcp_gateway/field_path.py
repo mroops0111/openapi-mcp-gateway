@@ -57,7 +57,7 @@ class FieldPath:
     def find(self, payload: typing.Any) -> typing.Iterator[FieldMatch]:
         """Yield every value this path reaches in ``payload``, skipping any branch whose shape does not match."""
         if self.segments:
-            yield from _find(payload, self.segments, '')
+            yield from self._find(payload, self.segments, '')
 
     def __str__(self) -> str:
         """Render the path in the syntax ``parse`` reads."""
@@ -66,21 +66,21 @@ class FieldPath:
             for index, segment in enumerate(self.segments)
         )
 
-
-def _find(node: typing.Any, segments: tuple[str, ...], path: str) -> typing.Iterator[FieldMatch]:
-    """Yield the matches for ``segments`` under ``node``, whose own concrete path is ``path``."""
-    segment, rest = segments[0], segments[1:]
-    if segment == ARRAY_WILDCARD:
-        if not isinstance(node, list):
-            return
-        keys: list[str | int] = list(range(len(node)))
-    elif isinstance(node, dict) and segment in node:
-        keys = [segment]
-    else:
-        return
-    for key in keys:
-        child_path = f'{path}[{key}]' if isinstance(key, int) else f'{path}.{key}' if path else key
-        if rest:
-            yield from _find(typing.cast(typing.Any, node)[key], rest, child_path)
+    @classmethod
+    def _find(cls, node: typing.Any, segments: tuple[str, ...], path: str) -> typing.Iterator[FieldMatch]:
+        """Yield the matches for ``segments`` under ``node``, whose own concrete path is ``path``."""
+        segment, rest = segments[0], segments[1:]
+        if segment == ARRAY_WILDCARD:
+            if not isinstance(node, list):
+                return
+            keys: list[str | int] = list(range(len(node)))
+        elif isinstance(node, dict) and segment in node:
+            keys = [segment]
         else:
-            yield FieldMatch(node, key, child_path)
+            return
+        for key in keys:
+            child_path = f'{path}[{key}]' if isinstance(key, int) else f'{path}.{key}' if path else key
+            if rest:
+                yield from cls._find(typing.cast(typing.Any, node)[key], rest, child_path)
+            else:
+                yield FieldMatch(node, key, child_path)
