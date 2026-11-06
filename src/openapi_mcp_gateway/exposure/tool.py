@@ -1,6 +1,3 @@
-import base64
-import binascii
-import dataclasses
 import inspect
 import logging
 import typing
@@ -12,7 +9,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, ToolAnnotations
 
 from ..openapi import ExposedTool, OperationInfo, ToolOverride
-from ._search import OperationSearchIndex
+from ._catalog import CatalogOperation, OperationCatalog
 from ._shaping import shape_operation
 from ._shared import (
     _get_override,
@@ -50,13 +47,6 @@ _CALL_OPERATION_DESCRIPTION = (
     'Invoke an operation by name with a JSON object of arguments. '
     'Argument keys must match the keys in `get_operation(name).input_schema.properties`.'
 )
-
-# How many operations one search_operations page carries.
-_SEARCH_PAGE_SIZE = 20
-
-# The longest description a search result shows, in characters.
-# The full text stays one get_operation call away.
-_BRIEF_DESCRIPTION_LIMIT = 200
 
 
 def _shaping(tool_override: ToolOverride | None) -> dict[str, typing.Any] | None:
@@ -216,20 +206,6 @@ def build_tool_function(
     return upstream_callable
 
 
-@dataclasses.dataclass
-class _MetaToolEntry:
-    """One operation indexed by the dynamic-exposure registry.
-
-    Internal to :class:`MetaToolGenerator`.
-    Consumers interact with operations through the three meta-tools, not this dataclass.
-    """
-
-    description: str
-    tags: list[str]
-    input_schema: dict[str, typing.Any]
-    callable_: typing.Callable[..., typing.Awaitable[CallToolResult]]
-
-
 class ToolGenerator:
     """Register one MCP tool per operation onto ``mcp``, for static exposure."""
 
@@ -289,37 +265,39 @@ class MetaToolGenerator:
     def __init__(self, mcp: MCPServer, binding: UpstreamBinding):
         self.mcp = mcp
         self.binding = binding
-        self._registry: dict[str, _MetaToolEntry] = {}
-        self._search_texts: dict[str, str] = {}
 
     def register(self, operations: list[OperationInfo]) -> list[ExposedTool]:
-        """Populate the registry from ``operations`` and bind the three meta-tools, returning them."""
+        """Build the operation catalog from ``operations`` and bind the three meta-tools, returning them."""
+        catalog_operations: list[CatalogOperation] = []
         for operation in operations:
             # Same shaping as the static path, so a dynamic operation exposes the identical surface.
             # Meta-tools carry no per-operation annotations, so annotation overrides do not apply here.
             shaped_operation = shape_operation(operation)
             tool_override = _get_override(shaped_operation, 'tool')
-            name = derive_name(shaped_operation, tool_override.name if tool_override else None)
-            description = derive_description(shaped_operation, tool_override.description if tool_override else None)
-            self._registry[name] = _MetaToolEntry(
-                description=description,
-                tags=shaped_operation.tags,
-                input_schema=build_input_schema(shaped_operation),
-                callable_=build_tool_function(shaped_operation, self.binding, attach_signature=False),
-            )
-            # The name and summary say what the operation does, while a long description also mentions what it does not.
-            # Counting them twice ranks `issues_create_comment` above operations that only mention issue comments.
-            headline = f'{name} {shaped_operation.summary}'
-            self._search_texts[name] = ' '.join(
-                [headline, headline, description, shaped_operation.path, *shaped_operation.tags]
+            catalog_operations.append(
+                CatalogOperation(
+                    name=derive_name(shaped_operation, tool_override.name if tool_override else None),
+                    summary=shaped_operation.summary,
+                    description=derive_description(
+                        shaped_operation, tool_override.description if tool_override else None
+                    ),
+                    path=shaped_operation.path,
+                    tags=shaped_operation.tags,
+                    input_schema=build_input_schema(shaped_operation),
+                    callable_=build_tool_function(shaped_operation, self.binding, attach_signature=False),
+                )
             )
             logger.debug(
-                'Dynamic operation indexed: %s ← %s %s', name, shaped_operation.method.upper(), shaped_operation.path
+                'Dynamic operation indexed: %s ← %s %s',
+                catalog_operations[-1].name,
+                shaped_operation.method.upper(),
+                shaped_operation.path,
             )
-        self._bind_meta_tools()
+        catalog = OperationCatalog(catalog_operations)
+        self._bind_meta_tools(catalog)
         logger.info(
             'Registered %d operation(s) behind dynamic meta-tools on server "%s"',
-            len(self._registry),
+            len(catalog),
             self.mcp.name,
         )
         return [
@@ -328,10 +306,7 @@ class MetaToolGenerator:
             ExposedTool('call_operation', '-', '-'),
         ]
 
-    def _bind_meta_tools(self) -> None:
-        registry = self._registry
-        search_index = OperationSearchIndex(self._search_texts)
-
+    def _bind_meta_tools(self, catalog: OperationCatalog) -> None:
         @self.mcp.tool(name='search_operations', description=_SEARCH_OPERATIONS_DESCRIPTION)
         async def search_operations(
             ctx: Context,
@@ -345,74 +320,20 @@ class MetaToolGenerator:
                 str | None, pydantic.Field(description='The `nextCursor` of the previous page.')
             ] = None,
         ) -> CallToolResult:
-            candidates = _names_tagged(registry, tags) if tags else None
-            if query:
-                names = search_index.search(query, candidates)
-            else:
-                names = [name for name in registry if candidates is None or name in candidates]
-            offset = _decode_cursor(cursor) if cursor else 0
-            page = names[offset : offset + _SEARCH_PAGE_SIZE]
-            payload: dict[str, typing.Any] = {
-                'operations': [{'name': name, 'description': _brief(registry[name].description)} for name in page]
-            }
-            if offset + _SEARCH_PAGE_SIZE < len(names):
-                payload['nextCursor'] = _encode_cursor(offset + _SEARCH_PAGE_SIZE)
-            # Listing everything, the first page also shows how the operations divide into tags,
-            # so the model can narrow down rather than page through all of them.
-            if not query and not tags and offset == 0 and (tag_counts := _count_tags(registry)):
-                payload['tags'] = tag_counts
-            return _build_success_result(payload)
+            return _build_success_result(catalog.search(query, tags, cursor))
 
         @self.mcp.tool(name='get_operation', description=_GET_OPERATION_DESCRIPTION)
         async def get_operation(name: str, ctx: Context) -> CallToolResult:
-            entry = registry.get(name)
-            if entry is None:
+            operation = catalog.get(name)
+            if operation is None:
                 raise _unknown_operation_error(name)
             return _build_success_result(
-                {'name': name, 'description': entry.description, 'input_schema': entry.input_schema}
+                {'name': name, 'description': operation.description, 'input_schema': operation.input_schema}
             )
 
         @self.mcp.tool(name='call_operation', description=_CALL_OPERATION_DESCRIPTION)
         async def call_operation(name: str, arguments: dict[str, typing.Any], ctx: Context) -> CallToolResult:
-            entry = registry.get(name)
-            if entry is None:
+            operation = catalog.get(name)
+            if operation is None:
                 raise _unknown_operation_error(name)
-            return await entry.callable_(**arguments, ctx=ctx)
-
-
-def _count_tags(registry: dict[str, _MetaToolEntry]) -> list[dict[str, typing.Any]]:
-    """List every tag with the number of operations carrying it, in name order."""
-    counts: dict[str, int] = {}
-    for entry in registry.values():
-        for tag in entry.tags:
-            counts[tag] = counts.get(tag, 0) + 1
-    return [{'name': tag, 'operations': counts[tag]} for tag in sorted(counts)]
-
-
-def _names_tagged(registry: dict[str, _MetaToolEntry], tags: list[str]) -> set[str]:
-    """Return the operations carrying any of ``tags``, matched without regard to case."""
-    wanted = {tag.casefold() for tag in tags}
-    return {name for name, entry in registry.items() if any(tag.casefold() in wanted for tag in entry.tags)}
-
-
-def _brief(description: str) -> str:
-    """Cut ``description`` to its first paragraph on one line, at most ``_BRIEF_DESCRIPTION_LIMIT`` characters."""
-    first_paragraph = ' '.join(description.strip().split('\n\n', 1)[0].split())
-    if len(first_paragraph) <= _BRIEF_DESCRIPTION_LIMIT:
-        return first_paragraph
-    return first_paragraph[: _BRIEF_DESCRIPTION_LIMIT - 1].rstrip() + '…'
-
-
-def _encode_cursor(offset: int) -> str:
-    return base64.urlsafe_b64encode(str(offset).encode()).decode()
-
-
-def _decode_cursor(cursor: str) -> int:
-    """Read the offset back out of a ``nextCursor``, rejecting one this server did not issue."""
-    try:
-        offset = int(base64.urlsafe_b64decode(cursor.encode()).decode())
-    except (binascii.Error, UnicodeDecodeError, ValueError):
-        raise ValueError(f'Invalid cursor: {cursor!r}. Pass the nextCursor of the previous page.') from None
-    if offset < 0:
-        raise ValueError(f'Invalid cursor: {cursor!r}. Pass the nextCursor of the previous page.')
-    return offset
+            return await operation.callable_(**arguments, ctx=ctx)

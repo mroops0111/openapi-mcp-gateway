@@ -588,6 +588,13 @@ def _tagged_ops() -> list[OperationInfo]:
     ]
 
 
+def _many_things() -> list[OperationInfo]:
+    """Twenty-five untagged operations, more than one search page holds."""
+    return [
+        OperationInfo(operation_id=f'listThing{index}', method='get', path=f'/things/{index}') for index in range(25)
+    ]
+
+
 class TestSearchOperations:
     """``search_operations`` ranks operations against a query, filters by tag, and pages the result."""
 
@@ -659,12 +666,7 @@ class TestSearchOperations:
     async def test_pages_with_next_cursor(self):
         """A result longer than one page carries ``nextCursor``, and the last page does not."""
         generator, mcp = _meta_generator()
-        generator.register(
-            [
-                OperationInfo(operation_id=f'listThing{index}', method='get', path=f'/things/{index}')
-                for index in range(25)
-            ]
-        )
+        generator.register(_many_things())
         first = await _search(mcp, query='list things')
         assert len(first['operations']) == 20
         second = await _search(mcp, query='list things', cursor=first['nextCursor'])
@@ -679,6 +681,33 @@ class TestSearchOperations:
         generator.register(_ops())
         with pytest.raises(ValueError, match='Invalid cursor'):
             await _search(mcp, query='pets', cursor='not-a-cursor')
+
+    async def test_rejects_a_cursor_from_another_search(self):
+        """A cursor carried over to a different query raises, rather than paging through the wrong result."""
+        generator, mcp = _meta_generator()
+        generator.register(_many_things())
+        cursor = (await _search(mcp, query='list things'))['nextCursor']
+        with pytest.raises(ValueError, match='different query or tags'):
+            await _search(mcp, query='things', cursor=cursor)
+
+    async def test_blank_query_filters_nothing(self):
+        """A query of only whitespace is treated as omitted and lists everything."""
+        generator, mcp = _meta_generator()
+        generator.register(_tagged_ops())
+        assert await _search(mcp, query='   ') == await _search(mcp)
+
+    async def test_tag_counts_merge_spellings_that_differ_in_case(self):
+        """Tags differing only in case count as one, in the spelling seen first, matching how filtering treats them."""
+        generator, mcp = _meta_generator()
+        generator.register(
+            [
+                OperationInfo(operation_id='listPets', method='get', path='/pets', tags=['Pets']),
+                OperationInfo(operation_id='adoptPet', method='post', path='/pets/adopt', tags=['pets']),
+            ]
+        )
+        payload = await _search(mcp)
+        assert payload['tags'] == [{'name': 'Pets', 'operations': 2}]
+        assert len((await _search(mcp, tags=['PETS']))['operations']) == 2
 
     async def test_description_cut_to_first_paragraph(self):
         """A result shows only the first paragraph of a long description, capped in length."""
@@ -2139,8 +2168,8 @@ class TestExposedToolDetail:
     def test_a_nested_body_keeps_its_shape(self, tmp_path):
         """Flattening body properties into a list loses exactly what a reviewer needs.
 
-        An enum, a default, a pattern and a numeric bound all live below the top level,
-        and a summary that reports ``priority: string`` cannot answer what the model may send.
+        A summary that reports ``priority: string`` cannot answer what the model may send.
+        The answer lives below the top level, in an enum, a default, a pattern and a numeric bound.
         """
         spec = tmp_path / 'spec.json'
         spec.write_text(json.dumps(_nested_body_spec()))
