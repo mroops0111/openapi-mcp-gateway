@@ -52,3 +52,18 @@ async def test_example_config_lists_tools(config_name: str):
         async with Client(bundle.mcp) as session:
             listed = await session.list_tools()
             assert listed.tools, f'config "{config_name}" server "{bundle.name}" registered no tools'
+
+
+async def test_github_dynamic_search_finds_merge_on_first_page():
+    """Against GitHub's 1,200-operation spec, the first result stays small and a plain query finds its operation.
+
+    The first ``search_operations`` call returns one page of operations and the tag counts, so it fits in a few kilobytes.
+    """
+    config = GatewayConfig.from_yaml(_EXAMPLES_DIR / 'github-dynamic.yml')
+    gateway = Gateway.from_config(config)
+
+    async with Client(gateway._servers[0].mcp) as session:
+        overview = await session.call_tool('search_operations', {})
+        assert len(overview.content[0].text) < 8 * 1024
+        found = await session.call_tool('search_operations', {'query': 'merge a pull request'})
+        assert 'pulls_merge' in {entry['name'] for entry in found.structured_content['operations']}

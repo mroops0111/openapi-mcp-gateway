@@ -18,7 +18,7 @@ uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 - **Multi-Spec, Multi-Auth.** Mount GitHub, an OAuth2 SaaS, and your internal API side by side from one config file, each at its own endpoint with its own auth and token namespace.
 - **Spec-Compliant Authorization.** The gateway runs its own OAuth server, or exchanges the caller's token with an issuer you already run, and calls the API with a per-user upstream token. The MCP client's credential is never replayed against a third party.
 - **Tool Shaping.** Rename ugly `operationId`s, hide knobs the model should never touch, and rewrite requests and responses with JSONata, all in YAML with no fork required. Every expression is checked at startup.
-- **Dynamic Exposure.** Front a 1,200-operation spec with three `list → get → call` meta-tools, so connecting to it does not spend the LLM's whole context window on tool schemas.
+- **Dynamic Exposure.** Front a 1,200-operation spec with three `search → get → call` meta-tools, so connecting to it does not spend the LLM's whole context window on tool schemas.
 - **Resources, Not Just Tools.** Eligible read-only GETs register as MCP resources instead, addressable by URI and surfaced by the client rather than guessed at by the model.
 - **FastAPI-Native.** Decorate routes with `@mcp_tool` to expose them in-process over ASGI, no extra hop and no second spec to maintain.
 
@@ -336,7 +336,7 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `timeout` | float | `90` | HTTP timeout in seconds |
 | `headers` | map |  | Static headers sent on every upstream call, such as an API version the whole API requires. Values take `${ENV_VAR}`, and an unset variable leaves the header out. A header the call itself sends wins. `Authorization` is refused, since it belongs to `auth` |
 | `instructions` | string |  | Guidance about the server as a whole, such as when to use it rather than another server or which tool to call first. Sent in the MCP `initialize` result, which clients place in the model's context. Unset leaves the field out |
-| `exposure.style` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`list_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand, and ignores `promote_resources`. |
+| `exposure.style` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`search_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand, and ignores `promote_resources`. |
 | `exposure.promote_resources` | bool | `false` | Promotes eligible GETs (no required non-path parameter) to MCP resources. A per-operation `resource` declaration applies either way. |
 | `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation. Useful when you do not control the upstream spec. |
 
@@ -494,12 +494,12 @@ operations:
 
 ### Dynamic Exposure
 
-For APIs with hundreds of operations (GitHub, Stripe, etc.), registering each as its own tool can blow the LLM's context window before the agent does anything. Set `exposure.style: dynamic` and the client sees three meta-tools instead, which the LLM walks as `list → get → call` to discover and invoke operations on demand. It is per-server, so `/github/mcp` can run `dynamic` while `/petstore/mcp` runs `static` in the same process.
+For APIs with hundreds of operations (GitHub, Stripe, etc.), registering each as its own tool can blow the LLM's context window before the agent does anything. Set `exposure.style: dynamic` and the client sees three meta-tools instead, which the LLM walks as `search → get → call` to discover and invoke operations on demand. It is per-server, so `/github/mcp` can run `dynamic` while `/petstore/mcp` runs `static` in the same process.
 
 <details>
 <summary><b>The Three Meta-Tools</b></summary>
 
-- `list_operations()` returns `[{name, description}, ...]` for every operation on this server.
+- `search_operations(query, tags, cursor)` ranks operations against `query` with BM25 and returns `[{name, description}, ...]`, 20 per page, with `nextCursor` when more matches exist. `tags` limits the search to operations carrying any of them. An omitted argument filters nothing, so with no arguments it lists every operation, and the first page also carries each tag with its operation count.
 - `get_operation(name)` returns one operation's JSON Schema for input arguments.
 - `call_operation(name, arguments)` invokes that operation against the upstream.
 
