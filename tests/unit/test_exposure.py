@@ -557,30 +557,72 @@ class TestMetaToolRegistration:
     """``MetaToolGenerator.register`` produces exactly three meta-tools regardless of N operations."""
 
     def test_exactly_three_tools_registered(self):
-        """Three operations in, three meta-tools out, namely list, get, and call."""
+        """Three operations in, three meta-tools out, namely search, get, and call."""
         generator, mcp = _meta_generator()
         generator.register(_ops())
         names = {tool.name for tool in mcp._tool_manager.list_tools()}
-        assert names == {'list_operations', 'get_operation', 'call_operation'}
+        assert names == {'search_operations', 'get_operation', 'call_operation'}
 
     def test_empty_ops_still_registers_three(self):
         """No operations still produces three meta-tools (callable on an empty registry)."""
         generator, mcp = _meta_generator()
         generator.register([])
         names = {tool.name for tool in mcp._tool_manager.list_tools()}
-        assert names == {'list_operations', 'get_operation', 'call_operation'}
+        assert names == {'search_operations', 'get_operation', 'call_operation'}
 
 
-class TestListOperations:
-    """``list_operations`` returns ``{name, description}`` for every indexed operation."""
+async def _search(mcp: MCPServer, **arguments: typing.Any) -> dict[str, typing.Any]:
+    """Call ``search_operations`` with ``arguments`` and return its structured payload."""
+    tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'search_operations')
+    return (await tool.fn(ctx=_stub_context(), **arguments)).structured_content
 
-    async def test_returns_name_and_description_only(self):
-        """The list payload carries ``name`` and ``description`` per entry, nothing else."""
+
+def _tagged_ops() -> list[OperationInfo]:
+    """Two pet operations and one store operation."""
+    return [
+        OperationInfo(operation_id='listPets', method='get', path='/pets', summary='List pets.', tags=['pets']),
+        OperationInfo(
+            operation_id='adoptPet', method='post', path='/pets/{petId}/adopt', summary='Adopt a pet.', tags=['pets']
+        ),
+        OperationInfo(operation_id='listOrders', method='get', path='/orders', summary='List orders.', tags=['store']),
+    ]
+
+
+class TestSearchOperations:
+    """``search_operations`` ranks operations against a query, filters by tag, and pages the result."""
+
+    async def test_no_arguments_lists_everything_with_tag_counts(self):
+        """With neither query nor tags, every operation is listed, and the first page adds the tags and their counts."""
+        generator, mcp = _meta_generator()
+        generator.register(_tagged_ops())
+        assert await _search(mcp) == {
+            'operations': [
+                {'name': 'list_pets', 'description': 'List pets.'},
+                {'name': 'adopt_pet', 'description': 'Adopt a pet.'},
+                {'name': 'list_orders', 'description': 'List orders.'},
+            ],
+            'tags': [{'name': 'pets', 'operations': 2}, {'name': 'store', 'operations': 1}],
+        }
+
+    async def test_tag_counts_only_on_the_first_page(self):
+        """Later pages of the full listing leave the tag counts out."""
+        generator, mcp = _meta_generator()
+        generator.register(
+            [
+                OperationInfo(operation_id=f'listThing{index}', method='get', path=f'/things/{index}', tags=['things'])
+                for index in range(25)
+            ]
+        )
+        first = await _search(mcp)
+        assert first['tags'] == [{'name': 'things', 'operations': 25}]
+        second = await _search(mcp, cursor=first['nextCursor'])
+        assert 'tags' not in second
+
+    async def test_no_arguments_without_tags_lists_operations(self):
+        """A spec without tags lists every operation by name and description, with no tag counts."""
         generator, mcp = _meta_generator()
         generator.register(_ops())
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'list_operations')
-        payload = (await tool.fn(ctx=_stub_context())).structured_content
-        assert payload == {
+        assert await _search(mcp) == {
             'operations': [
                 {'name': 'list_pets', 'description': 'List all pets.'},
                 {'name': 'get_pet_by_id', 'description': 'Get one pet.'},
@@ -590,14 +632,79 @@ class TestListOperations:
     async def test_falls_back_to_method_path_when_no_text(self):
         """An op without description or summary falls back to ``METHOD /path``."""
         generator, mcp = _meta_generator()
+        generator.register([OperationInfo(operation_id='ping', method='get', path='/ping')])
+        assert await _search(mcp) == {'operations': [{'name': 'ping', 'description': 'GET /ping'}]}
+
+    async def test_query_ranks_matches_and_leaves_out_the_rest(self):
+        """The best match comes first, and an operation sharing no term with the query is left out."""
+        generator, mcp = _meta_generator()
+        generator.register(_tagged_ops())
+        payload = await _search(mcp, query='adopt a pet')
+        assert [entry['name'] for entry in payload['operations']] == ['adopt_pet', 'list_pets']
+
+    async def test_tags_filter_without_query(self):
+        """Tags alone list the operations carrying any of them, matched without regard to case."""
+        generator, mcp = _meta_generator()
+        generator.register(_tagged_ops())
+        payload = await _search(mcp, tags=['Store'])
+        assert [entry['name'] for entry in payload['operations']] == ['list_orders']
+
+    async def test_tags_filter_narrows_query(self):
+        """Tags restrict a query to the operations carrying them."""
+        generator, mcp = _meta_generator()
+        generator.register(_tagged_ops())
+        payload = await _search(mcp, query='list', tags=['store'])
+        assert [entry['name'] for entry in payload['operations']] == ['list_orders']
+
+    async def test_pages_with_next_cursor(self):
+        """A result longer than one page carries ``nextCursor``, and the last page does not."""
+        generator, mcp = _meta_generator()
         generator.register(
             [
-                OperationInfo(operation_id='ping', method='get', path='/ping'),
+                OperationInfo(operation_id=f'listThing{index}', method='get', path=f'/things/{index}')
+                for index in range(25)
             ]
         )
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'list_operations')
-        payload = (await tool.fn(ctx=_stub_context())).structured_content
-        assert payload == {'operations': [{'name': 'ping', 'description': 'GET /ping'}]}
+        first = await _search(mcp, query='list things')
+        assert len(first['operations']) == 20
+        second = await _search(mcp, query='list things', cursor=first['nextCursor'])
+        assert len(second['operations']) == 5
+        assert 'nextCursor' not in second
+        names = [entry['name'] for entry in first['operations'] + second['operations']]
+        assert len(set(names)) == 25
+
+    async def test_rejects_a_cursor_it_did_not_issue(self):
+        """A cursor that does not decode to an offset raises."""
+        generator, mcp = _meta_generator()
+        generator.register(_ops())
+        with pytest.raises(ValueError, match='Invalid cursor'):
+            await _search(mcp, query='pets', cursor='not-a-cursor')
+
+    async def test_description_cut_to_first_paragraph(self):
+        """A result shows only the first paragraph of a long description, capped in length."""
+        generator, mcp = _meta_generator()
+        long_first_paragraph = 'Merge a pull request. ' * 20
+        generator.register(
+            [
+                OperationInfo(
+                    operation_id='pullsMerge',
+                    method='put',
+                    path='/pulls/{pull_number}/merge',
+                    description='Merge it.\n\nMore detail here.',
+                ),
+                OperationInfo(
+                    operation_id='pullsMergeLong',
+                    method='put',
+                    path='/pulls/merge',
+                    description=long_first_paragraph,
+                ),
+            ]
+        )
+        payload = await _search(mcp, query='merge')
+        descriptions = {entry['name']: entry['description'] for entry in payload['operations']}
+        assert descriptions['pulls_merge'] == 'Merge it.'
+        assert len(descriptions['pulls_merge_long']) == 200
+        assert descriptions['pulls_merge_long'].endswith('…')
 
 
 class TestGetOperation:
