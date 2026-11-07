@@ -2,6 +2,7 @@ import pathlib
 
 import pytest
 from mcp import Client
+from mcp.types import TextContent
 
 from openapi_mcp_gateway import Gateway, GatewayConfig
 
@@ -64,6 +65,8 @@ async def test_github_dynamic_search_finds_merge_on_first_page():
 
     async with Client(gateway._servers[0].mcp) as session:
         overview = await session.call_tool('search_operations', {})
-        assert len(overview.content[0].text) < 8 * 1024
+        text = overview.content[0]
+        assert isinstance(text, TextContent)
+        assert len(text.text) < 8 * 1024
         found = await session.call_tool('search_operations', {'query': 'merge a pull request'})
         assert 'pulls_merge' in {entry['name'] for entry in found.structured_content['operations']}
