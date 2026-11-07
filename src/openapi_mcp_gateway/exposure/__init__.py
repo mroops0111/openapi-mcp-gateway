@@ -4,6 +4,7 @@ from ._shared import (
     derive_name,
 )
 from ._upstream import UpstreamBinding
+from .meta_tool import MetaToolGenerator
 from .resource import (
     ResourceGenerator,
     build_resource_read_function,
@@ -11,7 +12,6 @@ from .resource import (
     derive_resource_uri,
 )
 from .tool import (
-    MetaToolGenerator,
     ToolGenerator,
     build_tool_function,
     derive_tool_annotations,

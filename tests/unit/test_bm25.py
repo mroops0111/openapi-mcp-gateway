@@ -1,13 +1,13 @@
-from openapi_mcp_gateway.exposure._search import OperationSearchIndex, tokenize
+from openapi_mcp_gateway.exposure._bm25 import BM25FIndex, tokenize
 
 
 # One plain-text field with unit weight, for tests that are not about field weighting.
 _TEXT_ONLY = {'text': 1.0}
 
 
-def _index(documents: dict[str, str]) -> OperationSearchIndex:
+def _index(documents: dict[str, str]) -> BM25FIndex:
     """Index each document as a single ``text`` field."""
-    return OperationSearchIndex({name: {'text': text} for name, text in documents.items()}, _TEXT_ONLY)
+    return BM25FIndex({name: {'text': text} for name, text in documents.items()}, _TEXT_ONLY)
 
 
 class TestTokenize:
@@ -43,7 +43,7 @@ class TestTokenize:
         assert tokenize('v2Api') == ['v', '2', 'api']
 
 
-class TestOperationSearchIndex:
+class TestBM25FIndex:
     """BM25F ranking over operation fields."""
 
     def test_rarer_term_ranks_higher(self):
@@ -53,7 +53,7 @@ class TestOperationSearchIndex:
 
     def test_heavier_field_ranks_higher(self):
         """A term in a heavier field outranks the same term in a lighter one."""
-        index = OperationSearchIndex(
+        index = BM25FIndex(
             {
                 'in_description': {'name': 'other', 'description': 'merge'},
                 'in_name': {'name': 'merge', 'description': 'other'},
@@ -64,7 +64,7 @@ class TestOperationSearchIndex:
 
     def test_unweighted_field_is_not_searched(self):
         """A field without a weight contributes nothing."""
-        index = OperationSearchIndex({'only_path': {'path': '/merge'}}, {'name': 1.0})
+        index = BM25FIndex({'only_path': {'path': '/merge'}}, {'name': 1.0})
         assert index.search('merge') == []
 
     def test_no_shared_term_returns_nothing(self):

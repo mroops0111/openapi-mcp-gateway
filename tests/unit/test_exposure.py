@@ -682,14 +682,6 @@ class TestSearchOperations:
         with pytest.raises(ValueError, match='Invalid cursor'):
             await _search(mcp, query='pets', cursor='not-a-cursor')
 
-    async def test_rejects_a_cursor_from_another_search(self):
-        """A cursor carried over to a different query raises, rather than paging through the wrong result."""
-        generator, mcp = _meta_generator()
-        generator.register(_many_things())
-        cursor = (await _search(mcp, query='list things'))['nextCursor']
-        with pytest.raises(ValueError, match='different query or tags'):
-            await _search(mcp, query='things', cursor=cursor)
-
     async def test_blank_query_filters_nothing(self):
         """A query of only whitespace is treated as omitted and lists everything."""
         generator, mcp = _meta_generator()

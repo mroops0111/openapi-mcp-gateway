@@ -23,7 +23,7 @@ _STOPWORDS = frozenset(
 )
 
 
-class OperationSearchIndex:
+class BM25FIndex:
     """Rank documents against a free-text query with BM25F.
 
     A document is a mapping of field name to text, keyed by document name.
