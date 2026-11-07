@@ -30,6 +30,8 @@ from openapi_mcp_gateway.settings import (
     ExposureConfig,
     GatewayConfig,
     PolicyConfig,
+    SearchConfig,
+    SearchFieldWeights,
     ServerConfig,
     UpstreamAuthConfig,
 )
@@ -499,6 +501,29 @@ class TestDynamicExposureEndToEnd:
         mcp = dynamic_gateway._servers[0].mcp
         names = {tool.name for tool in mcp._tool_manager.list_tools()}
         assert names == {'search_operations', 'get_operation', 'call_operation'}
+
+    async def test_search_field_weights_reach_the_ranking(self, petstore_json_path):
+        """A weight of 0 on every field but ``path`` ranks by path alone, so a word only in summaries finds nothing."""
+        config = GatewayConfig(
+            servers=[
+                ServerConfig(
+                    name='petstore',
+                    spec=str(petstore_json_path),
+                    exposure=ExposureConfig(
+                        style='dynamic',
+                        search=SearchConfig(
+                            field_weights=SearchFieldWeights(name=0, summary=0, description=0, tags=0, path=1)
+                        ),
+                    ),
+                ),
+            ],
+        )
+        mcp = Gateway.from_config(config)._servers[0].mcp
+        search = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'search_operations')
+        by_path = (await search.fn(ctx=_stub_context(), query='pets')).structured_content
+        by_summary_word = (await search.fn(ctx=_stub_context(), query='list')).structured_content
+        assert by_path['operations']
+        assert by_summary_word['operations'] == []
 
     async def test_list_then_get_then_call_roundtrip(self, dynamic_gateway, mock_upstream):
         """An LLM-style search, get, and call sequence drives an upstream call with correct query."""

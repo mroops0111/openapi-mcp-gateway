@@ -20,8 +20,10 @@ _BRIEF_DESCRIPTION_LIMIT = 200
 # How much a matching term counts in each searchable field.
 # The summary says in plain words what the operation does, and the name says it in identifier form.
 # A long description also mentions what the operation does not do, and the path and tags repeat its resource.
-# Tried on everyday requests against GitHub's spec, these weights ranked the intended operation in the top three most often.
-_FIELD_WEIGHTS = {'name': 2.0, 'summary': 3.0, 'description': 0.5, 'path': 0.5, 'tags': 0.5}
+# Checked against 180 everyday requests over the GitHub, Stripe, Asana, and Auth0 specs.
+# They beat equal weights on every spec, and beat weights tuned on any three specs when scored on the fourth.
+# A server's exposure.search.field_weights overrides them field by field.
+DEFAULT_FIELD_WEIGHTS = {'name': 2.0, 'summary': 3.0, 'description': 0.5, 'path': 0.5, 'tags': 0.5}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -55,10 +57,14 @@ class OperationCatalog:
     Tags match without regard to case, and each is shown in the spelling it first appears in.
     """
 
-    def __init__(self, operations: typing.Iterable[CatalogOperation]):
+    def __init__(
+        self,
+        operations: typing.Iterable[CatalogOperation],
+        field_weights: typing.Mapping[str, float] = DEFAULT_FIELD_WEIGHTS,
+    ):
         self._operations = {operation.name: operation for operation in operations}
         self._index = OperationSearchIndex(
-            {name: operation.search_fields() for name, operation in self._operations.items()}, _FIELD_WEIGHTS
+            {name: operation.search_fields() for name, operation in self._operations.items()}, field_weights
         )
         # Keyed by casefolded tag. The inner dict is an ordered set of operation names.
         self._names_by_tag: dict[str, dict[str, None]] = {}

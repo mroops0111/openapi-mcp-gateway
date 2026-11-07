@@ -474,3 +474,54 @@ class TestSettingsThatCannotTakeEffect:
 
         with pytest.raises(pydantic.ValidationError, match=r'issuer.*no effect'):
             AuthConfig.model_validate({'type': 'oauth2', 'issuer': 'https://kc'})
+
+
+class TestSearchFieldWeights:
+    """``exposure.search.field_weights`` overrides search ranking field by field, and refuses what cannot work."""
+
+    def test_unset_fields_stay_unset(self):
+        """Only the fields written in the config are carried, so the rest keep the gateway's defaults."""
+        config = build_gateway_config(
+            {
+                'servers': [
+                    {
+                        'name': 'b',
+                        'spec': 'x.json',
+                        'exposure': {'style': 'dynamic', 'search': {'field_weights': {'summary': 4}}},
+                    }
+                ]
+            }
+        )
+        search = config.servers[0].exposure.search
+        assert search is not None
+        assert search.field_weights.model_dump(exclude_none=True) == {'summary': 4}
+
+    @pytest.mark.parametrize(
+        ('field_weights', 'message'),
+        [
+            ({'sumary': 4}, 'sumary'),
+            ({'summary': -1}, 'greater than or equal to 0'),
+            ({'name': 0, 'summary': 0, 'description': 0, 'path': 0, 'tags': 0}, 'every field to 0'),
+        ],
+    )
+    def test_refuses_weights_that_cannot_work(self, field_weights, message):
+        """A misspelt field, a negative weight, and weights that leave nothing to search are refused."""
+        with pytest.raises(pydantic.ValidationError, match=message):
+            build_gateway_config(
+                {
+                    'servers': [
+                        {
+                            'name': 'b',
+                            'spec': 'x.json',
+                            'exposure': {'style': 'dynamic', 'search': {'field_weights': field_weights}},
+                        }
+                    ]
+                }
+            )
+
+    def test_refuses_search_under_static_exposure(self):
+        """Only the dynamic meta-tools search, so ``search`` under static exposure would have no effect."""
+        with pytest.raises(pydantic.ValidationError, match=r'exposure.search.*no effect'):
+            build_gateway_config(
+                {'servers': [{'name': 'b', 'spec': 'x.json', 'exposure': {'search': {'field_weights': {'name': 1}}}}]}
+            )

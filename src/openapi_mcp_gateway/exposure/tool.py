@@ -9,7 +9,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, ToolAnnotations
 
 from ..openapi import ExposedTool, OperationInfo, ToolOverride
-from ._catalog import CatalogOperation, OperationCatalog
+from ._catalog import DEFAULT_FIELD_WEIGHTS, CatalogOperation, OperationCatalog
 from ._shaping import shape_operation
 from ._shared import (
     _get_override,
@@ -262,9 +262,16 @@ class MetaToolGenerator:
     so auth, path substitution, and request shape stay identical across modes.
     """
 
-    def __init__(self, mcp: MCPServer, binding: UpstreamBinding):
+    def __init__(
+        self,
+        mcp: MCPServer,
+        binding: UpstreamBinding,
+        field_weight_overrides: typing.Mapping[str, float] | None = None,
+    ):
         self.mcp = mcp
         self.binding = binding
+        # Overrides replace the default weight of the fields they name and leave the rest as they are.
+        self.field_weights = {**DEFAULT_FIELD_WEIGHTS, **(field_weight_overrides or {})}
 
     def register(self, operations: list[OperationInfo]) -> list[ExposedTool]:
         """Build the operation catalog from ``operations`` and bind the three meta-tools, returning them."""
@@ -293,7 +300,7 @@ class MetaToolGenerator:
                 shaped_operation.method.upper(),
                 shaped_operation.path,
             )
-        catalog = OperationCatalog(catalog_operations)
+        catalog = OperationCatalog(catalog_operations, self.field_weights)
         self._bind_meta_tools(catalog)
         logger.info(
             'Registered %d operation(s) behind dynamic meta-tools on server "%s"',
