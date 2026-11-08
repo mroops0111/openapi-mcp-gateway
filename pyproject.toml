@@ -40,7 +40,7 @@ redis = ["redis>=7.4.0"]
 oidc = ["pyjwt[crypto]>=2.15.1"]
 dev = [
     "pytest>=9.2.0",
-    "pytest-asyncio>=1.4.1",
+    "pytest-asyncio>=1.4.1.post1",
     "fakeredis>=2.35.0",
     "httpx>=0.28.1",
     "basedpyright>=1.39.0",
