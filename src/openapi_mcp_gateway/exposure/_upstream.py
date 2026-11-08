@@ -284,7 +284,7 @@ def _build_upstream_closure(
     )
     validator = Draft202012Validator(input_schema, format_checker=FormatChecker()) if input_schema is not None else None
     # The override wins per path, so an author can correct or add to what the spec declares.
-    media_promoter = MediaPromoter({**operation.media_fields, **(tool_override.media if tool_override else {})})
+    media_promoter = MediaPromoter(operation.response_media, tool_override.media if tool_override else {})
 
     async def upstream_callable(**kwargs: typing.Any) -> CallToolResult:
         context: Context = kwargs.pop('ctx')

@@ -1,11 +1,10 @@
 import json
-import logging
+import typing
 
 import pytest
 import yaml
 
 from openapi_mcp_gateway.openapi import (
-    MediaField,
     _deep_merge,
     _expand_inline,
     _expand_schema,
@@ -569,16 +568,20 @@ class TestParseSpec:
         assert 'oauth2' in self.spec.security_schemes
 
 
-class TestMediaFieldCollection:
-    """Fields the success response declares as ``contentEncoding: base64`` become the operation's media fields."""
+class TestResponseMedia:
+    """Fields the success response declares as ``contentEncoding: base64`` are found in each response at call time."""
 
     @staticmethod
-    def _media(response: dict, schemas: dict | None = None) -> dict[str, MediaField]:
-        """Parse a one-operation spec whose ``200`` response is ``response`` and return its media fields."""
-        return parse_spec(operation_spec(response=response, schemas=schemas)).operations[0].media_fields
+    def _found(raw: dict, payload: typing.Any, operation_id: str = 'createThing') -> dict[str, str]:
+        """Return the media ``operation_id`` finds in ``payload``, as each concrete path's media type."""
+        operation = next(
+            operation for operation in parse_spec(raw).operations if operation.operation_id == operation_id
+        )
+        assert operation.response_media is not None
+        return {match.path: field.media_type for match, field in operation.response_media.find(payload)}
 
     def test_nested_and_array_fields_are_found_through_references(self):
-        """A field inside an array of a referenced component gets a ``[*]`` path and its ``contentMediaType``."""
+        """A field inside each item of an array of a referenced component is found, with its ``contentMediaType``."""
         schemas = {
             'Attachment': {
                 'type': 'object',
@@ -594,20 +597,22 @@ class TestMediaFieldCollection:
                 'attachments': {'type': 'array', 'items': component_ref('Attachment')},
             },
         }
+        payload = {'signature': 's', 'attachments': [{'content': 'a'}, {'content': 'b'}]}
 
-        assert self._media(response, schemas) == {
-            'signature': MediaField(encoding='base64', media_type='image/png'),
-            'attachments[*].content': MediaField(encoding='base64', media_type='application/pdf'),
+        assert self._found(operation_spec(response=response, schemas=schemas), payload) == {
+            'signature': 'image/png',
+            'attachments[0].content': 'application/pdf',
+            'attachments[1].content': 'application/pdf',
         }
 
     def test_missing_media_type_falls_back_to_octet_stream(self):
         """Without ``contentMediaType`` nothing says what the bytes are, so they are an octet stream."""
         response = {'type': 'object', 'properties': {'blob': {'type': 'string', 'contentEncoding': 'base64'}}}
 
-        assert self._media(response) == {'blob': MediaField(encoding='base64')}
+        assert self._found(operation_spec(response=response), {'blob': 'b'}) == {'blob': 'application/octet-stream'}
 
-    def test_combinators_are_searched_at_the_same_path(self):
-        """A field declared in an ``allOf`` branch keeps the path of the object it belongs to."""
+    def test_combinators_are_searched_at_the_same_value(self):
+        """A field declared in an ``allOf`` branch is found in the object it belongs to."""
         response = {
             'allOf': [
                 {'type': 'object', 'properties': {'id': {'type': 'integer'}}},
@@ -615,10 +620,10 @@ class TestMediaFieldCollection:
             ],
         }
 
-        assert set(self._media(response)) == {'photo'}
+        assert set(self._found(operation_spec(response=response), {'id': 1, 'photo': 'p'})) == {'photo'}
 
-    def test_recursive_schema_stops(self):
-        """A component that refers back to itself is followed once per branch, not forever."""
+    def test_recursive_schema_is_followed_as_deep_as_the_response(self):
+        """A component that refers back to itself is followed once per level the response actually nests."""
         schemas = {
             'Node': {
                 'type': 'object',
@@ -628,29 +633,17 @@ class TestMediaFieldCollection:
                 },
             },
         }
+        payload = {'icon': 'a', 'children': [{'icon': 'b', 'children': [{'icon': 'c'}]}]}
 
-        assert set(self._media(component_ref('Node'), schemas)) == {'icon'}
+        assert set(self._found(operation_spec(response=component_ref('Node'), schemas=schemas), payload)) == {
+            'icon',
+            'children[0].icon',
+            'children[0].children[0].icon',
+        }
 
-    def test_a_component_cached_by_one_operation_is_found_afresh_by_another(self):
-        """A component first reached through a reference whose sibling keywords led to it is not cached as truncated.
-
-        The first operation reaches ``Album`` beside an ``Image`` it has already followed, so ``Album.cover`` stops.
-        The second reaches ``Album`` on its own, so it has followed nothing and finds ``cover.data``.
-        """
-        image = {'type': 'object', 'properties': {'data': {'type': 'string', 'contentEncoding': 'base64'}}}
-        album = {'type': 'object', 'properties': {'cover': component_ref('Image')}}
-        beside_image = {**component_ref('Image'), 'properties': {'album': component_ref('Album')}}
-        raw = operation_spec(response=beside_image, schemas={'Image': image, 'Album': album})
-        album_response = {'content': {'application/json': {'schema': component_ref('Album')}}}
-        raw['paths']['/albums'] = {'get': {'operationId': 'getAlbum', 'responses': {'200': album_response}}}
-
-        media = {operation.operation_id: set(operation.media_fields) for operation in parse_spec(raw).operations}
-
-        assert media == {'createThing': set(), 'getAlbum': {'cover.data'}}
-
-    def test_a_combinatorial_schema_gives_up_with_a_warning(self, caplog):
-        """Components that all refer to each other nest more paths than can be listed, so the walk stops and says so."""
-        names = [f'Node{index}' for index in range(9)]
+    def test_components_that_all_refer_to_each_other_cost_only_the_response(self):
+        """A dense recursive group, which nests more paths than could ever be listed, is walked by the response."""
+        names = [f'Node{index}' for index in range(30)]
         schemas = {
             name: {
                 'type': 'object',
@@ -661,18 +654,89 @@ class TestMediaFieldCollection:
             }
             for name in names
         }
+        payload = {'icon': 'a', 'node1': {'icon': 'b', 'node0': {'icon': 'c'}}}
 
-        with caplog.at_level(logging.WARNING, logger='openapi_mcp_gateway.openapi'):
-            media = self._media(component_ref('Node0'), schemas)
+        assert set(self._found(operation_spec(response=component_ref('Node0'), schemas=schemas), payload)) == {
+            'icon',
+            'node1.icon',
+            'node1.node0.icon',
+        }
 
-        assert media == {}
-        assert 'x-mcp-integration.tool.media' in caplog.text
+    def test_keywords_beside_a_reference_replace_the_targets(self):
+        """``properties`` beside a reference replace the target's, while what the target alone declares still counts."""
+        image = {
+            'type': 'object',
+            'contentMediaType': 'image/png',
+            'properties': {'data': {'type': 'string', 'contentEncoding': 'base64'}},
+        }
+        album = {'type': 'object', 'properties': {'cover': component_ref('Image')}}
+        beside_image = {**component_ref('Image'), 'properties': {'album': component_ref('Album')}}
+        raw = operation_spec(response=beside_image, schemas={'Image': image, 'Album': album})
+        payload = {'data': 'replaced', 'album': {'cover': {'data': 'd'}}}
+
+        assert set(self._found(raw, payload)) == {'album.cover.data'}
+
+    def test_media_beside_a_reference_merges_with_the_targets(self):
+        """A ``contentMediaType`` beside a reference names the type of the base64 its target declares."""
+        schemas = {'Blob': {'type': 'string', 'contentEncoding': 'base64'}}
+        response = {
+            'type': 'object',
+            'properties': {'logo': {**component_ref('Blob'), 'contentMediaType': 'image/png'}},
+        }
+
+        assert self._found(operation_spec(response=response, schemas=schemas), {'logo': 'l'}) == {'logo': 'image/png'}
+
+    def test_a_reference_to_a_reference_is_followed(self):
+        """A component that only refers to another is an alias, so the media of the other is found through it."""
+        schemas = {
+            'Alias': component_ref('Blob'),
+            'Blob': {'type': 'string', 'contentEncoding': 'base64'},
+            'Loop': component_ref('Loop'),
+        }
+        response = {'type': 'object', 'properties': {'file': component_ref('Alias'), 'loop': component_ref('Loop')}}
+
+        assert set(self._found(operation_spec(response=response, schemas=schemas), {'file': 'f', 'loop': 1})) == {
+            'file'
+        }
+
+    def test_base64_beside_a_reference_takes_the_type_its_aliases_declare(self):
+        """The ``contentMediaType`` of a component reached through an alias names the base64 declared beside both."""
+        schemas = {'Typed': component_ref('Png'), 'Png': {'type': 'string', 'contentMediaType': 'image/png'}}
+        response = {'type': 'object', 'properties': {'logo': {**component_ref('Typed'), 'contentEncoding': 'base64'}}}
+
+        assert self._found(operation_spec(response=response, schemas=schemas), {'logo': 'l'}) == {'logo': 'image/png'}
+
+    def test_values_of_another_shape_are_skipped(self):
+        """A value whose shape is not the schema's, such as an object where an array is declared, yields nothing."""
+        response = {
+            'type': 'object',
+            'properties': {'pages': {'type': 'array', 'items': {'type': 'string', 'contentEncoding': 'base64'}}},
+        }
+
+        assert self._found(operation_spec(response=response), {'pages': {'0': 'p'}}) == {}
+        assert self._found(operation_spec(response=response), ['p']) == {}
+
+    def test_operations_without_media_keep_nothing(self):
+        """An operation whose response cannot reach base64 keeps no schema, nor does any in a spec with none at all."""
+        schemas = {'Blob': {'type': 'string', 'contentEncoding': 'base64'}, 'Plain': {'type': 'object'}}
+        raw = operation_spec(response=component_ref('Plain'), schemas=schemas)
+        plain_spec = operation_spec(response={'type': 'object', 'properties': {'data': {'type': 'string'}}})
+
+        assert parse_spec(raw).operations[0].response_media is None
+        assert parse_spec(plain_spec).operations[0].response_media is None
 
     def test_undeclared_base64_is_left_alone(self):
         """Nothing is guessed, so a plain string field is not media, whatever it holds."""
         response = {'type': 'object', 'properties': {'data': {'type': 'string', 'format': 'byte'}}}
 
-        assert self._media(response) == {}
+        assert parse_spec(operation_spec(response=response)).operations[0].response_media is None
+
+    def test_a_deep_copy_of_the_operation_shares_it(self):
+        """Shaping deep-copies each operation, which must not copy the components a whole spec shares."""
+        response = {'type': 'object', 'properties': {'blob': {'type': 'string', 'contentEncoding': 'base64'}}}
+        operation = parse_spec(operation_spec(response=response)).operations[0]
+
+        assert operation.model_copy(deep=True).response_media is operation.response_media
 
     def test_status_range_and_integer_keys_are_read(self):
         """A ``2XX`` range, or a status a YAML spec keyed as an integer, still names the success response."""
@@ -682,7 +746,7 @@ class TestMediaFieldCollection:
             raw['paths']['/things']['post']['responses'] = {
                 status: {'description': 'ok', 'content': {'application/json': {'schema': schema}}},
             }
-            assert set(parse_spec(raw).operations[0].media_fields) == {'blob'}
+            assert set(self._found(raw, {'blob': 'b'})) == {'blob'}
 
 
 class TestRelativeServerResolution:

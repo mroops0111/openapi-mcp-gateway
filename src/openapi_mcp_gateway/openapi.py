@@ -1,8 +1,10 @@
 import collections
+import dataclasses
 import json
 import logging
 import pathlib
 import re
+import types
 import typing
 import urllib.parse
 
@@ -10,7 +12,7 @@ import httpx
 import pydantic
 import yaml
 
-from .field_path import ARRAY_WILDCARD, FieldPath
+from .field_path import FieldMatch, FieldPath
 
 
 logger = logging.getLogger(__name__)
@@ -37,11 +39,8 @@ _EXPANDING: dict[str, typing.Any] = {}
 _COMPOSITION_KEYWORDS = ('allOf', 'oneOf', 'anyOf')
 # The media type a base64 field is promoted as when nothing names one.
 _DEFAULT_MEDIA_TYPE = 'application/octet-stream'
-# The steps the media field walk may take for one operation, and for a whole spec, before giving up.
-# A real spec needs under a thousand per operation even if every component reached base64,
-# so only a schema whose answer is itself combinatorial reaches them, and startup stays bounded there.
-_MEDIA_WALK_OPERATION_BUDGET = 20_000
-_MEDIA_WALK_SPEC_BUDGET = 500_000
+# The keywords a walk for media descends through, each of which beside a reference replaces the target's.
+_MEDIA_WALK_KEYWORDS = frozenset({'properties', 'items', *_COMPOSITION_KEYWORDS})
 
 # The YAML loader for specs, the libyaml one when PyYAML was built with it.
 # It reads the same documents as the pure Python loader nearly ten times faster, which matters for a spec of megabytes.
@@ -200,8 +199,78 @@ class McpIntegration(pydantic.BaseModel):
     resource: ResourceOverride | None = None
 
 
+class ResponseMedia:
+    """Where a success response schema declares ``contentEncoding: base64``, to find in each response at call time.
+
+    The schema is kept only as far as it leads to such a field, and its references point into ``components``,
+    which every operation of a spec shares.
+    A walk with it moves one response value down per step, so a recursive schema costs no more than the response.
+    It is never changed, so a deep copy of the operation holding it shares it rather than copying the components.
+    """
+
+    def __init__(self, root: '_MediaNode', components: typing.Mapping[str, '_MediaNode']):
+        self._root = root
+        self._components = components
+
+    def __copy__(self) -> typing.Self:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, typing.Any]) -> typing.Self:
+        return self
+
+    def find(self, payload: typing.Any) -> typing.Iterator[tuple[FieldMatch, MediaField]]:
+        """Yield every value of ``payload`` the schema declares as base64, with how it carries media.
+
+        Values come in payload order, and one that several composed branches declare comes once per branch.
+        The payload itself is never yielded, since a placeholder needs a field to stand in.
+        """
+        return self._find(self._root, payload, None, frozenset())
+
+    def _find(
+        self,
+        node: '_MediaNode',
+        value: typing.Any,
+        match: FieldMatch | None,
+        followed: frozenset[str],
+    ) -> typing.Iterator[tuple[FieldMatch, MediaField]]:
+        """Yield the media under ``value``, which ``node`` describes and ``match`` holds.
+
+        A schema reads as one with the components its references lead to at this value,
+        each keyword taken from the nearest of them that declares it.
+        ``followed`` is the references already followed at this value, so a reference that loops back stops.
+        """
+        chain = [node]
+        while (reference := chain[-1].reference) is not None and reference not in followed:
+            target = self._components.get(reference)
+            if target is None:
+                break
+            followed |= {reference}
+            chain.append(target)
+        encoding = next((link.encoding for link in chain if link.encoding is not None), None)
+        if encoding == 'base64' and match is not None:
+            media_type = next((link.media_type for link in chain if link.media_type is not None), _DEFAULT_MEDIA_TYPE)
+            yield match, MediaField(encoding='base64', media_type=media_type)
+        properties = _declaring(chain, 'properties').properties
+        if properties and isinstance(value, dict):
+            for name, child in properties:
+                if name in value:
+                    path = f'{match.path}.{name}' if match is not None else name
+                    yield from self._find(child, value[name], FieldMatch(value, name, path), frozenset())
+        items = _declaring(chain, 'items').items
+        if items is not None and isinstance(value, list):
+            prefix = match.path if match is not None else ''
+            for index, item in enumerate(value):
+                yield from self._find(items, item, FieldMatch(value, index, f'{prefix}[{index}]'), frozenset())
+        for keyword in _COMPOSITION_KEYWORDS:
+            for branch_keyword, branch in _declaring(chain, keyword).branches:
+                if branch_keyword == keyword:
+                    yield from self._find(branch, value, match, followed)
+
+
 class OperationInfo(pydantic.BaseModel):
     """One HTTP operation from ``paths`` with parameters, security, and MCP integration flags."""
+
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
 
     operation_id: str
     method: str
@@ -215,8 +284,8 @@ class OperationInfo(pydantic.BaseModel):
     # The expanded component schemas the parameters reach, keyed by component name,
     # for resolving their ``#/$defs/<Name>`` references.
     schema_defs: dict[str, dict[str, typing.Any]] = pydantic.Field(default_factory=dict)
-    # The fields the success response schema declares as media, keyed by field path.
-    media_fields: dict[str, MediaField] = pydantic.Field(default_factory=dict)
+    # Where the success response schema declares media, or ``None`` when it declares none anywhere.
+    response_media: ResponseMedia | None = None
 
     @property
     def tool_exposed(self) -> bool:
@@ -230,9 +299,10 @@ class OperationInfo(pydantic.BaseModel):
 
 
 class OpenAPISpec(pydantic.BaseModel):
-    """What the gateway keeps of a parsed OpenAPI document: its metadata, flattened operations, and security schemes.
+    """The metadata, flattened operations, and security schemes the gateway keeps of a parsed OpenAPI document.
 
-    The decoded document itself is not kept, since every reference is resolved while parsing, and it is the largest part.
+    The decoded document itself is not kept, since every reference is resolved while parsing,
+    and it is the largest part.
     """
 
     title: str = ''
@@ -606,100 +676,76 @@ def _success_response_schema(raw: dict[str, typing.Any], operation: dict[str, ty
     return {}
 
 
-class _MediaFieldFinder:
-    """Find every response field that declares ``contentEncoding: base64``, keyed by field path.
+class _ResponseMediaBuilder:
+    """Build each operation's ``ResponseMedia`` for one spec, sharing the components every one of them refers to.
 
-    A reference already followed on the current branch is not followed again, so a recursive schema stops.
-    Walked naively, that revisits a component once per path reaching it, which is combinatorial in Stripe's spec.
-    A reference that cannot reach base64 at all is skipped.
-    A component's fields are cached, keyed by the followed references in its own recursive group,
-    the only ones its walk can meet again, see ``_reference_graph``, so the result matches a fresh walk.
-    One instance serves a whole spec, so the cache is shared by every operation.
+    A reference whose target cannot reach base64 is dropped, and so is any schema that leads only to such references.
     """
 
     def __init__(self, raw: dict[str, typing.Any]):
         self._raw = raw
         targets = self._reference_graph(raw)
-        self._reaching = self._references_reaching_base64(targets)
-        self._group = self._recursive_groups(
-            {reference: targets[reference][0] & self._reaching for reference in self._reaching}
-        )
-        self._cache: dict[tuple[str, frozenset[str]], dict[tuple[str, ...], MediaField]] = {}
-        self._operation_steps = 0
-        self._spec_steps = 0
-        # The operations whose walk ran out of budget, in the order they were given up on.
-        self.given_up: list[str] = []
+        self._holds_base64 = targets is not None
+        self._reaching = self._with_aliased(raw, self._references_reaching_base64(targets or {}))
+        components: dict[str, _MediaNode] = {}
+        for reference in self._reaching:
+            node = self._node(_resolve_ref(raw, reference), component=True)
+            if node is not None:
+                components[reference] = node
+        self._components = types.MappingProxyType(components)
 
-    def find(self, schema: typing.Any, operation_id: str) -> dict[str, MediaField]:
-        """Return the media fields under ``schema``, the success response of ``operation_id``.
+    def build(self, schema: typing.Any) -> ResponseMedia | None:
+        """Return where ``schema`` declares media, or ``None`` when it declares none at any depth."""
+        if not self._holds_base64:
+            return None
+        root = self._node(schema)
+        return None if root is None else ResponseMedia(root, self._components)
 
-        Below the root nothing truncates, so a schema whose answer is itself combinatorial gives up instead.
-        The operation then finds nothing and joins ``given_up``,
-        and its media can still be declared on its tool override.
+    def _node(self, schema: typing.Any, *, component: bool = False) -> '_MediaNode | None':
+        """Keep what ``schema`` holds that leads to base64, not following a ``$ref``, or ``None`` when nothing does.
+
+        A ``component`` keeps its ``contentMediaType`` even without base64,
+        since a schema referring to it can declare base64 beside the reference.
         """
-        self._operation_steps = 0
-        try:
-            fields = self._walk(schema, frozenset())
-        except _MediaWalkBudgetError:
-            self.given_up.append(operation_id)
-            return {}
-        return {str(FieldPath(segments)): field for segments, field in fields.items() if segments}
-
-    def _walk(self, schema: typing.Any, seen: frozenset[str]) -> dict[tuple[str, ...], MediaField]:
-        """Return the media fields under ``schema``, keyed by their segments relative to it."""
         if not isinstance(schema, dict):
-            return {}
+            return None
         reference = schema.get('$ref')
-        if not isinstance(reference, str):
-            return self._walk_node(schema, seen)
-        if reference in seen:
-            return {}
-        siblings = _siblings(schema)
-        if siblings:
-            # Keywords beside the reference replace the target's, so this use is walked as its own schema.
-            return self._walk_node({**_resolve_ref(self._raw, reference), **siblings}, seen | {reference})
-        if reference not in self._reaching:
-            return {}
-        key = (reference, seen & self._group[reference])
-        cached = self._cache.get(key)
-        if cached is None:
-            cached = self._walk_node(_resolve_ref(self._raw, reference), seen | {reference})
-            self._cache[key] = cached
-        self._charge(len(cached))
-        return cached
-
-    def _walk_node(self, schema: dict[str, typing.Any], seen: frozenset[str]) -> dict[tuple[str, ...], MediaField]:
-        """Return the media fields of ``schema`` itself and beneath it, not following a ``$ref`` it holds."""
-        self._charge(1)
-        fields: dict[tuple[str, ...], MediaField] = {}
-        if schema.get('contentEncoding') == 'base64':
-            media_type = schema.get('contentMediaType') or _DEFAULT_MEDIA_TYPE
-            fields[()] = MediaField(encoding='base64', media_type=media_type)
-        for name, property_schema in (schema.get('properties') or {}).items():
-            for segments, field in self._walk(property_schema, seen).items():
-                fields[(name, *segments)] = field
-        for segments, field in self._walk(schema.get('items'), seen).items():
-            fields[(ARRAY_WILDCARD, *segments)] = field
-        for keyword in _COMPOSITION_KEYWORDS:
-            for branch in schema.get(keyword) or []:
-                fields |= self._walk(branch, seen)
-        return fields
-
-    def _charge(self, steps: int) -> None:
-        self._operation_steps += steps
-        self._spec_steps += steps
-        if self._operation_steps > _MEDIA_WALK_OPERATION_BUDGET or self._spec_steps > _MEDIA_WALK_SPEC_BUDGET:
-            raise _MediaWalkBudgetError
+        reference = reference if isinstance(reference, str) and reference in self._reaching else None
+        encoding, media_type = schema.get('contentEncoding'), schema.get('contentMediaType')
+        properties = schema.get('properties')
+        node = _MediaNode(
+            encoding=encoding if isinstance(encoding, str) else None,
+            media_type=media_type if isinstance(media_type, str) else None,
+            properties=tuple(
+                (name, child)
+                for name, property_schema in (properties.items() if isinstance(properties, dict) else ())
+                if (child := self._node(property_schema)) is not None
+            ),
+            items=self._node(schema.get('items')),
+            branches=tuple(
+                (keyword, child)
+                for keyword in _COMPOSITION_KEYWORDS
+                if isinstance(schema.get(keyword), list)
+                for branch in schema[keyword]
+                if (child := self._node(branch)) is not None
+            ),
+            reference=reference,
+            replaces=frozenset(_MEDIA_WALK_KEYWORDS & schema.keys()) if reference is not None else frozenset(),
+        )
+        leads_on = bool(node.properties or node.branches) or node.items is not None or reference is not None
+        declares_media = node.encoding == 'base64' or (component and (node.encoding or node.media_type) is not None)
+        return node if leads_on or declares_media else None
 
     @staticmethod
-    def _reference_graph(raw: dict[str, typing.Any]) -> dict[str, tuple[frozenset[str], bool]]:
+    def _reference_graph(raw: dict[str, typing.Any]) -> dict[str, tuple[frozenset[str], bool]] | None:
         """Map each reference in ``raw`` to the references its walk can follow next, and whether it meets base64.
 
         A walk that follows a reference goes on through its target,
         and also through the keywords beside it wherever it is used with some, since those replace the target's,
         so both count as the reference's own, which keeps every followed reference upstream of what its walk meets.
         Every reference found anywhere is an edge, rather than only those the walk follows,
-        so the graph can only overstate what reaches base64 or recurses, which costs speed but never a field.
+        so the graph can only overstate what reaches base64, which costs speed but never a field.
+        Returns ``None`` when ``raw`` declares no base64 anywhere, as most specs do, since then nothing is media.
         """
         every_reference: set[str] = set()
         beside: dict[str, set[str]] = collections.defaultdict(set)
@@ -716,9 +762,8 @@ class _MediaFieldFinder:
                 beside[reference] |= references
                 if holds_base64:
                     base64_beside.add(reference)
-        # A spec declaring no base64 anywhere, as most do, has nothing to find, so its graph is left empty.
         if not holds_any_base64:
-            return {}
+            return None
         graph: dict[str, tuple[frozenset[str], bool]] = {}
         pending = list(every_reference)
         while pending:
@@ -730,6 +775,22 @@ class _MediaFieldFinder:
             graph[reference] = (references, holds_base64 or reference in base64_beside)
             pending.extend(references - graph.keys())
         return graph
+
+    @staticmethod
+    def _with_aliased(raw: dict[str, typing.Any], references: frozenset[str]) -> frozenset[str]:
+        """Return ``references`` with every reference their targets are aliases of, at any depth.
+
+        A schema reads as one with its whole chain of aliases,
+        so the ``contentMediaType`` of one that cannot reach base64 still names the type base64 beside it carries.
+        """
+        kept = set(references)
+        pending = list(references)
+        while pending:
+            alias = _resolve_ref(raw, pending.pop()).get('$ref')
+            if isinstance(alias, str) and alias not in kept:
+                kept.add(alias)
+                pending.append(alias)
+        return frozenset(kept)
 
     @staticmethod
     def _references_reaching_base64(targets: dict[str, tuple[frozenset[str], bool]]) -> frozenset[str]:
@@ -747,56 +808,28 @@ class _MediaFieldFinder:
                     pending.append(referrer)
         return frozenset(reaching)
 
-    @staticmethod
-    def _recursive_groups(edges: dict[str, frozenset[str]]) -> dict[str, frozenset[str]]:
-        """Map each reference to its strongly connected component, the references that both reach it and it reaches.
 
-        Iterative Tarjan, since a dense spec nests deeper than the recursion limit allows.
-        """
-        index: dict[str, int] = {}
-        lowlink: dict[str, int] = {}
-        stack: list[str] = []
-        on_stack: set[str] = set()
-        groups: dict[str, frozenset[str]] = {}
-        for root in edges:
-            if root in index:
-                continue
-            work: list[tuple[str, typing.Iterator[str]]] = [(root, iter(edges[root]))]
-            index[root] = lowlink[root] = len(index)
-            stack.append(root)
-            on_stack.add(root)
-            while work:
-                node, successors = work[-1]
-                successor = next(successors, None)
-                if successor is not None:
-                    if successor not in index:
-                        index[successor] = lowlink[successor] = len(index)
-                        stack.append(successor)
-                        on_stack.add(successor)
-                        work.append((successor, iter(edges[successor])))
-                    elif successor in on_stack:
-                        lowlink[node] = min(lowlink[node], index[successor])
-                    continue
-                work.pop()
-                if work:
-                    parent = work[-1][0]
-                    lowlink[parent] = min(lowlink[parent], lowlink[node])
-                if lowlink[node] == index[node]:
-                    members: list[str] = []
-                    while True:
-                        member = stack.pop()
-                        on_stack.discard(member)
-                        members.append(member)
-                        if member == node:
-                            break
-                    group = frozenset(members)
-                    for member in members:
-                        groups[member] = group
-        return groups
+@dataclasses.dataclass(frozen=True, eq=False)
+class _MediaNode:
+    """The part of one schema that leads to base64, with each nested schema that does, by the keyword holding it.
+
+    ``encoding`` and ``media_type`` are its ``contentEncoding`` and ``contentMediaType``, whatever they say.
+    ``reference`` is the component it goes on to at the same value, a key of ``ResponseMedia``'s components,
+    and ``replaces`` the walk keywords it declares beside that reference, which count rather than the component's.
+    """
+
+    encoding: str | None
+    media_type: str | None
+    properties: tuple[tuple[str, '_MediaNode'], ...]
+    items: '_MediaNode | None'
+    branches: tuple[tuple[str, '_MediaNode'], ...]
+    reference: str | None
+    replaces: frozenset[str]
 
 
-class _MediaWalkBudgetError(Exception):
-    """Raised inside ``_MediaFieldFinder`` when a walk passes its operation's or its spec's budget of steps."""
+def _declaring(chain: list[_MediaNode], keyword: str) -> _MediaNode:
+    """Return the nearest schema of a reference ``chain`` whose ``keyword`` counts, the last when none replaces it."""
+    return next((link for link in chain[:-1] if keyword in link.replaces), chain[-1])
 
 
 def _iter_mappings(node: typing.Any) -> typing.Iterator[dict[str, typing.Any]]:
@@ -851,7 +884,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
     operations: list[OperationInfo] = []
     # Every component expanded so far, shared by all operations so each is expanded once.
     defs: dict[str, dict[str, typing.Any]] = {}
-    media_finder = _MediaFieldFinder(raw)
+    response_media = _ResponseMediaBuilder(raw)
 
     for path, path_item in raw.get('paths', {}).items():
         if not isinstance(path_item, dict):
@@ -923,18 +956,9 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                         name: defs[name]
                         for name in count_defs_references((parameter.schema_ for parameter in params), defs)
                     },
-                    media_fields=media_finder.find(_success_response_schema(raw, operation), operation_id),
+                    response_media=response_media.build(_success_response_schema(raw, operation)),
                 )
             )
-
-    if media_finder.given_up:
-        logger.warning(
-            'Gave up finding base64 media fields in the responses of %d operation(s) (%s), '
-            'since their schemas nest too many paths to list. '
-            'Declare any media they carry under x-mcp-integration.tool.media.',
-            len(media_finder.given_up),
-            ', '.join(media_finder.given_up[:5]) + ('...' if len(media_finder.given_up) > 5 else ''),
-        )
 
     return OpenAPISpec(
         title=info.get('title', ''),

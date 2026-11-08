@@ -2,13 +2,12 @@ import abc
 import base64
 import binascii
 import copy
-import dataclasses
 import typing
 
 from mcp.types import ContentBlock
 
-from ..field_path import FieldPath
-from ..openapi import MediaField
+from ..field_path import FieldMatch, FieldPath
+from ..openapi import MediaField, ResponseMedia
 from ._content import binary_content
 
 
@@ -42,18 +41,11 @@ class Base64Encoding(MediaEncoding):
         return binary_content(data, media_type, uri)
 
 
-@dataclasses.dataclass(frozen=True)
-class _MediaRule:
-    """One declared media field, ready to apply."""
-
-    path: FieldPath
-    media_type: str
-    encoding: MediaEncoding
-
-
 class MediaPromoter:
-    """Move the declared media fields of a JSON payload into content blocks, leaving a placeholder in each field.
+    """Move the media fields of a JSON payload into content blocks, leaving a placeholder in each field.
 
+    The fields are those the response schema declares, found in each payload,
+    and those a tool override names by field path, which win over the schema wherever both reach the same value.
     Built once per operation, so every path is parsed at startup rather than on each call.
     """
 
@@ -63,27 +55,38 @@ class MediaPromoter:
         'base64': Base64Encoding(),
     }
 
-    def __init__(self, fields: typing.Mapping[str, MediaField]):
-        self._rules = [
-            _MediaRule(FieldPath.parse(path), field.media_type, self._ENCODINGS[field.encoding])
-            for path, field in fields.items()
-        ]
+    def __init__(self, response_media: ResponseMedia | None, overrides: typing.Mapping[str, MediaField]):
+        self._response_media = response_media
+        self._overrides = [(FieldPath.parse(path), field) for path, field in overrides.items()]
 
     def promote(self, payload: typing.Any, uri: str) -> tuple[typing.Any, list[ContentBlock]]:
-        """Return a copy of ``payload`` with its media replaced by placeholders, and the content blocks, in order.
+        """Return ``payload`` with its media replaced by placeholders, and the content blocks, in order.
 
+        ``payload`` itself is never changed, since it is copied first whenever it holds a value to promote.
+        Blocks follow the payload order of the fields the schema declares, then the override fields the schema missed.
         ``uri`` names the upstream response, and each embedded resource is addressed by its field path within it.
         A path that matches nothing, or a value its encoding cannot read, is left as it is.
         """
-        if not self._rules:
+        if (self._response_media is None and not self._overrides) or not self._find(payload):
             return payload, []
+        # The matches hold the containers they were found in, so they are found again in the copy that is changed.
         payload = copy.deepcopy(payload)
         contents: list[ContentBlock] = []
-        for rule in self._rules:
-            for match in rule.path.find(payload):
-                content = rule.encoding.to_content(match.value, rule.media_type, f'{uri}#{match.path}')
-                if content is None:
-                    continue
-                contents.append(content)
-                match.replace(_PLACEHOLDER_TEMPLATE.format(index=len(contents), media_type=rule.media_type))
+        for match, field in self._find(payload).values():
+            content = self._ENCODINGS[field.encoding].to_content(match.value, field.media_type, f'{uri}#{match.path}')
+            if content is None:
+                continue
+            contents.append(content)
+            match.replace(_PLACEHOLDER_TEMPLATE.format(index=len(contents), media_type=field.media_type))
         return payload, contents
+
+    def _find(self, payload: typing.Any) -> dict[str, tuple[FieldMatch, MediaField]]:
+        """Return every value to promote, keyed by its concrete path, so a value reached twice is promoted once."""
+        found: dict[str, tuple[FieldMatch, MediaField]] = {}
+        if self._response_media is not None:
+            for match, field in self._response_media.find(payload):
+                found.setdefault(match.path, (match, field))
+        for path, field in self._overrides:
+            for match in path.find(payload):
+                found[match.path] = (match, field)
+        return found
