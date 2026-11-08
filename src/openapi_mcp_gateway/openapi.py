@@ -38,6 +38,10 @@ _COMPOSITION_KEYWORDS = ('allOf', 'oneOf', 'anyOf')
 # The media type a base64 field is promoted as when nothing names one.
 _DEFAULT_MEDIA_TYPE = 'application/octet-stream'
 
+# The YAML loader for specs, the libyaml one when PyYAML was built with it.
+# It reads the same documents as the pure Python loader nearly ten times faster, which matters for a spec of megabytes.
+_YAML_LOADER = getattr(yaml, 'CSafeLoader', yaml.SafeLoader)
+
 
 class ParameterInfo(pydantic.BaseModel):
     """One OpenAPI parameter (path, query, header, cookie, or body) with its schema.
@@ -249,11 +253,11 @@ def load_spec(source: str | pathlib.Path) -> dict[str, typing.Any]:
         response.raise_for_status()
         content_type = response.headers.get('content-type', '')
         if 'yaml' in content_type or 'yml' in content_type:
-            return yaml.safe_load(response.text)
+            return _load_yaml(response.text)
         try:
             return response.json()
         except json.JSONDecodeError:
-            return yaml.safe_load(response.text)
+            return _load_yaml(response.text)
 
     path = pathlib.Path(source_str).expanduser().resolve()
     if not path.exists():
@@ -261,7 +265,11 @@ def load_spec(source: str | pathlib.Path) -> dict[str, typing.Any]:
 
     logger.debug('Loading OpenAPI spec from file: %s', path)
     text = path.read_text(encoding='utf-8')
-    return yaml.safe_load(text) if path.suffix in ('.yaml', '.yml') else json.loads(text)
+    return _load_yaml(text) if path.suffix in ('.yaml', '.yml') else json.loads(text)
+
+
+def _load_yaml(text: str) -> typing.Any:
+    return yaml.load(text, Loader=_YAML_LOADER)  # noqa: S506  # Both loaders are the safe variants.
 
 
 def _resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:

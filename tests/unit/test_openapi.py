@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import yaml
 
 from openapi_mcp_gateway.openapi import (
     MediaField,
@@ -716,3 +717,10 @@ class TestLoadSpec:
         bad_json.write_text('{not valid json')
         with pytest.raises(json.JSONDecodeError):
             load_spec(bad_json)
+
+    def test_yaml_refuses_python_tags(self, tmp_path):
+        """A YAML spec is read by a safe loader, so a tag that would build a Python object is refused."""
+        hostile = tmp_path / 'hostile.yaml'
+        hostile.write_text('openapi: !!python/object/apply:os.getcwd []\n')
+        with pytest.raises(yaml.constructor.ConstructorError):
+            load_spec(hostile)
