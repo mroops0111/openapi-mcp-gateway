@@ -19,7 +19,7 @@ def _context(auth: AuthConfig) -> AuthTypeContext:
     """Build the one shape every handler receives, for a server carrying ``auth``."""
     return AuthTypeContext(
         entry=ServerConfig(name='srv', spec='dummy.json', base_url=API_URL, auth=auth),
-        spec=OpenAPISpec(raw={}, title='test', version='1.0.0', operations=[], security_schemes={}),
+        spec=OpenAPISpec(title='test', version='1.0.0', operations=[], security_schemes={}),
         store=MemoryTokenStore(),
         gateway_url=GATEWAY_URL,
     )

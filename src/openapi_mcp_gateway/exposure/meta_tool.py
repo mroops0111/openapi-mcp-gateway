@@ -79,6 +79,8 @@ class MetaToolGenerator:
             # Same shaping as the static path, so a dynamic operation exposes the identical surface.
             # Meta-tools carry no per-operation annotations, so annotation overrides do not apply here.
             shaped_operation = shape_operation(operation)
+            # The input schema is the operation's contract, built once and both shown by get_operation and enforced.
+            input_schema = build_input_schema(shaped_operation)
             tool_override = _get_override(shaped_operation, 'tool')
             registered.append(
                 _RegisteredOperation(
@@ -89,8 +91,10 @@ class MetaToolGenerator:
                     ),
                     path=shaped_operation.path,
                     tags=shaped_operation.tags,
-                    input_schema=build_input_schema(shaped_operation),
-                    callable_=build_tool_function(shaped_operation, self.binding, attach_signature=False),
+                    input_schema=input_schema,
+                    callable_=build_tool_function(
+                        shaped_operation, self.binding, input_schema=input_schema, attach_signature=False
+                    ),
                 )
             )
             logger.debug(
