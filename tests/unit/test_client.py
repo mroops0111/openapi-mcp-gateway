@@ -1,7 +1,9 @@
+import asyncio
+
 import httpx
 import pytest
 
-from openapi_mcp_gateway.client import APIClient, BinaryBody
+from openapi_mcp_gateway.client import APIClient, BinaryBody, SharedAPIClient
 
 
 def _client_with_handler(handler):
@@ -136,3 +138,79 @@ async def test_http_error_raises_status_error(status_code):
             await client.request('GET', '/pet/missing')
 
     assert exception_info.value.response.status_code == status_code
+
+
+async def test_cookies_the_upstream_sets_are_never_sent_back():
+    """A ``Set-Cookie`` from one response is not stored, so a later request through the same client carries none."""
+    sent_cookies: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent_cookies.append(request.headers.get('cookie'))
+        return httpx.Response(200, json={}, headers={'set-cookie': 'session=alice; Path=/'})
+
+    async with APIClient(base_url='https://example.com', transport=httpx.MockTransport(handler)) as client:
+        await client.request('GET', '/me')
+        await client.request('GET', '/me')
+
+    assert sent_cookies == [None, None]
+
+
+async def test_a_cookie_header_on_the_request_is_sent_as_given():
+    """A forwarded ``Cookie`` header reaches the upstream unchanged, with nothing an earlier response set."""
+    sent_cookies: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent_cookies.append(request.headers.get('cookie'))
+        return httpx.Response(200, json={}, headers={'set-cookie': 'session=alice; Path=/'})
+
+    async with APIClient(base_url='https://example.com', transport=httpx.MockTransport(handler)) as client:
+        await client.request('GET', '/me')
+        await client.request('GET', '/me', headers={'Cookie': 'session=bob'})
+
+    assert sent_cookies == [None, 'session=bob']
+
+
+class TestSharedAPIClient:
+    """One ``APIClient`` per upstream server, bound to the event loop that first used it."""
+
+    async def test_the_same_client_serves_every_call_on_a_loop(self):
+        """Calls on one loop reuse one client, so its connections are kept alive between them."""
+        shared = SharedAPIClient('https://example.com')
+
+        assert shared.get() is shared.get()
+        await shared.aclose()
+
+    def test_another_loop_gets_a_fresh_client(self):
+        """A client is not carried onto a second loop, since its connections belong to the first."""
+        shared = SharedAPIClient('https://example.com')
+
+        async def current() -> APIClient:
+            return shared.get()
+
+        first, second = asyncio.run(current()), asyncio.run(current())
+
+        assert first is not second
+
+    async def test_aclose_closes_the_client_and_the_next_call_opens_another(self):
+        """Closing on the client's own loop closes it, and a later call does not reuse the closed one."""
+        shared = SharedAPIClient('https://example.com')
+        client = shared.get()
+
+        await shared.aclose()
+
+        assert client._client.is_closed
+        assert shared.get() is not client
+        await shared.aclose()
+
+    def test_aclose_on_another_loop_forgets_the_client_without_touching_it(self):
+        """A shutdown hook run on a fresh loop, as stdio does, leaves the old loop's client alone."""
+        shared = SharedAPIClient('https://example.com')
+
+        async def open_client() -> APIClient:
+            return shared.get()
+
+        client = asyncio.run(open_client())
+        asyncio.run(shared.aclose())
+
+        assert not client._client.is_closed
+        assert shared._client is None

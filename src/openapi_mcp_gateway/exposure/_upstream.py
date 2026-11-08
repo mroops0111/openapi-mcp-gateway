@@ -9,11 +9,11 @@ from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, ContentBlock, TextContent
 
 from ..auth.resolver import AuthResolver, NullAuthResolver
-from ..client import APIClient, BinaryBody
+from ..client import BinaryBody, SharedAPIClient
 from ..openapi import OperationInfo, ParameterInfo
 from ._content import binary_content
 from ._media import MediaPromoter
-from ._shared import _get_override, _sanitize_name, _split_by_location, build_input_schema
+from ._shared import _get_override, _sanitize_name, _split_by_location
 from ._transform import TransformError, apply_transform, compile_expression
 
 
@@ -33,6 +33,11 @@ class UpstreamBinding:
     transport: httpx.AsyncBaseTransport | None = None
     # Static per-server headers, sent on every call beneath the auth and per-call headers.
     headers: dict[str, str] = dataclasses.field(default_factory=dict)
+    # The one HTTP client every call to this server goes through, built from the fields above.
+    client: SharedAPIClient = dataclasses.field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'client', SharedAPIClient(self.base_url, self.timeout, self.transport))
 
 
 def _build_success_result(payload: typing.Any, media_contents: typing.Sequence[ContentBlock] = ()) -> CallToolResult:
@@ -239,7 +244,7 @@ def _build_upstream_closure(
     operation: OperationInfo,
     binding: UpstreamBinding,
     *,
-    validate_input: bool = False,
+    input_schema: dict[str, typing.Any] | None = None,
 ) -> typing.Callable[..., typing.Awaitable[CallToolResult]]:
     """Build the async callable that issues one upstream request per invocation.
 
@@ -247,8 +252,7 @@ def _build_upstream_closure(
     The callable accepts the sanitised parameter names as keyword arguments,
     plus ``ctx`` for the MCPServer-injected :class:`Context`.
 
-    With ``validate_input`` the arguments are checked against the operation's advertised schema before any call,
-    so the constraints the client is shown are the constraints enforced.
+    With ``input_schema``, the schema a tool advertises, the arguments are checked against it before any call.
 
     When the ``tool`` override carries a ``request`` JSONata expression it builds the whole upstream request,
     otherwise the arguments pass through by location as declared in the spec.
@@ -278,9 +282,7 @@ def _build_upstream_closure(
         if tool_override and tool_override.response
         else None
     )
-    validator = (
-        Draft202012Validator(build_input_schema(operation), format_checker=FormatChecker()) if validate_input else None
-    )
+    validator = Draft202012Validator(input_schema, format_checker=FormatChecker()) if input_schema is not None else None
     # The override wins per path, so an author can correct or add to what the spec declares.
     media_promoter = MediaPromoter({**operation.media_fields, **(tool_override.media if tool_override else {})})
 
@@ -332,25 +334,21 @@ def _build_upstream_closure(
             **header_arguments,
         }
 
-        async with APIClient(
-            base_url=binding.base_url,
-            headers=request_headers,
-            timeout=binding.timeout,
-            transport=binding.transport,
-        ) as client:
-            try:
-                result = await client.request(
-                    method,
-                    resolved_path,
-                    params=query_arguments or None,
-                    data=body_arguments or None,
-                )
-            except httpx.HTTPStatusError as exception:
-                await context.report_progress(1, 1, 'Request completed (upstream error)')
-                return _build_http_error_result(exception)
-            except httpx.RequestError as exception:
-                await context.report_progress(1, 1, 'Request failed (network error)')
-                return _build_network_error_result(exception)
+        # The client is shared by every call to this server, so every header, auth included, rides on the request.
+        try:
+            result = await binding.client.get().request(
+                method,
+                resolved_path,
+                params=query_arguments or None,
+                data=body_arguments or None,
+                headers=request_headers,
+            )
+        except httpx.HTTPStatusError as exception:
+            await context.report_progress(1, 1, 'Request completed (upstream error)')
+            return _build_http_error_result(exception)
+        except httpx.RequestError as exception:
+            await context.report_progress(1, 1, 'Request failed (network error)')
+            return _build_network_error_result(exception)
 
         await context.report_progress(1, 1, 'Request completed')
 
