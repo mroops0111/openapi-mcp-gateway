@@ -158,9 +158,14 @@ def build_tool_function(
     operation: OperationInfo,
     binding: UpstreamBinding,
     *,
+    input_schema: dict[str, typing.Any] | None = None,
     attach_signature: bool = True,
 ) -> typing.Callable:
     """Build the async callable for ``operation``.
+
+    The callable checks its arguments against ``input_schema`` before any upstream call.
+    Pass the schema the tool advertises, so the two cannot drift apart.
+    Without it, the schema is built from ``operation`` with ``build_input_schema``.
 
     With ``attach_signature=True`` (the default),
     the returned callable carries an ``inspect.Signature`` and ``__annotations__``,
@@ -168,7 +173,9 @@ def build_tool_function(
     With ``attach_signature=False``, returns the bare upstream closure for dispatch from a registry,
     as used by :class:`MetaToolGenerator`.
     """
-    upstream_callable = _build_upstream_closure(operation, binding, validate_input=True)
+    if input_schema is None:
+        input_schema = build_input_schema(operation)
+    upstream_callable = _build_upstream_closure(operation, binding, input_schema=input_schema)
     if not attach_signature:
         return upstream_callable
     signature, annotations = _build_tool_signature(operation)
@@ -191,8 +198,10 @@ class ToolGenerator:
             # Shape once, then feed the shaped operation to every consumer (schema, signature, upstream),
             # so hidden / default / description overrides stay consistent across all of them.
             shaped_operation = shape_operation(operation)
+            # The input schema is the tool's contract, built once and both advertised and enforced.
+            input_schema = build_input_schema(shaped_operation)
             tool_override = _get_override(shaped_operation, 'tool')
-            tool_function = build_tool_function(shaped_operation, self.binding)
+            tool_function = build_tool_function(shaped_operation, self.binding, input_schema=input_schema)
             name = derive_name(shaped_operation, tool_override.name if tool_override else None)
             description = derive_description(shaped_operation, tool_override.description if tool_override else None)
             title = derive_tool_title(shaped_operation)
@@ -206,9 +215,7 @@ class ToolGenerator:
             )
             # The high-level registration derives the advertised input schema from the Python signature,
             # which cannot carry OpenAPI keywords such as format, numeric bounds, pattern, enum, or composition.
-            # Overwrite it with the schema built straight from the operation, so the LLM sees the real contract.
-            # build_tool_function enforces this same schema before the upstream call, so display and validation match.
-            input_schema = build_input_schema(shaped_operation)
+            # Overwrite it with the contract built above, the same schema the tool function enforces.
             registered.parameters = input_schema
             exposed_tools.append(
                 ExposedTool(

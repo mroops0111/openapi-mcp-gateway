@@ -13,7 +13,7 @@ from ..client import APIClient, BinaryBody
 from ..openapi import OperationInfo, ParameterInfo
 from ._content import binary_content
 from ._media import MediaPromoter
-from ._shared import _get_override, _sanitize_name, _split_by_location, build_input_schema
+from ._shared import _get_override, _sanitize_name, _split_by_location
 from ._transform import TransformError, apply_transform, compile_expression
 
 
@@ -239,7 +239,7 @@ def _build_upstream_closure(
     operation: OperationInfo,
     binding: UpstreamBinding,
     *,
-    validate_input: bool = False,
+    input_schema: dict[str, typing.Any] | None = None,
 ) -> typing.Callable[..., typing.Awaitable[CallToolResult]]:
     """Build the async callable that issues one upstream request per invocation.
 
@@ -247,8 +247,7 @@ def _build_upstream_closure(
     The callable accepts the sanitised parameter names as keyword arguments,
     plus ``ctx`` for the MCPServer-injected :class:`Context`.
 
-    With ``validate_input`` the arguments are checked against the operation's advertised schema before any call,
-    so the constraints the client is shown are the constraints enforced.
+    With ``input_schema``, the schema a tool advertises, the arguments are checked against it before any call.
 
     When the ``tool`` override carries a ``request`` JSONata expression it builds the whole upstream request,
     otherwise the arguments pass through by location as declared in the spec.
@@ -278,9 +277,7 @@ def _build_upstream_closure(
         if tool_override and tool_override.response
         else None
     )
-    validator = (
-        Draft202012Validator(build_input_schema(operation), format_checker=FormatChecker()) if validate_input else None
-    )
+    validator = Draft202012Validator(input_schema, format_checker=FormatChecker()) if input_schema is not None else None
     # The override wins per path, so an author can correct or add to what the spec declares.
     media_promoter = MediaPromoter({**operation.media_fields, **(tool_override.media if tool_override else {})})
 
