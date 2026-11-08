@@ -16,9 +16,12 @@ from openapi_mcp_gateway.exposure import (
     MetaToolGenerator,
     ToolGenerator,
     UpstreamBinding,
+    _upstream,
     derive_tool_annotations,
     derive_tool_title,
 )
+from openapi_mcp_gateway.exposure import meta_tool as meta_tool_module
+from openapi_mcp_gateway.exposure import tool as tool_module
 from openapi_mcp_gateway.exposure._shaping import shape_operation
 from openapi_mcp_gateway.exposure._shared import (
     _sanitize_name,
@@ -1307,6 +1310,43 @@ class TestInputSchemaEnforcement:
         """Invoke ``do_thing`` through an in-memory client and return the tool result."""
         async with Client(mcp) as client:
             return await client.call_tool('do_thing', arguments)
+
+    @pytest.mark.parametrize('generator_class', [ToolGenerator, MetaToolGenerator])
+    def test_schema_is_built_once_and_enforced_as_built(self, monkeypatch, generator_class):
+        """Each operation's schema is built once, and the validator checks against that very schema."""
+        built: list[dict] = []
+        enforced: list[dict] = []
+
+        def counting_build(operation: OperationInfo) -> dict:
+            built.append(build_input_schema(operation))
+            return built[-1]
+
+        validator_class = _upstream.Draft202012Validator
+
+        def capturing_validator(schema: dict, **options: typing.Any) -> typing.Any:
+            enforced.append(schema)
+            return validator_class(schema, **options)
+
+        monkeypatch.setattr(tool_module, 'build_input_schema', counting_build)
+        monkeypatch.setattr(meta_tool_module, 'build_input_schema', counting_build)
+        monkeypatch.setattr(_upstream, 'Draft202012Validator', capturing_validator)
+        mcp = MCPServer('test')
+        operation = OperationInfo(
+            operation_id='do_thing',
+            method='get',
+            path='/things',
+            parameters=[ParameterInfo(name='n', location='query', required=True, schema={'type': 'integer'})],
+        )
+
+        generator_class(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)).register([operation])
+
+        assert len(built) == 1
+        assert len(enforced) == 1
+        assert enforced[0] is built[0]
+        if generator_class is ToolGenerator:
+            tool = mcp._tool_manager.get_tool('do_thing')
+            assert tool is not None
+            assert tool.parameters is built[0]
 
     async def test_maximum_enforced(self):
         """A value above ``maximum`` is rejected even though its type is correct."""

@@ -1,6 +1,8 @@
 import json
+import logging
 
 import pytest
+import yaml
 
 from openapi_mcp_gateway.openapi import (
     MediaField,
@@ -629,6 +631,43 @@ class TestMediaFieldCollection:
 
         assert set(self._media(component_ref('Node'), schemas)) == {'icon'}
 
+    def test_a_component_cached_by_one_operation_is_found_afresh_by_another(self):
+        """A component first reached through a reference whose sibling keywords led to it is not cached as truncated.
+
+        The first operation reaches ``Album`` beside an ``Image`` it has already followed, so ``Album.cover`` stops.
+        The second reaches ``Album`` on its own, so it has followed nothing and finds ``cover.data``.
+        """
+        image = {'type': 'object', 'properties': {'data': {'type': 'string', 'contentEncoding': 'base64'}}}
+        album = {'type': 'object', 'properties': {'cover': component_ref('Image')}}
+        beside_image = {**component_ref('Image'), 'properties': {'album': component_ref('Album')}}
+        raw = operation_spec(response=beside_image, schemas={'Image': image, 'Album': album})
+        album_response = {'content': {'application/json': {'schema': component_ref('Album')}}}
+        raw['paths']['/albums'] = {'get': {'operationId': 'getAlbum', 'responses': {'200': album_response}}}
+
+        media = {operation.operation_id: set(operation.media_fields) for operation in parse_spec(raw).operations}
+
+        assert media == {'createThing': set(), 'getAlbum': {'cover.data'}}
+
+    def test_a_combinatorial_schema_gives_up_with_a_warning(self, caplog):
+        """Components that all refer to each other nest more paths than can be listed, so the walk stops and says so."""
+        names = [f'Node{index}' for index in range(9)]
+        schemas = {
+            name: {
+                'type': 'object',
+                'properties': {
+                    'icon': {'type': 'string', 'contentEncoding': 'base64'},
+                    **{other.lower(): component_ref(other) for other in names if other != name},
+                },
+            }
+            for name in names
+        }
+
+        with caplog.at_level(logging.WARNING, logger='openapi_mcp_gateway.openapi'):
+            media = self._media(component_ref('Node0'), schemas)
+
+        assert media == {}
+        assert 'x-mcp-integration.tool.media' in caplog.text
+
     def test_undeclared_base64_is_left_alone(self):
         """Nothing is guessed, so a plain string field is not media, whatever it holds."""
         response = {'type': 'object', 'properties': {'data': {'type': 'string', 'format': 'byte'}}}
@@ -716,3 +755,10 @@ class TestLoadSpec:
         bad_json.write_text('{not valid json')
         with pytest.raises(json.JSONDecodeError):
             load_spec(bad_json)
+
+    def test_yaml_refuses_python_tags(self, tmp_path):
+        """A YAML spec is read by a safe loader, so a tag that would build a Python object is refused."""
+        hostile = tmp_path / 'hostile.yaml'
+        hostile.write_text('openapi: !!python/object/apply:os.getcwd []\n')
+        with pytest.raises(yaml.constructor.ConstructorError):
+            load_spec(hostile)

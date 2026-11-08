@@ -23,6 +23,7 @@ from starlette.testclient import TestClient
 from openapi_mcp_gateway.app import _transport_security
 from openapi_mcp_gateway.auth import token_source as token_source_module
 from openapi_mcp_gateway.auth.oidc import IssuerMetadata
+from openapi_mcp_gateway.client import APIClient, SharedAPIClient
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import (
     AuthConfig,
@@ -56,6 +57,13 @@ class _StubContext:
     async def report_progress(self, *_args, **_kwargs):
         """Match the ``Context`` protocol, doing nothing."""
         return None
+
+
+def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Awaitable[None]]]:
+    """The shutdown hooks an auth flow registered, leaving out the one closing each server's upstream client."""
+    return [
+        hook for hook in gateway._shutdown_hooks if not isinstance(getattr(hook, '__self__', None), SharedAPIClient)
+    ]
 
 
 def _stub_context() -> Context:
@@ -590,7 +598,7 @@ class TestClientCredentialsFlowEndToEnd:
         bundle = cc_gateway._servers[0]
         assert bundle.auth_provider is None
         assert bundle.auth_settings is None
-        assert len(cc_gateway._shutdown_hooks) == 1
+        assert len(_auth_shutdown_hooks(cc_gateway)) == 1
 
     async def test_tool_call_attaches_fetched_bearer(self, cc_gateway, token_post, mock_upstream):
         """A tool call fetches a token from the IdP, then forwards it as ``Authorization`` upstream."""
@@ -646,6 +654,30 @@ class TestSpec20260728Adoption:
         first = tool_names()
         assert first, 'petstore should register at least one tool'
         assert first == tool_names()
+
+
+class TestUpstreamClientLifecycle:
+    """Each server keeps one upstream client across calls and closes it when the gateway shuts down."""
+
+    async def test_calls_reuse_one_client_closed_at_shutdown(self, gateway, upstream_requests, monkeypatch):
+        """Two calls go through one client, and running the shutdown hooks closes it."""
+        constructed: list[APIClient] = []
+        original_init = APIClient.__init__
+
+        def recording_init(self, *args, **kwargs):
+            constructed.append(self)
+            original_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(APIClient, '__init__', recording_init)
+
+        async with Client(gateway._servers[0].mcp, raise_exceptions=True) as client:
+            await client.call_tool('list_pets', {})
+            await client.call_tool('list_pets', {})
+        await gateway._run_shutdown_hooks()
+
+        assert len(upstream_requests) == 2
+        assert len(constructed) == 1
+        assert constructed[0]._client.is_closed
 
 
 class TestTraceContextPropagation:

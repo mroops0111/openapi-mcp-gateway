@@ -8,6 +8,7 @@ from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway import Gateway, mcp_tool
 from openapi_mcp_gateway.auth import token_source as token_source_module
+from openapi_mcp_gateway.client import SharedAPIClient
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
 from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
@@ -28,6 +29,13 @@ class _StubContext:
     async def report_progress(self, *_args, **_kwargs):
         """Match the ``Context`` protocol, doing nothing."""
         return None
+
+
+def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Awaitable[None]]]:
+    """The shutdown hooks an auth flow registered, leaving out the one closing each server's upstream client."""
+    return [
+        hook for hook in gateway._shutdown_hooks if not isinstance(getattr(hook, '__self__', None), SharedAPIClient)
+    ]
 
 
 def _stub_context(headers: dict[str, str] | None = None) -> Context:
@@ -51,7 +59,7 @@ class TestGatewayFromFastapiAssembly:
         bundle = gateway._servers[0]
         assert bundle.auth_provider is None
         assert bundle.auth_settings is None
-        assert gateway._shutdown_hooks == []
+        assert _auth_shutdown_hooks(gateway) == []
 
     def test_authorization_code_without_creds_picks_passthrough(self):
         """No client credentials but an authorizationCode scheme falls back to passthrough."""
@@ -71,7 +79,7 @@ class TestGatewayFromFastapiAssembly:
         # Passthrough setup carries no provider, no settings, no shutdown hook.
         assert bundle.auth_provider is None
         assert bundle.auth_settings is None
-        assert gateway._shutdown_hooks == []
+        assert _auth_shutdown_hooks(gateway) == []
 
     def test_client_credentials_uses_token_source(self):
         """A clientCredentials scheme + creds registers a service-token shutdown hook."""
@@ -107,7 +115,7 @@ class TestGatewayFromFastapiAssembly:
             auth=AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec')),
         )
         # client_credentials registers a shutdown hook that closes the token source's HTTP client.
-        assert len(gateway._shutdown_hooks) == 1
+        assert len(_auth_shutdown_hooks(gateway)) == 1
 
     def test_no_marked_routes_raises(self):
         """A FastAPI app without any ``@mcp_tool`` route is a configuration error."""

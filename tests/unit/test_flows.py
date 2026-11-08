@@ -29,7 +29,6 @@ from tests.constants import API_URL, AUTHORIZE_URL, ISSUER, JWKS_URL, TOKEN_URL
 def _build_spec(security_schemes: dict | None = None) -> OpenAPISpec:
     """Construct a minimal ``OpenAPISpec`` carrying the given ``securitySchemes``."""
     return OpenAPISpec(
-        raw={},
         title='test',
         version='1.0.0',
         operations=[],

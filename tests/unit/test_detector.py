@@ -9,7 +9,7 @@ from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
 def _spec(security_schemes: dict) -> OpenAPISpec:
     """Build a minimal ``OpenAPISpec`` carrying the given security schemes."""
-    return OpenAPISpec(raw={}, security_schemes=security_schemes)
+    return OpenAPISpec(security_schemes=security_schemes)
 
 
 AUTH_CODE_SCHEME = {
