@@ -230,9 +230,11 @@ class OperationInfo(pydantic.BaseModel):
 
 
 class OpenAPISpec(pydantic.BaseModel):
-    """Decoded OpenAPI document with flattened operations and component schemas."""
+    """What the gateway keeps of a parsed OpenAPI document: its metadata, flattened operations, and security schemes.
 
-    raw: dict[str, typing.Any]
+    The decoded document itself is not kept, since every reference is resolved while parsing, and it is the largest part.
+    """
+
     title: str = ''
     version: str = ''
     description: str = ''
@@ -935,7 +937,6 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
         )
 
     return OpenAPISpec(
-        raw=raw,
         title=info.get('title', ''),
         version=info.get('version', ''),
         description=info.get('description', ''),
