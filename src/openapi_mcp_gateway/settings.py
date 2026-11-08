@@ -262,6 +262,37 @@ class PolicyConfig(pydantic.BaseModel):
     annotated_only: bool = False
 
 
+class SearchFieldWeights(pydantic.BaseModel):
+    """How much a matching term counts in each field ``search_operations`` ranks by.
+
+    A field left unset keeps the gateway's default weight, and 0 leaves the field out of search.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid')
+
+    name: float | None = pydantic.Field(default=None, ge=0)
+    summary: float | None = pydantic.Field(default=None, ge=0)
+    description: float | None = pydantic.Field(default=None, ge=0)
+    path: float | None = pydantic.Field(default=None, ge=0)
+    tags: float | None = pydantic.Field(default=None, ge=0)
+
+    @pydantic.model_validator(mode='after')
+    def _refuse_all_zero(self) -> typing.Self:
+        """Refuse setting every field to 0, since search would then match nothing."""
+        weights = self.model_dump()
+        if all(weight == 0 for weight in weights.values()):
+            raise ValueError('exposure.search.field_weights sets every field to 0, so search would match nothing.')
+        return self
+
+
+class SearchConfig(pydantic.BaseModel):
+    """How ``search_operations`` ranks operations under dynamic exposure."""
+
+    model_config = pydantic.ConfigDict(extra='forbid')
+
+    field_weights: SearchFieldWeights = SearchFieldWeights()
+
+
 class ExposureConfig(pydantic.BaseModel):
     """How a server's operations surface as MCP primitives.
 
@@ -278,6 +309,15 @@ class ExposureConfig(pydantic.BaseModel):
     # The operations it promotes are the ones a client reads rather than calls,
     # and an operation can still opt in per-operation regardless.
     promote_resources: bool = False
+    # Ranking for the search_operations meta-tool, so it only takes effect with ``style: dynamic``.
+    search: SearchConfig | None = None
+
+    @pydantic.model_validator(mode='after')
+    def _refuse_search_without_dynamic(self) -> typing.Self:
+        """Refuse ``search`` under static exposure, since only the dynamic meta-tools search."""
+        if self.search is not None and self.style != 'dynamic':
+            raise ValueError('exposure.search needs exposure.style dynamic, so it would have no effect here.')
+        return self
 
 
 class ServerConfig(pydantic.BaseModel):

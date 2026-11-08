@@ -30,6 +30,8 @@ from openapi_mcp_gateway.settings import (
     ExposureConfig,
     GatewayConfig,
     PolicyConfig,
+    SearchConfig,
+    SearchFieldWeights,
     ServerConfig,
     UpstreamAuthConfig,
 )
@@ -495,13 +497,36 @@ class TestDynamicExposureEndToEnd:
         return Gateway.from_config(config)
 
     def test_only_three_meta_tools_registered(self, dynamic_gateway):
-        """An MCP client sees just ``list_operations``, ``get_operation``, ``call_operation``."""
+        """An MCP client sees just ``search_operations``, ``get_operation``, ``call_operation``."""
         mcp = dynamic_gateway._servers[0].mcp
         names = {tool.name for tool in mcp._tool_manager.list_tools()}
-        assert names == {'list_operations', 'get_operation', 'call_operation'}
+        assert names == {'search_operations', 'get_operation', 'call_operation'}
+
+    async def test_search_field_weights_reach_the_ranking(self, petstore_json_path):
+        """A weight of 0 on every field but ``path`` ranks by path alone, so a word only in summaries finds nothing."""
+        config = GatewayConfig(
+            servers=[
+                ServerConfig(
+                    name='petstore',
+                    spec=str(petstore_json_path),
+                    exposure=ExposureConfig(
+                        style='dynamic',
+                        search=SearchConfig(
+                            field_weights=SearchFieldWeights(name=0, summary=0, description=0, tags=0, path=1)
+                        ),
+                    ),
+                ),
+            ],
+        )
+        mcp = Gateway.from_config(config)._servers[0].mcp
+        search = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'search_operations')
+        by_path = (await search.fn(ctx=_stub_context(), query='pets')).structured_content
+        by_summary_word = (await search.fn(ctx=_stub_context(), query='list')).structured_content
+        assert by_path['operations']
+        assert by_summary_word['operations'] == []
 
     async def test_list_then_get_then_call_roundtrip(self, dynamic_gateway, mock_upstream):
-        """An LLM-style list, get, and call sequence drives an upstream call with correct query."""
+        """An LLM-style search, get, and call sequence drives an upstream call with correct query."""
         captured: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -514,8 +539,8 @@ class TestDynamicExposureEndToEnd:
         mcp = dynamic_gateway._servers[0].mcp
         tools = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
 
-        listing = (await tools['list_operations'].fn(ctx=_stub_context())).structured_content
-        assert {entry['name'] for entry in listing['operations']} >= {'list_pets', 'get_pet_by_id'}
+        listing = (await tools['search_operations'].fn(ctx=_stub_context(), query='list pets')).structured_content
+        assert listing['operations'][0]['name'] == 'list_pets'
 
         described = (await tools['get_operation'].fn(name='list_pets', ctx=_stub_context())).structured_content
         assert described['input_schema']['properties']['limit']['type'] == 'integer'

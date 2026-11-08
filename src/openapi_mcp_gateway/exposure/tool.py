@@ -1,4 +1,3 @@
-import dataclasses
 import inspect
 import logging
 import typing
@@ -7,7 +6,7 @@ import inflection
 import pydantic
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
-from mcp.types import CallToolResult, ToolAnnotations
+from mcp.types import ToolAnnotations
 
 from ..openapi import ExposedTool, OperationInfo, ToolOverride
 from ._shaping import shape_operation
@@ -20,28 +19,10 @@ from ._shared import (
     derive_description,
     derive_name,
 )
-from ._upstream import UpstreamBinding, _build_success_result, _build_upstream_closure
+from ._upstream import UpstreamBinding, _build_upstream_closure
 
 
 logger = logging.getLogger(__name__)
-
-
-_LIST_OPERATIONS_DESCRIPTION = (
-    'List every operation available on this server. '
-    'Returns `{operations: [{name, description}, ...]}`. '
-    'Call `get_operation(name)` next to fetch the input schema for one specific operation.'
-)
-
-_GET_OPERATION_DESCRIPTION = (
-    'Return the input schema for one operation. '
-    'Returns `{name, description, input_schema}`. '
-    'Use the JSON Schema to construct the `arguments` payload for `call_operation`.'
-)
-
-_CALL_OPERATION_DESCRIPTION = (
-    'Invoke an operation by name with a JSON object of arguments. '
-    'Argument keys must match the keys in `get_operation(name).input_schema.properties`.'
-)
 
 
 def _shaping(tool_override: ToolOverride | None) -> dict[str, typing.Any] | None:
@@ -173,11 +154,6 @@ def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, 
     return inspect.Signature(signature_parameters), annotations
 
 
-def _unknown_operation_error(name: str) -> ValueError:
-    """Build the standard error raised by ``get_operation`` and ``call_operation`` when ``name`` is not indexed."""
-    return ValueError(f'Unknown operation: {name!r}. Use list_operations to see available names.')
-
-
 def build_tool_function(
     operation: OperationInfo,
     binding: UpstreamBinding,
@@ -199,19 +175,6 @@ def build_tool_function(
     upstream_callable.__signature__ = signature
     upstream_callable.__annotations__ = annotations
     return upstream_callable
-
-
-@dataclasses.dataclass
-class _MetaToolEntry:
-    """One operation indexed by the dynamic-exposure registry.
-
-    Internal to :class:`MetaToolGenerator`.
-    Consumers interact with operations through the three meta-tools, not this dataclass.
-    """
-
-    description: str
-    input_schema: dict[str, typing.Any]
-    callable_: typing.Callable[..., typing.Awaitable[CallToolResult]]
 
 
 class ToolGenerator:
@@ -260,69 +223,3 @@ class ToolGenerator:
             logger.debug('Tool registered: %s ← %s %s', name, shaped_operation.method.upper(), shaped_operation.path)
         logger.info('Registered %d MCP tool(s) on server "%s"', len(operations), self.mcp.name)
         return exposed_tools
-
-
-class MetaToolGenerator:
-    """Register the ``list_operations`` / ``get_operation`` / ``call_operation`` meta-tools, for dynamic exposure.
-
-    The LLM lists, then gets, then calls, to discover and invoke a specific operation.
-    Per-operation callables come from the same upstream closure the static path uses,
-    so auth, path substitution, and request shape stay identical across modes.
-    """
-
-    def __init__(self, mcp: MCPServer, binding: UpstreamBinding):
-        self.mcp = mcp
-        self.binding = binding
-        self._registry: dict[str, _MetaToolEntry] = {}
-
-    def register(self, operations: list[OperationInfo]) -> list[ExposedTool]:
-        """Populate the registry from ``operations`` and bind the three meta-tools, returning them."""
-        for operation in operations:
-            # Same shaping as the static path, so a dynamic operation exposes the identical surface.
-            # Meta-tools carry no per-operation annotations, so annotation overrides do not apply here.
-            shaped_operation = shape_operation(operation)
-            tool_override = _get_override(shaped_operation, 'tool')
-            name = derive_name(shaped_operation, tool_override.name if tool_override else None)
-            self._registry[name] = _MetaToolEntry(
-                description=derive_description(shaped_operation, tool_override.description if tool_override else None),
-                input_schema=build_input_schema(shaped_operation),
-                callable_=build_tool_function(shaped_operation, self.binding, attach_signature=False),
-            )
-            logger.debug(
-                'Dynamic operation indexed: %s ← %s %s', name, shaped_operation.method.upper(), shaped_operation.path
-            )
-        self._bind_meta_tools()
-        logger.info(
-            'Registered %d operation(s) behind dynamic meta-tools on server "%s"',
-            len(self._registry),
-            self.mcp.name,
-        )
-        return [
-            ExposedTool('list_operations', '-', '-'),
-            ExposedTool('get_operation', '-', '-'),
-            ExposedTool('call_operation', '-', '-'),
-        ]
-
-    def _bind_meta_tools(self) -> None:
-        registry = self._registry
-
-        @self.mcp.tool(name='list_operations', description=_LIST_OPERATIONS_DESCRIPTION)
-        async def list_operations(ctx: Context) -> CallToolResult:
-            entries = [{'name': name, 'description': entry.description} for name, entry in registry.items()]
-            return _build_success_result({'operations': entries})
-
-        @self.mcp.tool(name='get_operation', description=_GET_OPERATION_DESCRIPTION)
-        async def get_operation(name: str, ctx: Context) -> CallToolResult:
-            entry = registry.get(name)
-            if entry is None:
-                raise _unknown_operation_error(name)
-            return _build_success_result(
-                {'name': name, 'description': entry.description, 'input_schema': entry.input_schema}
-            )
-
-        @self.mcp.tool(name='call_operation', description=_CALL_OPERATION_DESCRIPTION)
-        async def call_operation(name: str, arguments: dict[str, typing.Any], ctx: Context) -> CallToolResult:
-            entry = registry.get(name)
-            if entry is None:
-                raise _unknown_operation_error(name)
-            return await entry.callable_(**arguments, ctx=ctx)

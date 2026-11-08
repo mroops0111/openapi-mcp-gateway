@@ -3,7 +3,7 @@
 # GitHub's OpenAPI spec carries 700+ operations,
 # and registering each as its own MCP tool overflows most LLM context windows on connect.
 # With `exposure.style: dynamic` the client sees only three meta-tools,
-# and the LLM walks list -> get -> call to pick operations on demand.
+# and the LLM walks search -> get -> call to pick operations on demand.
 #
 # Prerequisites:
 #   1. Create a PAT: https://github.com/settings/tokens
@@ -20,6 +20,11 @@ servers:
     spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
     exposure:
       style: dynamic
+      # Optional: reweigh how search_operations ranks operations, field by field.
+      # Unset fields keep their defaults (summary 3, name 2, description 0.5, path 0.5, tags 0.5).
+      # search:
+      #   field_weights:
+      #     description: 1
     auth:
       type: bearer
       token: ${GITHUB_TOKEN}

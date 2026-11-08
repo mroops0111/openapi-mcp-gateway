@@ -32,6 +32,7 @@ dependencies = [
     "click>=8.4.0",
     "jsonschema>=4.26.0",
     "jsonata-python>=0.7.0",
+    "snowballstemmer>=3.1.1",
 ]
 
 [project.optional-dependencies]

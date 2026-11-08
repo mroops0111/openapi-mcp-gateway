@@ -561,7 +561,12 @@ class Gateway:
                     'The meta-tools surface every operation uniformly, so resource promotion is skipped.',
                     server_config.name,
                 )
-            exposed_tools = MetaToolGenerator(mcp=mcp, binding=binding).register(operations)
+            search = server_config.exposure.search
+            exposed_tools = MetaToolGenerator(
+                mcp=mcp,
+                binding=binding,
+                field_weight_overrides=search.field_weights.model_dump(exclude_none=True) if search else None,
+            ).register(operations)
         else:
             resource_ops, tool_ops = _partition_operations(
                 operations, server_config.name, server_config.exposure.promote_resources
