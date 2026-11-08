@@ -529,6 +529,7 @@ class Gateway:
             transport=transport,
             headers=server_config.resolve_headers(),
         )
+        self._shutdown_hooks.append(binding.client.aclose)
         exposed_tools: list[ExposedTool] = []
         # A policy pattern that matches no operation at all is almost always a typo,
         # and the result is only ever a shorter list that nobody notices is short.

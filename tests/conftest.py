@@ -66,13 +66,12 @@ def mock_upstream(monkeypatch):
     """
 
     def install(handler: _HttpHandler) -> None:
+        original_init = APIClient.__init__
+
         def patched_init(self, base_url, headers=None, timeout=90, transport=None):
             del transport  # MockTransport always wins so an in-process ASGI is overridden in tests.
-            self._client = httpx.AsyncClient(
-                base_url=base_url,
-                headers=headers or {},
-                transport=httpx.MockTransport(handler),
-            )
+            # Only the transport is swapped, so the client keeps the cookie policy and limits it has in production.
+            original_init(self, base_url, headers=headers, timeout=timeout, transport=httpx.MockTransport(handler))
 
         monkeypatch.setattr(APIClient, '__init__', patched_init)
 

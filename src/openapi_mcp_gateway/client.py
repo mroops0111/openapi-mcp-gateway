@@ -1,4 +1,6 @@
+import asyncio
 import dataclasses
+import http.cookiejar
 import json
 import logging
 import typing
@@ -11,6 +13,11 @@ logger = logging.getLogger(__name__)
 # The media type a binary body without a ``Content-Type`` is reported as.
 _FALLBACK_BINARY_MEDIA_TYPE = 'application/octet-stream'
 
+# The connection pool of one upstream client.
+# No cap on open connections, so concurrent calls never queue for one, as when each call opened its own.
+# Idle ones are kept for reuse up to httpx's default.
+_POOL_LIMITS = httpx.Limits(max_connections=None, max_keepalive_connections=20)
+
 
 @dataclasses.dataclass(frozen=True)
 class BinaryBody:
@@ -22,7 +29,11 @@ class BinaryBody:
 
 
 class APIClient:
-    """Thin async HTTP wrapper around ``httpx.AsyncClient`` for upstream calls."""
+    """Thin async HTTP wrapper around ``httpx.AsyncClient`` for upstream calls.
+
+    A cookie the upstream sets is never stored, so nothing one call receives is sent on another,
+    which keeps a client shared across callers free of any one caller's session.
+    """
 
     def __init__(
         self,
@@ -40,6 +51,8 @@ class APIClient:
             'base_url': base_url,
             'timeout': timeout,
             'headers': headers or {},
+            'cookies': http.cookiejar.CookieJar(policy=_RefuseCookiesPolicy()),
+            'limits': _POOL_LIMITS,
         }
         if transport is not None:
             client_kwargs['transport'] = transport
@@ -125,3 +138,47 @@ class APIClient:
         except UnicodeDecodeError:
             media_type = response.headers.get('content-type', '').partition(';')[0].strip().lower()
             return BinaryBody(response.content, media_type or _FALLBACK_BINARY_MEDIA_TYPE, str(response.request.url))
+
+
+class SharedAPIClient:
+    """One ``APIClient`` for one upstream server, reused by every call to it so connections are kept alive.
+
+    It holds no per-call state: callers send every header on the request, and ``APIClient`` stores no cookie.
+    A client belongs to the event loop that first used it, since its connections do,
+    so a call on another loop gets a fresh client.
+    """
+
+    def __init__(self, base_url: str, timeout: float = 90, transport: httpx.AsyncBaseTransport | None = None):
+        self._base_url = base_url
+        self._timeout = timeout
+        self._transport = transport
+        self._client: APIClient | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def get(self) -> APIClient:
+        """Return the client for the running event loop, opening it on first use."""
+        loop = _running_loop()
+        if self._client is None or self._loop is not loop:
+            # A client left on a finished loop cannot be closed from this one, so it is dropped with its loop.
+            self._client = APIClient(base_url=self._base_url, timeout=self._timeout, transport=self._transport)
+            self._loop = loop
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close the client if it belongs to the running loop, and forget it either way."""
+        client, loop = self._client, self._loop
+        self._client = self._loop = None
+        if client is not None and loop is _running_loop():
+            await client.aclose()
+
+
+class _RefuseCookiesPolicy(http.cookiejar.DefaultCookiePolicy):
+    def set_ok(self, cookie: http.cookiejar.Cookie, request: typing.Any) -> bool:
+        return False
+
+
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
