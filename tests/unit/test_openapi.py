@@ -744,7 +744,7 @@ class TestResponseMedia:
     def test_branches_that_meet_again_are_read_once(self):
         """Composed branches that keep reaching the same component by two routes cost one walk, not one per route."""
         levels = 40
-        schemas = {
+        schemas: dict[str, typing.Any] = {
             f'Level{index}': {'allOf': [component_ref(f'Level{index + 1}'), component_ref(f'Level{index + 1}')]}
             for index in range(levels)
         }
