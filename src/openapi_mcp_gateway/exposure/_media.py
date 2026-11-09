@@ -67,25 +67,29 @@ class MediaPromoter:
         ``uri`` names the upstream response, and each embedded resource is addressed by its field path within it.
         A path that matches nothing, or a value its encoding cannot read, is left as it is.
         """
-        if (self._response_media is None and not self._overrides) or not self._find(payload):
+        if self._response_media is None and not self._overrides:
             return payload, []
-        # The matches hold the containers they were found in, so they are found again in the copy that is changed.
-        payload = copy.deepcopy(payload)
+        found = self._find(payload)
+        if not found:
+            return payload, []
+        # The copy records each container's copy by the original's id, so a match is replaced there without a new walk.
+        copies: dict[int, typing.Any] = {}
+        promoted = copy.deepcopy(payload, copies)
         contents: list[ContentBlock] = []
-        for match, field in self._find(payload).values():
+        for match, field in found.values():
             content = self._ENCODINGS[field.encoding].to_content(match.value, field.media_type, f'{uri}#{match.path}')
             if content is None:
                 continue
             contents.append(content)
-            match.replace(_PLACEHOLDER_TEMPLATE.format(index=len(contents), media_type=field.media_type))
-        return payload, contents
+            placeholder = _PLACEHOLDER_TEMPLATE.format(index=len(contents), media_type=field.media_type)
+            copies[id(match.container)][match.key] = placeholder
+        return promoted, contents
 
     def _find(self, payload: typing.Any) -> dict[str, tuple[FieldMatch, MediaField]]:
         """Return every value to promote, keyed by its concrete path, so a value reached twice is promoted once."""
         found: dict[str, tuple[FieldMatch, MediaField]] = {}
         if self._response_media is not None:
-            for match, field in self._response_media.find(payload):
-                found.setdefault(match.path, (match, field))
+            found.update((match.path, (match, field)) for match, field in self._response_media.find(payload))
         for path, field in self._overrides:
             for match in path.find(payload):
                 found[match.path] = (match, field)

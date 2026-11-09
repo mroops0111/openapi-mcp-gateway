@@ -706,6 +706,75 @@ class TestResponseMedia:
 
         assert self._found(operation_spec(response=response, schemas=schemas), {'logo': 'l'}) == {'logo': 'image/png'}
 
+    def test_a_reference_only_to_an_alias_keeps_nothing(self):
+        """A component kept only for the type it names leads nowhere, so a response of it alone has no media."""
+        schemas = {
+            'Logo': {'type': 'object', 'properties': {'logo': {**component_ref('Typed'), 'contentEncoding': 'base64'}}},
+            'Typed': component_ref('Png'),
+            'Png': {'type': 'string', 'contentMediaType': 'image/png'},
+        }
+
+        assert (
+            parse_spec(operation_spec(response=component_ref('Png'), schemas=schemas)).operations[0].response_media
+            is None
+        )
+
+    def test_an_alias_to_a_value_that_is_not_a_schema_is_ignored(self):
+        """A reference that resolves to a list rather than a schema leads nowhere, rather than failing the spec."""
+        schemas = {'Alias': component_ref('Broken'), 'Broken': ['not', 'a', 'schema']}
+        response = {'type': 'object', 'properties': {'logo': {**component_ref('Alias'), 'contentEncoding': 'base64'}}}
+
+        assert self._found(operation_spec(response=response, schemas=schemas), {'logo': 'l'}) == {
+            'logo': 'application/octet-stream'
+        }
+
+    def test_a_branch_referring_back_to_a_replaced_component_reads_it_in_full(self):
+        """A branch may refer to a component whose branches a reference to it replaced, which is no loop."""
+        schemas = {
+            'Base': {
+                'anyOf': [{'type': 'object', 'properties': {'data': {'type': 'string', 'contentEncoding': 'base64'}}}]
+            },
+            'Thing': {**component_ref('Base'), 'anyOf': [component_ref('Base')]},
+        }
+
+        assert set(self._found(operation_spec(response=component_ref('Thing'), schemas=schemas), {'data': 'd'})) == {
+            'data'
+        }
+
+    def test_branches_that_meet_again_are_read_once(self):
+        """Composed branches that keep reaching the same component by two routes cost one walk, not one per route."""
+        levels = 40
+        schemas = {
+            f'Level{index}': {'allOf': [component_ref(f'Level{index + 1}'), component_ref(f'Level{index + 1}')]}
+            for index in range(levels)
+        }
+        schemas[f'Level{levels}'] = {
+            'type': 'object',
+            'properties': {'data': {'type': 'string', 'contentEncoding': 'base64'}},
+        }
+
+        assert set(self._found(operation_spec(response=component_ref('Level0'), schemas=schemas), {'data': 'd'})) == {
+            'data'
+        }
+
+    def test_values_come_in_payload_order_once_each(self):
+        """Fields come once each in the order the response holds them, whatever order the schema declares."""
+        base64 = {'type': 'string', 'contentEncoding': 'base64'}
+        response = {
+            'type': 'object',
+            'properties': {'thumbnail': base64, 'original': base64},
+            'allOf': [{'type': 'object', 'properties': {'banner': base64, 'thumbnail': base64}}],
+        }
+        operation = parse_spec(operation_spec(response=response)).operations[0]
+        assert operation.response_media is not None
+        payload = {'banner': 'b', 'original': 'o', 'thumbnail': 't'}
+
+        assert [match.path for match, _field in operation.response_media.find(payload)] == [
+            'banner',
+            'original',
+            'thumbnail',
+        ]
+
     def test_values_of_another_shape_are_skipped(self):
         """A value whose shape is not the schema's, such as an object where an array is declared, yields nothing."""
         response = {

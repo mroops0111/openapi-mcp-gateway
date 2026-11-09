@@ -42,6 +42,9 @@ _DEFAULT_MEDIA_TYPE = 'application/octet-stream'
 # The keywords a walk for media descends through, each of which beside a reference replaces the target's.
 _MEDIA_WALK_KEYWORDS = frozenset({'properties', 'items', *_COMPOSITION_KEYWORDS})
 
+# Whatever ``_distinct`` dedupes, kept as the type it returns.
+_Item = typing.TypeVar('_Item')
+
 # The YAML loader for specs, the libyaml one when PyYAML was built with it.
 # It reads the same documents as the pure Python loader nearly ten times faster, which matters for a spec of megabytes.
 _YAML_LOADER = getattr(yaml, 'CSafeLoader', yaml.SafeLoader)
@@ -221,50 +224,99 @@ class ResponseMedia:
     def find(self, payload: typing.Any) -> typing.Iterator[tuple[FieldMatch, MediaField]]:
         """Yield every value of ``payload`` the schema declares as base64, with how it carries media.
 
-        Values come in payload order, and one that several composed branches declare comes once per branch.
+        Values come in payload order, each once, typed by the first composed branch that declares it base64.
         The payload itself is never yielded, since a placeholder needs a field to stand in.
         """
-        return self._find(self._root, payload, None, frozenset())
+        return self._find((self._root,), payload, None)
 
     def _find(
         self,
-        node: '_MediaNode',
+        nodes: typing.Sequence['_MediaNode'],
         value: typing.Any,
         match: FieldMatch | None,
-        followed: frozenset[str],
     ) -> typing.Iterator[tuple[FieldMatch, MediaField]]:
-        """Yield the media under ``value``, which ``node`` describes and ``match`` holds.
+        """Yield the media under ``value``, which every one of ``nodes`` describes and ``match`` holds.
 
-        A schema reads as one with the components its references lead to at this value,
-        each keyword taken from the nearest of them that declares it.
-        ``followed`` is the references already followed at this value, so a reference that loops back stops.
+        Each value is visited once with all the schemas that describe it,
+        so composed branches that meet again at the same component cost nothing more.
+        """
+        chains = self._chains(nodes)
+        if match is not None:
+            for chain in chains:
+                if next((link.encoding for link in chain if link.encoding is not None), None) == 'base64':
+                    media_type = next(
+                        (link.media_type for link in chain if link.media_type is not None), _DEFAULT_MEDIA_TYPE
+                    )
+                    yield match, MediaField(encoding='base64', media_type=media_type)
+                    break
+        if isinstance(value, dict):
+            declared = _distinct(_declaring(chain, 'properties').properties or None for chain in chains)
+            if not declared:
+                return
+            names = declared[0].keys() & value.keys()
+            for properties in declared[1:]:
+                names |= properties.keys() & value.keys()
+            # Most values hold at most one field leading to media, which needs no ordering.
+            for name in names if len(names) < 2 else [name for name in value if name in names]:
+                children = _distinct(properties.get(name) for properties in declared)
+                path = f'{match.path}.{name}' if match is not None else name
+                yield from self._find(children, value[name], FieldMatch(value, name, path))
+        elif isinstance(value, list):
+            children = _distinct(_declaring(chain, 'items').items for chain in chains)
+            if children:
+                prefix = match.path if match is not None else ''
+                for index, item in enumerate(value):
+                    yield from self._find(children, item, FieldMatch(value, index, f'{prefix}[{index}]'))
+
+    def _chains(self, nodes: typing.Sequence['_MediaNode']) -> list[list['_MediaNode']]:
+        """Return each distinct schema that ``nodes`` and their composed branches read as at one value.
+
+        Chains come in the order a depth-first walk of the branches meets them.
+        Two that differ only in links declaring nothing read alike, so the second is dropped,
+        which also ends a branch that loops back to a schema already read here.
+        """
+        if len(nodes) == 1:
+            chain = self._chain(nodes[0])
+            if not any(link.branches for link in chain):
+                return [chain]
+        chains: list[list[_MediaNode]] = []
+        seen: set[tuple[int, ...]] = set()
+        pending = list(reversed(nodes))
+        while pending:
+            chain = self._chain(pending.pop())
+            key = tuple(id(link) for link in chain if link is chain[-1] or link.declares_any)
+            if key in seen:
+                continue
+            seen.add(key)
+            chains.append(chain)
+            pending.extend(
+                reversed(
+                    [
+                        branch
+                        for keyword in _COMPOSITION_KEYWORDS
+                        for branch_keyword, branch in _declaring(chain, keyword).branches
+                        if branch_keyword == keyword
+                    ]
+                )
+            )
+        return chains
+
+    def _chain(self, node: '_MediaNode') -> list['_MediaNode']:
+        """Return ``node`` followed by the components its references lead to, which together it reads as.
+
+        Each keyword is taken from the nearest of them that declares it.
+        Only a reference this chain already followed is a loop.
+        A branch referring back to a component whose keywords a reference beside it replaced reads it in full.
         """
         chain = [node]
+        followed: set[str] = set()
         while (reference := chain[-1].reference) is not None and reference not in followed:
             target = self._components.get(reference)
             if target is None:
                 break
-            followed |= {reference}
+            followed.add(reference)
             chain.append(target)
-        encoding = next((link.encoding for link in chain if link.encoding is not None), None)
-        if encoding == 'base64' and match is not None:
-            media_type = next((link.media_type for link in chain if link.media_type is not None), _DEFAULT_MEDIA_TYPE)
-            yield match, MediaField(encoding='base64', media_type=media_type)
-        properties = _declaring(chain, 'properties').properties
-        if properties and isinstance(value, dict):
-            for name, child in properties:
-                if name in value:
-                    path = f'{match.path}.{name}' if match is not None else name
-                    yield from self._find(child, value[name], FieldMatch(value, name, path), frozenset())
-        items = _declaring(chain, 'items').items
-        if items is not None and isinstance(value, list):
-            prefix = match.path if match is not None else ''
-            for index, item in enumerate(value):
-                yield from self._find(items, item, FieldMatch(value, index, f'{prefix}[{index}]'), frozenset())
-        for keyword in _COMPOSITION_KEYWORDS:
-            for branch_keyword, branch in _declaring(chain, keyword).branches:
-                if branch_keyword == keyword:
-                    yield from self._find(branch, value, match, followed)
+        return chain
 
 
 class OperationInfo(pydantic.BaseModel):
@@ -350,14 +402,14 @@ def _load_yaml(text: str) -> typing.Any:
 
 
 def _resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:
-    """Resolve a ``#/foo/bar`` JSON Pointer into ``raw``, returning ``{}`` if missing."""
+    """Resolve a ``#/foo/bar`` JSON Pointer into ``raw``, returning ``{}`` if missing or not a mapping."""
     parts = ref.lstrip('#/').split('/')
     node = raw
     for part in parts:
         if not isinstance(node, dict) or part not in node:
             return {}
         node = node[part]
-    return node
+    return node if isinstance(node, dict) else {}
 
 
 def _deep_merge(
@@ -680,15 +732,18 @@ class _ResponseMediaBuilder:
     """Build each operation's ``ResponseMedia`` for one spec, sharing the components every one of them refers to.
 
     A reference whose target cannot reach base64 is dropped, and so is any schema that leads only to such references.
+    A component also keeps a reference to one it is an alias of,
+    since its ``contentMediaType`` names the type of base64 declared beside a reference to the alias.
     """
 
     def __init__(self, raw: dict[str, typing.Any]):
         self._raw = raw
         targets = self._reference_graph(raw)
         self._holds_base64 = targets is not None
-        self._reaching = self._with_aliased(raw, self._references_reaching_base64(targets or {}))
+        self._reaching = self._references_reaching_base64(targets or {})
+        self._reaching_or_aliased = self._with_aliased(raw, self._reaching)
         components: dict[str, _MediaNode] = {}
-        for reference in self._reaching:
+        for reference in self._reaching_or_aliased:
             node = self._node(_resolve_ref(raw, reference), component=True)
             if node is not None:
                 components[reference] = node
@@ -710,16 +765,19 @@ class _ResponseMediaBuilder:
         if not isinstance(schema, dict):
             return None
         reference = schema.get('$ref')
-        reference = reference if isinstance(reference, str) and reference in self._reaching else None
+        followable = self._reaching_or_aliased if component else self._reaching
+        reference = reference if isinstance(reference, str) and reference in followable else None
         encoding, media_type = schema.get('contentEncoding'), schema.get('contentMediaType')
         properties = schema.get('properties')
         node = _MediaNode(
             encoding=encoding if isinstance(encoding, str) else None,
             media_type=media_type if isinstance(media_type, str) else None,
-            properties=tuple(
-                (name, child)
-                for name, property_schema in (properties.items() if isinstance(properties, dict) else ())
-                if (child := self._node(property_schema)) is not None
+            properties=types.MappingProxyType(
+                {
+                    name: child
+                    for name, property_schema in (properties.items() if isinstance(properties, dict) else ())
+                    if (child := self._node(property_schema)) is not None
+                }
             ),
             items=self._node(schema.get('items')),
             branches=tuple(
@@ -820,16 +878,29 @@ class _MediaNode:
 
     encoding: str | None
     media_type: str | None
-    properties: tuple[tuple[str, '_MediaNode'], ...]
+    properties: typing.Mapping[str, '_MediaNode']
     items: '_MediaNode | None'
     branches: tuple[tuple[str, '_MediaNode'], ...]
     reference: str | None
     replaces: frozenset[str]
 
+    @property
+    def declares_any(self) -> bool:
+        """Whether it declares anything of its own, rather than only going on to its reference."""
+        return self.encoding is not None or self.media_type is not None or bool(self.replaces)
+
 
 def _declaring(chain: list[_MediaNode], keyword: str) -> _MediaNode:
     """Return the nearest schema of a reference ``chain`` whose ``keyword`` counts, the last when none replaces it."""
-    return next((link for link in chain[:-1] if keyword in link.replaces), chain[-1])
+    for link in chain:
+        if keyword in link.replaces:
+            return link
+    return chain[-1]
+
+
+def _distinct(items: typing.Iterable[_Item | None]) -> tuple[_Item, ...]:
+    """Return ``items`` without ``None`` or the same object twice, in order."""
+    return tuple({id(item): item for item in items if item is not None}.values())
 
 
 def _iter_mappings(node: typing.Any) -> typing.Iterator[dict[str, typing.Any]]:

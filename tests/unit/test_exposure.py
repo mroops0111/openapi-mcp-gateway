@@ -421,7 +421,8 @@ class TestMediaFields:
         """Blocks follow the response, item by item, and an override field the schema does not declare comes last."""
         png = self._encode(self._PNG)
         body = {'cover': png, 'pages': [{'front': png, 'back': png}, {'front': png, 'back': png}]}
-        page = self._object(front=self._base64('image/png'), back=self._base64('image/png'))
+        # The schema declares each page's fields in the other order, so the blocks follow the response, not it.
+        page = self._object(back=self._base64('image/png'), front=self._base64('image/png'))
         response = self._object(pages={'type': 'array', 'items': page})
         override = ToolOverride(media={'cover': MediaField(encoding='base64', media_type='image/png')})
 
