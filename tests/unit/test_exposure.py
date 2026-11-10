@@ -36,6 +36,7 @@ from openapi_mcp_gateway.openapi import (
     ParameterInfo,
     ParamOverride,
     ToolOverride,
+    parse_spec,
 )
 from tests.constants import API_URL
 from tests.specs import operation_spec
@@ -322,17 +323,18 @@ class TestMediaFields:
         self,
         mock_upstream,
         body: typing.Any,
-        media_fields: dict[str, MediaField] | None = None,
+        response: dict[str, typing.Any] | None = None,
         tool: ToolOverride | None = None,
     ) -> CallToolResult:
-        """Call a one-operation tool whose upstream answers with the JSON ``body``."""
+        """Call a one-operation tool whose upstream answers with the JSON ``body``, as the schema ``response`` says."""
         mock_upstream(lambda _request: httpx.Response(200, json=body))
         mcp = MCPServer('test')
+        spec_operation = parse_spec(operation_spec(response=response)).operations[0]
         operation = OperationInfo(
             operation_id='get_contract',
             method='get',
             path='/contracts/7',
-            media_fields=media_fields or {},
+            response_media=spec_operation.response_media,
             x_mcp_integration=McpIntegration(tool=tool),
         )
         ToolGenerator(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)).register([operation])
@@ -343,12 +345,21 @@ class TestMediaFields:
     def _encode(data: bytes) -> str:
         return base64.b64encode(data).decode('ascii')
 
+    @staticmethod
+    def _object(**properties: dict[str, typing.Any]) -> dict[str, typing.Any]:
+        return {'type': 'object', 'properties': properties}
+
+    @staticmethod
+    def _base64(media_type: str | None = None) -> dict[str, typing.Any]:
+        schema = {'type': 'string', 'contentEncoding': 'base64'}
+        return {**schema, 'contentMediaType': media_type} if media_type else schema
+
     async def test_declared_field_follows_the_json_as_a_block(self, mock_upstream):
         """The JSON keeps its shape with a placeholder, and the bytes follow it as an image block."""
         body = {'id': 7, 'signature': {'image': self._encode(self._PNG)}}
-        media = {'signature.image': MediaField(encoding='base64', media_type='image/png')}
+        response = self._object(signature=self._object(image=self._base64('image/png')))
 
-        result = await self._call(mock_upstream, body, media_fields=media)
+        result = await self._call(mock_upstream, body, response)
 
         text, image = result.content
         assert isinstance(text, TextContent)
@@ -361,9 +372,10 @@ class TestMediaFields:
     async def test_every_array_item_gets_its_own_block(self, mock_upstream):
         """Each item under ``[*]`` becomes a separate block, numbered and addressed by its index."""
         body = {'attachments': [{'content': self._encode(self._PDF)}, {'content': self._encode(self._PNG)}]}
-        media = {'attachments[*].content': MediaField(encoding='base64', media_type='application/pdf')}
+        attachment = self._object(content=self._base64('application/pdf'))
+        response = self._object(attachments={'type': 'array', 'items': attachment})
 
-        result = await self._call(mock_upstream, body, media_fields=media)
+        result = await self._call(mock_upstream, body, response)
 
         _text, *blocks = result.content
         assert all(isinstance(block, EmbeddedResource) for block in blocks)
@@ -379,10 +391,9 @@ class TestMediaFields:
     async def test_override_wins_over_the_spec(self, mock_upstream):
         """The YAML ``media`` entry replaces what the spec declares for the same path."""
         body = {'photo': self._encode(self._PNG)}
-        spec_media = {'photo': MediaField(encoding='base64')}
         override = ToolOverride(media={'photo': MediaField(encoding='base64', media_type='image/png')})
 
-        result = await self._call(mock_upstream, body, media_fields=spec_media, tool=override)
+        result = await self._call(mock_upstream, body, self._object(photo=self._base64()), override)
 
         assert isinstance(result.content[1], ImageContent)
 
@@ -390,9 +401,7 @@ class TestMediaFields:
         """MIME base64 that breaks its lines, as GitHub's contents API sends it, still decodes."""
         encoded = self._encode(self._PNG * 10)
         body = {'photo': '\n'.join(encoded[index : index + 60] for index in range(0, len(encoded), 60))}
-        media = {'photo': MediaField(encoding='base64', media_type='image/png')}
-
-        result = await self._call(mock_upstream, body, media_fields=media)
+        result = await self._call(mock_upstream, body, self._object(photo=self._base64('image/png')))
 
         (_text, image) = result.content
         assert isinstance(image, ImageContent)
@@ -401,12 +410,31 @@ class TestMediaFields:
     async def test_value_that_is_not_base64_is_left_alone(self, mock_upstream):
         """A declared field holding something else, or missing, keeps its value and adds no block."""
         body = {'photo': 'not base64!', 'other': 1}
-        media = {'photo': MediaField(encoding='base64'), 'missing.path': MediaField(encoding='base64')}
+        response = self._object(photo=self._base64(), missing=self._object(path=self._base64()))
 
-        result = await self._call(mock_upstream, body, media_fields=media)
+        result = await self._call(mock_upstream, body, response)
 
         assert len(result.content) == 1
         assert result.structured_content == body
+
+    async def test_blocks_are_numbered_in_payload_order(self, mock_upstream):
+        """Blocks follow the response, item by item, and an override field the schema does not declare comes last."""
+        png = self._encode(self._PNG)
+        body = {'cover': png, 'pages': [{'front': png, 'back': png}, {'front': png, 'back': png}]}
+        # The schema declares each page's fields in the other order, so the blocks follow the response, not it.
+        page = self._object(back=self._base64('image/png'), front=self._base64('image/png'))
+        response = self._object(pages={'type': 'array', 'items': page})
+        override = ToolOverride(media={'cover': MediaField(encoding='base64', media_type='image/png')})
+
+        result = await self._call(mock_upstream, body, response, override)
+
+        assert result.structured_content == {
+            'cover': '<content[5]: image/png>',
+            'pages': [
+                {'front': '<content[1]: image/png>', 'back': '<content[2]: image/png>'},
+                {'front': '<content[3]: image/png>', 'back': '<content[4]: image/png>'},
+            ],
+        }
 
     async def test_response_transform_sees_the_placeholder(self, mock_upstream):
         """Media is promoted from the upstream shape first, so a transform reshapes the placeholder, not the bytes."""
