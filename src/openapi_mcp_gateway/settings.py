@@ -101,7 +101,7 @@ class ManualScopeConfig(pydantic.BaseModel):
     operations: list[str] = pydantic.Field(min_length=1)
 
 
-class ScopesConfig(pydantic.BaseModel):
+class OperationScopesConfig(pydantic.BaseModel):
     """The MCP scopes of one server, and which operations each opens.
 
     An operation opens to a token carrying any scope that covers it.
@@ -118,7 +118,7 @@ class ScopesConfig(pydantic.BaseModel):
     @pydantic.field_validator('manual')
     @classmethod
     def _validate_scope_names(cls, manual: dict[str, ManualScopeConfig]) -> dict[str, ManualScopeConfig]:
-        _refuse_invalid_scope_tokens(manual, 'auth.scopes.manual')
+        _refuse_invalid_scope_tokens(manual, 'auth.operation_scopes.manual')
         return manual
 
 
@@ -128,7 +128,7 @@ class ClientConfig(pydantic.BaseModel):
     Without ``client_secret`` it is a public client, held to PKCE alone.
     Without ``redirect_uris`` any loopback redirect is accepted, on any port and path, as OAuth 2.1 requires,
     which is what a CLI client listening on a local port needs.
-    ``scopes`` are every scope the client is granted, and each must be one ``auth.scopes`` defines.
+    ``scopes`` are every scope the client is granted, and each must be one ``auth.operation_scopes`` defines.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid')
@@ -178,7 +178,7 @@ class AuthConfig(pydantic.BaseModel):
 
     # Inbound, and for ``authorization_code`` only, where the gateway mints the MCP tokens.
     # Which operations each scope opens, and the clients allowed to sign in with the scopes each is granted.
-    scopes: ScopesConfig | None = None
+    operation_scopes: OperationScopesConfig | None = None
     clients: dict[str, ClientConfig] = pydantic.Field(default_factory=dict)
 
     # Lifetimes of the MCP-side tokens the gateway mints for authorization_code, in seconds.
@@ -216,7 +216,7 @@ class AuthConfig(pydantic.BaseModel):
             ),
             'mcp_access_token_ttl': (mints_tokens, _MINTING_FLOW),
             'mcp_refresh_token_ttl': (mints_tokens, _MINTING_FLOW),
-            'scopes': (mints_tokens, _MINTING_FLOW),
+            'operation_scopes': (mints_tokens, _MINTING_FLOW),
             'clients': (mints_tokens, _MINTING_FLOW),
         }
         for field, (is_applicable, requirement) in applicable.items():
@@ -238,23 +238,23 @@ class AuthConfig(pydantic.BaseModel):
     def _reject_scope_settings_that_cannot_take_effect(self) -> typing.Self:
         """Refuse operation scopes no client could receive, and endpoint scopes that would stop no one.
 
-        With ``scopes`` set, every token is minted from a pre-registered client's own scopes,
+        With ``operation_scopes`` set, every token is minted from a pre-registered client's own scopes,
         so an endpoint-wide ``required_scopes`` checks only what the gateway itself just granted.
         """
-        if self.scopes is not None and not self.clients:
+        if self.operation_scopes is not None and not self.clients:
             raise ValueError(
-                'auth.scopes needs auth.clients, since only a pre-registered client is granted scopes, '
+                'auth.operation_scopes needs auth.clients, since only a pre-registered client is granted scopes, '
                 'so it would have no effect here.'
             )
-        if self.scopes is not None and 'required_scopes' in self.model_fields_set:
+        if self.operation_scopes is not None and 'required_scopes' in self.model_fields_set:
             raise ValueError(
-                'auth.required_scopes cannot be combined with auth.scopes. '
+                'auth.required_scopes cannot be combined with auth.operation_scopes. '
                 'Every token is minted from a client in auth.clients, so an endpoint-wide scope would stop no one.'
             )
         scoped_clients = sorted(client_id for client_id, client in self.clients.items() if client.scopes)
-        if self.scopes is None and scoped_clients:
+        if self.operation_scopes is None and scoped_clients:
             raise ValueError(
-                f'auth.clients ({", ".join(scoped_clients)}) grant scopes but auth.scopes defines none, '
+                f'auth.clients ({", ".join(scoped_clients)}) grant scopes but auth.operation_scopes defines none, '
                 'so they would have no effect here.'
             )
         return self
@@ -447,9 +447,9 @@ class ServerConfig(pydantic.BaseModel):
 
         Scopes guard tool calls, so a resource read would reach the same operation unguarded.
         """
-        if self.auth.scopes is not None and self.exposure.promote_resources:
+        if self.auth.operation_scopes is not None and self.exposure.promote_resources:
             raise ValueError(
-                'auth.scopes cannot be combined with exposure.promote_resources yet, '
+                'auth.operation_scopes cannot be combined with exposure.promote_resources yet, '
                 'since a resource read would reach an operation no scope guards.'
             )
         return self

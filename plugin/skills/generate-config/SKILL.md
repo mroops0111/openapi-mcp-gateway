@@ -120,7 +120,7 @@ servers:
       token: ${SOME_TOKEN}
       # oauth2 also takes flow: authorization_code (default) / client_credentials / token_exchange
       # required_scopes: for token_exchange, what an inbound token must already carry
-      # scopes: for authorization_code, which MCP scopes open which operations
+      # operation_scopes: for authorization_code, which MCP scopes open which operations
       #   {auto: tags, unscoped: deny, manual: {<scope>: {description: ..., operations: ["DELETE *"]}}}
       # clients: the pre-registered clients allowed to sign in, which turns off dynamic registration
       #   {<client_id>: {scopes: [...], client_secret: ${SOME_SECRET}, redirect_uris: [...]}}

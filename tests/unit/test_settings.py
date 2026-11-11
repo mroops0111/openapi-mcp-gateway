@@ -443,8 +443,8 @@ class TestSettingsThatCannotTakeEffect:
             ),
             ({'type': 'oauth2', 'flow': 'token_exchange', 'issuer': ISSUER, 'clients': {'agent': {}}}, 'clients'),
             (
-                {'type': 'oauth2', 'flow': 'client_credentials', 'scopes': {}, 'clients': {'agent': {}}},
-                'scopes',
+                {'type': 'oauth2', 'flow': 'client_credentials', 'operation_scopes': {}, 'clients': {'agent': {}}},
+                'operation_scopes',
             ),
         ],
     )
@@ -463,7 +463,7 @@ class TestSettingsThatCannotTakeEffect:
             {'type': 'oauth2', 'upstream': {'client_id': 'c'}},
             {'type': 'oauth2', 'upstream': {'issuer': ISSUER}},
             {'type': 'oauth2', 'flow': 'authorization_code', 'upstream': {'issuer': ISSUER}},
-            {'type': 'oauth2', 'scopes': {'auto': 'tags'}, 'clients': {'agent': {'scopes': ['pets:read']}}},
+            {'type': 'oauth2', 'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {'scopes': ['pets:read']}}},
             {'type': 'oauth2', 'clients': {'agent': {}}},
             {'type': 'none'},
         ],
@@ -484,24 +484,30 @@ class TestSettingsThatCannotTakeEffect:
 
 
 class TestScopeSettings:
-    """``auth.scopes`` and ``auth.clients`` refuse what could never grant or restrict anything."""
+    """``auth.operation_scopes`` and ``auth.clients`` refuse what could never grant or restrict anything."""
 
     @pytest.mark.parametrize(
         ('auth', 'refusal'),
         [
-            ({'scopes': {'auto': 'tags'}}, 'auth.scopes needs auth.clients'),
+            ({'operation_scopes': {'auto': 'tags'}}, 'auth.operation_scopes needs auth.clients'),
             (
-                {'scopes': {'auto': 'tags'}, 'clients': {'agent': {}}, 'required_scopes': ['api']},
-                'cannot be combined with auth.scopes',
+                {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {}}, 'required_scopes': ['api']},
+                'cannot be combined with auth.operation_scopes',
             ),
             ({'clients': {'agent': {'scopes': ['pets:read']}}}, r'clients \(agent\) grant scopes'),
             ({'clients': {'agent': {'scopes': ['pets read']}}}, 'invalid scopes'),
             (
-                {'scopes': {'manual': {'pets admin': {'description': 'd', 'operations': ['*']}}}, 'clients': {'a': {}}},
+                {
+                    'operation_scopes': {'manual': {'pets admin': {'description': 'd', 'operations': ['*']}}},
+                    'clients': {'a': {}},
+                },
                 'invalid scopes',
             ),
             (
-                {'scopes': {'manual': {'admin': {'description': 'd', 'operations': []}}}, 'clients': {'a': {}}},
+                {
+                    'operation_scopes': {'manual': {'admin': {'description': 'd', 'operations': []}}},
+                    'clients': {'a': {}},
+                },
                 'at least 1 item',
             ),
         ],
@@ -517,7 +523,7 @@ class TestScopeSettings:
                 {
                     'name': 'petstore',
                     'spec': 'petstore.json',
-                    'auth': {'type': 'oauth2', 'scopes': {'auto': 'tags'}, 'clients': {'agent': {}}},
+                    'auth': {'type': 'oauth2', 'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {}}},
                     'exposure': {'promote_resources': True},
                 }
             )

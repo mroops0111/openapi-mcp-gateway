@@ -15,7 +15,7 @@ from openapi_mcp_gateway.scopes import (
     UnrestrictedPolicy,
     build_mcp_scope_policy,
 )
-from openapi_mcp_gateway.settings import ScopesConfig
+from openapi_mcp_gateway.settings import OperationScopesConfig
 from tests.operations import PETSTORE_OPERATIONS, operation
 
 
@@ -86,7 +86,7 @@ class TestTagMethodDerivation:
 
 
 class TestScopeCatalog:
-    """``auth.scopes`` resolved against a server's operations."""
+    """``auth.operation_scopes`` resolved against a server's operations."""
 
     def test_derived_and_manual_scopes_add_up(self):
         """An operation a manual scope also covers opens to either scope."""
@@ -137,7 +137,7 @@ class TestScopeCatalog:
 
 
 class TestUnrestrictedPolicy:
-    """A server without ``auth.scopes`` restricts nothing."""
+    """A server without ``auth.operation_scopes`` restricts nothing."""
 
     def test_every_operation_is_open(self):
         policy = build_mcp_scope_policy(None, PETSTORE_OPERATIONS, 'petstore')
@@ -182,8 +182,8 @@ class TestCallTargets:
 
 
 def _catalog(**config: object) -> ScopeCatalog:
-    """A catalog over the petstore operations, configured as ``auth.scopes`` would be."""
-    return ScopeCatalog(ScopesConfig.model_validate(config), PETSTORE_OPERATIONS, 'petstore')
+    """A catalog over the petstore operations, configured as ``auth.operation_scopes`` would be."""
+    return ScopeCatalog(OperationScopesConfig.model_validate(config), PETSTORE_OPERATIONS, 'petstore')
 
 
 def _operation_named(operation_id: str) -> OperationInfo:

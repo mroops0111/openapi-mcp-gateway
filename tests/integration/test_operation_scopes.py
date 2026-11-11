@@ -45,14 +45,14 @@ def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gatew
     """Build a petstore gateway whose ``authorization_code`` server defines ``scopes`` for ``clients``."""
 
     def make(
-        scopes: dict[str, typing.Any] | None = None,
+        operation_scopes: dict[str, typing.Any] | None = None,
         clients: dict[str, typing.Any] | None = None,
         style: str = 'static',
     ) -> Gateway:
         auth = {
             'type': 'oauth2',
             'upstream': {'client_id': 'gateway', 'client_secret': 'secret', 'scopes': ['read']},
-            'scopes': scopes if scopes is not None else {'auto': 'tags'},
+            'operation_scopes': operation_scopes if operation_scopes is not None else {'auto': 'tags'},
             'clients': clients or CLIENTS,
         }
         server = {'name': 'petstore', 'spec': str(petstore_json_path), 'auth': auth, 'exposure': {'style': style}}
@@ -78,14 +78,17 @@ class TestToolFiltering:
             assert await _tool_names(session) == expected
 
     async def test_unscoped_allow_opens_untagged_operations_to_every_token(self, make_gateway):
-        gateway = make_gateway(scopes={'auto': 'tags', 'unscoped': 'allow'})
+        gateway = make_gateway(operation_scopes={'auto': 'tags', 'unscoped': 'allow'})
         async with _connect(gateway, READER, MODERN) as session:
             assert await _tool_names(session) == [*READ_TOOLS, 'create_pet_with_owner', 'listAdminPets']
 
     async def test_a_manual_scope_adds_a_way_in(self, make_gateway):
         """A client holding only the hand-written scope reaches what the derived scope also opens."""
         gateway = make_gateway(
-            scopes={'auto': 'tags', 'manual': {'cleanup': {'description': 'Remove pets', 'operations': ['DELETE *']}}},
+            operation_scopes={
+                'auto': 'tags',
+                'manual': {'cleanup': {'description': 'Remove pets', 'operations': ['DELETE *']}},
+            },
             clients={'janitor': {'scopes': ['cleanup']}},
         )
         async with _connect(gateway, 'janitor', MODERN) as session:

@@ -14,7 +14,7 @@ class DerivedScope(typing.NamedTuple):
 
 
 class ScopeDerivation(abc.ABC):
-    """Strategy that derives the MCP scopes covering one operation from the spec, selected by ``auth.scopes.auto``."""
+    """Strategy that derives the MCP scopes covering one operation from the spec, selected by ``auth.operation_scopes.auto``."""
 
     @abc.abstractmethod
     def derive(self, operation: OperationInfo) -> collections.abc.Iterable[DerivedScope]:
@@ -63,7 +63,7 @@ class TagMethodDerivation(ScopeDerivation):
 
 
 # The extension point.
-# Adding a derivation means adding a strategy above, one entry here, and its value in ``ScopesConfig.auto``.
+# Adding a derivation means adding a strategy above, one entry here, and its value in ``OperationScopesConfig.auto``.
 SCOPE_DERIVATIONS: dict[str, type[ScopeDerivation]] = {
     'none': NoDerivation,
     'tags': TagMethodDerivation,

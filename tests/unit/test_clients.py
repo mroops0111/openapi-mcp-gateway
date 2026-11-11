@@ -32,7 +32,7 @@ class TestScopeGrant:
         assert client.validate_scope(requested) == granted
 
     async def test_endpoint_scopes_are_granted_beside_the_client_set(self):
-        """Without ``auth.scopes`` every token carries the endpoint scopes, as a registered client's would."""
+        """Without ``auth.operation_scopes`` every token carries the endpoint scopes, as a registered client's would."""
         client = await _pre_registered(mcp_endpoint_scopes=('api',))
         assert client.validate_scope(None) == ['api']
 

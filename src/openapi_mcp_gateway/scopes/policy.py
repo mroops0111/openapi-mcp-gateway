@@ -5,7 +5,7 @@ import typing
 
 from ..openapi import OperationInfo
 from ..policy import matches_pattern, unmatched_patterns
-from ..settings import ScopesConfig
+from ..settings import OperationScopesConfig
 from .derivation import SCOPE_DERIVATIONS, ScopeDerivation
 from .requirement import AnyScope, ScopeRequirement, Unreachable, Unrestricted
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # How many operation names a startup log lists before it only counts the rest.
 _LOGGED_OPERATION_LIMIT = 5
 
-# What an operation no scope covers requires, keyed by ``auth.scopes.unscoped``.
+# What an operation no scope covers requires, keyed by ``auth.operation_scopes.unscoped``.
 _UNSCOPED_REQUIREMENTS: dict[str, ScopeRequirement] = {
     'deny': Unreachable(),
     'allow': Unrestricted(),
@@ -42,7 +42,7 @@ class ScopePolicy(abc.ABC):
 
 
 class UnrestrictedPolicy(ScopePolicy):
-    """No operation scopes, so every token may use every operation, as on a server without ``auth.scopes``."""
+    """No operation scopes, so every token may use every operation, as on a server without ``auth.operation_scopes``."""
 
     @property
     def defined_mcp_scopes(self) -> collections.abc.Mapping[str, str]:
@@ -57,7 +57,7 @@ class UnrestrictedPolicy(ScopePolicy):
 
 
 class ScopeCatalog(ScopePolicy):
-    """The scopes ``auth.scopes`` defines over a server's operations, derived and hand-written alike.
+    """The scopes ``auth.operation_scopes`` defines over a server's operations, derived and hand-written alike.
 
     An operation opens to any scope that covers it, and falls to ``unscoped`` when none does.
     Construction refuses a hand-written scope that reuses a derived name,
@@ -66,7 +66,7 @@ class ScopeCatalog(ScopePolicy):
 
     def __init__(
         self,
-        config: ScopesConfig,
+        config: OperationScopesConfig,
         operations: collections.abc.Sequence[OperationInfo],
         server_name: str,
     ) -> None:
@@ -108,7 +108,7 @@ class ScopeCatalog(ScopePolicy):
         reused = sorted(set(derived) & set(self._config.manual))
         if reused:
             raise ValueError(
-                f'Server "{self._server_name}": auth.scopes.manual reuses names auth.scopes.auto {self._config.auto} '
+                f'Server "{self._server_name}": auth.operation_scopes.manual reuses names auth.operation_scopes.auto {self._config.auto} '
                 f'derives ({", ".join(reused)}). Rename the hand-written scopes.'
             )
 
@@ -118,7 +118,7 @@ class ScopeCatalog(ScopePolicy):
         stray = unmatched_patterns(list(operations), patterns)
         if stray:
             logger.warning(
-                'Server "%s": %d auth.scopes.manual pattern(s) matched no operation (%s). '
+                'Server "%s": %d auth.operation_scopes.manual pattern(s) matched no operation (%s). '
                 'Check them against the operationIds in the spec.',
                 self._server_name,
                 len(stray),
@@ -135,7 +135,7 @@ class ScopeCatalog(ScopePolicy):
         )
         logger.log(
             logging.WARNING if self._config.unscoped == 'deny' else logging.INFO,
-            'Server "%s": %d operation(s) no scope covers (%s) follow auth.scopes.unscoped %s.',
+            'Server "%s": %d operation(s) no scope covers (%s) follow auth.operation_scopes.unscoped %s.',
             self._server_name,
             len(unscoped),
             shown,
@@ -144,11 +144,11 @@ class ScopeCatalog(ScopePolicy):
 
 
 def build_mcp_scope_policy(
-    config: ScopesConfig | None,
+    config: OperationScopesConfig | None,
     operations: collections.abc.Sequence[OperationInfo],
     server_name: str,
 ) -> ScopePolicy:
-    """Return the scope policy for a server, which restricts nothing unless ``auth.scopes`` is set."""
+    """Return the scope policy for a server, which restricts nothing unless ``auth.operation_scopes`` is set."""
     if config is None:
         return UnrestrictedPolicy()
     return ScopeCatalog(config, operations, server_name)

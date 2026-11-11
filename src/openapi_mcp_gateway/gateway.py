@@ -353,7 +353,7 @@ class Gateway:
     ) -> None:
         auth = self._resolve_auth(server_config, spec)
         auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
-        mcp_scope_policy = build_mcp_scope_policy(server_config.auth.scopes, operations, server_config.name)
+        mcp_scope_policy = build_mcp_scope_policy(server_config.auth.operation_scopes, operations, server_config.name)
         _refuse_undefined_mcp_scopes(server_config, mcp_scope_policy)
         access = OperationAccess(mcp_scope_policy)
         mcp = self._build_mcp_server(
@@ -721,7 +721,7 @@ def _refuse_undefined_mcp_scopes(server_config: ServerConfig, mcp_scope_policy: 
     named = '; '.join(f'{client_id}: {", ".join(scopes)}' for client_id, scopes in undefined.items() if scopes)
     if named:
         raise ValueError(
-            f'Server "{server_config.name}": auth.clients grant scopes auth.scopes does not define ({named}).'
+            f'Server "{server_config.name}": auth.clients grant scopes auth.operation_scopes does not define ({named}).'
         )
 
 

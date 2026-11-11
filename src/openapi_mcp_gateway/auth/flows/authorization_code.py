@@ -582,9 +582,9 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         callback_url = f'{gateway_url}{flow_context.mount_path}/auth/callback'
 
         # The scopes every token carries and every request must hold, granted on top of a client's own scopes.
-        # With auth.scopes there are none, since each operation names its own scopes instead.
+        # With auth.operation_scopes there are none, since each operation names its own scopes instead.
         mcp_endpoint_scopes = (
-            [] if entry.auth.scopes is not None else list(entry.auth.required_scopes) or [DEFAULT_MCP_SCOPE]
+            [] if entry.auth.operation_scopes is not None else list(entry.auth.required_scopes) or [DEFAULT_MCP_SCOPE]
         )
         server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')
         # The same string the metadata publishes as ``issuer``,
