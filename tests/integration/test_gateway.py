@@ -1,7 +1,6 @@
 import contextlib
 import json
 import pathlib
-import socket
 import sys
 import time
 import typing
@@ -11,7 +10,6 @@ import anyio
 import httpx
 import jwt
 import pytest
-import uvicorn
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from mcp import Client, StdioServerParameters
@@ -49,6 +47,7 @@ from tests.constants import (
     PETSTORE_URL,
     TOKEN_URL,
 )
+from tests.serving import serve
 
 
 class _StubContext:
@@ -119,31 +118,6 @@ def _initialize_status(test_client: TestClient, host: str, origin: str | None = 
 
 
 @contextlib.asynccontextmanager
-async def _serve(app: FastAPI) -> typing.AsyncIterator[str]:
-    """Serve ``app`` with uvicorn on a free loopback port and yield its base URL."""
-    sock = socket.socket()
-    sock.bind(('127.0.0.1', 0))
-    server = uvicorn.Server(uvicorn.Config(app, log_config=None, ws='none'))
-    served = anyio.Event()
-
-    async def serve() -> None:
-        # ``serve`` returns rather than raising when the lifespan fails, so record that it finished.
-        await server.serve([sock])
-        served.set()
-
-    async with anyio.create_task_group() as task_group:
-        task_group.start_soon(serve)
-        with anyio.fail_after(5):
-            while not server.started and not served.is_set():
-                await anyio.sleep(0.01)
-        assert server.started, 'the app failed to start'
-        try:
-            yield f'http://127.0.0.1:{sock.getsockname()[1]}'
-        finally:
-            server.should_exit = True
-
-
-@contextlib.asynccontextmanager
 async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) -> typing.AsyncIterator[Client]:
     """Connect an MCP client over ``transport``, through the CLI for stdio and ``gateway``'s app for HTTP."""
     if transport == 'stdio':
@@ -153,7 +127,7 @@ async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) ->
         ) as mcp_client:
             yield mcp_client
         return
-    async with _serve(gateway._build_app(transport=transport)) as base_url:
+    async with serve(gateway._build_app(transport=transport)) as base_url:
         target = (
             f'{base_url}/petstore/mcp' if transport == 'streamable-http' else sse_client(f'{base_url}/petstore/sse')
         )
@@ -367,7 +341,7 @@ class TestMountEmbedding:
         gateway.mount(host, transport='streamable-http')
 
         with anyio.fail_after(10):
-            async with _serve(host) as base_url, Client(f'{base_url}/petstore/mcp') as mcp_client:
+            async with serve(host) as base_url, Client(f'{base_url}/petstore/mcp') as mcp_client:
                 tools = await mcp_client.list_tools()
 
         assert tools.tools
