@@ -2,6 +2,7 @@ import abc
 import collections.abc
 import ipaddress
 import logging
+import typing
 
 from mcp.server.auth.provider import RegistrationError
 from mcp.server.auth.settings import ClientRegistrationOptions
@@ -49,17 +50,17 @@ class DynamicClientRegistry(ClientDirectory):
     """
 
     def __init__(self, store: TokenStore, issuer: str) -> None:
-        self.store = store
-        self.issuer = issuer
+        self._store = store
+        self._issuer = issuer
 
     async def get(self, client_id: str) -> OAuthClientInformationFull | None:
         # A registration stored before issuer binding lives under the bare client_id and is never read here.
         # The client is then unknown to this server and registers again, which is the migration path.
-        data = await self.store.get('mcp_client', self._client_key(client_id))
+        data = await self._store.get('mcp_client', self._client_key(client_id))
         return OAuthClientInformationFull(**data) if data else None
 
     async def register(self, client_info: OAuthClientInformationFull) -> None:
-        await self.store.set(
+        await self._store.set(
             'mcp_client',
             self._client_key(client_info.client_id),
             client_info.model_dump(exclude_none=True, mode='json'),
@@ -68,7 +69,7 @@ class DynamicClientRegistry(ClientDirectory):
             'Registered MCP client: client_id=%s application_type=%s issuer=%s',
             client_info.client_id,
             client_info.application_type,
-            self.issuer,
+            self._issuer,
         )
 
     def registration_options(self, scopes: collections.abc.Sequence[str]) -> ClientRegistrationOptions:
@@ -81,7 +82,7 @@ class DynamicClientRegistry(ClientDirectory):
         Keying the record, rather than only checking a field in it,
         also keeps two servers from overwriting each other's registration of the same ``client_id``.
         """
-        return f'{self.issuer} {client_id}'
+        return f'{self._issuer} {client_id}'
 
 
 class PreRegisteredClient(OAuthClientInformationFull):
@@ -93,6 +94,24 @@ class PreRegisteredClient(OAuthClientInformationFull):
     Without registered redirect URIs, any loopback redirect is accepted on any port and path,
     since OAuth 2.1 requires that of loopback redirects and a CLI client picks its port at run time.
     """
+
+    @classmethod
+    def from_config(
+        cls, client_id: str, client: ClientConfig, endpoint_scopes: collections.abc.Sequence[str]
+    ) -> typing.Self:
+        """The SDK's record of ``client``, granted ``endpoint_scopes`` beside its own scopes.
+
+        A confidential client authenticates with HTTP Basic,
+        the method RFC 6749 §2.3.1 requires every server to support and the one clients try first.
+        """
+        secret = client.resolve_client_secret()
+        return cls(
+            client_id=client_id,
+            client_secret=secret,
+            token_endpoint_auth_method='client_secret_basic' if secret else 'none',
+            redirect_uris=client.redirect_uris,
+            scope=' '.join(dict.fromkeys([*endpoint_scopes, *client.scopes])),
+        )
 
     def validate_scope(self, requested_scope: str | None) -> list[str]:
         granted = self.scope.split() if self.scope else []
@@ -128,30 +147,12 @@ class PreRegisteredClientDirectory(ClientDirectory):
         endpoint_scopes: collections.abc.Sequence[str],
     ) -> None:
         self._clients = {
-            client_id: _pre_registered_client(client_id, client, endpoint_scopes)
+            client_id: PreRegisteredClient.from_config(client_id, client, endpoint_scopes)
             for client_id, client in clients.items()
         }
 
     async def get(self, client_id: str) -> OAuthClientInformationFull | None:
         return self._clients.get(client_id)
-
-
-def _pre_registered_client(
-    client_id: str, client: ClientConfig, endpoint_scopes: collections.abc.Sequence[str]
-) -> PreRegisteredClient:
-    """Build the SDK's record of a client declared in config.
-
-    A confidential client authenticates with HTTP Basic,
-    the method RFC 6749 §2.3.1 requires every server to support and the one clients try first.
-    """
-    secret = client.resolve_client_secret()
-    return PreRegisteredClient(
-        client_id=client_id,
-        client_secret=secret,
-        token_endpoint_auth_method='client_secret_basic' if secret else 'none',
-        redirect_uris=client.redirect_uris,
-        scope=' '.join(dict.fromkeys([*endpoint_scopes, *client.scopes])),
-    )
 
 
 def _is_loopback(uri: AnyUrl) -> bool:

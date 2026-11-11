@@ -57,194 +57,6 @@ _DEFAULT_FASTAPI_PASSTHROUGH_HEADERS: tuple[str, ...] = ('Authorization', 'X-API
 _STATIC_CACHE_TTL_MS = 300_000
 
 
-def _warn_if_deprecated_transport(transport: str) -> None:
-    """Emit a deprecation warning when the caller selects the ``sse`` transport.
-
-    HTTP+SSE was reclassified as Deprecated in the 2026-07-28 spec.
-    The gateway still serves it for now,
-    but steers callers to ``streamable-http`` and will remove it in a future release.
-    """
-    if transport == 'sse':
-        message = (
-            "The 'sse' transport is deprecated and will be removed in a future release. "
-            'HTTP+SSE was reclassified as Deprecated in the MCP 2026-07-28 spec. '
-            "Use 'streamable-http' instead."
-        )
-        warnings.warn(message, DeprecationWarning, stacklevel=2)
-        logger.warning(message)
-
-
-def _compose_with_passthrough(
-    base: AuthResolver,
-    forward_incoming_headers: tuple[str, ...],
-) -> AuthResolver:
-    """Forward ``forward_incoming_headers`` from the live MCP request alongside ``base``.
-
-    ``base`` wins on collision, so gateway-minted credentials override the client's incoming token.
-    """
-    if not forward_incoming_headers:
-        return base
-    return CompositeAuthResolver([PassthroughAuthResolver(forward_incoming_headers), base])
-
-
-def _resource_eligibility_problem(operation: OperationInfo) -> tuple[str, str] | None:
-    """Return ``None`` if ``operation`` can be exposed as an MCP resource, else ``(reason, hint)``.
-
-    Eligibility: method is ``GET`` and no required parameter outside the path.
-    """
-    if operation.method.lower() != 'get':
-        return (
-            f'method is {operation.method.upper()}',
-            'Resources are read-only. Declare tool instead, or remove the resource declaration.',
-        )
-    required_non_path = [
-        f'{parameter.location}:{parameter.name}'
-        for parameter in operation.parameters
-        if parameter.required and parameter.location != 'path'
-    ]
-    if required_non_path:
-        return (
-            f'has required non-path parameter(s) {required_non_path}',
-            'URI templates can only carry path parameters. Make these optional, or expose as a tool.',
-        )
-    return None
-
-
-def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -> None:
-    """Raise ``ValueError`` when an explicit ``resource`` opt-in cannot be honored.
-
-    Covers both the basic eligibility rules and the ``uri_template`` scheme override,
-    which only spec-side opt-ins can carry.
-    """
-    ineligibility = _resource_eligibility_problem(operation)
-    if ineligibility is not None:
-        reason, hint = ineligibility
-        raise ValueError(
-            f'Server "{server_name}": operation "{operation.operation_id}" declares '
-            f'x-mcp-integration.resource but {reason}. {hint}'
-        )
-
-    override = operation.x_mcp_integration.resource
-    if override and override.uri_template and not override.uri_template.startswith(f'{server_name}://'):
-        raise ValueError(
-            f'Server "{server_name}": operation "{operation.operation_id}".resource.uri_template '
-            f'must start with "{server_name}://" (got "{override.uri_template}").'
-        )
-
-
-def _apply_yaml_overrides(
-    operations: list[OperationInfo],
-    yaml_overrides: dict[str, McpIntegration],
-    server_name: str,
-) -> list[OperationInfo]:
-    """Return ``operations`` with the YAML-side ``operations.<id>`` override applied to each match.
-
-    Each override fully replaces the spec-side ``x-mcp-integration`` for that operation, with no merging.
-    Raises ``ValueError`` if an ``operation_id`` in ``yaml_overrides`` is not exposed by this server.
-    """
-    if not yaml_overrides:
-        return operations
-    unmatched = set(yaml_overrides) - {operation.operation_id for operation in operations}
-    if unmatched:
-        raise ValueError(
-            f'Server "{server_name}": YAML operations override targets unknown operation_id(s) {sorted(unmatched)!r}; '
-            'check the spec or your allow / deny / annotated_only policy.'
-        )
-    return [
-        operation.model_copy(update={'x_mcp_integration': yaml_overrides[operation.operation_id]})
-        if operation.operation_id in yaml_overrides
-        else operation
-        for operation in operations
-    ]
-
-
-def _partition_operations(
-    operations: list[OperationInfo],
-    server_name: str,
-    promote_resources: bool = False,
-) -> tuple[list[OperationInfo], list[OperationInfo]]:
-    """Split ``operations`` into ``(resource_operations, tool_operations)``.
-
-    With ``promote_resources`` off, the default,
-    every operation becomes a tool and ``x-mcp-integration.resource`` declarations are ignored.
-
-    With it on, an operation becomes a resource when it either declares ``resource`` explicitly,
-    or qualifies for promotion (no ``tool`` and the eligibility rules pass).
-    Declaring both ``tool`` and ``resource`` registers the operation in both lists.
-    """
-    if not promote_resources:
-        return [], list(operations)
-
-    resource_operations: list[OperationInfo] = []
-    tool_operations: list[OperationInfo] = []
-    for operation in operations:
-        if operation.resource_exposed:
-            _validate_resource_eligibility(operation, server_name)
-            resource_operations.append(operation)
-            if operation.tool_exposed:
-                tool_operations.append(operation)
-        elif not operation.tool_exposed and _resource_eligibility_problem(operation) is None:
-            resource_operations.append(operation)
-        else:
-            tool_operations.append(operation)
-    return resource_operations, tool_operations
-
-
-@dataclasses.dataclass
-class _AppContext:
-    """Per-server lifespan context injected into MCPServer tool handlers."""
-
-    auth_provider: AuthorizationCodeProvider | None = None
-
-
-def _policy_summary(policy: PolicyConfig) -> str:
-    """A short human label for which operations a server exposes.
-
-    Printed so a tool count reads as the result of a decision rather than a bare number.
-    An unfiltered server says so outright, since that is the case worth noticing.
-    """
-    filters = []
-    if policy.annotated_only:
-        filters.append('annotated only')
-    if policy.allow:
-        filters.append(f'allow {policy.allow}')
-    if policy.deny:
-        filters.append(f'deny {policy.deny}')
-    return ', '.join(filters) if filters else 'no filter, every operation exposed'
-
-
-def _cache_hints(scope_policy: ScopePolicy) -> dict[CacheableMethod, CacheHint]:
-    """Freshness hints for the static lists, where ``tools/list`` turns private once it depends on the token."""
-    return {
-        'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=scope_policy.list_cache_scope),
-        'resources/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
-        'resources/templates/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
-        'server/discover': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
-    }
-
-
-def _refuse_undefined_client_scopes(server_config: ServerConfig, scope_policy: ScopePolicy) -> None:
-    """Refuse a client granted a scope the server does not define, since it would open nothing."""
-    undefined = {
-        client_id: sorted(set(client.scopes) - set(scope_policy.defined_scopes))
-        for client_id, client in server_config.auth.clients.items()
-    }
-    named = '; '.join(f'{client_id}: {", ".join(scopes)}' for client_id, scopes in undefined.items() if scopes)
-    if named:
-        raise ValueError(
-            f'Server "{server_config.name}": auth.clients grant scopes auth.scopes does not define ({named}).'
-        )
-
-
-def _auth_summary(auth: AuthConfig) -> str:
-    """A short human label for a server's auth, naming the header for api_key and the OAuth flow."""
-    if auth.type == 'api_key':
-        return f'api_key (header {auth.api_key_header})'
-    if auth.type == 'oauth2' and auth.flow:
-        return f'oauth2 ({auth.flow})'
-    return auth.type
-
-
 class Gateway:
     """Expose several OpenAPI backends as MCP servers in one process.
 
@@ -732,3 +544,191 @@ class Gateway:
             transport=transport,
             host=host if host is not None else self._config.host,
         )
+
+
+def _warn_if_deprecated_transport(transport: str) -> None:
+    """Emit a deprecation warning when the caller selects the ``sse`` transport.
+
+    HTTP+SSE was reclassified as Deprecated in the 2026-07-28 spec.
+    The gateway still serves it for now,
+    but steers callers to ``streamable-http`` and will remove it in a future release.
+    """
+    if transport == 'sse':
+        message = (
+            "The 'sse' transport is deprecated and will be removed in a future release. "
+            'HTTP+SSE was reclassified as Deprecated in the MCP 2026-07-28 spec. '
+            "Use 'streamable-http' instead."
+        )
+        warnings.warn(message, DeprecationWarning, stacklevel=2)
+        logger.warning(message)
+
+
+def _compose_with_passthrough(
+    base: AuthResolver,
+    forward_incoming_headers: tuple[str, ...],
+) -> AuthResolver:
+    """Forward ``forward_incoming_headers`` from the live MCP request alongside ``base``.
+
+    ``base`` wins on collision, so gateway-minted credentials override the client's incoming token.
+    """
+    if not forward_incoming_headers:
+        return base
+    return CompositeAuthResolver([PassthroughAuthResolver(forward_incoming_headers), base])
+
+
+def _resource_eligibility_problem(operation: OperationInfo) -> tuple[str, str] | None:
+    """Return ``None`` if ``operation`` can be exposed as an MCP resource, else ``(reason, hint)``.
+
+    Eligibility: method is ``GET`` and no required parameter outside the path.
+    """
+    if operation.method.lower() != 'get':
+        return (
+            f'method is {operation.method.upper()}',
+            'Resources are read-only. Declare tool instead, or remove the resource declaration.',
+        )
+    required_non_path = [
+        f'{parameter.location}:{parameter.name}'
+        for parameter in operation.parameters
+        if parameter.required and parameter.location != 'path'
+    ]
+    if required_non_path:
+        return (
+            f'has required non-path parameter(s) {required_non_path}',
+            'URI templates can only carry path parameters. Make these optional, or expose as a tool.',
+        )
+    return None
+
+
+def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -> None:
+    """Raise ``ValueError`` when an explicit ``resource`` opt-in cannot be honored.
+
+    Covers both the basic eligibility rules and the ``uri_template`` scheme override,
+    which only spec-side opt-ins can carry.
+    """
+    ineligibility = _resource_eligibility_problem(operation)
+    if ineligibility is not None:
+        reason, hint = ineligibility
+        raise ValueError(
+            f'Server "{server_name}": operation "{operation.operation_id}" declares '
+            f'x-mcp-integration.resource but {reason}. {hint}'
+        )
+
+    override = operation.x_mcp_integration.resource
+    if override and override.uri_template and not override.uri_template.startswith(f'{server_name}://'):
+        raise ValueError(
+            f'Server "{server_name}": operation "{operation.operation_id}".resource.uri_template '
+            f'must start with "{server_name}://" (got "{override.uri_template}").'
+        )
+
+
+def _apply_yaml_overrides(
+    operations: list[OperationInfo],
+    yaml_overrides: dict[str, McpIntegration],
+    server_name: str,
+) -> list[OperationInfo]:
+    """Return ``operations`` with the YAML-side ``operations.<id>`` override applied to each match.
+
+    Each override fully replaces the spec-side ``x-mcp-integration`` for that operation, with no merging.
+    Raises ``ValueError`` if an ``operation_id`` in ``yaml_overrides`` is not exposed by this server.
+    """
+    if not yaml_overrides:
+        return operations
+    unmatched = set(yaml_overrides) - {operation.operation_id for operation in operations}
+    if unmatched:
+        raise ValueError(
+            f'Server "{server_name}": YAML operations override targets unknown operation_id(s) {sorted(unmatched)!r}; '
+            'check the spec or your allow / deny / annotated_only policy.'
+        )
+    return [
+        operation.model_copy(update={'x_mcp_integration': yaml_overrides[operation.operation_id]})
+        if operation.operation_id in yaml_overrides
+        else operation
+        for operation in operations
+    ]
+
+
+def _partition_operations(
+    operations: list[OperationInfo],
+    server_name: str,
+    promote_resources: bool = False,
+) -> tuple[list[OperationInfo], list[OperationInfo]]:
+    """Split ``operations`` into ``(resource_operations, tool_operations)``.
+
+    With ``promote_resources`` off, the default,
+    every operation becomes a tool and ``x-mcp-integration.resource`` declarations are ignored.
+
+    With it on, an operation becomes a resource when it either declares ``resource`` explicitly,
+    or qualifies for promotion (no ``tool`` and the eligibility rules pass).
+    Declaring both ``tool`` and ``resource`` registers the operation in both lists.
+    """
+    if not promote_resources:
+        return [], list(operations)
+
+    resource_operations: list[OperationInfo] = []
+    tool_operations: list[OperationInfo] = []
+    for operation in operations:
+        if operation.resource_exposed:
+            _validate_resource_eligibility(operation, server_name)
+            resource_operations.append(operation)
+            if operation.tool_exposed:
+                tool_operations.append(operation)
+        elif not operation.tool_exposed and _resource_eligibility_problem(operation) is None:
+            resource_operations.append(operation)
+        else:
+            tool_operations.append(operation)
+    return resource_operations, tool_operations
+
+
+@dataclasses.dataclass
+class _AppContext:
+    """Per-server lifespan context injected into MCPServer tool handlers."""
+
+    auth_provider: AuthorizationCodeProvider | None = None
+
+
+def _policy_summary(policy: PolicyConfig) -> str:
+    """A short human label for which operations a server exposes.
+
+    Printed so a tool count reads as the result of a decision rather than a bare number.
+    An unfiltered server says so outright, since that is the case worth noticing.
+    """
+    filters = []
+    if policy.annotated_only:
+        filters.append('annotated only')
+    if policy.allow:
+        filters.append(f'allow {policy.allow}')
+    if policy.deny:
+        filters.append(f'deny {policy.deny}')
+    return ', '.join(filters) if filters else 'no filter, every operation exposed'
+
+
+def _cache_hints(scope_policy: ScopePolicy) -> dict[CacheableMethod, CacheHint]:
+    """Freshness hints for the static lists, where ``tools/list`` turns private once it depends on the token."""
+    return {
+        'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=scope_policy.list_cache_scope),
+        'resources/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
+        'resources/templates/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
+        'server/discover': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
+    }
+
+
+def _refuse_undefined_client_scopes(server_config: ServerConfig, scope_policy: ScopePolicy) -> None:
+    """Refuse a client granted a scope the server does not define, since it would open nothing."""
+    undefined = {
+        client_id: sorted(set(client.scopes) - set(scope_policy.defined_scopes))
+        for client_id, client in server_config.auth.clients.items()
+    }
+    named = '; '.join(f'{client_id}: {", ".join(scopes)}' for client_id, scopes in undefined.items() if scopes)
+    if named:
+        raise ValueError(
+            f'Server "{server_config.name}": auth.clients grant scopes auth.scopes does not define ({named}).'
+        )
+
+
+def _auth_summary(auth: AuthConfig) -> str:
+    """A short human label for a server's auth, naming the header for api_key and the OAuth flow."""
+    if auth.type == 'api_key':
+        return f'api_key (header {auth.api_key_header})'
+    if auth.type == 'oauth2' and auth.flow:
+        return f'oauth2 ({auth.flow})'
+    return auth.type

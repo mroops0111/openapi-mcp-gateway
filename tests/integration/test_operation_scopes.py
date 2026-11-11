@@ -40,19 +40,6 @@ DELETE_CHALLENGE = (
 )
 
 
-@dataclasses.dataclass
-class _Session:
-    """An MCP client connected with one token, and every HTTP response it received, in order."""
-
-    client: Client
-    responses: list[httpx2.Response]
-
-    @property
-    def refusal(self) -> httpx2.Response:
-        """The last response, which refused the call that just failed."""
-        return self.responses[-1]
-
-
 @pytest.fixture
 def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gateway]:
     """Build a petstore gateway whose ``authorization_code`` server defines ``scopes`` for ``clients``."""
@@ -78,45 +65,6 @@ def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gatew
 def gateway(make_gateway) -> Gateway:
     """The petstore gateway with tag-derived scopes and static exposure."""
     return make_gateway()
-
-
-async def _sign_in(gateway: Gateway, client_id: str, requested: str | None = None):
-    """Sign ``client_id`` in through the gateway's own authorization server, asking for ``requested``."""
-    provider = gateway.describe_servers()[0].auth_provider
-    assert provider is not None
-    client = await provider.get_client(client_id)
-    assert client is not None
-    return await sign_in(provider, client, scopes=client.validate_scope(requested))
-
-
-@contextlib.asynccontextmanager
-async def _connect(gateway: Gateway, client_id: str, mode: str) -> typing.AsyncIterator[_Session]:
-    """Serve ``gateway`` over HTTP and connect an MCP client speaking ``mode``, signed in as ``client_id``."""
-    token = await _sign_in(gateway, client_id)
-    responses: list[httpx2.Response] = []
-
-    async def record(response: httpx2.Response) -> None:
-        responses.append(response)
-
-    http_client = httpx2.AsyncClient(
-        headers={'Authorization': f'Bearer {token.access_token}'}, event_hooks={'response': [record]}
-    )
-    async with serve(gateway._build_app(transport='streamable-http')) as base_url:
-        transport = streamable_http_client(f'{base_url}/petstore/mcp', http_client=http_client)
-        async with Client(transport, mode=mode) as client:
-            yield _Session(client, responses)
-
-
-async def _tool_names(session: _Session) -> list[str]:
-    """The tools ``tools/list`` shows the session's token, in registration order."""
-    return [tool.name for tool in (await session.client.list_tools()).tools]
-
-
-def _text(result: CallToolResult) -> str:
-    """The text a tool result carries."""
-    [content] = result.content
-    assert isinstance(content, TextContent)
-    return content.text
 
 
 class TestToolFiltering:
@@ -237,3 +185,55 @@ class TestAuthorizationServer:
     def test_a_client_granted_an_undefined_scope_is_refused_at_startup(self, make_gateway):
         with pytest.raises(ValueError, match=r'reader: pets:raed'):
             make_gateway(clients={READER: {'scopes': ['pets:raed']}})
+
+
+@dataclasses.dataclass
+class _Session:
+    """An MCP client connected with one token, and every HTTP response it received, in order."""
+
+    client: Client
+    responses: list[httpx2.Response]
+
+    @property
+    def refusal(self) -> httpx2.Response:
+        """The last response, which refused the call that just failed."""
+        return self.responses[-1]
+
+
+async def _sign_in(gateway: Gateway, client_id: str, requested: str | None = None):
+    """Sign ``client_id`` in through the gateway's own authorization server, asking for ``requested``."""
+    provider = gateway.describe_servers()[0].auth_provider
+    assert provider is not None
+    client = await provider.get_client(client_id)
+    assert client is not None
+    return await sign_in(provider, client, scopes=client.validate_scope(requested))
+
+
+@contextlib.asynccontextmanager
+async def _connect(gateway: Gateway, client_id: str, mode: str) -> typing.AsyncIterator[_Session]:
+    """Serve ``gateway`` over HTTP and connect an MCP client speaking ``mode``, signed in as ``client_id``."""
+    token = await _sign_in(gateway, client_id)
+    responses: list[httpx2.Response] = []
+
+    async def record(response: httpx2.Response) -> None:
+        responses.append(response)
+
+    http_client = httpx2.AsyncClient(
+        headers={'Authorization': f'Bearer {token.access_token}'}, event_hooks={'response': [record]}
+    )
+    async with serve(gateway._build_app(transport='streamable-http')) as base_url:
+        transport = streamable_http_client(f'{base_url}/petstore/mcp', http_client=http_client)
+        async with Client(transport, mode=mode) as client:
+            yield _Session(client, responses)
+
+
+async def _tool_names(session: _Session) -> list[str]:
+    """The tools ``tools/list`` shows the session's token, in registration order."""
+    return [tool.name for tool in (await session.client.list_tools()).tools]
+
+
+def _text(result: CallToolResult) -> str:
+    """The text a tool result carries."""
+    [content] = result.content
+    assert isinstance(content, TextContent)
+    return content.text

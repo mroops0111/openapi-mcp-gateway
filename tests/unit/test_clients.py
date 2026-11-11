@@ -14,14 +14,6 @@ from tests.constants import BROWSER_ORIGIN, GATEWAY_ISSUER
 WEB_CALLBACK = f'{BROWSER_ORIGIN}/oauth/callback'
 
 
-async def _pre_registered(endpoint_scopes: tuple[str, ...] = (), **client: object) -> OAuthClientInformationFull:
-    """The record a directory holding one ``auth.clients`` entry, ``agent``, gives the SDK."""
-    directory = PreRegisteredClientDirectory({'agent': ClientConfig.model_validate(client)}, endpoint_scopes)
-    record = await directory.get('agent')
-    assert record is not None
-    return record
-
-
 class TestScopeGrant:
     """A pre-registered client is granted scopes within its set rather than refused for asking outside it."""
 
@@ -103,3 +95,11 @@ class TestRegistration:
         options = DynamicClientRegistry(memory_store, GATEWAY_ISSUER).registration_options(['api'])
         assert options.enabled is True
         assert options.valid_scopes == options.default_scopes == ['api']
+
+
+async def _pre_registered(endpoint_scopes: tuple[str, ...] = (), **client: object) -> OAuthClientInformationFull:
+    """The record a directory holding one ``auth.clients`` entry, ``agent``, gives the SDK."""
+    directory = PreRegisteredClientDirectory({'agent': ClientConfig.model_validate(client)}, endpoint_scopes)
+    record = await directory.get('agent')
+    assert record is not None
+    return record

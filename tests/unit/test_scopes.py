@@ -19,16 +19,6 @@ from openapi_mcp_gateway.settings import ScopesConfig
 from tests.operations import PETSTORE_OPERATIONS, operation
 
 
-def _catalog(**config: object) -> ScopeCatalog:
-    """A catalog over the petstore operations, configured as ``auth.scopes`` would be."""
-    return ScopeCatalog(ScopesConfig.model_validate(config), PETSTORE_OPERATIONS, 'petstore')
-
-
-def _operation_named(operation_id: str) -> OperationInfo:
-    """The petstore operation with ``operation_id``."""
-    return next(candidate for candidate in PETSTORE_OPERATIONS if candidate.operation_id == operation_id)
-
-
 class TestScopeRequirements:
     """Each requirement decides a token by its scopes and says what would satisfy it."""
 
@@ -189,3 +179,13 @@ class TestCallTargets:
     def test_dynamic_exposure_reads_the_operation_call_operation_names(self, headers, expected):
         """Only ``call_operation`` reaches a single operation, named in its ``Mcp-Param-Operation`` header."""
         assert DynamicOperationTarget().resolve(headers) == expected
+
+
+def _catalog(**config: object) -> ScopeCatalog:
+    """A catalog over the petstore operations, configured as ``auth.scopes`` would be."""
+    return ScopeCatalog(ScopesConfig.model_validate(config), PETSTORE_OPERATIONS, 'petstore')
+
+
+def _operation_named(operation_id: str) -> OperationInfo:
+    """The petstore operation with ``operation_id``."""
+    return next(candidate for candidate in PETSTORE_OPERATIONS if candidate.operation_id == operation_id)

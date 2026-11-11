@@ -27,22 +27,6 @@ _SCOPE_TOKEN = re.compile(r'[\x21\x23-\x5B\x5D-\x7E]+')
 _resolve_env_var = resolve_env_var
 
 
-def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
-    """Recursively merge ``override`` into ``base``, with ``override`` winning for non-dict values.
-
-    Keys present only in ``base`` are preserved.
-    Keys whose value on both sides is a dict are merged recursively,
-    so a partial ``{'logging': {'level': 'DEBUG'}}`` does not blow away the rest of ``logging``.
-    """
-    result = dict(base)
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result
-
-
 class UpstreamAuthConfig(pydantic.BaseModel):
     """How the gateway authenticates to the upstream's authorization server.
 
@@ -102,13 +86,6 @@ class UpstreamAuthConfig(pydantic.BaseModel):
         if audience:
             params['audience'] = audience
         return params
-
-
-def _refuse_invalid_scope_tokens(scopes: typing.Iterable[str], location: str) -> None:
-    """Refuse a scope name a token could not carry, since one with a space would split into two scopes."""
-    invalid = sorted(scope for scope in scopes if not _SCOPE_TOKEN.fullmatch(scope))
-    if invalid:
-        raise ValueError(f'{location} names invalid scopes {invalid!r}. A scope cannot contain spaces, " or \\.')
 
 
 class ManualScopeConfig(pydantic.BaseModel):
@@ -602,3 +579,26 @@ def build_gateway_config(*layers: dict[str, typing.Any]) -> GatewayConfig:
     for layer in layers:
         merged = _deep_merge(merged, layer)
     return GatewayConfig.model_validate(merged)
+
+
+def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Recursively merge ``override`` into ``base``, with ``override`` winning for non-dict values.
+
+    Keys present only in ``base`` are preserved.
+    Keys whose value on both sides is a dict are merged recursively,
+    so a partial ``{'logging': {'level': 'DEBUG'}}`` does not blow away the rest of ``logging``.
+    """
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _refuse_invalid_scope_tokens(scopes: typing.Iterable[str], location: str) -> None:
+    """Refuse a scope name a token could not carry, since one with a space would split into two scopes."""
+    invalid = sorted(scope for scope in scopes if not _SCOPE_TOKEN.fullmatch(scope))
+    if invalid:
+        raise ValueError(f'{location} names invalid scopes {invalid!r}. A scope cannot contain spaces, " or \\.')

@@ -50,91 +50,6 @@ from tests.constants import (
 from tests.serving import serve
 
 
-class _StubContext:
-    """No-op MCP context used when invoking generated tools end-to-end."""
-
-    async def report_progress(self, *_args, **_kwargs):
-        """Match the ``Context`` protocol, doing nothing."""
-        return None
-
-
-def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Awaitable[None]]]:
-    """The shutdown hooks an auth flow registered, leaving out the one closing each server's upstream client."""
-    return [
-        hook for hook in gateway._shutdown_hooks if not isinstance(getattr(hook, '__self__', None), SharedAPIClient)
-    ]
-
-
-def _stub_context() -> Context:
-    """Return a ``Context``-typed stub suitable for tool invocation."""
-    return typing.cast(Context, _StubContext())
-
-
-def _tool(gateway: Gateway, name: str):
-    """The registered tool called ``name`` on the gateway's only server."""
-    return next(tool for tool in gateway._servers[0].mcp._tool_manager.list_tools() if tool.name == name)
-
-
-def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = None) -> TestClient:
-    """Test client over a petstore server that validates tokens from ``ISSUER``, an issuer it does not own."""
-    metadata = IssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
-    config = GatewayConfig(
-        url=GATEWAY_URL,
-        servers=[
-            ServerConfig(
-                name='petstore',
-                spec=str(spec_path),
-                auth=AuthConfig(
-                    type='oauth2',
-                    flow='token_exchange',
-                    issuer=ISSUER,
-                    upstream=UpstreamAuthConfig(
-                        audience=API_URL, client_id='gateway', client_secret='secret', scopes=['read']
-                    ),
-                ),
-            ),
-        ],
-    )
-    with (
-        patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
-        patch('openapi_mcp_gateway.auth.oidc._build_jwk_client', return_value=jwk_client or MagicMock()),
-    ):
-        gateway = Gateway.from_config(config)
-        return TestClient(gateway._build_app(transport='streamable-http'))
-
-
-def _initialize_status(test_client: TestClient, host: str, origin: str | None = None) -> int:
-    """Status of an MCP ``initialize`` POST to the petstore endpoint, sent with ``host`` and ``origin``."""
-    headers = {'Host': host, 'Accept': 'application/json, text/event-stream', 'Content-Type': 'application/json'}
-    if origin is not None:
-        headers['Origin'] = origin
-    body = {
-        'jsonrpc': '2.0',
-        'id': 1,
-        'method': 'initialize',
-        'params': {'protocolVersion': '2025-11-25', 'capabilities': {}, 'clientInfo': {'name': 'test', 'version': '1'}},
-    }
-    return test_client.post('/petstore/mcp', headers=headers, json=body).status_code
-
-
-@contextlib.asynccontextmanager
-async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) -> typing.AsyncIterator[Client]:
-    """Connect an MCP client over ``transport``, through the CLI for stdio and ``gateway``'s app for HTTP."""
-    if transport == 'stdio':
-        cli_args = ['--spec', str(spec_path), '--name', 'petstore', '--transport', 'stdio']
-        async with Client(
-            StdioServerParameters(command=sys.executable, args=['-m', 'openapi_mcp_gateway.cli', *cli_args])
-        ) as mcp_client:
-            yield mcp_client
-        return
-    async with serve(gateway._build_app(transport=transport)) as base_url:
-        target = (
-            f'{base_url}/petstore/mcp' if transport == 'streamable-http' else sse_client(f'{base_url}/petstore/sse')
-        )
-        async with Client(target) as mcp_client:
-            yield mcp_client
-
-
 @pytest.fixture
 def gateway(petstore_json_path):
     """Single-server petstore gateway with no upstream auth configured."""
@@ -903,3 +818,88 @@ class TestRejectedTokenResponse:
         response = self._post(delegating_app, 'an-opaque-session-token')
 
         assert response.status_code == 401
+
+
+class _StubContext:
+    """No-op MCP context used when invoking generated tools end-to-end."""
+
+    async def report_progress(self, *_args, **_kwargs):
+        """Match the ``Context`` protocol, doing nothing."""
+        return None
+
+
+def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Awaitable[None]]]:
+    """The shutdown hooks an auth flow registered, leaving out the one closing each server's upstream client."""
+    return [
+        hook for hook in gateway._shutdown_hooks if not isinstance(getattr(hook, '__self__', None), SharedAPIClient)
+    ]
+
+
+def _stub_context() -> Context:
+    """Return a ``Context``-typed stub suitable for tool invocation."""
+    return typing.cast(Context, _StubContext())
+
+
+def _tool(gateway: Gateway, name: str):
+    """The registered tool called ``name`` on the gateway's only server."""
+    return next(tool for tool in gateway._servers[0].mcp._tool_manager.list_tools() if tool.name == name)
+
+
+def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = None) -> TestClient:
+    """Test client over a petstore server that validates tokens from ``ISSUER``, an issuer it does not own."""
+    metadata = IssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
+    config = GatewayConfig(
+        url=GATEWAY_URL,
+        servers=[
+            ServerConfig(
+                name='petstore',
+                spec=str(spec_path),
+                auth=AuthConfig(
+                    type='oauth2',
+                    flow='token_exchange',
+                    issuer=ISSUER,
+                    upstream=UpstreamAuthConfig(
+                        audience=API_URL, client_id='gateway', client_secret='secret', scopes=['read']
+                    ),
+                ),
+            ),
+        ],
+    )
+    with (
+        patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
+        patch('openapi_mcp_gateway.auth.oidc._build_jwk_client', return_value=jwk_client or MagicMock()),
+    ):
+        gateway = Gateway.from_config(config)
+        return TestClient(gateway._build_app(transport='streamable-http'))
+
+
+def _initialize_status(test_client: TestClient, host: str, origin: str | None = None) -> int:
+    """Status of an MCP ``initialize`` POST to the petstore endpoint, sent with ``host`` and ``origin``."""
+    headers = {'Host': host, 'Accept': 'application/json, text/event-stream', 'Content-Type': 'application/json'}
+    if origin is not None:
+        headers['Origin'] = origin
+    body = {
+        'jsonrpc': '2.0',
+        'id': 1,
+        'method': 'initialize',
+        'params': {'protocolVersion': '2025-11-25', 'capabilities': {}, 'clientInfo': {'name': 'test', 'version': '1'}},
+    }
+    return test_client.post('/petstore/mcp', headers=headers, json=body).status_code
+
+
+@contextlib.asynccontextmanager
+async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) -> typing.AsyncIterator[Client]:
+    """Connect an MCP client over ``transport``, through the CLI for stdio and ``gateway``'s app for HTTP."""
+    if transport == 'stdio':
+        cli_args = ['--spec', str(spec_path), '--name', 'petstore', '--transport', 'stdio']
+        async with Client(
+            StdioServerParameters(command=sys.executable, args=['-m', 'openapi_mcp_gateway.cli', *cli_args])
+        ) as mcp_client:
+            yield mcp_client
+        return
+    async with serve(gateway._build_app(transport=transport)) as base_url:
+        target = (
+            f'{base_url}/petstore/mcp' if transport == 'streamable-http' else sse_client(f'{base_url}/petstore/sse')
+        )
+        async with Client(target) as mcp_client:
+            yield mcp_client

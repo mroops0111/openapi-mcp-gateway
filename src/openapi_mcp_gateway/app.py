@@ -122,21 +122,6 @@ def build_mcp_asgi_app(
     return mcp.streamable_http_app(transport_security=transport_security, host=host or '')
 
 
-def _transport_security(protection: DNSRebindingProtectionConfig, host: str | None) -> TransportSecuritySettings | None:
-    """Settle the ``Host`` / ``Origin`` checks, where ``None`` leaves them to the SDK's default for ``host``."""
-    if protection.allowed_hosts:
-        return TransportSecuritySettings(
-            allowed_hosts=protection.allowed_hosts,
-            allowed_origins=protection.allowed_origins,
-        )
-    if host is None:
-        # The host app is bound by someone else, so there is no bind to judge the exposure by.
-        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
-    # The SDK checks a loopback bind against the loopback names, and leaves any other bind unchecked,
-    # since only the operator knows which names a proxy will put in ``Host``.
-    return None
-
-
 def mount_mcp_apps(
     app: FastAPI,
     servers: list[_ServerBundle],
@@ -157,27 +142,6 @@ def mount_mcp_apps(
     if transport == 'sse':
         return []
     return [bundle.mcp.session_manager for bundle in servers]
-
-
-def _guard_scopes(mcp_app: Starlette, bundle: _ServerBundle) -> None:
-    """Refuse a call the token's scopes do not cover with a ``403`` scope challenge, before the SDK reads the body.
-
-    Appended rather than added, since ``add_middleware`` puts it first,
-    and it needs the SDK's authentication middleware to have run.
-    """
-    resource_metadata_url = (
-        str(build_resource_metadata_url(bundle.auth_settings.resource_server_url))
-        if bundle.auth_settings and bundle.auth_settings.resource_server_url
-        else None
-    )
-    mcp_app.user_middleware.append(
-        Middleware(
-            ScopeChallengeGate,
-            access=bundle.access,
-            call_target=bundle.call_target,
-            resource_metadata_url=resource_metadata_url,
-        )
-    )
 
 
 @contextlib.asynccontextmanager
@@ -327,6 +291,42 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
             )
         handler = ProtectedResourceMetadataHandler(_protected_resource(bundle))
         return await handler.handle(request)
+
+
+def _transport_security(protection: DNSRebindingProtectionConfig, host: str | None) -> TransportSecuritySettings | None:
+    """Settle the ``Host`` / ``Origin`` checks, where ``None`` leaves them to the SDK's default for ``host``."""
+    if protection.allowed_hosts:
+        return TransportSecuritySettings(
+            allowed_hosts=protection.allowed_hosts,
+            allowed_origins=protection.allowed_origins,
+        )
+    if host is None:
+        # The host app is bound by someone else, so there is no bind to judge the exposure by.
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    # The SDK checks a loopback bind against the loopback names, and leaves any other bind unchecked,
+    # since only the operator knows which names a proxy will put in ``Host``.
+    return None
+
+
+def _guard_scopes(mcp_app: Starlette, bundle: _ServerBundle) -> None:
+    """Refuse a call the token's scopes do not cover with a ``403`` scope challenge, before the SDK reads the body.
+
+    Appended rather than added, since ``add_middleware`` puts it first,
+    and it needs the SDK's authentication middleware to have run.
+    """
+    resource_metadata_url = (
+        str(build_resource_metadata_url(bundle.auth_settings.resource_server_url))
+        if bundle.auth_settings and bundle.auth_settings.resource_server_url
+        else None
+    )
+    mcp_app.user_middleware.append(
+        Middleware(
+            ScopeChallengeGate,
+            access=bundle.access,
+            call_target=bundle.call_target,
+            resource_metadata_url=resource_metadata_url,
+        )
+    )
 
 
 def _register_health_route(app: FastAPI, servers: list[_ServerBundle]) -> None:
