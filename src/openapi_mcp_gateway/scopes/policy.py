@@ -28,7 +28,7 @@ class ScopePolicy(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def defined_scopes(self) -> collections.abc.Mapping[str, str]:
+    def defined_mcp_scopes(self) -> collections.abc.Mapping[str, str]:
         """Every scope the server defines, mapped to the description a person approving it is shown."""
 
     @property
@@ -45,7 +45,7 @@ class UnrestrictedPolicy(ScopePolicy):
     """No operation scopes, so every token may use every operation, as on a server without ``auth.scopes``."""
 
     @property
-    def defined_scopes(self) -> collections.abc.Mapping[str, str]:
+    def defined_mcp_scopes(self) -> collections.abc.Mapping[str, str]:
         return {}
 
     @property
@@ -78,13 +78,13 @@ class ScopeCatalog(ScopePolicy):
             scope.name: scope.description for operation in operations for scope in self._derivation.derive(operation)
         }
         self._refuse_reused_names(derived)
-        self._defined_scopes = {**derived, **{name: scope.description for name, scope in config.manual.items()}}
+        self._defined_mcp_scopes = {**derived, **{name: scope.description for name, scope in config.manual.items()}}
         self._warn_on_unmatched_patterns(operations)
         self._log_unscoped(operations)
 
     @property
-    def defined_scopes(self) -> collections.abc.Mapping[str, str]:
-        return self._defined_scopes
+    def defined_mcp_scopes(self) -> collections.abc.Mapping[str, str]:
+        return self._defined_mcp_scopes
 
     @property
     def list_cache_scope(self) -> typing.Literal['public', 'private']:
@@ -143,7 +143,7 @@ class ScopeCatalog(ScopePolicy):
         )
 
 
-def build_scope_policy(
+def build_mcp_scope_policy(
     config: ScopesConfig | None,
     operations: collections.abc.Sequence[OperationInfo],
     server_name: str,

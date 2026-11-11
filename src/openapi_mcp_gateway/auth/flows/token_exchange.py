@@ -70,12 +70,12 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
         # The two scope lists point in opposite directions and must not be conflated.
         # Demanding the upstream scopes of the caller would lock out every client that did not match,
         # since the deployment picks what to request from the issuer but not what a caller registered with.
-        required_scopes = list(entry.auth.required_scopes)
+        mcp_endpoint_scopes = list(entry.auth.required_scopes)
         verifier = JWKSTokenVerifier(
             issuer=metadata.issuer,
             audience=canonical_uri,
             jwks_uri=metadata.jwks_uri,
-            required_scopes=required_scopes,
+            required_scopes=mcp_endpoint_scopes,
         )
         token_source = TokenExchangeTokenSource(
             token_endpoint=metadata.token_endpoint,
@@ -88,7 +88,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
         settings = AuthSettings(
             issuer_url=pydantic.AnyHttpUrl(metadata.issuer),
             resource_server_url=pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}'),
-            required_scopes=required_scopes or None,
+            required_scopes=mcp_endpoint_scopes or None,
         )
 
         logger.debug(
@@ -98,7 +98,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
             metadata.issuer,
             canonical_uri,
             audience_params,
-            required_scopes,
+            mcp_endpoint_scopes,
             entry.auth.upstream.scopes,
         )
 
@@ -114,7 +114,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
                     'authorization_servers': [metadata.issuer],
                     # RFC 9728 defines this as what a client must obtain for this endpoint,
                     # so it is the inbound list, and a registering client reads it to know what to ask for.
-                    'scopes_supported': required_scopes or None,
+                    'scopes_supported': mcp_endpoint_scopes or None,
                 }
             ),
             on_shutdown=token_source.aclose,

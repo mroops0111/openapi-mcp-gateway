@@ -33,7 +33,7 @@ class TestScopeGrant:
 
     async def test_endpoint_scopes_are_granted_beside_the_client_set(self):
         """Without ``auth.scopes`` every token carries the endpoint scopes, as a registered client's would."""
-        client = await _pre_registered(endpoint_scopes=('api',))
+        client = await _pre_registered(mcp_endpoint_scopes=('api',))
         assert client.validate_scope(None) == ['api']
 
 
@@ -97,9 +97,9 @@ class TestRegistration:
         assert options.valid_scopes == options.default_scopes == ['api']
 
 
-async def _pre_registered(endpoint_scopes: tuple[str, ...] = (), **client: object) -> OAuthClientInformationFull:
+async def _pre_registered(mcp_endpoint_scopes: tuple[str, ...] = (), **client: object) -> OAuthClientInformationFull:
     """The record a directory holding one ``auth.clients`` entry, ``agent``, gives the SDK."""
-    directory = PreRegisteredClientDirectory({'agent': ClientConfig.model_validate(client)}, endpoint_scopes)
+    directory = PreRegisteredClientDirectory({'agent': ClientConfig.model_validate(client)}, mcp_endpoint_scopes)
     record = await directory.get('agent')
     assert record is not None
     return record

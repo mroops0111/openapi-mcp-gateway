@@ -40,7 +40,7 @@ from .scopes import (
     ScopeFilterMiddleware,
     ScopePolicy,
     ToolNameTarget,
-    build_scope_policy,
+    build_mcp_scope_policy,
 )
 from .settings import AuthConfig, ExposureConfig, GatewayConfig, PolicyConfig, ServerConfig
 from .stores import create_store
@@ -353,9 +353,9 @@ class Gateway:
     ) -> None:
         auth = self._resolve_auth(server_config, spec)
         auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
-        scope_policy = build_scope_policy(server_config.auth.scopes, operations, server_config.name)
-        _refuse_undefined_client_scopes(server_config, scope_policy)
-        access = OperationAccess(scope_policy)
+        mcp_scope_policy = build_mcp_scope_policy(server_config.auth.scopes, operations, server_config.name)
+        _refuse_undefined_mcp_scopes(server_config, mcp_scope_policy)
+        access = OperationAccess(mcp_scope_policy)
         mcp = self._build_mcp_server(
             server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions, access
         )
@@ -702,20 +702,20 @@ def _policy_summary(policy: PolicyConfig) -> str:
     return ', '.join(filters) if filters else 'no filter, every operation exposed'
 
 
-def _cache_hints(scope_policy: ScopePolicy) -> dict[CacheableMethod, CacheHint]:
+def _cache_hints(mcp_scope_policy: ScopePolicy) -> dict[CacheableMethod, CacheHint]:
     """Freshness hints for the static lists, where ``tools/list`` turns private once it depends on the token."""
     return {
-        'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=scope_policy.list_cache_scope),
+        'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=mcp_scope_policy.list_cache_scope),
         'resources/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
         'resources/templates/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
         'server/discover': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
     }
 
 
-def _refuse_undefined_client_scopes(server_config: ServerConfig, scope_policy: ScopePolicy) -> None:
+def _refuse_undefined_mcp_scopes(server_config: ServerConfig, mcp_scope_policy: ScopePolicy) -> None:
     """Refuse a client granted a scope the server does not define, since it would open nothing."""
     undefined = {
-        client_id: sorted(set(client.scopes) - set(scope_policy.defined_scopes))
+        client_id: sorted(set(client.scopes) - set(mcp_scope_policy.defined_mcp_scopes))
         for client_id, client in server_config.auth.clients.items()
     }
     named = '; '.join(f'{client_id}: {", ".join(scopes)}' for client_id, scopes in undefined.items() if scopes)

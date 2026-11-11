@@ -38,8 +38,8 @@ class ClientDirectory(abc.ABC):
             error_description='This server accepts only pre-registered clients.',
         )
 
-    def registration_options(self, scopes: collections.abc.Sequence[str]) -> ClientRegistrationOptions:
-        """The SDK's registration settings, granting a registered client ``scopes``."""
+    def registration_options(self, mcp_endpoint_scopes: collections.abc.Sequence[str]) -> ClientRegistrationOptions:
+        """The SDK's registration settings, granting a registered client ``mcp_endpoint_scopes``."""
         return ClientRegistrationOptions(enabled=False)
 
 
@@ -72,8 +72,10 @@ class DynamicClientRegistry(ClientDirectory):
             self._issuer,
         )
 
-    def registration_options(self, scopes: collections.abc.Sequence[str]) -> ClientRegistrationOptions:
-        return ClientRegistrationOptions(enabled=True, valid_scopes=list(scopes), default_scopes=list(scopes))
+    def registration_options(self, mcp_endpoint_scopes: collections.abc.Sequence[str]) -> ClientRegistrationOptions:
+        return ClientRegistrationOptions(
+            enabled=True, valid_scopes=list(mcp_endpoint_scopes), default_scopes=list(mcp_endpoint_scopes)
+        )
 
     def _client_key(self, client_id: str) -> str:
         """Key a registration by this server's issuer as well as its ``client_id``.
@@ -97,9 +99,9 @@ class PreRegisteredClient(OAuthClientInformationFull):
 
     @classmethod
     def from_config(
-        cls, client_id: str, client: ClientConfig, endpoint_scopes: collections.abc.Sequence[str]
+        cls, client_id: str, client: ClientConfig, mcp_endpoint_scopes: collections.abc.Sequence[str]
     ) -> typing.Self:
-        """The SDK's record of ``client``, granted ``endpoint_scopes`` beside its own scopes.
+        """The SDK's record of ``client``, granted ``mcp_endpoint_scopes`` beside its own scopes.
 
         A confidential client authenticates with HTTP Basic,
         the method RFC 6749 §2.3.1 requires every server to support and the one clients try first.
@@ -110,7 +112,7 @@ class PreRegisteredClient(OAuthClientInformationFull):
             client_secret=secret,
             token_endpoint_auth_method='client_secret_basic' if secret else 'none',
             redirect_uris=client.redirect_uris,
-            scope=' '.join(dict.fromkeys([*endpoint_scopes, *client.scopes])),
+            scope=' '.join(dict.fromkeys([*mcp_endpoint_scopes, *client.scopes])),
         )
 
     def validate_scope(self, requested_scope: str | None) -> list[str]:
@@ -139,15 +141,15 @@ class PreRegisteredClient(OAuthClientInformationFull):
 
 
 class PreRegisteredClientDirectory(ClientDirectory):
-    """The clients ``auth.clients`` declares, each granted ``endpoint_scopes`` plus its own scopes."""
+    """The clients ``auth.clients`` declares, each granted ``mcp_endpoint_scopes`` plus its own scopes."""
 
     def __init__(
         self,
         clients: collections.abc.Mapping[str, ClientConfig],
-        endpoint_scopes: collections.abc.Sequence[str],
+        mcp_endpoint_scopes: collections.abc.Sequence[str],
     ) -> None:
         self._clients = {
-            client_id: PreRegisteredClient.from_config(client_id, client, endpoint_scopes)
+            client_id: PreRegisteredClient.from_config(client_id, client, mcp_endpoint_scopes)
             for client_id, client in clients.items()
         }
 

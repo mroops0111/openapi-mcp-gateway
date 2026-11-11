@@ -1,7 +1,7 @@
-from .access import OperationAccess, granted_scopes
+from .access import OperationAccess, granted_mcp_scopes
 from .derivation import SCOPE_DERIVATIONS, DerivedScope, NoDerivation, ScopeDerivation, TagMethodDerivation
 from .enforcement import CallTarget, ScopeChallengeGate, ScopeFilterMiddleware, ToolNameTarget
-from .policy import ScopeCatalog, ScopePolicy, UnrestrictedPolicy, build_scope_policy
+from .policy import ScopeCatalog, ScopePolicy, UnrestrictedPolicy, build_mcp_scope_policy
 from .requirement import AnyScope, ScopeRequirement, Unreachable, Unrestricted
 
 
@@ -23,6 +23,6 @@ __all__ = [
     'Unreachable',
     'Unrestricted',
     'UnrestrictedPolicy',
-    'build_scope_policy',
-    'granted_scopes',
+    'build_mcp_scope_policy',
+    'granted_mcp_scopes',
 ]

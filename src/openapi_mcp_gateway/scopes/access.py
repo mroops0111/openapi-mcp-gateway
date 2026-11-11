@@ -35,7 +35,7 @@ class OperationAccess:
         return self.requirement(name).is_met(granted)
 
 
-def granted_scopes() -> frozenset[str]:
+def granted_mcp_scopes() -> frozenset[str]:
     """The scopes of the token on the request being handled, or none outside an authenticated request."""
     access_token = get_access_token()
     return frozenset(access_token.scopes) if access_token else frozenset()

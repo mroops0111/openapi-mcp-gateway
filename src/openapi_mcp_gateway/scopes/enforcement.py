@@ -11,7 +11,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .access import OperationAccess, granted_scopes
+from .access import OperationAccess, granted_mcp_scopes
 from .requirement import ScopeRequirement
 
 
@@ -110,12 +110,12 @@ class ScopeFilterMiddleware:
     async def __call__(self, ctx: ServerRequestContext[typing.Any, typing.Any], call_next: CallNext) -> HandlerResult:
         if ctx.method == 'tools/call':
             requirement = self._access.requirement(str((ctx.params or {}).get('name', '')))
-            if not requirement.is_met(granted_scopes()):
+            if not requirement.is_met(granted_mcp_scopes()):
                 return CallToolResult(content=[TextContent(type='text', text=requirement.refusal)], is_error=True)
         # Handlers return the wire form by the time middleware sees it, so the list is filtered as JSON.
         result = await call_next(ctx)
         if ctx.method == 'tools/list' and isinstance(result, dict):
-            granted = granted_scopes()
+            granted = granted_mcp_scopes()
             return {
                 **result,
                 'tools': [tool for tool in result['tools'] if self._access.permits(tool['name'], granted)],

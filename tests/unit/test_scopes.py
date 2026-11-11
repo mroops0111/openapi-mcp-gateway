@@ -13,7 +13,7 @@ from openapi_mcp_gateway.scopes import (
     Unreachable,
     Unrestricted,
     UnrestrictedPolicy,
-    build_scope_policy,
+    build_mcp_scope_policy,
 )
 from openapi_mcp_gateway.settings import ScopesConfig
 from tests.operations import PETSTORE_OPERATIONS, operation
@@ -100,10 +100,10 @@ class TestScopeCatalog:
         catalog = _catalog(auto='tags', unscoped=unscoped)
         assert isinstance(catalog.requirement_for(_operation_named('adminListPets')), expected)
 
-    def test_defined_scopes_carry_descriptions(self):
+    def test_defined_mcp_scopes_carry_descriptions(self):
         """Every scope is listed with what a person approving it is shown."""
         catalog = _catalog(auto='tags', manual={'admin': {'description': 'Manage pets', 'operations': ['admin*']}})
-        assert catalog.defined_scopes == {
+        assert catalog.defined_mcp_scopes == {
             'pets:read': 'Read pets',
             'pets:write': 'Create and change pets',
             'pets:delete': 'Delete pets',
@@ -140,10 +140,10 @@ class TestUnrestrictedPolicy:
     """A server without ``auth.scopes`` restricts nothing."""
 
     def test_every_operation_is_open(self):
-        policy = build_scope_policy(None, PETSTORE_OPERATIONS, 'petstore')
+        policy = build_mcp_scope_policy(None, PETSTORE_OPERATIONS, 'petstore')
         assert isinstance(policy, UnrestrictedPolicy)
         assert all(isinstance(policy.requirement_for(candidate), Unrestricted) for candidate in PETSTORE_OPERATIONS)
-        assert policy.defined_scopes == {}
+        assert policy.defined_mcp_scopes == {}
         assert policy.list_cache_scope == 'public'
 
 

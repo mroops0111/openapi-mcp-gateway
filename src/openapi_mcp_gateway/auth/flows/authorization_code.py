@@ -583,14 +583,14 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
 
         # The scopes every token carries and every request must hold, granted on top of a client's own scopes.
         # With auth.scopes there are none, since each operation names its own scopes instead.
-        endpoint_scopes = (
+        mcp_endpoint_scopes = (
             [] if entry.auth.scopes is not None else list(entry.auth.required_scopes) or [DEFAULT_MCP_SCOPE]
         )
         server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')
         # The same string the metadata publishes as ``issuer``,
         # since RFC 9207 compares the two without any normalisation.
         issuer = str(server_url)
-        clients = self._client_directory(flow_context, endpoint_scopes, issuer)
+        clients = self._client_directory(flow_context, mcp_endpoint_scopes, issuer)
 
         provider = AuthorizationCodeProvider(
             store=flow_context.store,
@@ -605,7 +605,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
                 issuer=entry.auth.upstream.resolve_issuer(),
             ),
             issued_tokens=IssuedTokenPolicy(
-                scopes=endpoint_scopes,
+                scopes=mcp_endpoint_scopes,
                 access_token_ttl=entry.auth.mcp_access_token_ttl,
                 refresh_token_ttl=entry.auth.mcp_refresh_token_ttl,
             ),
@@ -617,8 +617,8 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             issuer_url=server_url,
             resource_server_url=server_url,
             revocation_options=RevocationOptions(enabled=True),
-            client_registration_options=clients.registration_options(endpoint_scopes),
-            required_scopes=endpoint_scopes,
+            client_registration_options=clients.registration_options(mcp_endpoint_scopes),
+            required_scopes=mcp_endpoint_scopes,
         )
 
         logger.debug(
@@ -637,11 +637,13 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         )
 
     @staticmethod
-    def _client_directory(flow_context: OAuthFlowContext, endpoint_scopes: list[str], issuer: str) -> ClientDirectory:
+    def _client_directory(
+        flow_context: OAuthFlowContext, mcp_endpoint_scopes: list[str], issuer: str
+    ) -> ClientDirectory:
         """The clients ``auth.clients`` declares, or Dynamic Client Registration when it declares none."""
         entry = flow_context.entry
         if entry.auth.clients:
-            return PreRegisteredClientDirectory(entry.auth.clients, endpoint_scopes)
+            return PreRegisteredClientDirectory(entry.auth.clients, mcp_endpoint_scopes)
         logger.warning(
             'Server "%s" accepts Dynamic Client Registration, which the MCP 2026-07-28 spec deprecates. '
             'Declare the clients allowed to sign in under auth.clients instead.',
