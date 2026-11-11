@@ -4,7 +4,7 @@ from ._shared import (
     derive_name,
 )
 from ._upstream import UpstreamBinding
-from .meta_tool import MetaToolGenerator
+from .meta_tool import DynamicOperationTarget, MetaToolGenerator
 from .resource import (
     ResourceGenerator,
     build_resource_read_function,
@@ -20,6 +20,7 @@ from .tool import (
 
 
 __all__ = [
+    'DynamicOperationTarget',
     'MetaToolGenerator',
     'ResourceGenerator',
     'ToolGenerator',

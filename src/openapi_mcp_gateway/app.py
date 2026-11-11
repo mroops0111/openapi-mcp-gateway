@@ -7,6 +7,7 @@ from mcp.server import MCPServer
 from mcp.server.auth.handlers.metadata import MetadataHandler, ProtectedResourceMetadataHandler
 from mcp.server.auth.routes import (
     build_metadata,
+    build_resource_metadata_url,
     cors_middleware,
     create_auth_routes,
     create_protected_resource_routes,
@@ -15,12 +16,15 @@ from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, Re
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .auth.flows import AuthorizationCodeProvider
 from .openapi import ExposedTool, OpenAPISpec
+from .scopes import CallTarget, OperationAccess, ScopeChallengeGate
 from .settings import DNSRebindingProtectionConfig, GatewayConfig
 from .stores.base import TokenStore
 
@@ -46,6 +50,9 @@ class _ServerBundle(typing.NamedTuple):
     mcp: MCPServer
     spec: OpenAPISpec
     auth_provider: AuthorizationCodeProvider | None
+    # What each tool or operation requires of a token's scopes, and how a call names the one it reaches.
+    access: OperationAccess
+    call_target: CallTarget
     auth_settings: AuthSettings | None = None
     token_verifier: typing.Any | None = None
     protected_resource: ProtectedResourceMetadata | None = None
@@ -142,12 +149,35 @@ def mount_mcp_apps(
     Starlette runs only the root app's lifespan, so a mounted MCP app never starts its own session manager.
     """
     for bundle in servers:
-        app.mount(bundle.mount_path, build_mcp_asgi_app(bundle.mcp, transport, protection, host))
+        mcp_app = build_mcp_asgi_app(bundle.mcp, transport, protection, host)
+        _guard_scopes(mcp_app, bundle)
+        app.mount(bundle.mount_path, mcp_app)
     # Only ``streamable_http_app`` creates a session manager, and reading it before then raises.
     # An SSE connection runs its own session inside the request, so there is nothing to start.
     if transport == 'sse':
         return []
     return [bundle.mcp.session_manager for bundle in servers]
+
+
+def _guard_scopes(mcp_app: Starlette, bundle: _ServerBundle) -> None:
+    """Refuse a call the token's scopes do not cover with a ``403`` scope challenge, before the SDK reads the body.
+
+    Appended rather than added, since ``add_middleware`` puts it first,
+    and it needs the SDK's authentication middleware to have run.
+    """
+    resource_metadata_url = (
+        str(build_resource_metadata_url(bundle.auth_settings.resource_server_url))
+        if bundle.auth_settings and bundle.auth_settings.resource_server_url
+        else None
+    )
+    mcp_app.user_middleware.append(
+        Middleware(
+            ScopeChallengeGate,
+            access=bundle.access,
+            call_target=bundle.call_target,
+            resource_metadata_url=resource_metadata_url,
+        )
+    )
 
 
 @contextlib.asynccontextmanager

@@ -17,13 +17,14 @@ from mcp.server.auth.provider import (
     TokenError,
     construct_redirect_uri,
 )
-from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
+from mcp.server.auth.settings import AuthSettings, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from starlette.exceptions import HTTPException
 
 from ...stores.base import TokenStore
 from ..resolver import AuthorizationCodeAuthResolver
 from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
+from .clients import ClientDirectory, DynamicClientRegistry, PreRegisteredClientDirectory
 
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,9 @@ class AuthorizationCodeProvider:
     which is the cross-server credential reuse the MCP spec forbids.
     A record that names a different issuer or upstream, or none at all, is treated as absent,
     so the client re-registers or re-authorizes rather than failing outright.
+
+    ``clients`` is where the clients allowed to sign in are found.
+    It defaults to Dynamic Client Registration into ``store``.
     """
 
     def __init__(
@@ -109,37 +113,22 @@ class AuthorizationCodeProvider:
         issued_tokens: IssuedTokenPolicy,
         issuer: str,
         prefix: str = 'gateway',
+        clients: ClientDirectory | None = None,
     ) -> None:
         self.store = store
         self.upstream = upstream
         self.issued_tokens = issued_tokens
         self.issuer = issuer
+        self.clients = clients or DynamicClientRegistry(store, issuer)
         self._prefix = prefix
 
     # MCP SDK OAuthAuthorizationServerProvider interface
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        # A registration stored before issuer binding lives under the bare client_id and is never read here.
-        # The client is then unknown to this server and registers again, which is the migration path.
-        data = await self.store.get('mcp_client', self._client_key(client_id))
-        if data:
-            return OAuthClientInformationFull(**data)
-        return None
+        return await self.clients.get(client_id)
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        if not client_info.client_id:
-            raise ValueError('client_id is required')
-        await self.store.set(
-            'mcp_client',
-            self._client_key(client_info.client_id),
-            client_info.model_dump(exclude_none=True, mode='json'),
-        )
-        logger.info(
-            'Registered MCP client: client_id=%s application_type=%s prefix=%s',
-            client_info.client_id,
-            client_info.application_type,
-            self._prefix,
-        )
+        await self.clients.register(client_info)
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         """Return the upstream authorize URL after stashing PKCE/state payload in ``store``."""
@@ -154,6 +143,8 @@ class AuthorizationCodeProvider:
             'code_challenge': params.code_challenge,
             'redirect_uri_provided_explicitly': params.redirect_uri_provided_explicitly,
             'client_id': client_id,
+            # The scopes the SDK settled on for this client, or the default when it asked for none.
+            'scopes': params.scopes if params.scopes is not None else list(self.issued_tokens.scopes),
             'upstream_issuer': self.upstream.issuer,
             'upstream_authorization_server': self.upstream.authorization_server,
         }
@@ -355,7 +346,7 @@ class AuthorizationCodeProvider:
                 'redirect_uri': redirect_uri,
                 'redirect_uri_provided_explicitly': redirect_uri_provided_explicitly,
                 'expires_at': time.time() + 300,
-                'scopes': list(self.issued_tokens.scopes),
+                'scopes': state_data['scopes'],
                 'code_challenge': code_challenge,
                 **self._binding(),
             },
@@ -396,15 +387,6 @@ class AuthorizationCodeProvider:
         if not client.client_id:
             raise ValueError('client_id is required')
         return client.client_id
-
-    def _client_key(self, client_id: str) -> str:
-        """Key a registration by this server's issuer as well as its ``client_id``.
-
-        The MCP spec keys client credentials by issuer.
-        Keying the record, rather than only checking a field in it,
-        also keeps two servers from overwriting each other's registration of the same ``client_id``.
-        """
-        return f'{self.issuer} {client_id}'
 
     def _binding(self) -> dict[str, str]:
         """The fields that tie a persisted code or token to this issuer and this upstream."""
@@ -513,10 +495,12 @@ class AuthorizationCodeProvider:
             'mcp_refresh_token', mcp_refresh, 'mcp_access_token', mcp_access, ttl=self.issued_tokens.refresh_token_ttl
         )
 
+        # The granted scope is always stated, since RFC 6749 §5.1 requires it whenever it differs from the request.
         return OAuthToken(
             access_token=mcp_access,
             refresh_token=mcp_refresh,
             expires_in=self.issued_tokens.access_token_ttl,
+            scope=' '.join(scopes) or None,
         )
 
     async def _store_api_token(self, client_id: str, token: str, expires_in: int) -> None:
@@ -597,11 +581,16 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         gateway_url = flow_context.gateway_url.rstrip('/')
         callback_url = f'{gateway_url}{flow_context.mount_path}/auth/callback'
 
-        # auth.required_scopes names what a caller must hold.
-        # The gateway is the issuer here,
-        # so it is also what the gateway advertises and grants, rather than something it merely checks.
-        mcp_scopes = list(entry.auth.required_scopes) or [DEFAULT_MCP_SCOPE]
+        # The scopes every token carries and every request must hold, granted on top of a client's own scopes.
+        # With auth.scopes there are none, since each operation names its own scopes instead.
+        endpoint_scopes = (
+            [] if entry.auth.scopes is not None else list(entry.auth.required_scopes) or [DEFAULT_MCP_SCOPE]
+        )
         server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')
+        # The same string the metadata publishes as ``issuer``,
+        # since RFC 9207 compares the two without any normalisation.
+        issuer = str(server_url)
+        clients = self._client_directory(flow_context, endpoint_scopes, issuer)
 
         provider = AuthorizationCodeProvider(
             store=flow_context.store,
@@ -616,25 +605,20 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
                 issuer=entry.auth.upstream.resolve_issuer(),
             ),
             issued_tokens=IssuedTokenPolicy(
-                scopes=mcp_scopes,
+                scopes=endpoint_scopes,
                 access_token_ttl=entry.auth.mcp_access_token_ttl,
                 refresh_token_ttl=entry.auth.mcp_refresh_token_ttl,
             ),
-            # The same string the metadata publishes as ``issuer``,
-            # since RFC 9207 compares the two without any normalisation.
-            issuer=str(server_url),
+            issuer=issuer,
             prefix=entry.name,
+            clients=clients,
         )
         settings = AuthSettings(
             issuer_url=server_url,
             resource_server_url=server_url,
             revocation_options=RevocationOptions(enabled=True),
-            client_registration_options=ClientRegistrationOptions(
-                enabled=True,
-                valid_scopes=mcp_scopes,
-                default_scopes=mcp_scopes,
-            ),
-            required_scopes=mcp_scopes,
+            client_registration_options=clients.registration_options(endpoint_scopes),
+            required_scopes=endpoint_scopes,
         )
 
         logger.debug(
@@ -651,3 +635,16 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             provider=provider,
             settings=settings,
         )
+
+    @staticmethod
+    def _client_directory(flow_context: OAuthFlowContext, endpoint_scopes: list[str], issuer: str) -> ClientDirectory:
+        """The clients ``auth.clients`` declares, or Dynamic Client Registration when it declares none."""
+        entry = flow_context.entry
+        if entry.auth.clients:
+            return PreRegisteredClientDirectory(entry.auth.clients, endpoint_scopes)
+        logger.warning(
+            'Server "%s" accepts Dynamic Client Registration, which the MCP 2026-07-28 spec deprecates. '
+            'Declare the clients allowed to sign in under auth.clients instead.',
+            entry.name,
+        )
+        return DynamicClientRegistry(flow_context.store, issuer)

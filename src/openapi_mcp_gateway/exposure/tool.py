@@ -9,6 +9,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
 from ..openapi import ExposedTool, OperationInfo, ToolOverride
+from ..scopes import OperationAccess, UnrestrictedPolicy
 from ._shaping import shape_operation
 from ._shared import (
     _get_override,
@@ -185,11 +186,16 @@ def build_tool_function(
 
 
 class ToolGenerator:
-    """Register one MCP tool per operation onto ``mcp``, for static exposure."""
+    """Register one MCP tool per operation onto ``mcp``, for static exposure.
 
-    def __init__(self, mcp: MCPServer, binding: UpstreamBinding):
+    Each tool's scope requirement is recorded in ``access`` under the tool's name,
+    which is the name a ``tools/call`` and its ``Mcp-Name`` header carry.
+    """
+
+    def __init__(self, mcp: MCPServer, binding: UpstreamBinding, access: OperationAccess | None = None):
         self.mcp = mcp
         self.binding = binding
+        self.access = access or OperationAccess(UnrestrictedPolicy())
 
     def register(self, operations: list[OperationInfo]) -> list[ExposedTool]:
         """Declare one MCP tool per ``OperationInfo`` in ``operations``, returning what was exposed."""
@@ -217,6 +223,7 @@ class ToolGenerator:
             # which cannot carry OpenAPI keywords such as format, numeric bounds, pattern, enum, or composition.
             # Overwrite it with the contract built above, the same schema the tool function enforces.
             registered.parameters = input_schema
+            self.access.register(name, operation)
             exposed_tools.append(
                 ExposedTool(
                     name,

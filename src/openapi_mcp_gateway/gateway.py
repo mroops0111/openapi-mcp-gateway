@@ -24,7 +24,7 @@ from .auth.resolver import (
     PassthroughAuthResolver,
 )
 from .auth.types import AuthTypeContext, build_auth
-from .exposure import MetaToolGenerator, ResourceGenerator, ToolGenerator, UpstreamBinding
+from .exposure import DynamicOperationTarget, MetaToolGenerator, ResourceGenerator, ToolGenerator, UpstreamBinding
 from .fastapi import (
     collect_marked_routes,
     filter_marked_operations,
@@ -34,6 +34,14 @@ from .fastapi import (
 )
 from .openapi import ExposedTool, McpIntegration, OpenAPISpec, OperationInfo, load_spec, parse_spec
 from .policy import filter_operations, unmatched_patterns
+from .scopes import (
+    CallTarget,
+    OperationAccess,
+    ScopeFilterMiddleware,
+    ScopePolicy,
+    ToolNameTarget,
+    build_scope_policy,
+)
 from .settings import AuthConfig, ExposureConfig, GatewayConfig, PolicyConfig, ServerConfig
 from .stores import create_store
 
@@ -45,14 +53,8 @@ _FASTAPI_BASE_URL = 'http://fastapi.local'
 _DEFAULT_FASTAPI_PASSTHROUGH_HEADERS: tuple[str, ...] = ('Authorization', 'X-API-Key')
 
 # The list and discover results are static for a running gateway,
-# so advertise a public freshness hint (2026-07-28 CacheableResult).
+# so advertise a freshness hint (2026-07-28 CacheableResult).
 _STATIC_CACHE_TTL_MS = 300_000
-_STATIC_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
-    'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
-    'resources/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
-    'resources/templates/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
-    'server/discover': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
-}
 
 
 def _warn_if_deprecated_transport(transport: str) -> None:
@@ -209,6 +211,29 @@ def _policy_summary(policy: PolicyConfig) -> str:
     if policy.deny:
         filters.append(f'deny {policy.deny}')
     return ', '.join(filters) if filters else 'no filter, every operation exposed'
+
+
+def _cache_hints(scope_policy: ScopePolicy) -> dict[CacheableMethod, CacheHint]:
+    """Freshness hints for the static lists, where ``tools/list`` turns private once it depends on the token."""
+    return {
+        'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=scope_policy.list_cache_scope),
+        'resources/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
+        'resources/templates/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
+        'server/discover': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
+    }
+
+
+def _refuse_undefined_client_scopes(server_config: ServerConfig, scope_policy: ScopePolicy) -> None:
+    """Refuse a client granted a scope the server does not define, since it would open nothing."""
+    undefined = {
+        client_id: sorted(set(client.scopes) - set(scope_policy.defined_scopes))
+        for client_id, client in server_config.auth.clients.items()
+    }
+    named = '; '.join(f'{client_id}: {", ".join(scopes)}' for client_id, scopes in undefined.items() if scopes)
+    if named:
+        raise ValueError(
+            f'Server "{server_config.name}": auth.clients grant scopes auth.scopes does not define ({named}).'
+        )
 
 
 def _auth_summary(auth: AuthConfig) -> str:
@@ -516,8 +541,11 @@ class Gateway:
     ) -> None:
         auth = self._resolve_auth(server_config, spec)
         auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
+        scope_policy = build_scope_policy(server_config.auth.scopes, operations, server_config.name)
+        _refuse_undefined_client_scopes(server_config, scope_policy)
+        access = OperationAccess(scope_policy)
         mcp = self._build_mcp_server(
-            server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions
+            server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions, access
         )
         if auth.provider is not None:
             self._register_oauth_callback(mcp, auth.provider)
@@ -545,6 +573,7 @@ class Gateway:
             )
 
         resource_names: list[str] = []
+        call_target: CallTarget = ToolNameTarget()
         if server_config.exposure.style == 'dynamic':
             resource_optins = [operation.operation_id for operation in operations if operation.resource_exposed]
             if resource_optins:
@@ -567,7 +596,9 @@ class Gateway:
                 mcp=mcp,
                 binding=binding,
                 field_weight_overrides=search.field_weights.model_dump(exclude_none=True) if search else None,
+                access=access,
             ).register(operations)
+            call_target = DynamicOperationTarget()
         else:
             resource_ops, tool_ops = _partition_operations(
                 operations, server_config.name, server_config.exposure.promote_resources
@@ -577,7 +608,7 @@ class Gateway:
                     resource_ops
                 )
             if tool_ops:
-                exposed_tools = ToolGenerator(mcp=mcp, binding=binding).register(tool_ops)
+                exposed_tools = ToolGenerator(mcp=mcp, binding=binding, access=access).register(tool_ops)
 
         self._servers.append(
             _ServerBundle(
@@ -589,6 +620,8 @@ class Gateway:
                 auth_settings=auth.settings,
                 token_verifier=auth.verifier,
                 protected_resource=auth.protected_resource,
+                access=access,
+                call_target=call_target,
                 base_url=base_url,
                 auth_summary=_auth_summary(server_config.auth),
                 auth_type=server_config.auth.type,
@@ -631,13 +664,15 @@ class Gateway:
         name: str,
         auth_provider: AuthorizationCodeProvider | None,
         auth_settings: AuthSettings | None,
-        token_verifier: typing.Any | None = None,
-        instructions: str | None = None,
+        token_verifier: typing.Any | None,
+        instructions: str | None,
+        access: OperationAccess,
     ) -> MCPServer:
         """Build the MCP server, wiring whichever of provider or verifier the flow produced.
 
         The SDK rejects a server given both,
         since issuing tokens and validating someone else's are alternatives rather than layers.
+        ``access`` decides which tools each token sees and may call.
         """
 
         @contextlib.asynccontextmanager
@@ -654,7 +689,8 @@ class Gateway:
             auth=auth_settings,
             instructions=instructions,
             lifespan=lifespan,
-            cache_hints=_STATIC_CACHE_HINTS,
+            cache_hints=_cache_hints(access.policy),
+            middleware=[ScopeFilterMiddleware(access)],
         )
 
     @staticmethod

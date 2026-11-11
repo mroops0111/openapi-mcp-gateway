@@ -1,4 +1,5 @@
 import pathlib
+import re
 import typing
 
 import pydantic
@@ -12,6 +13,13 @@ from .openapi import McpIntegration
 # An unknown key is a mistake rather than a preference, and silently dropping one is worse than refusing it.
 # policy.annotated_only decides which operations a caller may invoke,
 # so a typo there once widened a curated surface to the whole spec with no signal at all.
+
+
+# What an applicability error names for a setting only the gateway's own token minting reads.
+_MINTING_FLOW = 'auth.flow authorization_code, the only flow where the gateway mints tokens'
+
+# One RFC 6749 §3.3 scope-token, which excludes spaces, double quotes and backslashes.
+_SCOPE_TOKEN = re.compile(r'[\x21\x23-\x5B\x5D-\x7E]+')
 
 
 # The resolver moved to the leaf ``env`` module so exposure/ can reuse it without importing settings.
@@ -96,6 +104,73 @@ class UpstreamAuthConfig(pydantic.BaseModel):
         return params
 
 
+def _refuse_invalid_scope_tokens(scopes: typing.Iterable[str], location: str) -> None:
+    """Refuse a scope name a token could not carry, since one with a space would split into two scopes."""
+    invalid = sorted(scope for scope in scopes if not _SCOPE_TOKEN.fullmatch(scope))
+    if invalid:
+        raise ValueError(f'{location} names invalid scopes {invalid!r}. A scope cannot contain spaces, " or \\.')
+
+
+class ManualScopeConfig(pydantic.BaseModel):
+    """One hand-written MCP scope and the operations it opens.
+
+    ``operations`` takes the same patterns as ``policy.allow``.
+    ``description`` is what a person approving the scope is shown.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid')
+
+    description: str
+    operations: list[str] = pydantic.Field(min_length=1)
+
+
+class ScopesConfig(pydantic.BaseModel):
+    """The MCP scopes of one server, and which operations each opens.
+
+    An operation opens to a token carrying any scope that covers it.
+    ``auto`` derives scopes from the spec, ``manual`` declares them by hand, and both may cover one operation.
+    ``unscoped`` decides an operation no scope covers.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid')
+
+    auto: typing.Literal['none', 'tags'] = 'none'
+    unscoped: typing.Literal['deny', 'allow'] = 'deny'
+    manual: dict[str, ManualScopeConfig] = pydantic.Field(default_factory=dict)
+
+    @pydantic.field_validator('manual')
+    @classmethod
+    def _validate_scope_names(cls, manual: dict[str, ManualScopeConfig]) -> dict[str, ManualScopeConfig]:
+        _refuse_invalid_scope_tokens(manual, 'auth.scopes.manual')
+        return manual
+
+
+class ClientConfig(pydantic.BaseModel):
+    """One pre-registered MCP client, keyed by its ``client_id`` under ``auth.clients``.
+
+    Without ``client_secret`` it is a public client, held to PKCE alone.
+    Without ``redirect_uris`` any loopback redirect is accepted, on any port and path, as OAuth 2.1 requires,
+    which is what a CLI client listening on a local port needs.
+    ``scopes`` are every scope the client is granted, and each must be one ``auth.scopes`` defines.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid')
+
+    client_secret: str | None = None
+    redirect_uris: list[pydantic.AnyUrl] | None = pydantic.Field(default=None, min_length=1)
+    scopes: list[str] = pydantic.Field(default_factory=list)
+
+    @pydantic.field_validator('scopes')
+    @classmethod
+    def _validate_scope_names(cls, scopes: list[str]) -> list[str]:
+        _refuse_invalid_scope_tokens(scopes, 'auth.clients.<client>.scopes')
+        return scopes
+
+    def resolve_client_secret(self) -> str | None:
+        """Client secret after env-var substitution."""
+        return _resolve_env_var(self.client_secret)
+
+
 class AuthConfig(pydantic.BaseModel):
     """Authentication for one server, on both sides of the gateway.
 
@@ -124,6 +199,11 @@ class AuthConfig(pydantic.BaseModel):
     # Outbound.
     upstream: UpstreamAuthConfig = UpstreamAuthConfig()
 
+    # Inbound, and for ``authorization_code`` only, where the gateway mints the MCP tokens.
+    # Which operations each scope opens, and the clients allowed to sign in with the scopes each is granted.
+    scopes: ScopesConfig | None = None
+    clients: dict[str, ClientConfig] = pydantic.Field(default_factory=dict)
+
     # Lifetimes of the MCP-side tokens the gateway mints for authorization_code, in seconds.
     # The refresh TTL is the practical idle window, since each refresh issues a fresh refresh token,
     # so a client refreshing within it slides forward and never re-authorizes.
@@ -146,6 +226,7 @@ class AuthConfig(pydantic.BaseModel):
         # ``token_exchange`` is never inferred from a spec, so an unset flow rules it out.
         # ``authorization_code`` is, so an unset flow leaves its fields plausible.
         flow_unresolved = oauth and self.flow is None
+        mints_tokens = self.flow == 'authorization_code' or flow_unresolved
 
         applicable: dict[str, tuple[bool, str]] = {
             'token': (self.type in ('bearer', 'api_key'), 'auth.type bearer or api_key'),
@@ -156,14 +237,10 @@ class AuthConfig(pydantic.BaseModel):
                 self.flow in ('authorization_code', 'token_exchange') or flow_unresolved,
                 'auth.flow authorization_code or token_exchange, the flows that verify an inbound token',
             ),
-            'mcp_access_token_ttl': (
-                self.flow == 'authorization_code' or flow_unresolved,
-                'auth.flow authorization_code, the only flow where the gateway mints tokens',
-            ),
-            'mcp_refresh_token_ttl': (
-                self.flow == 'authorization_code' or flow_unresolved,
-                'auth.flow authorization_code, the only flow where the gateway mints tokens',
-            ),
+            'mcp_access_token_ttl': (mints_tokens, _MINTING_FLOW),
+            'mcp_refresh_token_ttl': (mints_tokens, _MINTING_FLOW),
+            'scopes': (mints_tokens, _MINTING_FLOW),
+            'clients': (mints_tokens, _MINTING_FLOW),
         }
         for field, (is_applicable, requirement) in applicable.items():
             if field in self.model_fields_set and not is_applicable:
@@ -177,6 +254,31 @@ class AuthConfig(pydantic.BaseModel):
             raise ValueError(
                 'auth.upstream.issuer needs auth.flow authorization_code, '
                 'the only flow with an authorization response to check, so it would have no effect here.'
+            )
+        return self
+
+    @pydantic.model_validator(mode='after')
+    def _reject_scope_settings_that_cannot_take_effect(self) -> typing.Self:
+        """Refuse operation scopes no client could receive, and endpoint scopes that would stop no one.
+
+        With ``scopes`` set, every token is minted from a pre-registered client's own scopes,
+        so an endpoint-wide ``required_scopes`` checks only what the gateway itself just granted.
+        """
+        if self.scopes is not None and not self.clients:
+            raise ValueError(
+                'auth.scopes needs auth.clients, since only a pre-registered client is granted scopes, '
+                'so it would have no effect here.'
+            )
+        if self.scopes is not None and 'required_scopes' in self.model_fields_set:
+            raise ValueError(
+                'auth.required_scopes cannot be combined with auth.scopes. '
+                'Every token is minted from a client in auth.clients, so an endpoint-wide scope would stop no one.'
+            )
+        scoped_clients = sorted(client_id for client_id, client in self.clients.items() if client.scopes)
+        if self.scopes is None and scoped_clients:
+            raise ValueError(
+                f'auth.clients ({", ".join(scoped_clients)}) grant scopes but auth.scopes defines none, '
+                'so they would have no effect here.'
             )
         return self
 
@@ -362,6 +464,19 @@ class ServerConfig(pydantic.BaseModel):
             raise ValueError('headers cannot set Authorization. The upstream credential belongs to auth.')
         return headers
 
+    @pydantic.model_validator(mode='after')
+    def _refuse_scopes_with_resources(self) -> typing.Self:
+        """Refuse operation scopes beside promoted resources.
+
+        Scopes guard tool calls, so a resource read would reach the same operation unguarded.
+        """
+        if self.auth.scopes is not None and self.exposure.promote_resources:
+            raise ValueError(
+                'auth.scopes cannot be combined with exposure.promote_resources yet, '
+                'since a resource read would reach an operation no scope guards.'
+            )
+        return self
+
     def resolve_headers(self) -> dict[str, str]:
         """Static upstream headers after env-var substitution."""
         return {
@@ -472,7 +587,7 @@ def single_spec_layer(
 def build_gateway_config(*layers: dict[str, typing.Any]) -> GatewayConfig:
     """Compose layered partial-settings dicts (later wins) into a validated ``GatewayConfig``.
 
-    The contract for a *layer* is: a dict containing only the fields that source actually supplies.
+    A *layer* is a dict containing only the fields that source actually supplies.
     Pydantic defaults form the implicit floor, so callers never need to repeat them.
     Order encodes precedence.
     Typical CLI use is::

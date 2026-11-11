@@ -120,6 +120,10 @@ servers:
       token: ${SOME_TOKEN}
       # oauth2 also takes flow: authorization_code (default) / client_credentials / token_exchange
       # required_scopes: for token_exchange, what an inbound token must already carry
+      # scopes: for authorization_code, which MCP scopes open which operations
+      #   {auto: tags, unscoped: deny, manual: {<scope>: {description: ..., operations: ["DELETE *"]}}}
+      # clients: the pre-registered clients allowed to sign in, which turns off dynamic registration
+      #   {<client_id>: {scopes: [...], client_secret: ${SOME_SECRET}, redirect_uris: [...]}}
       upstream: # everything the gateway sends to the upstream authorization server
         client_id: ${SOME_ID}
         scopes: [...]
@@ -172,6 +176,8 @@ uvx openapi-mcp-gateway --config <their-config>.yml
 ```
 
 ## Notes
+
+These bound what the skill does beyond writing the file.
 
 - You produce a config only. You do not start a long-running server for the user, and you do not wire the gateway into their Claude Code. The gateway is a neutral runtime the user points any MCP client at.
 - When confidence is low (a synthesized spec, a guessed auth style), say so plainly and list what needs human confirmation. A wrong assumption should surface, not hide.
