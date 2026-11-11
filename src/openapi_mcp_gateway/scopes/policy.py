@@ -34,7 +34,7 @@ class ScopePolicy(abc.ABC):
     @property
     @abc.abstractmethod
     def list_cache_scope(self) -> typing.Literal['public', 'private']:
-        """The cache scope of ``tools/list``, which is private once the list depends on who asks."""
+        """The cache scope of the tool and resource lists, which is private once they depend on who asks."""
 
     @abc.abstractmethod
     def requirement_for(self, operation: OperationInfo) -> ScopeRequirement:

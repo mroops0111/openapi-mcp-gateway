@@ -4,8 +4,9 @@ import typing
 
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
+from mcp.shared.exceptions import MCPError
 from mcp.shared.inbound import MCP_METHOD_HEADER, MCP_NAME_HEADER, MCP_PROTOCOL_VERSION_HEADER, decode_header_value
-from mcp.types import CallToolResult, TextContent
+from mcp.types import INVALID_REQUEST, CallToolResult, TextContent
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
@@ -15,27 +16,31 @@ from .access import OperationAccess, granted_mcp_scopes
 from .requirement import ScopeRequirement
 
 
-class CallTarget(abc.ABC):
-    """Which registered name a ``tools/call`` addresses, read from the 2026-07-28 request headers alone.
+class RequestTarget(abc.ABC):
+    """Which registered name a request addresses, read from the 2026-07-28 request headers alone.
 
     The SDK rejects a header that disagrees with the body, so the header can be trusted without parsing the body.
     """
 
     @abc.abstractmethod
     def resolve(self, headers: collections.abc.Mapping[str, str]) -> str | None:
-        """Return the name whose scope requirement applies, or ``None`` when the call addresses no guarded name."""
+        """Return the name whose scope requirement applies, or ``None`` when the request addresses no guarded name."""
 
 
-class ToolNameTarget(CallTarget):
-    """The tool itself, named in ``Mcp-Name``, for static exposure where each operation is its own tool."""
+class NameHeaderTarget(RequestTarget):
+    """The name ``Mcp-Name`` carries, which is the tool for ``tools/call`` and the URI for ``resources/read``.
+
+    It is the whole target under static exposure, where each operation is its own tool.
+    """
 
     def resolve(self, headers: collections.abc.Mapping[str, str]) -> str | None:
         return decode_header_value(headers.get(MCP_NAME_HEADER))
 
 
 class ScopeChallengeGate:
-    """ASGI middleware refusing a ``tools/call`` the token's scopes do not cover, with ``403`` and a scope challenge.
+    """ASGI middleware refusing a request the token's scopes do not cover, with ``403`` and a scope challenge.
 
+    It guards ``tools/call``, through the target the exposure style names, and ``resources/read``.
     It runs after the SDK authenticates the request and before the SDK reads the body,
     since only an HTTP response can carry the ``insufficient_scope`` challenge a client steps up from.
     Requests from clients older than 2026-07-28 carry no routing headers and pass through,
@@ -46,12 +51,12 @@ class ScopeChallengeGate:
         self,
         app: ASGIApp,
         access: OperationAccess,
-        call_target: CallTarget,
+        tool_call_target: RequestTarget,
         resource_metadata_url: str | None,
     ) -> None:
         self.app = app
         self._access = access
-        self._call_target = call_target
+        self._targets: dict[str, RequestTarget] = {'tools/call': tool_call_target, 'resources/read': NameHeaderTarget()}
         self._resource_metadata_url = resource_metadata_url
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -67,7 +72,7 @@ class ScopeChallengeGate:
         await response(scope, receive, send)
 
     def _unmet_requirement(self, scope: Scope) -> ScopeRequirement | None:
-        """The requirement an authenticated 2026-07-28 ``tools/call`` fails, or ``None`` to let the request through.
+        """The requirement an authenticated 2026-07-28 request fails, or ``None`` to let the request through.
 
         An unauthenticated request passes, so the SDK answers it with its own ``401``.
         """
@@ -77,16 +82,15 @@ class ScopeChallengeGate:
         headers = Headers(scope=scope)
         if headers.get(MCP_PROTOCOL_VERSION_HEADER) not in MODERN_PROTOCOL_VERSIONS:
             return None
-        if headers.get(MCP_METHOD_HEADER) != 'tools/call':
-            return None
-        name = self._call_target.resolve(headers)
+        target = self._targets.get(headers.get(MCP_METHOD_HEADER, ''))
+        name = target.resolve(headers) if target else None
         if name is None:
             return None
         requirement = self._access.requirement(name)
         return None if requirement.is_met(frozenset(user.scopes)) else requirement
 
     def _challenge(self, requirement: ScopeRequirement) -> str:
-        """The RFC 6750 ``WWW-Authenticate`` value, naming every scope that would satisfy the call at once."""
+        """The RFC 6750 ``WWW-Authenticate`` value, naming every scope that would satisfy the request at once."""
         parameters = {
             'error': 'insufficient_scope',
             'scope': ' '.join(requirement.challenge),
@@ -97,9 +101,10 @@ class ScopeChallengeGate:
 
 
 class ScopeFilterMiddleware:
-    """SDK middleware hiding tools the token's scopes do not cover, and refusing calls to them.
+    """SDK middleware hiding the tools and resources the token's scopes do not cover, and refusing requests for them.
 
-    The refusal is a tool error, which a client cannot step up from.
+    A refused tool call is a tool error and a refused resource read a protocol error,
+    which a client cannot step up from.
     It is the deprecated path for clients older than 2026-07-28, which ``ScopeChallengeGate`` cannot read,
     and goes away with legacy protocol support.
     """
@@ -108,16 +113,58 @@ class ScopeFilterMiddleware:
         self._access = access
 
     async def __call__(self, ctx: ServerRequestContext[typing.Any, typing.Any], call_next: CallNext) -> HandlerResult:
-        if ctx.method == 'tools/call':
-            requirement = self._access.requirement(str((ctx.params or {}).get('name', '')))
+        guarded = _GUARDED_REQUESTS.get(ctx.method)
+        if guarded is not None:
+            requirement = self._access.requirement(str((ctx.params or {}).get(guarded.name_param, '')))
             if not requirement.is_met(granted_mcp_scopes()):
-                return CallToolResult(content=[TextContent(type='text', text=requirement.refusal)], is_error=True)
-        # Handlers return the wire form by the time middleware sees it, so the list is filtered as JSON.
+                return guarded.refuse(requirement.refusal)
+        # Handlers return the wire form by the time middleware sees it, so a list is filtered as JSON.
         result = await call_next(ctx)
-        if ctx.method == 'tools/list' and isinstance(result, dict):
+        listing = _LISTINGS.get(ctx.method)
+        if listing is not None and isinstance(result, dict):
             granted = granted_mcp_scopes()
             return {
                 **result,
-                'tools': [tool for tool in result['tools'] if self._access.permits(tool['name'], granted)],
+                listing.items_key: [
+                    item for item in result[listing.items_key] if self._access.permits(item[listing.name_key], granted)
+                ],
             }
         return result
+
+
+class _GuardedRequest(typing.NamedTuple):
+    """A request for one tool or resource, named by a body parameter, and how its refusal is answered."""
+
+    name_param: str
+    refuse: typing.Callable[[str], HandlerResult]
+
+
+class _Listing(typing.NamedTuple):
+    """A list result, filtered item by item by the name each item carries."""
+
+    items_key: str
+    name_key: str
+
+
+def _refuse_tool_call(refusal: str) -> HandlerResult:
+    """A tool error, the result a tool call that cannot run answers with."""
+    return CallToolResult(content=[TextContent(type='text', text=refusal)], is_error=True)
+
+
+def _refuse_resource_read(refusal: str) -> HandlerResult:
+    """A protocol error, since a resource read has no error result of its own."""
+    raise MCPError(INVALID_REQUEST, refusal)
+
+
+# The requests the deprecated path refuses, keyed by method.
+_GUARDED_REQUESTS: dict[str, _GuardedRequest] = {
+    'tools/call': _GuardedRequest('name', _refuse_tool_call),
+    'resources/read': _GuardedRequest('uri', _refuse_resource_read),
+}
+
+# The lists filtered by what the token's scopes open, keyed by method.
+_LISTINGS: dict[str, _Listing] = {
+    'tools/list': _Listing('tools', 'name'),
+    'resources/list': _Listing('resources', 'uri'),
+    'resources/templates/list': _Listing('resourceTemplates', 'uriTemplate'),
+}

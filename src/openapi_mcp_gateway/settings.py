@@ -441,19 +441,6 @@ class ServerConfig(pydantic.BaseModel):
             raise ValueError('headers cannot set Authorization. The upstream credential belongs to auth.')
         return headers
 
-    @pydantic.model_validator(mode='after')
-    def _refuse_scopes_with_resources(self) -> typing.Self:
-        """Refuse operation scopes beside promoted resources.
-
-        Scopes guard tool calls, so a resource read would reach the same operation unguarded.
-        """
-        if self.auth.operation_scopes is not None and self.exposure.promote_resources:
-            raise ValueError(
-                'auth.operation_scopes cannot be combined with exposure.promote_resources yet, '
-                'since a resource read would reach an operation no scope guards.'
-            )
-        return self
-
     def resolve_headers(self) -> dict[str, str]:
         """Static upstream headers after env-var substitution."""
         return {

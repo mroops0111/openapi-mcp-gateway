@@ -12,7 +12,7 @@ from mcp.shared.inbound import MCP_NAME_HEADER, MCP_PARAM_HEADER_PREFIX, X_MCP_H
 from mcp.types import CallToolResult
 
 from ..openapi import ExposedTool, OperationInfo
-from ..scopes import CallTarget, OperationAccess, UnrestrictedPolicy, granted_mcp_scopes
+from ..scopes import OperationAccess, RequestTarget, UnrestrictedPolicy, granted_mcp_scopes
 from ._bm25 import BM25FIndex
 from ._shaping import shape_operation
 from ._shared import _get_override, build_input_schema, derive_description, derive_name
@@ -61,7 +61,7 @@ _CALL_OPERATION_DESCRIPTION = (
 )
 
 
-class DynamicOperationTarget(CallTarget):
+class DynamicOperationTarget(RequestTarget):
     """The operation a ``call_operation`` invokes, named in its ``Mcp-Param-Operation`` header.
 
     The other meta-tools reach no single operation, so they address no guarded name.

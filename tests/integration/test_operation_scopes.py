@@ -27,17 +27,26 @@ LEGACY = 'legacy'
 # The pre-registered clients every scoped server declares, by what each may do to pets.
 READER = 'reader'
 DELETER = 'deleter'
-CLIENTS = {READER: {'scopes': ['pets:read']}, DELETER: {'scopes': ['pets:read', 'pets:delete']}}
+WRITER = 'writer'
+CLIENTS = {
+    READER: {'scopes': ['pets:read']},
+    DELETER: {'scopes': ['pets:read', 'pets:delete']},
+    WRITER: {'scopes': ['pets:write']},
+}
 
 # The tools a token holding only ``pets:read`` sees on the petstore fixture.
 READ_TOOLS = ['list_pets', 'get_pet_by_id']
 
-# The challenge a reader is answered with when it calls ``delete_pet``.
+# The challenges a token is answered with when its scopes lack the one named.
 DELETE_CHALLENGE = (
     'Bearer error="insufficient_scope", scope="pets:delete", '
     f'resource_metadata="{GATEWAY_URL}/.well-known/oauth-protected-resource/petstore", '
     'error_description="This operation needs one of these scopes: pets:delete."'
 )
+READ_CHALLENGE = DELETE_CHALLENGE.replace('pets:delete', 'pets:read')
+
+# A pet read through the resource the petstore's ``getPetById`` is promoted to.
+PET_RESOURCE = 'petstore://pets/7'
 
 
 @pytest.fixture
@@ -48,6 +57,7 @@ def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gatew
         operation_scopes: dict[str, typing.Any] | None = None,
         clients: dict[str, typing.Any] | None = None,
         style: str = 'static',
+        promote_resources: bool = False,
     ) -> Gateway:
         auth = {
             'type': 'oauth2',
@@ -55,7 +65,8 @@ def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gatew
             'operation_scopes': operation_scopes if operation_scopes is not None else {'auto': 'tags'},
             'clients': clients or CLIENTS,
         }
-        server = {'name': 'petstore', 'spec': str(petstore_json_path), 'auth': auth, 'exposure': {'style': style}}
+        exposure = {'style': style, 'promote_resources': promote_resources}
+        server = {'name': 'petstore', 'spec': str(petstore_json_path), 'auth': auth, 'exposure': exposure}
         return Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
 
     return make
@@ -159,6 +170,48 @@ class TestDynamicExposure:
         assert result.is_error
         assert 'pets:delete' in _text(result)
         assert upstream_requests == []
+
+
+class TestPromotedResources:
+    """A resource promoted from an operation is listed and read only under the scopes that operation requires."""
+
+    @pytest.fixture
+    def gateway(self, make_gateway) -> Gateway:
+        return make_gateway(promote_resources=True)
+
+    @pytest.mark.parametrize('mode', [MODERN, LEGACY])
+    @pytest.mark.parametrize(
+        ('client_id', 'resources', 'templates'),
+        [(READER, ['petstore://pets'], ['petstore://pets/{petId}']), (WRITER, [], [])],
+    )
+    async def test_each_client_lists_only_what_its_scopes_open(self, gateway, mode, client_id, resources, templates):
+        async with _connect(gateway, client_id, mode) as session:
+            listed = await session.client.list_resources()
+            listed_templates = await session.client.list_resource_templates()
+        assert [str(resource.uri) for resource in listed.resources] == resources
+        assert [template.uri_template for template in listed_templates.resource_templates] == templates
+        assert listed.model_dump(by_alias=True)['cacheScope'] == 'private'
+
+    async def test_a_modern_client_is_challenged_over_http(self, gateway, upstream_requests):
+        """``Mcp-Name`` carries the URI, which the template it expands from decides."""
+        async with _connect(gateway, WRITER, MODERN) as session:
+            with pytest.raises(MCPError):
+                await session.client.read_resource(PET_RESOURCE)
+        assert session.refusal.status_code == 403
+        assert session.refusal.headers['www-authenticate'] == READ_CHALLENGE
+        assert upstream_requests == []
+
+    async def test_a_legacy_client_receives_a_protocol_error(self, gateway, upstream_requests):
+        async with _connect(gateway, WRITER, LEGACY) as session:
+            with pytest.raises(MCPError, match='pets:read'):
+                await session.client.read_resource(PET_RESOURCE)
+        assert upstream_requests == []
+
+    @pytest.mark.parametrize('mode', [MODERN, LEGACY])
+    async def test_a_read_within_the_scopes_reaches_the_upstream(self, gateway, upstream_requests, mode):
+        async with _connect(gateway, READER, mode) as session:
+            await session.client.read_resource(PET_RESOURCE)
+        assert [(request.method, request.url.path) for request in upstream_requests] == [('GET', '/v1/pets/7')]
 
 
 class TestAuthorizationServer:

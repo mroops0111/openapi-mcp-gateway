@@ -35,11 +35,11 @@ from .fastapi import (
 from .openapi import ExposedTool, McpIntegration, OpenAPISpec, OperationInfo, load_spec, parse_spec
 from .policy import filter_operations, unmatched_patterns
 from .scopes import (
-    CallTarget,
+    NameHeaderTarget,
     OperationAccess,
+    RequestTarget,
     ScopeFilterMiddleware,
     ScopePolicy,
-    ToolNameTarget,
     build_mcp_scope_policy,
 )
 from .settings import AuthConfig, ExposureConfig, GatewayConfig, PolicyConfig, ServerConfig
@@ -385,7 +385,7 @@ class Gateway:
             )
 
         resource_names: list[str] = []
-        call_target: CallTarget = ToolNameTarget()
+        tool_call_target: RequestTarget = NameHeaderTarget()
         if server_config.exposure.style == 'dynamic':
             resource_optins = [operation.operation_id for operation in operations if operation.resource_exposed]
             if resource_optins:
@@ -410,15 +410,15 @@ class Gateway:
                 field_weight_overrides=search.field_weights.model_dump(exclude_none=True) if search else None,
                 access=access,
             ).register(operations)
-            call_target = DynamicOperationTarget()
+            tool_call_target = DynamicOperationTarget()
         else:
             resource_ops, tool_ops = _partition_operations(
                 operations, server_config.name, server_config.exposure.promote_resources
             )
             if resource_ops:
-                resource_names = ResourceGenerator(mcp=mcp, binding=binding, server_name=server_config.name).register(
-                    resource_ops
-                )
+                resource_names = ResourceGenerator(
+                    mcp=mcp, binding=binding, server_name=server_config.name, access=access
+                ).register(resource_ops)
             if tool_ops:
                 exposed_tools = ToolGenerator(mcp=mcp, binding=binding, access=access).register(tool_ops)
 
@@ -433,7 +433,7 @@ class Gateway:
                 token_verifier=auth.verifier,
                 protected_resource=auth.protected_resource,
                 access=access,
-                call_target=call_target,
+                tool_call_target=tool_call_target,
                 base_url=base_url,
                 auth_summary=_auth_summary(server_config.auth),
                 auth_type=server_config.auth.type,
@@ -703,11 +703,12 @@ def _policy_summary(policy: PolicyConfig) -> str:
 
 
 def _cache_hints(mcp_scope_policy: ScopePolicy) -> dict[CacheableMethod, CacheHint]:
-    """Freshness hints for the static lists, where ``tools/list`` turns private once it depends on the token."""
+    """Freshness hints for the static lists, where the tool and resource lists turn private once they depend on the token."""
+    list_cache_scope = mcp_scope_policy.list_cache_scope
     return {
-        'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=mcp_scope_policy.list_cache_scope),
-        'resources/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
-        'resources/templates/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
+        'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=list_cache_scope),
+        'resources/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=list_cache_scope),
+        'resources/templates/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=list_cache_scope),
         'server/discover': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
     }
 

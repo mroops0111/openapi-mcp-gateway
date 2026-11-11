@@ -516,18 +516,6 @@ class TestScopeSettings:
         with pytest.raises(pydantic.ValidationError, match=refusal):
             AuthConfig.model_validate({'type': 'oauth2', **auth})
 
-    def test_scopes_cannot_guard_promoted_resources(self):
-        """A resource read would reach the operation with no scope check."""
-        with pytest.raises(pydantic.ValidationError, match=r'exposure\.promote_resources'):
-            ServerConfig.model_validate(
-                {
-                    'name': 'petstore',
-                    'spec': 'petstore.json',
-                    'auth': {'type': 'oauth2', 'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {}}},
-                    'exposure': {'promote_resources': True},
-                }
-            )
-
 
 class TestSearchFieldWeights:
     """``exposure.search.field_weights`` overrides search ranking field by field, and refuses what cannot work."""

@@ -7,6 +7,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, TextContent
 
 from ..openapi import OperationInfo, ParameterInfo
+from ..scopes import OperationAccess, UnrestrictedPolicy
 from ._content import binary_content_data
 from ._shared import (
     _get_override,
@@ -155,12 +156,17 @@ class ResourceGenerator:
 
     Inputs are assumed to be GET operations with no required non-path parameters.
     URI placeholders are sanitised to valid Python identifiers, so MCPServer's template regex matches.
+    Each resource's scope requirement is recorded in ``access`` under its URI or URI template,
+    which is what a ``resources/read`` and its ``Mcp-Name`` header carry.
     """
 
-    def __init__(self, mcp: MCPServer, binding: UpstreamBinding, server_name: str):
+    def __init__(
+        self, mcp: MCPServer, binding: UpstreamBinding, server_name: str, access: OperationAccess | None = None
+    ):
         self.mcp = mcp
         self.binding = binding
         self.server_name = server_name
+        self.access = access or OperationAccess(UnrestrictedPolicy())
 
     def register(self, operations: list[OperationInfo]) -> list[str]:
         """Declare one MCP resource per ``OperationInfo`` in ``operations``, returning the resource names."""
@@ -176,6 +182,7 @@ class ResourceGenerator:
                 description=derive_description(operation, override.description if override else None),
                 mime_type=derive_resource_mime_type(operation),
             )(read_function)
+            self.access.register_resource(uri, operation)
             resource_names.append(name)
             logger.debug('Resource registered: %s ← %s %s', uri, operation.method.upper(), operation.path)
         logger.info('Registered %d MCP resource(s) on server "%s"', len(operations), self.mcp.name)

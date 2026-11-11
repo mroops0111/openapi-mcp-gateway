@@ -6,10 +6,10 @@ from openapi_mcp_gateway.exposure import DynamicOperationTarget
 from openapi_mcp_gateway.openapi import OperationInfo
 from openapi_mcp_gateway.scopes import (
     AnyScope,
+    NameHeaderTarget,
     OperationAccess,
     ScopeCatalog,
     TagMethodDerivation,
-    ToolNameTarget,
     Unreachable,
     Unrestricted,
     UnrestrictedPolicy,
@@ -148,7 +148,7 @@ class TestUnrestrictedPolicy:
 
 
 class TestOperationAccess:
-    """Requirements looked up by the name a tool or operation is exposed as."""
+    """Requirements looked up by the name a tool or operation is exposed as, or the URI a resource is read at."""
 
     def test_a_registered_name_carries_its_requirement(self):
         access = OperationAccess(_catalog(auto='tags'))
@@ -161,12 +161,22 @@ class TestOperationAccess:
         access = OperationAccess(_catalog(auto='tags'))
         assert access.permits('search_operations', frozenset())
 
+    @pytest.mark.parametrize('uri', ['petstore://pets/{petId}', 'petstore://pets/7'])
+    def test_a_resource_template_covers_every_uri_it_expands_to(self, uri):
+        """The template is what a listing names and the concrete URI what a read names, and both require the same."""
+        access = OperationAccess(_catalog(auto='tags'))
+        access.register_resource('petstore://pets/{petId}', _operation_named('getPetById'))
+        assert access.permits(uri, frozenset({'pets:read'}))
+        assert not access.permits(uri, frozenset({'pets:write'}))
 
-class TestCallTargets:
-    """Which name a 2026-07-28 ``tools/call`` reaches, read from its headers alone."""
 
-    def test_static_exposure_reads_the_tool_name(self):
-        assert ToolNameTarget().resolve({'mcp-name': 'delete_pet'}) == 'delete_pet'
+class TestRequestTargets:
+    """Which name a 2026-07-28 request reaches, read from its headers alone."""
+
+    @pytest.mark.parametrize('name', ['delete_pet', 'petstore://pets/7'])
+    def test_the_name_header_names_a_tool_or_a_resource(self, name):
+        """``Mcp-Name`` carries the tool of a ``tools/call`` and the URI of a ``resources/read``."""
+        assert NameHeaderTarget().resolve({'mcp-name': name}) == name
 
     @pytest.mark.parametrize(
         ('headers', 'expected'),
