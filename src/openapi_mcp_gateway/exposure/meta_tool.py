@@ -7,9 +7,12 @@ import typing
 import pydantic
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.shared.inbound import MCP_NAME_HEADER, MCP_PARAM_HEADER_PREFIX, X_MCP_HEADER_KEY, decode_header_value
 from mcp.types import CallToolResult
 
 from ..openapi import ExposedTool, OperationInfo
+from ..scopes import OperationAccess, RequestTarget, UnrestrictedPolicy, granted_mcp_scopes
 from ._bm25 import BM25FIndex
 from ._shaping import shape_operation
 from ._shared import _get_override, build_input_schema, derive_description, derive_name
@@ -19,6 +22,11 @@ from .tool import build_tool_function
 
 logger = logging.getLogger(__name__)
 
+
+# The meta-tool that invokes an operation, and the header its operation name travels in,
+# so an HTTP layer can tell which operation a call reaches without reading the body.
+CALL_OPERATION_TOOL = 'call_operation'
+OPERATION_PARAM_HEADER = 'Operation'
 
 # How much a matching term counts in each searchable field.
 # A server's exposure.search.field_weights overrides them field by field.
@@ -53,12 +61,26 @@ _CALL_OPERATION_DESCRIPTION = (
 )
 
 
+class DynamicOperationTarget(RequestTarget):
+    """The operation a ``call_operation`` invokes, named in its ``Mcp-Param-Operation`` header.
+
+    The other meta-tools reach no single operation, so they address no guarded name.
+    """
+
+    def resolve(self, headers: typing.Mapping[str, str]) -> str | None:
+        if decode_header_value(headers.get(MCP_NAME_HEADER)) != CALL_OPERATION_TOOL:
+            return None
+        return decode_header_value(headers.get(f'{MCP_PARAM_HEADER_PREFIX}{OPERATION_PARAM_HEADER}'.lower()))
+
+
 class MetaToolGenerator:
     """Register the ``search_operations`` / ``get_operation`` / ``call_operation`` meta-tools, for dynamic exposure.
 
     The LLM searches, then gets, then calls, to discover and invoke a specific operation.
     Per-operation callables come from the same upstream closure the static path uses,
     so auth, path substitution, and request shape stay identical across modes.
+    Each operation's scope requirement is recorded in ``access`` under its name,
+    and search and get show only the operations the caller's token can use.
     """
 
     def __init__(
@@ -66,9 +88,11 @@ class MetaToolGenerator:
         mcp: MCPServer,
         binding: UpstreamBinding,
         field_weight_overrides: typing.Mapping[str, float] | None = None,
+        access: OperationAccess | None = None,
     ):
         self.mcp = mcp
         self.binding = binding
+        self.access = access or OperationAccess(UnrestrictedPolicy())
         # Overrides replace the default weight of the fields they name and leave the rest as they are.
         self.field_weights = {**DEFAULT_FIELD_WEIGHTS, **(field_weight_overrides or {})}
 
@@ -82,9 +106,11 @@ class MetaToolGenerator:
             # The input schema is the operation's contract, built once and both shown by get_operation and enforced.
             input_schema = build_input_schema(shaped_operation)
             tool_override = _get_override(shaped_operation, 'tool')
+            name = derive_name(shaped_operation, tool_override.name if tool_override else None)
+            self.access.register(name, operation)
             registered.append(
                 _RegisteredOperation(
-                    name=derive_name(shaped_operation, tool_override.name if tool_override else None),
+                    name=name,
                     summary=shaped_operation.summary,
                     description=derive_description(
                         shaped_operation, tool_override.description if tool_override else None
@@ -130,23 +156,37 @@ class MetaToolGenerator:
                 str | None, pydantic.Field(description='The `nextCursor` of the previous page.')
             ] = None,
         ) -> CallToolResult:
-            return _build_success_result(registry.search(query, tags, cursor))
+            return _build_success_result(registry.search(query, tags, cursor, self._visibility()))
 
         @self.mcp.tool(name='get_operation', description=_GET_OPERATION_DESCRIPTION)
         async def get_operation(name: str, ctx: Context) -> CallToolResult:
             operation = registry.get(name)
-            if operation is None:
+            if operation is None or not self._visibility()(name):
                 raise _unknown_operation_error(name)
             return _build_success_result(
                 {'name': name, 'description': operation.description, 'input_schema': operation.input_schema}
             )
 
-        @self.mcp.tool(name='call_operation', description=_CALL_OPERATION_DESCRIPTION)
-        async def call_operation(name: str, arguments: dict[str, typing.Any], ctx: Context) -> CallToolResult:
+        @self.mcp.tool(name=CALL_OPERATION_TOOL, description=_CALL_OPERATION_DESCRIPTION)
+        async def call_operation(
+            name: typing.Annotated[str, pydantic.Field(json_schema_extra={X_MCP_HEADER_KEY: OPERATION_PARAM_HEADER})],
+            arguments: dict[str, typing.Any],
+            ctx: Context,
+        ) -> CallToolResult:
             operation = registry.get(name)
             if operation is None:
                 raise _unknown_operation_error(name)
+            # A 2026-07-28 client was already refused over HTTP with a scope challenge.
+            # This refusal is the deprecated path for older clients, which send no Mcp-Param-Operation header.
+            requirement = self.access.requirement(name)
+            if not requirement.is_met(granted_mcp_scopes()):
+                raise ToolError(requirement.refusal)
             return await operation.callable_(**arguments, ctx=ctx)
+
+    def _visibility(self) -> typing.Callable[[str], bool]:
+        """Whether the token on the current request may see each operation, by name."""
+        granted = granted_mcp_scopes()
+        return lambda name: self.access.permits(name, granted)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -193,10 +233,6 @@ class _OperationRegistry:
                 key = tag.casefold()
                 self._tag_spellings.setdefault(key, tag)
                 self._names_by_tag.setdefault(key, {})[name] = None
-        self._tag_counts = [
-            {'name': self._tag_spellings[key], 'operations': len(self._names_by_tag[key])}
-            for key in sorted(self._names_by_tag, key=lambda key: self._tag_spellings[key])
-        ]
 
     def __len__(self) -> int:
         return len(self._operations)
@@ -204,8 +240,14 @@ class _OperationRegistry:
     def get(self, name: str) -> _RegisteredOperation | None:
         return self._operations.get(name)
 
-    def search(self, query: str | None, tags: list[str] | None, cursor: str | None) -> dict[str, typing.Any]:
-        """Return one page of the operations matching ``query`` and carrying any of ``tags``.
+    def search(
+        self,
+        query: str | None,
+        tags: list[str] | None,
+        cursor: str | None,
+        visible: typing.Callable[[str], bool],
+    ) -> dict[str, typing.Any]:
+        """Return one page of the ``visible`` operations matching ``query`` and carrying any of ``tags``.
 
         An omitted or blank ``query``, and omitted or empty ``tags``, filter nothing.
         Listing everything, the first page also carries the tag counts,
@@ -214,7 +256,7 @@ class _OperationRegistry:
         """
         query = (query or '').strip()
         tags = tags or []
-        names = self._matching(query, tags)
+        names = [name for name in self._matching(query, tags) if visible(name)]
         offset = _decode_cursor(cursor, len(names)) if cursor else 0
         page = names[offset : offset + _PAGE_SIZE]
         payload: dict[str, typing.Any] = {
@@ -222,9 +264,20 @@ class _OperationRegistry:
         }
         if offset + _PAGE_SIZE < len(names):
             payload['nextCursor'] = _encode_cursor(offset + _PAGE_SIZE)
-        if not query and not tags and offset == 0 and self._tag_counts:
-            payload['tags'] = self._tag_counts
+        if not query and not tags and offset == 0:
+            tag_counts = self._tag_counts(set(names))
+            if tag_counts:
+                payload['tags'] = tag_counts
         return payload
+
+    def _tag_counts(self, names: set[str]) -> list[dict[str, typing.Any]]:
+        """Each tag carried by any of ``names``, with how many of them carry it, in tag order."""
+        counts = {key: len(names.intersection(tagged)) for key, tagged in self._names_by_tag.items()}
+        return [
+            {'name': self._tag_spellings[key], 'operations': counts[key]}
+            for key in sorted(counts, key=lambda key: self._tag_spellings[key])
+            if counts[key]
+        ]
 
     def _matching(self, query: str, tags: list[str]) -> list[str]:
         candidates = {name for tag in tags for name in self._names_by_tag.get(tag.casefold(), {})} if tags else None

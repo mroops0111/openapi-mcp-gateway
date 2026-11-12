@@ -441,6 +441,11 @@ class TestSettingsThatCannotTakeEffect:
                 {'type': 'oauth2', 'flow': 'client_credentials', 'upstream': {'issuer': ISSUER}},
                 'upstream.issuer',
             ),
+            ({'type': 'oauth2', 'flow': 'token_exchange', 'issuer': ISSUER, 'clients': {'agent': {}}}, 'clients'),
+            (
+                {'type': 'oauth2', 'flow': 'client_credentials', 'operation_scopes': {}, 'clients': {'agent': {}}},
+                'operation_scopes',
+            ),
         ],
     )
     def test_inapplicable_settings_are_refused(self, payload, offending):
@@ -458,6 +463,8 @@ class TestSettingsThatCannotTakeEffect:
             {'type': 'oauth2', 'upstream': {'client_id': 'c'}},
             {'type': 'oauth2', 'upstream': {'issuer': ISSUER}},
             {'type': 'oauth2', 'flow': 'authorization_code', 'upstream': {'issuer': ISSUER}},
+            {'type': 'oauth2', 'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {'scopes': ['pets:read']}}},
+            {'type': 'oauth2', 'clients': {'agent': {}}},
             {'type': 'none'},
         ],
     )
@@ -474,6 +481,40 @@ class TestSettingsThatCannotTakeEffect:
 
         with pytest.raises(pydantic.ValidationError, match=r'issuer.*no effect'):
             AuthConfig.model_validate({'type': 'oauth2', 'issuer': 'https://kc'})
+
+
+class TestScopeSettings:
+    """``auth.operation_scopes`` and ``auth.clients`` refuse what could never grant or restrict anything."""
+
+    @pytest.mark.parametrize(
+        ('auth', 'refusal'),
+        [
+            ({'operation_scopes': {'auto': 'tags'}}, 'auth.operation_scopes needs auth.clients'),
+            (
+                {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {}}, 'required_scopes': ['api']},
+                'cannot be combined with auth.operation_scopes',
+            ),
+            ({'clients': {'agent': {'scopes': ['pets:read']}}}, r'clients \(agent\) grant scopes'),
+            ({'clients': {'agent': {'scopes': ['pets read']}}}, 'invalid scopes'),
+            (
+                {
+                    'operation_scopes': {'manual': {'pets admin': {'description': 'd', 'operations': ['*']}}},
+                    'clients': {'a': {}},
+                },
+                'invalid scopes',
+            ),
+            (
+                {
+                    'operation_scopes': {'manual': {'admin': {'description': 'd', 'operations': []}}},
+                    'clients': {'a': {}},
+                },
+                'at least 1 item',
+            ),
+        ],
+    )
+    def test_unusable_scope_settings_are_refused(self, auth, refusal):
+        with pytest.raises(pydantic.ValidationError, match=refusal):
+            AuthConfig.model_validate({'type': 'oauth2', **auth})
 
 
 class TestSearchFieldWeights:
