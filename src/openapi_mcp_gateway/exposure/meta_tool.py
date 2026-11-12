@@ -12,7 +12,7 @@ from mcp.shared.inbound import MCP_NAME_HEADER, MCP_PARAM_HEADER_PREFIX, X_MCP_H
 from mcp.types import CallToolResult
 
 from ..openapi import ExposedTool, OperationInfo
-from ..scopes import OperationAccess, RequestTarget, UnrestrictedPolicy, granted_mcp_scopes
+from ..scopes import OperationAccess, RequestTarget, UnrestrictedPolicy, current_grant
 from ._bm25 import BM25FIndex
 from ._shaping import shape_operation
 from ._shared import _get_override, build_input_schema, derive_description, derive_name
@@ -176,17 +176,17 @@ class MetaToolGenerator:
             operation = registry.get(name)
             if operation is None:
                 raise _unknown_operation_error(name)
-            # A 2026-07-28 client was already refused over HTTP with a scope challenge.
-            # This refusal is the deprecated path for older clients, which send no Mcp-Param-Operation header.
-            requirement = self.access.requirement(name)
-            if not requirement.is_met(granted_mcp_scopes()):
-                raise ToolError(requirement.refusal)
+            # A 2026-07-28 client lacking MCP scopes was already refused over HTTP with a scope challenge.
+            # This refusal covers older clients, which send no Mcp-Param-Operation header, and a short upstream grant.
+            refusal = self.access.refusal(name, current_grant())
+            if refusal is not None:
+                raise ToolError(refusal)
             return await operation.callable_(**arguments, ctx=ctx)
 
     def _visibility(self) -> typing.Callable[[str], bool]:
         """Whether the token on the current request may see each operation, by name."""
-        granted = granted_mcp_scopes()
-        return lambda name: self.access.permits(name, granted)
+        grant = current_grant()
+        return lambda name: self.access.permits(name, grant)
 
 
 @dataclasses.dataclass(frozen=True)

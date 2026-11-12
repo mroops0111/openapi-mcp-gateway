@@ -7,8 +7,8 @@ from mcp.server.mcpserver import Context
 from mcp.types import InputRequiredResult
 
 from openapi_mcp_gateway.gateway import Gateway
-from openapi_mcp_gateway.openapi import McpIntegration, ResourceOverride
-from openapi_mcp_gateway.settings import ExposureConfig, GatewayConfig, ServerConfig
+from openapi_mcp_gateway.openapi import ResourceOverride
+from openapi_mcp_gateway.settings import ExposureConfig, GatewayConfig, OperationOverride, ServerConfig
 from tests.constants import PETSTORE_URL
 
 
@@ -330,7 +330,7 @@ class TestYamlOverrideEndToEnd:
                         spec=str(spec_path),
                         exposure=ExposureConfig(promote_resources=True),
                         operations={
-                            'getPet': McpIntegration(
+                            'getPet': OperationOverride(
                                 resource=ResourceOverride(name='pet', mime_type='application/json'),
                             ),
                         },
@@ -354,7 +354,7 @@ class TestYamlOverrideEndToEnd:
                             spec=str(spec_path),
                             exposure=ExposureConfig(promote_resources=True),
                             operations={
-                                'not_a_real_op': McpIntegration(
+                                'not_a_real_op': OperationOverride(
                                     resource=ResourceOverride(name='ghost'),
                                 ),
                             },

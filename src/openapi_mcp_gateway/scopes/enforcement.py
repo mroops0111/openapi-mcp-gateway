@@ -12,7 +12,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .access import OperationAccess, granted_mcp_scopes
+from .access import OperationAccess, current_grant
 from .requirement import ScopeRequirement
 
 
@@ -41,6 +41,7 @@ class ScopeChallengeGate:
     """ASGI middleware refusing a request the token's scopes do not cover, with ``403`` and a scope challenge.
 
     It guards ``tools/call``, through the target the exposure style names, and ``resources/read``.
+    Only the MCP scopes are challenged, since stepping up at the gateway cannot change what the upstream granted.
     It runs after the SDK authenticates the request and before the SDK reads the body,
     since only an HTTP response can carry the ``insufficient_scope`` challenge a client steps up from.
     Requests from clients older than 2026-07-28 carry no routing headers and pass through,
@@ -86,7 +87,7 @@ class ScopeChallengeGate:
         name = target.resolve(headers) if target else None
         if name is None:
             return None
-        requirement = self._access.requirement(name)
+        requirement = self._access.mcp_requirement(name)
         return None if requirement.is_met(frozenset(user.scopes)) else requirement
 
     def _challenge(self, requirement: ScopeRequirement) -> str:
@@ -101,12 +102,12 @@ class ScopeChallengeGate:
 
 
 class ScopeFilterMiddleware:
-    """SDK middleware hiding the tools and resources the token's scopes do not cover, and refusing requests for them.
+    """SDK middleware hiding the tools and resources a token may not use, and refusing requests for them.
 
     A refused tool call is a tool error and a refused resource read a protocol error,
     which a client cannot step up from.
-    It is the deprecated path for clients older than 2026-07-28, which ``ScopeChallengeGate`` cannot read,
-    and goes away with legacy protocol support.
+    It is the only refusal of a token whose upstream grant falls short, since stepping up cannot fix that.
+    For MCP scopes, it is the deprecated path for clients older than 2026-07-28, which ``ScopeChallengeGate`` cannot read.
     """
 
     def __init__(self, access: OperationAccess) -> None:
@@ -115,18 +116,18 @@ class ScopeFilterMiddleware:
     async def __call__(self, ctx: ServerRequestContext[typing.Any, typing.Any], call_next: CallNext) -> HandlerResult:
         guarded = _GUARDED_REQUESTS.get(ctx.method)
         if guarded is not None:
-            requirement = self._access.requirement(str((ctx.params or {}).get(guarded.name_param, '')))
-            if not requirement.is_met(granted_mcp_scopes()):
-                return guarded.refuse(requirement.refusal)
+            refusal = self._access.refusal(str((ctx.params or {}).get(guarded.name_param, '')), current_grant())
+            if refusal is not None:
+                return guarded.refuse(refusal)
         # Handlers return the wire form by the time middleware sees it, so a list is filtered as JSON.
         result = await call_next(ctx)
         listing = _LISTINGS.get(ctx.method)
         if listing is not None and isinstance(result, dict):
-            granted = granted_mcp_scopes()
+            grant = current_grant()
             return {
                 **result,
                 listing.items_key: [
-                    item for item in result[listing.items_key] if self._access.permits(item[listing.name_key], granted)
+                    item for item in result[listing.items_key] if self._access.permits(item[listing.name_key], grant)
                 ],
             }
         return result

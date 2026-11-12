@@ -1,6 +1,7 @@
 from .authorization_code import (
     AuthorizationCodeFlowHandler,
     AuthorizationCodeProvider,
+    BrokeredAccessToken,
     IssuedTokenPolicy,
     UpstreamOAuthClient,
 )
@@ -20,6 +21,7 @@ __all__ = [
     'OAUTH_FLOW_HANDLERS',
     'AuthorizationCodeFlowHandler',
     'AuthorizationCodeProvider',
+    'BrokeredAccessToken',
     'ClientCredentialsFlowHandler',
     'ClientDirectory',
     'DynamicClientRegistry',

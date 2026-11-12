@@ -40,9 +40,11 @@ from .scopes import (
     RequestTarget,
     ScopeFilterMiddleware,
     ScopePolicy,
+    SpecSecurityScopes,
     build_mcp_scope_policy,
+    build_upstream_scope_policy,
 )
-from .settings import AuthConfig, ExposureConfig, GatewayConfig, PolicyConfig, ServerConfig
+from .settings import AuthConfig, ExposureConfig, GatewayConfig, OperationOverride, PolicyConfig, ServerConfig
 from .stores import create_store
 
 
@@ -280,7 +282,9 @@ class Gateway:
                 'Check your allow/deny rules or the OpenAPI spec.'
             )
 
-        operations = _apply_yaml_overrides(operations, server_config.operations, server_config.name)
+        operations = _apply_yaml_overrides(
+            operations, server_config.operations, server_config.name, spec.security_schemes
+        )
 
         self._register_server_bundle(
             server_config=server_config,
@@ -351,11 +355,30 @@ class Gateway:
         transport: httpx.AsyncBaseTransport | None = None,
         forward_incoming_headers: tuple[str, ...] = (),
     ) -> None:
-        auth = self._resolve_auth(server_config, spec)
-        auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
         mcp_scope_policy = build_mcp_scope_policy(server_config.auth.operation_scopes, operations, server_config.name)
         _refuse_undefined_mcp_scopes(server_config, mcp_scope_policy)
-        access = OperationAccess(mcp_scope_policy)
+        upstream = server_config.auth.upstream
+        spec_security = SpecSecurityScopes(spec.security_schemes, upstream.scope_implies)
+        if upstream.enforce_scopes and not upstream.scopes:
+            server_config = _with_requested_upstream_scopes(server_config, spec_security.requested_scopes(operations))
+        auth = self._resolve_auth(server_config, spec)
+        auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
+        if auth.provider is not None:
+            spec_security.warn_on_unrequested_scopes(
+                operations,
+                auth.provider.upstream.scopes,
+                mcp_scope_policy,
+                {client_id: client.scopes for client_id, client in server_config.auth.clients.items()},
+                server_config.name,
+            )
+        elif upstream.enforce_scopes:
+            raise ValueError(
+                f'Server "{server_config.name}": auth.upstream.enforce_scopes needs auth.flow authorization_code, '
+                f'but the spec resolves to {auth.flow_type}. Set auth.flow, or turn enforce_scopes off.'
+            )
+        access = OperationAccess(
+            mcp_scope_policy, build_upstream_scope_policy(upstream.enforce_scopes, spec_security, server_config.name)
+        )
         mcp = self._build_mcp_server(
             server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions, access
         )
@@ -501,7 +524,7 @@ class Gateway:
             auth=auth_settings,
             instructions=instructions,
             lifespan=lifespan,
-            cache_hints=_cache_hints(access.policy),
+            cache_hints=_cache_hints(access),
             middleware=[ScopeFilterMiddleware(access)],
         )
 
@@ -623,13 +646,17 @@ def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -
 
 def _apply_yaml_overrides(
     operations: list[OperationInfo],
-    yaml_overrides: dict[str, McpIntegration],
+    yaml_overrides: dict[str, OperationOverride],
     server_name: str,
+    security_schemes: dict[str, typing.Any],
 ) -> list[OperationInfo]:
     """Return ``operations`` with the YAML-side ``operations.<id>`` override applied to each match.
 
-    Each override fully replaces the spec-side ``x-mcp-integration`` for that operation, with no merging.
-    Raises ``ValueError`` if an ``operation_id`` in ``yaml_overrides`` is not exposed by this server.
+    Each override fully replaces the spec-side ``x-mcp-integration`` for that operation, with no merging,
+    unless it overrides ``security`` alone.
+    A ``security`` override replaces the spec's ``security`` for that operation.
+    Raises ``ValueError`` if an ``operation_id`` in ``yaml_overrides`` is not exposed by this server,
+    or if a ``security`` override names a scheme the spec does not declare.
     """
     if not yaml_overrides:
         return operations
@@ -639,12 +666,44 @@ def _apply_yaml_overrides(
             f'Server "{server_name}": YAML operations override targets unknown operation_id(s) {sorted(unmatched)!r}; '
             'check the spec or your allow / deny / annotated_only policy.'
         )
+    for operation_id, override in yaml_overrides.items():
+        undeclared = sorted(
+            {scheme for requirement in override.security or () for scheme in requirement} - set(security_schemes)
+        )
+        if undeclared:
+            raise ValueError(
+                f'Server "{server_name}": operations.{operation_id}.security names schemes the spec does not declare '
+                f'{undeclared!r}; use the names under components.securitySchemes.'
+            )
     return [
-        operation.model_copy(update={'x_mcp_integration': yaml_overrides[operation.operation_id]})
+        _apply_yaml_override(operation, yaml_overrides[operation.operation_id])
         if operation.operation_id in yaml_overrides
         else operation
         for operation in operations
     ]
+
+
+def _apply_yaml_override(operation: OperationInfo, override: OperationOverride) -> OperationInfo:
+    """Return ``operation`` with what ``override`` sets replaced."""
+    update: dict[str, typing.Any] = {}
+    if override.overrides_integration:
+        update['x_mcp_integration'] = McpIntegration(tool=override.tool, resource=override.resource)
+    if override.security is not None:
+        update['security'] = override.security
+    return operation.model_copy(update=update)
+
+
+def _with_requested_upstream_scopes(server_config: ServerConfig, scopes: list[str]) -> ServerConfig:
+    """Return ``server_config`` requesting ``scopes`` from the upstream, as when ``auth.upstream.scopes`` lists them."""
+    if scopes:
+        logger.info(
+            'Server "%s": auth.upstream.scopes is unset, so the gateway requests the upstream scopes '
+            'the exposed operations declare (%s).',
+            server_config.name,
+            ' '.join(scopes),
+        )
+    upstream = server_config.auth.upstream.model_copy(update={'scopes': scopes})
+    return server_config.model_copy(update={'auth': server_config.auth.model_copy(update={'upstream': upstream})})
 
 
 def _partition_operations(
@@ -702,9 +761,9 @@ def _policy_summary(policy: PolicyConfig) -> str:
     return ', '.join(filters) if filters else 'no filter, every operation exposed'
 
 
-def _cache_hints(mcp_scope_policy: ScopePolicy) -> dict[CacheableMethod, CacheHint]:
+def _cache_hints(access: OperationAccess) -> dict[CacheableMethod, CacheHint]:
     """Freshness hints for the static lists, where the tool and resource lists turn private once they depend on the token."""
-    list_cache_scope = mcp_scope_policy.list_cache_scope
+    list_cache_scope = access.list_cache_scope
     return {
         'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=list_cache_scope),
         'resources/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=list_cache_scope),

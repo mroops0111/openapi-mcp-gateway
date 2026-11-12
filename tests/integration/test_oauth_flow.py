@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException
 
 from openapi_mcp_gateway.auth.flows.authorization_code import (
     AuthorizationCodeProvider,
+    BrokeredAccessToken,
     IssuedTokenPolicy,
     UpstreamOAuthClient,
 )
@@ -178,6 +179,54 @@ class TestGrantedScopes:
         )
         assert auth_code is not None
         assert auth_code.scopes == ['api']
+
+
+class TestUpstreamGrant:
+    """Each token records the scopes the upstream granted the user behind it."""
+
+    @pytest.mark.parametrize(('stated', 'recorded'), [('read', ['read']), (None, ['read', 'write'])])
+    async def test_a_sign_in_records_the_upstream_grant(self, provider, mcp_client_info, stated, recorded):
+        """An omitted ``scope`` means the upstream granted what the gateway requested."""
+        token = await sign_in(provider, mcp_client_info, upstream_scope=stated)
+        access_token = await provider.load_access_token(token.access_token)
+        assert isinstance(access_token, BrokeredAccessToken)
+        assert access_token.upstream_scopes == recorded
+
+    @pytest.mark.parametrize(
+        ('stated', 'recorded'), [('read write admin', ['read', 'write', 'admin']), (None, ['read'])]
+    )
+    async def test_an_upstream_refresh_updates_the_grant_it_states(
+        self, provider, mcp_client_info, memory_store, stated, recorded
+    ):
+        """A refresh that omits ``scope`` leaves the grant as it was."""
+        token = await sign_in(provider, mcp_client_info, upstream_scope='read')
+        assert token.refresh_token is not None
+        refresh = await provider.load_refresh_token(mcp_client_info, token.refresh_token)
+        assert refresh is not None
+        # Expire the upstream token so the refresh path actually calls the token endpoint.
+        await memory_store.delete('api_access_token', 'upstream-access-token')
+
+        response = upstream_token_response('rotated-access-token', scope=stated)
+        with patch('httpx.AsyncClient.post', AsyncMock(return_value=response)):
+            rotated = await provider.exchange_refresh_token(mcp_client_info, refresh, [])
+
+        access_token = await provider.load_access_token(rotated.access_token)
+        assert isinstance(access_token, BrokeredAccessToken)
+        assert access_token.upstream_scopes == recorded
+
+    async def test_a_token_stored_without_the_grant_holds_the_requested_scopes(
+        self, provider, mcp_client_info, memory_store
+    ):
+        """A token minted before an upgrade keeps working, read as an omitted ``scope`` is."""
+        token = await sign_in(provider, mcp_client_info, upstream_scope='read')
+        data = await memory_store.get('mcp_access_token', token.access_token)
+        assert data is not None
+        del data['upstream_scopes']
+        await memory_store.set('mcp_access_token', token.access_token, data, ttl=3600)
+
+        access_token = await provider.load_access_token(token.access_token)
+        assert isinstance(access_token, BrokeredAccessToken)
+        assert access_token.upstream_scopes == ['read', 'write']
 
 
 class TestFullOAuthLifecycle:

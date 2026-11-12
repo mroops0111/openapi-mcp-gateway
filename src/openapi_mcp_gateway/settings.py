@@ -62,6 +62,19 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     resource: str | None = None
     audience: str | None = None
 
+    # Whether an operation also needs the upstream scopes its OpenAPI ``security`` declares,
+    # checked against the scopes the upstream actually granted the user.
+    # ``scope_implies`` maps an upstream scope to the narrower ones it covers, such as GitHub's ``repo``.
+    enforce_scopes: bool = False
+    scope_implies: dict[str, list[str]] = pydantic.Field(default_factory=dict)
+
+    @pydantic.field_validator('scope_implies')
+    @classmethod
+    def _validate_implied_scope_names(cls, scope_implies: dict[str, list[str]]) -> dict[str, list[str]]:
+        implied = [scope for scopes in scope_implies.values() for scope in scopes]
+        _refuse_invalid_scope_tokens([*scope_implies, *implied], 'auth.upstream.scope_implies')
+        return scope_implies
+
     def resolve_client_id(self) -> str | None:
         """OAuth client id after env-var substitution."""
         return _resolve_env_var(self.client_id)
@@ -227,12 +240,19 @@ class AuthConfig(pydantic.BaseModel):
         if self.upstream.model_fields_set and not oauth:
             named = ', '.join(sorted(self.upstream.model_fields_set))
             raise ValueError(f'auth.upstream ({named}) needs auth.type oauth2, so it would have no effect here.')
-        # Only authorization_code receives an authorization response, the one place ``iss`` arrives.
-        if 'issuer' in self.upstream.model_fields_set and not (self.flow == 'authorization_code' or flow_unresolved):
-            raise ValueError(
-                'auth.upstream.issuer needs auth.flow authorization_code, '
-                'the only flow with an authorization response to check, so it would have no effect here.'
-            )
+        receives_grant = self.flow == 'authorization_code' or flow_unresolved
+        upstream_applicable: dict[str, str] = {
+            # Only authorization_code receives an authorization response, the one place ``iss`` arrives.
+            'issuer': 'the only flow with an authorization response to check',
+            # Only authorization_code records each user's upstream grant on the token it mints.
+            'enforce_scopes': "the only flow that records each user's upstream grant",
+            'scope_implies': "the only flow that records each user's upstream grant",
+        }
+        for field, reason in upstream_applicable.items():
+            if field in self.upstream.model_fields_set and not receives_grant:
+                raise ValueError(
+                    f'auth.upstream.{field} needs auth.flow authorization_code, {reason}, so it would have no effect here.'
+                )
         return self
 
     @pydantic.model_validator(mode='after')
@@ -400,6 +420,24 @@ class ExposureConfig(pydantic.BaseModel):
         return self
 
 
+class OperationOverride(McpIntegration):
+    """What ``operations.<operationId>`` overrides of one operation.
+
+    ``tool`` and ``resource`` replace the spec's ``x-mcp-integration``.
+    ``security`` replaces the spec's own ``security``, in the same OpenAPI form,
+    for a spec that declares an operation's upstream scopes wrongly.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid')
+
+    security: list[dict[str, list[str]]] | None = None
+
+    @property
+    def overrides_integration(self) -> bool:
+        """Whether this replaces ``x-mcp-integration``, which an override of ``security`` alone leaves as it is."""
+        return self.model_fields_set != {'security'}
+
+
 class ServerConfig(pydantic.BaseModel):
     """One upstream API, with its OpenAPI location, auth, policy, and HTTP timeout."""
 
@@ -413,7 +451,7 @@ class ServerConfig(pydantic.BaseModel):
     policy: PolicyConfig = PolicyConfig()
     timeout: float = 90
     exposure: ExposureConfig = ExposureConfig()
-    operations: dict[str, McpIntegration] = pydantic.Field(default_factory=dict)
+    operations: dict[str, OperationOverride] = pydantic.Field(default_factory=dict)
     # Static headers sent on every upstream call, such as an API version the whole API requires.
     headers: dict[str, str] = pydantic.Field(default_factory=dict)
     # Guidance about the server as a whole, such as when to use it rather than another,

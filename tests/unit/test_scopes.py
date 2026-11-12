@@ -10,6 +10,7 @@ from openapi_mcp_gateway.scopes import (
     OperationAccess,
     ScopeCatalog,
     TagMethodDerivation,
+    TokenGrant,
     Unreachable,
     Unrestricted,
     UnrestrictedPolicy,
@@ -164,21 +165,21 @@ class TestOperationAccess:
     def test_a_registered_name_carries_its_requirement(self):
         access = OperationAccess(_catalog(auto='tags'))
         access.register('delete_pet', _operation_named('deletePet'))
-        assert access.permits('delete_pet', frozenset({'pets:delete'}))
-        assert not access.permits('delete_pet', frozenset({'pets:write'}))
+        assert access.permits('delete_pet', _mcp_grant({'pets:delete'}))
+        assert not access.permits('delete_pet', _mcp_grant({'pets:write'}))
 
     def test_an_unregistered_name_requires_nothing(self):
         """A dynamic meta-tool is never registered, since the operations behind it are what scopes guard."""
         access = OperationAccess(_catalog(auto='tags'))
-        assert access.permits('search_operations', frozenset())
+        assert access.permits('search_operations', _mcp_grant(set()))
 
     @pytest.mark.parametrize('uri', ['petstore://pets/{petId}', 'petstore://pets/7'])
     def test_a_resource_template_covers_every_uri_it_expands_to(self, uri):
         """The template is what a listing names and the concrete URI what a read names, and both require the same."""
         access = OperationAccess(_catalog(auto='tags'))
         access.register_resource('petstore://pets/{petId}', _operation_named('getPetById'))
-        assert access.permits(uri, frozenset({'pets:read'}))
-        assert not access.permits(uri, frozenset({'pets:write'}))
+        assert access.permits(uri, _mcp_grant({'pets:read'}))
+        assert not access.permits(uri, _mcp_grant({'pets:write'}))
 
 
 class TestRequestTargets:
@@ -210,3 +211,8 @@ def _catalog(**config: object) -> ScopeCatalog:
 def _operation_named(operation_id: str) -> OperationInfo:
     """The petstore operation with ``operation_id``."""
     return next(candidate for candidate in PETSTORE_OPERATIONS if candidate.operation_id == operation_id)
+
+
+def _mcp_grant(mcp_scopes: set[str]) -> TokenGrant:
+    """A grant carrying ``mcp_scopes`` and nothing from the upstream."""
+    return TokenGrant(frozenset(mcp_scopes), frozenset())

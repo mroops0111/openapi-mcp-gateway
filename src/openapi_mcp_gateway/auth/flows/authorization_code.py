@@ -68,6 +68,30 @@ class UpstreamOAuthClient:
         return self.issuer or self.token_url
 
 
+class BrokeredAccessToken(AccessToken):
+    """An MCP access token the gateway minted, carrying the scopes the upstream granted the user behind it."""
+
+    upstream_scopes: list[str] = pydantic.Field(default_factory=list)
+
+
+@dataclasses.dataclass(frozen=True)
+class UpstreamTokenResponse:
+    """What the upstream token endpoint answered, with ``scope`` exactly as sent, or ``None`` when omitted."""
+
+    access_token: str
+    refresh_token: str | None
+    expires_in: int
+    scope: str | None
+
+    def granted_scopes(self, previous: list[str]) -> list[str]:
+        """The scopes the upstream granted, read as RFC 6749 §5.1 states them.
+
+        An omitted ``scope`` means the grant did not change, so it is ``previous``,
+        which for a first grant is what the gateway requested.
+        """
+        return self.scope.split() if self.scope is not None else list(previous)
+
+
 @dataclasses.dataclass(frozen=True)
 class IssuedTokenPolicy:
     """What the gateway grants on the ``mcp_...`` tokens it mints for MCP clients.
@@ -204,6 +228,7 @@ class AuthorizationCodeProvider:
         return await self._issue_mcp_token(
             client_id=client_id,
             scopes=authorization_code.scopes,
+            upstream_scopes=self._recorded_upstream_scopes(data),
             api_access_token=api_access_token,
             api_refresh_token=api_refresh_token,
         )
@@ -211,7 +236,7 @@ class AuthorizationCodeProvider:
     async def load_access_token(self, token: str) -> AccessToken | None:
         data = await self.store.get('mcp_access_token', token)
         if data and self._is_bound_here(data):
-            return AccessToken(**data)
+            return BrokeredAccessToken(**{**data, 'upstream_scopes': self._recorded_upstream_scopes(data)})
         return None
 
     async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
@@ -242,6 +267,7 @@ class AuthorizationCodeProvider:
             logger.warning('OAuth refresh rejected: reason=mapping_lost client_id=%s', client_id)
             raise TokenError(error='invalid_grant', error_description='Upstream token mapping lost')
 
+        upstream_scopes = self._recorded_upstream_scopes(data)
         if not await self.store.get('api_access_token', api_access_token):
             if not api_refresh_token:
                 logger.warning('OAuth refresh rejected: reason=upstream_expired_no_refresh client_id=%s', client_id)
@@ -249,7 +275,7 @@ class AuthorizationCodeProvider:
                     error='invalid_grant',
                     error_description='Upstream token expired and no refresh token available; re-authenticate',
                 )
-            api_access_token, new_refresh, expires_in = await self._request_upstream_token(
+            refreshed = await self._request_upstream_token(
                 {
                     'client_id': self.upstream.client_id,
                     'client_secret': self.upstream.client_secret,
@@ -257,12 +283,15 @@ class AuthorizationCodeProvider:
                     'grant_type': 'refresh_token',
                 }
             )
-            api_refresh_token = new_refresh or api_refresh_token
-            await self._store_api_token(client_id, api_access_token, expires_in)
+            api_access_token = refreshed.access_token
+            api_refresh_token = refreshed.refresh_token or api_refresh_token
+            upstream_scopes = refreshed.granted_scopes(upstream_scopes)
+            await self._store_api_token(client_id, api_access_token, refreshed.expires_in)
 
         new_token = await self._issue_mcp_token(
             client_id=client_id,
             scopes=scopes or data.get('scopes', []),
+            upstream_scopes=upstream_scopes,
             api_access_token=api_access_token,
             api_refresh_token=api_refresh_token,
         )
@@ -326,7 +355,7 @@ class AuthorizationCodeProvider:
         redirect_uri_provided_explicitly = state_data['redirect_uri_provided_explicitly']
         client_id = state_data['client_id']
 
-        api_access_token, api_refresh_token, expires_in = await self._request_upstream_token(
+        upstream_token = await self._request_upstream_token(
             {
                 'client_id': self.upstream.client_id,
                 'client_secret': self.upstream.client_secret,
@@ -335,6 +364,9 @@ class AuthorizationCodeProvider:
                 'grant_type': 'authorization_code',
             }
         )
+        api_access_token = upstream_token.access_token
+        api_refresh_token = upstream_token.refresh_token
+        expires_in = upstream_token.expires_in
 
         mcp_auth_code = f'mcp_{secrets.token_hex(16)}'
         await self.store.set(
@@ -349,6 +381,7 @@ class AuthorizationCodeProvider:
                 # State stored before the grant was recorded with it carries the endpoint scopes alone.
                 'scopes': state_data.get('scopes', list(self.issued_tokens.scopes)),
                 'code_challenge': code_challenge,
+                'upstream_scopes': upstream_token.granted_scopes(self.upstream.scopes),
                 **self._binding(),
             },
             ttl=300,
@@ -401,6 +434,14 @@ class AuthorizationCodeProvider:
         """
         return all(data.get(field) == value for field, value in self._binding().items())
 
+    def _recorded_upstream_scopes(self, data: dict[str, typing.Any]) -> list[str]:
+        """The upstream scopes a stored code or token records.
+
+        One stored before the grant was recorded is taken to hold what the gateway requests,
+        as an omitted ``scope`` is.
+        """
+        return data.get('upstream_scopes', list(self.upstream.scopes))
+
     def _validate_upstream_response_issuer(self, state_data: dict[str, typing.Any], iss: str | None) -> None:
         """Apply RFC 9207 to the upstream's authorization response, before its code is redeemed.
 
@@ -430,10 +471,11 @@ class AuthorizationCodeProvider:
         self,
         client_id: str,
         scopes: list[str],
+        upstream_scopes: list[str],
         api_access_token: str,
         api_refresh_token: str | None,
     ) -> OAuthToken:
-        """Mint MCP access and refresh tokens and map them to the upstream API tokens."""
+        """Mint MCP access and refresh tokens and map them to the upstream API tokens, recording the upstream grant."""
         mcp_access = f'mcp_{secrets.token_hex(32)}'
         mcp_refresh = f'mcp_refresh_{secrets.token_hex(32)}'
         now = int(time.time())
@@ -445,6 +487,7 @@ class AuthorizationCodeProvider:
                 'token': mcp_access,
                 'client_id': client_id,
                 'scopes': scopes,
+                'upstream_scopes': upstream_scopes,
                 'expires_at': now + self.issued_tokens.access_token_ttl,
                 **self._binding(),
             },
@@ -458,6 +501,7 @@ class AuthorizationCodeProvider:
                 'token': mcp_refresh,
                 'client_id': client_id,
                 'scopes': scopes,
+                'upstream_scopes': upstream_scopes,
                 'expires_at': now + self.issued_tokens.refresh_token_ttl,
                 **self._binding(),
             },
@@ -517,7 +561,7 @@ class AuthorizationCodeProvider:
             ttl=expires_in,
         )
 
-    async def _request_upstream_token(self, request_data: dict[str, typing.Any]) -> tuple[str, str | None, int]:
+    async def _request_upstream_token(self, request_data: dict[str, typing.Any]) -> UpstreamTokenResponse:
         """POST ``request_data`` to ``upstream_token_url``.
 
         Audience parameters are added here rather than at each call site,
@@ -525,8 +569,7 @@ class AuthorizationCodeProvider:
         Dropping them on refresh would return a token the upstream refuses,
         and that failure would only surface once the first token expired.
 
-        Returns ``(access_token, refresh_token | None, expires_in)``,
-        raising ``HTTPException`` when the upstream rejects the exchange.
+        Raises ``HTTPException`` when the upstream rejects the exchange.
         """
         # Grant fields last, so a stray audience key can never displace ``grant_type`` or the credentials.
         async with httpx.AsyncClient() as client:
@@ -553,7 +596,12 @@ class AuthorizationCodeProvider:
             logger.info(
                 'Upstream token response: granted_scope=%r expires_in=%s', data.get('scope'), data.get('expires_in')
             )
-            return access_token, data.get('refresh_token'), data.get('expires_in', 3600)
+            return UpstreamTokenResponse(
+                access_token=access_token,
+                refresh_token=data.get('refresh_token'),
+                expires_in=data.get('expires_in', 3600),
+                scope=data.get('scope'),
+            )
 
 
 class AuthorizationCodeFlowHandler(OAuthFlowHandler):
