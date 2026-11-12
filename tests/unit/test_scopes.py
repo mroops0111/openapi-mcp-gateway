@@ -79,6 +79,17 @@ class TestTagMethodDerivation:
         assert [scope.name for scope in derived] == ['pets:read', 'store-admin:read']
         assert [scope.description for scope in derived] == ['Read pets', 'Read Store Admin']
 
+    def test_a_tag_that_makes_no_scope_name_derives_nothing(self, caplog):
+        """Such a scope could never be granted, so the tag is skipped and warned about once."""
+        derivation = TagMethodDerivation()
+        with caplog.at_level(logging.WARNING):
+            derived = [
+                *derivation.derive(operation(tags=('Usuários', 'pets'))),
+                *derivation.derive(operation(tags=('Usuários',))),
+            ]
+        assert [scope.name for scope in derived] == ['pets:read']
+        assert caplog.text.count("Tag 'Usuários'") == 1
+
     @pytest.mark.parametrize('unscopable', [operation(tags=()), operation(method='options')])
     def test_untagged_or_unknown_methods_derive_nothing(self, unscopable):
         """Such an operation falls to ``unscoped`` instead."""

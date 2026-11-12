@@ -153,6 +153,33 @@ class TestAuthorize:
         assert 'scope=read+write' in url
 
 
+class TestGrantedScopes:
+    """The scopes a token carries, whatever the client asked for."""
+
+    @pytest.mark.parametrize(('requested', 'granted'), [(None, 'a b'), (['a'], 'a b'), (['c'], 'a b c')])
+    async def test_endpoint_scopes_are_always_granted(self, make_provider, mcp_client_info, requested, granted):
+        """A token without them would be refused by every request, since each must hold them all."""
+        provider = make_provider(issued_tokens=IssuedTokenPolicy(scopes=['a', 'b']))
+        token = await sign_in(provider, mcp_client_info, scopes=requested)
+        assert token.scope == granted
+
+    async def test_state_stored_without_scopes_grants_the_endpoint_scopes(
+        self, provider, mcp_client_info, memory_store
+    ):
+        """A sign-in started before an upgrade still completes, as the state it stored lacks the grant."""
+        await authorize(provider, mcp_client_info, 'state-old')
+        state_data = await memory_store.get('mcp_auth_state', 'state-old')
+        assert state_data is not None
+        del state_data['scopes']
+        await memory_store.set('mcp_auth_state', 'state-old', state_data, ttl=900)
+
+        auth_code = await provider.load_authorization_code(
+            mcp_client_info, code_in(await complete_upstream(provider, 'state-old'))
+        )
+        assert auth_code is not None
+        assert auth_code.scopes == ['api']
+
+
 class TestFullOAuthLifecycle:
     """Run the end-to-end flow of authorize, callback, exchange, load, refresh, and revoke."""
 

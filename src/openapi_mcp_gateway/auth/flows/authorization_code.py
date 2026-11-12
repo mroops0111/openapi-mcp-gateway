@@ -143,8 +143,8 @@ class AuthorizationCodeProvider:
             'code_challenge': params.code_challenge,
             'redirect_uri_provided_explicitly': params.redirect_uri_provided_explicitly,
             'client_id': client_id,
-            # The scopes the SDK settled on for this client, or the default when it asked for none.
-            'scopes': params.scopes if params.scopes is not None else list(self.issued_tokens.scopes),
+            # The scopes the SDK settled on for this client, always with the endpoint scopes every request must hold.
+            'scopes': list(dict.fromkeys([*self.issued_tokens.scopes, *(params.scopes or [])])),
             'upstream_issuer': self.upstream.issuer,
             'upstream_authorization_server': self.upstream.authorization_server,
         }
@@ -346,7 +346,8 @@ class AuthorizationCodeProvider:
                 'redirect_uri': redirect_uri,
                 'redirect_uri_provided_explicitly': redirect_uri_provided_explicitly,
                 'expires_at': time.time() + 300,
-                'scopes': state_data['scopes'],
+                # State stored before the grant was recorded with it carries the endpoint scopes alone.
+                'scopes': state_data.get('scopes', list(self.issued_tokens.scopes)),
                 'code_challenge': code_challenge,
                 **self._binding(),
             },

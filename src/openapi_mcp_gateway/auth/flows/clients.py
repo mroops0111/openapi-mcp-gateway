@@ -39,8 +39,12 @@ class ClientDirectory(abc.ABC):
         )
 
     def registration_options(self, mcp_endpoint_scopes: collections.abc.Sequence[str]) -> ClientRegistrationOptions:
-        """The SDK's registration settings, granting a registered client ``mcp_endpoint_scopes``."""
-        return ClientRegistrationOptions(enabled=False)
+        """The SDK's registration settings, granting a registered client ``mcp_endpoint_scopes``.
+
+        Registration stays off, but the endpoint scopes are still advertised as ``scopes_supported``,
+        and none are when ``auth.operation_scopes`` leaves the endpoint without any.
+        """
+        return ClientRegistrationOptions(enabled=False, valid_scopes=list(mcp_endpoint_scopes) or None)
 
 
 class DynamicClientRegistry(ClientDirectory):
@@ -107,6 +111,11 @@ class PreRegisteredClient(OAuthClientInformationFull):
         the method RFC 6749 §2.3.1 requires every server to support and the one clients try first.
         """
         secret = client.resolve_client_secret()
+        if client.client_secret is not None and not secret:
+            raise ValueError(
+                f'auth.clients.{client_id}.client_secret resolves to nothing, so the client would turn public. '
+                'Set its environment variable, or remove client_secret to make the client public on purpose.'
+            )
         return cls(
             client_id=client_id,
             client_secret=secret,

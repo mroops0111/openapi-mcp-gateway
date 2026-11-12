@@ -77,6 +77,13 @@ class TestClientAuthentication:
         record = await _pre_registered(**client)
         assert record.token_endpoint_auth_method == method
 
+    def test_a_secret_that_resolves_to_nothing_is_refused(self, monkeypatch):
+        """An unset variable would otherwise turn a confidential client public, open to anyone knowing its id."""
+        monkeypatch.delenv('AGENT_SECRET', raising=False)
+        client = ClientConfig(client_secret='${AGENT_SECRET}')
+        with pytest.raises(ValueError, match=r'auth\.clients\.agent\.client_secret'):
+            PreRegisteredClientDirectory({'agent': client}, ())
+
     async def test_an_unknown_client_is_absent(self):
         directory = PreRegisteredClientDirectory({}, ())
         assert await directory.get('stranger') is None
@@ -90,6 +97,12 @@ class TestRegistration:
         assert directory.registration_options(['api']).enabled is False
         with pytest.raises(RegistrationError):
             await directory.register(OAuthClientInformationFull(client_id='newcomer'))
+
+    @pytest.mark.parametrize(('mcp_endpoint_scopes', 'advertised'), [(['api'], ['api']), ([], None)])
+    def test_pre_registered_directories_still_advertise_the_endpoint_scopes(self, mcp_endpoint_scopes, advertised):
+        """``scopes_supported`` is read from the registration options, so it would vanish with registration."""
+        options = PreRegisteredClientDirectory({}, ()).registration_options(mcp_endpoint_scopes)
+        assert options.valid_scopes == advertised
 
     def test_dynamic_registries_grant_the_endpoint_scopes(self, memory_store):
         options = DynamicClientRegistry(memory_store, GATEWAY_ISSUER).registration_options(['api'])

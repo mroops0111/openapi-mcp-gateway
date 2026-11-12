@@ -1,9 +1,14 @@
 import abc
 import collections.abc
+import logging
 import re
 import typing
 
 from ..openapi import OperationInfo
+from ..settings import SCOPE_TOKEN
+
+
+logger = logging.getLogger(__name__)
 
 
 class DerivedScope(typing.NamedTuple):
@@ -33,6 +38,8 @@ class TagMethodDerivation(ScopeDerivation):
 
     A tag is lowercased and its spaces become hyphens, since a scope cannot contain a space.
     A method outside the table, and an operation without tags, derive nothing.
+    Nor does a tag that still makes no valid scope, such as one with non-ASCII letters,
+    which is warned about once so it can be covered by a hand-written scope instead.
     """
 
     _ACCESS_BY_METHOD: typing.ClassVar[dict[str, str]] = {
@@ -49,6 +56,9 @@ class TagMethodDerivation(ScopeDerivation):
         'delete': 'Delete {tag}',
     }
 
+    def __init__(self) -> None:
+        self._unusable_tags: set[str] = set()
+
     def derive(self, operation: OperationInfo) -> collections.abc.Iterable[DerivedScope]:
         access = self._ACCESS_BY_METHOD.get(operation.method.upper())
         if access is None:
@@ -59,7 +69,21 @@ class TagMethodDerivation(ScopeDerivation):
                 description=self._DESCRIPTION_BY_ACCESS[access].format(tag=tag),
             )
             for tag in operation.tags
+            if self._is_usable(tag)
         )
+
+    def _is_usable(self, tag: str) -> bool:
+        """Whether ``tag`` makes a valid scope name, warning the first time one does not."""
+        if SCOPE_TOKEN.fullmatch(_scope_token(tag)):
+            return True
+        if tag not in self._unusable_tags:
+            self._unusable_tags.add(tag)
+            logger.warning(
+                'Tag %r makes no valid scope name, so auth.operation_scopes.auto tags derives no scope from it. '
+                'Cover its operations with auth.operation_scopes.manual instead.',
+                tag,
+            )
+        return False
 
 
 # The extension point.

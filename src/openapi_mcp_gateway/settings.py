@@ -15,11 +15,12 @@ from .openapi import McpIntegration
 # so a typo there once widened a curated surface to the whole spec with no signal at all.
 
 
+# One RFC 6749 §3.3 scope-token, which excludes spaces, double quotes and backslashes.
+SCOPE_TOKEN = re.compile(r'[\x21\x23-\x5B\x5D-\x7E]+')
+
+
 # What an applicability error names for a setting only the gateway's own token minting reads.
 _MINTING_FLOW = 'auth.flow authorization_code, the only flow where the gateway mints tokens'
-
-# One RFC 6749 §3.3 scope-token, which excludes spaces, double quotes and backslashes.
-_SCOPE_TOKEN = re.compile(r'[\x21\x23-\x5B\x5D-\x7E]+')
 
 
 # The resolver moved to the leaf ``env`` module so exposure/ can reuse it without importing settings.
@@ -586,6 +587,6 @@ def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) ->
 
 def _refuse_invalid_scope_tokens(scopes: typing.Iterable[str], location: str) -> None:
     """Refuse a scope name a token could not carry, since one with a space would split into two scopes."""
-    invalid = sorted(scope for scope in scopes if not _SCOPE_TOKEN.fullmatch(scope))
+    invalid = sorted(scope for scope in scopes if not SCOPE_TOKEN.fullmatch(scope))
     if invalid:
         raise ValueError(f'{location} names invalid scopes {invalid!r}. A scope cannot contain spaces, " or \\.')
