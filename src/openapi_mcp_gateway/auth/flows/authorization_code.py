@@ -359,10 +359,6 @@ class AuthorizationCodeProvider:
                 'grant_type': 'authorization_code',
             }
         )
-        api_access_token = upstream_token.access_token
-        api_refresh_token = upstream_token.refresh_token
-        expires_in = upstream_token.expires_in
-
         mcp_auth_code = f'mcp_{secrets.token_hex(16)}'
         await self.store.set(
             'mcp_auth_code',
@@ -382,12 +378,14 @@ class AuthorizationCodeProvider:
             ttl=300,
         )
 
-        await self._store_api_token(client_id, api_access_token, expires_in)
+        await self._store_api_token(client_id, upstream_token.access_token, upstream_token.expires_in)
 
-        await self.store.set_mapping('mcp_auth_code', mcp_auth_code, 'api_access_token', api_access_token, ttl=300)
-        if api_refresh_token:
+        await self.store.set_mapping(
+            'mcp_auth_code', mcp_auth_code, 'api_access_token', upstream_token.access_token, ttl=300
+        )
+        if upstream_token.refresh_token:
             await self.store.set_mapping(
-                'mcp_auth_code', mcp_auth_code, 'api_refresh_token', api_refresh_token, ttl=300
+                'mcp_auth_code', mcp_auth_code, 'api_refresh_token', upstream_token.refresh_token, ttl=300
             )
 
         await self.store.delete('mcp_auth_state', state)
@@ -395,8 +393,8 @@ class AuthorizationCodeProvider:
         logger.info(
             'Upstream OAuth callback handled: client_id=%s expires_in=%s refresh=%s',
             client_id,
-            expires_in,
-            bool(api_refresh_token),
+            upstream_token.expires_in,
+            bool(upstream_token.refresh_token),
         )
         # Per RFC 9207, name this authorization server in its own response, as its metadata advertises,
         # so an MCP client talking to several authorization servers can tell which one answered.

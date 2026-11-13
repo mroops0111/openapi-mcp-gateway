@@ -32,7 +32,7 @@ from .fastapi import (
     override_with_metadata,
     warn_on_mixed_security_schemes,
 )
-from .openapi import ExposedTool, McpIntegration, OpenAPISpec, OperationInfo, load_spec, parse_spec
+from .openapi import ExposedTool, OpenAPISpec, OperationInfo, load_spec, parse_spec
 from .policy import filter_operations, unmatched_patterns
 from .scopes import (
     McpScopePolicy,
@@ -41,6 +41,7 @@ from .scopes import (
     ScopeFilterMiddleware,
     ScopeRegistry,
     SpecSecurityUpstreamScopePolicy,
+    UpstreamScopePolicy,
     build_mcp_scope_policy,
     build_upstream_scope_policy,
 )
@@ -363,21 +364,9 @@ class Gateway:
             server_config = _with_requested_upstream_scopes(server_config, spec_security.requested_scopes(operations))
         auth = self._resolve_auth(server_config, spec)
         auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
-        if auth.provider is not None:
-            spec_security.warn_on_unrequested_scopes(
-                operations,
-                auth.provider.upstream.scopes,
-                mcp_scope_policy,
-                {client_id: client.scopes for client_id, client in server_config.auth.clients.items()},
-                server_config.name,
-            )
-        elif upstream.enforce_scopes:
-            raise ValueError(
-                f'Server "{server_config.name}": auth.upstream.enforce_scopes needs auth.flow authorization_code, '
-                f'but the spec resolves to {auth.flow_type}. Set auth.flow, or turn enforce_scopes off.'
-            )
         scope_registry = ScopeRegistry(
-            mcp_scope_policy, build_upstream_scope_policy(upstream.enforce_scopes, spec_security, server_config.name)
+            mcp_scope_policy,
+            _upstream_scope_policy(server_config, auth, spec_security, operations, mcp_scope_policy),
         )
         mcp = self._build_mcp_server(
             server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions, scope_registry
@@ -689,10 +678,38 @@ def _apply_yaml_override(operation: OperationInfo, override: OperationOverride) 
     """Return ``operation`` with what ``override`` sets replaced."""
     update: dict[str, typing.Any] = {}
     if override.overrides_integration:
-        update['x_mcp_integration'] = McpIntegration(tool=override.tool, resource=override.resource)
+        update['x_mcp_integration'] = override.integration
     if override.security is not None:
         update['security'] = override.security
     return operation.model_copy(update=update)
+
+
+def _upstream_scope_policy(
+    server_config: ServerConfig,
+    auth: OAuthFlowSetup,
+    spec_security: SpecSecurityUpstreamScopePolicy,
+    operations: list[OperationInfo],
+    mcp_scope_policy: McpScopePolicy,
+) -> UpstreamScopePolicy:
+    """Return what each operation requires of the upstream grant, warning about scopes the gateway never requests.
+
+    Raises ``ValueError`` when ``enforce_scopes`` is on but the flow records no user grant.
+    """
+    upstream = server_config.auth.upstream
+    if auth.provider is not None:
+        spec_security.warn_on_unrequested_scopes(
+            operations,
+            auth.provider.upstream.scopes,
+            mcp_scope_policy,
+            {client_id: client.scopes for client_id, client in server_config.auth.clients.items()},
+            server_config.name,
+        )
+    elif upstream.enforce_scopes:
+        raise ValueError(
+            f'Server "{server_config.name}": auth.upstream.enforce_scopes needs auth.flow authorization_code, '
+            f'but the spec resolves to {auth.flow_type}. Set auth.flow, or turn enforce_scopes off.'
+        )
+    return build_upstream_scope_policy(upstream.enforce_scopes, spec_security, server_config.name)
 
 
 def _with_requested_upstream_scopes(server_config: ServerConfig, scopes: list[str]) -> ServerConfig:

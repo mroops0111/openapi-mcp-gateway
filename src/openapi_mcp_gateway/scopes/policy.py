@@ -62,12 +62,8 @@ class UpstreamScopePolicy(ScopePolicy):
     """What each operation requires of the scopes the upstream granted the user behind a token."""
 
 
-class UnrestrictedMcpScopePolicy(McpScopePolicy):
-    """No MCP scopes, so every token may use every operation, as on a server without ``auth.operation_scopes``."""
-
-    @property
-    def defined_mcp_scopes(self) -> collections.abc.Mapping[str, str]:
-        return {}
+class UnrestrictedScopePolicy(ScopePolicy):
+    """Every operation open whatever the token holds, so the lists are the same for every token."""
 
     @property
     def list_cache_scope(self) -> typing.Literal['public', 'private']:
@@ -75,6 +71,14 @@ class UnrestrictedMcpScopePolicy(McpScopePolicy):
 
     def requirement_for(self, operation: OperationInfo) -> ScopeRequirement:
         return UnrestrictedRequirement()
+
+
+class UnrestrictedMcpScopePolicy(UnrestrictedScopePolicy, McpScopePolicy):
+    """No MCP scopes, so every token may use every operation, as on a server without ``auth.operation_scopes``."""
+
+    @property
+    def defined_mcp_scopes(self) -> collections.abc.Mapping[str, str]:
+        return {}
 
 
 class ConfiguredMcpScopePolicy(McpScopePolicy):
@@ -161,15 +165,8 @@ class ConfiguredMcpScopePolicy(McpScopePolicy):
         )
 
 
-class UnrestrictedUpstreamScopePolicy(UpstreamScopePolicy):
+class UnrestrictedUpstreamScopePolicy(UnrestrictedScopePolicy, UpstreamScopePolicy):
     """Every operation open whatever the upstream granted, as on a server without ``auth.upstream.enforce_scopes``."""
-
-    @property
-    def list_cache_scope(self) -> typing.Literal['public', 'private']:
-        return 'public'
-
-    def requirement_for(self, operation: OperationInfo) -> ScopeRequirement:
-        return UnrestrictedRequirement()
 
 
 class SpecSecurityUpstreamScopePolicy(UpstreamScopePolicy):
@@ -213,8 +210,11 @@ class SpecSecurityUpstreamScopePolicy(UpstreamScopePolicy):
         return frozenset(held)
 
     def requested_scopes(self, operations: collections.abc.Iterable[OperationInfo]) -> list[str]:
-        """Every upstream scope any of ``operations`` names, in the order the operations name them."""
-        return list(
+        """Every upstream scope any of ``operations`` names, in the order the operations name them.
+
+        A scope another requested scope implies is left out, since the broader one already covers it.
+        """
+        requested = list(
             dict.fromkeys(
                 scope
                 for operation in operations
@@ -223,6 +223,10 @@ class SpecSecurityUpstreamScopePolicy(UpstreamScopePolicy):
                 for scope in sorted(scope_set)
             )
         )
+        for scope in list(requested):
+            if scope in self.held_scopes(other for other in requested if other != scope):
+                requested.remove(scope)
+        return requested
 
     def warn_on_unrequested_scopes(
         self,
@@ -305,6 +309,7 @@ def build_upstream_scope_policy(
             'so no operation is restricted by the upstream grant.',
             server_name,
         )
+        return UnrestrictedUpstreamScopePolicy()
     return spec_security
 
 

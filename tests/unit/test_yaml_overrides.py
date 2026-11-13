@@ -5,6 +5,10 @@ from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ResourceO
 from openapi_mcp_gateway.settings import OperationOverride
 
 
+# The securitySchemes of a spec that takes one OAuth token.
+OAUTH2_SCHEMES = {'oauth2': {'type': 'oauth2'}}
+
+
 def _operation(operation_id: str, integration: McpIntegration | None = None) -> OperationInfo:
     """Build a minimal ``OperationInfo`` for partition / override tests."""
     return OperationInfo(
@@ -89,7 +93,7 @@ class TestApplyYamlOverrides:
         operations = [_operation('get_pet', spec_side)]
         security = [{'oauth2': ['pets:read']}, {'oauth2': ['pets:admin']}]
         [result] = _apply_yaml_overrides(
-            operations, {'get_pet': OperationOverride(security=security)}, 'petstore', {'oauth2': {'type': 'oauth2'}}
+            operations, {'get_pet': OperationOverride(security=security)}, 'petstore', OAUTH2_SCHEMES
         )
         assert result.security == security
         assert result.x_mcp_integration is spec_side
@@ -99,4 +103,4 @@ class TestApplyYamlOverrides:
         operations = [_operation('get_pet')]
         override = OperationOverride(security=[{'OAuth2': ['pets:read']}])
         with pytest.raises(ValueError, match=r"operations\.get_pet\.security .* \['OAuth2'\]"):
-            _apply_yaml_overrides(operations, {'get_pet': override}, 'petstore', {'oauth2': {'type': 'oauth2'}})
+            _apply_yaml_overrides(operations, {'get_pet': override}, 'petstore', OAUTH2_SCHEMES)

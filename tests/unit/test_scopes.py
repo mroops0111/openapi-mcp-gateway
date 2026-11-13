@@ -104,8 +104,8 @@ class TestConfiguredMcpScopePolicy:
 
     def test_derived_and_manual_scopes_add_up(self):
         """An operation a manual scope also covers opens to either scope."""
-        catalog = _catalog(auto='tags', manual={'admin': {'description': 'Admin', 'operations': ['DELETE *']}})
-        requirement = catalog.requirement_for(_operation_named('deletePet'))
+        policy = _configured_policy(auto='tags', manual={'admin': {'description': 'Admin', 'operations': ['DELETE *']}})
+        requirement = policy.requirement_for(_operation_named('deletePet'))
         assert requirement.challenge == ('admin', 'pets:delete')
 
     @pytest.mark.parametrize(
@@ -113,13 +113,15 @@ class TestConfiguredMcpScopePolicy:
     )
     def test_unscoped_decides_an_operation_no_scope_covers(self, unscoped, expected):
         """An untagged operation under ``auto: tags`` is unscoped, like any other no scope covers."""
-        catalog = _catalog(auto='tags', unscoped=unscoped)
-        assert isinstance(catalog.requirement_for(_operation_named('adminListPets')), expected)
+        policy = _configured_policy(auto='tags', unscoped=unscoped)
+        assert isinstance(policy.requirement_for(_operation_named('adminListPets')), expected)
 
     def test_defined_mcp_scopes_carry_descriptions(self):
         """Every scope is listed with what a person approving it is shown."""
-        catalog = _catalog(auto='tags', manual={'admin': {'description': 'Manage pets', 'operations': ['admin*']}})
-        assert catalog.defined_mcp_scopes == {
+        policy = _configured_policy(
+            auto='tags', manual={'admin': {'description': 'Manage pets', 'operations': ['admin*']}}
+        )
+        assert policy.defined_mcp_scopes == {
             'pets:read': 'Read pets',
             'pets:write': 'Create and change pets',
             'pets:delete': 'Delete pets',
@@ -129,19 +131,19 @@ class TestConfiguredMcpScopePolicy:
     def test_a_manual_scope_cannot_reuse_a_derived_name(self):
         """The two definitions would otherwise merge into one scope without anyone noticing."""
         with pytest.raises(ValueError, match=r'reuses names .* \(pets:read\)'):
-            _catalog(auto='tags', manual={'pets:read': {'description': 'Read', 'operations': ['GET *']}})
+            _configured_policy(auto='tags', manual={'pets:read': {'description': 'Read', 'operations': ['GET *']}})
 
     def test_a_pattern_matching_nothing_is_warned(self, caplog):
         """A typo in a pattern only ever shortens what a scope opens, so it is reported at startup."""
         with caplog.at_level(logging.WARNING):
-            _catalog(manual={'admin': {'description': 'Admin', 'operations': ['DELETE /pest/*']}})
+            _configured_policy(manual={'admin': {'description': 'Admin', 'operations': ['DELETE /pest/*']}})
         assert 'DELETE /pest/*' in caplog.text
 
     @pytest.mark.parametrize(('unscoped', 'level'), [('deny', logging.WARNING), ('allow', logging.INFO)])
     def test_unscoped_operations_are_counted_at_startup(self, caplog, unscoped, level):
         """Under ``deny`` they vanish from every client, so the count is a warning there."""
         with caplog.at_level(logging.INFO):
-            _catalog(auto='tags', unscoped=unscoped)
+            _configured_policy(auto='tags', unscoped=unscoped)
         [record] = [record for record in caplog.records if 'no scope covers' in record.message]
         assert record.levelno == level
         assert '2 operation(s)' in record.message
@@ -149,10 +151,10 @@ class TestConfiguredMcpScopePolicy:
 
     def test_lists_vary_by_token(self):
         """``tools/list`` is cached per token once scopes filter it."""
-        assert _catalog(auto='tags').list_cache_scope == 'private'
+        assert _configured_policy(auto='tags').list_cache_scope == 'private'
 
 
-class TestUnrestrictedPolicy:
+class TestUnrestrictedMcpScopePolicy:
     """A server without ``auth.operation_scopes`` restricts nothing."""
 
     def test_every_operation_is_open(self):
@@ -169,20 +171,20 @@ class TestScopeRegistry:
     """Requirements looked up by the name a tool or operation is exposed as, or the URI a resource is read at."""
 
     def test_a_registered_name_carries_its_requirement(self):
-        scope_registry = ScopeRegistry(_catalog(auto='tags'))
+        scope_registry = ScopeRegistry(_configured_policy(auto='tags'))
         scope_registry.register('delete_pet', _operation_named('deletePet'))
         assert scope_registry.permits('delete_pet', _mcp_grant({'pets:delete'}))
         assert not scope_registry.permits('delete_pet', _mcp_grant({'pets:write'}))
 
     def test_an_unregistered_name_requires_nothing(self):
         """A dynamic meta-tool is never registered, since the operations behind it are what scopes guard."""
-        scope_registry = ScopeRegistry(_catalog(auto='tags'))
+        scope_registry = ScopeRegistry(_configured_policy(auto='tags'))
         assert scope_registry.permits('search_operations', _mcp_grant(set()))
 
     @pytest.mark.parametrize('uri', ['petstore://pets/{petId}', 'petstore://pets/7'])
     def test_a_resource_template_covers_every_uri_it_expands_to(self, uri):
         """The template is what a listing names and the concrete URI what a read names, and both require the same."""
-        scope_registry = ScopeRegistry(_catalog(auto='tags'))
+        scope_registry = ScopeRegistry(_configured_policy(auto='tags'))
         scope_registry.register_resource('petstore://pets/{petId}', _operation_named('getPetById'))
         assert scope_registry.permits(uri, _mcp_grant({'pets:read'}))
         assert not scope_registry.permits(uri, _mcp_grant({'pets:write'}))
@@ -209,8 +211,8 @@ class TestRequestTargets:
         assert DynamicOperationTarget().resolve(headers) == expected
 
 
-def _catalog(**config: object) -> ConfiguredMcpScopePolicy:
-    """A catalog over the petstore operations, configured as ``auth.operation_scopes`` would be."""
+def _configured_policy(**config: object) -> ConfiguredMcpScopePolicy:
+    """A policy over the petstore operations, configured as ``auth.operation_scopes`` would be."""
     return ConfiguredMcpScopePolicy(OperationScopesConfig.model_validate(config), PETSTORE_OPERATIONS, 'petstore')
 
 

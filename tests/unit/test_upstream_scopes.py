@@ -3,6 +3,7 @@ import logging
 import pytest
 
 from openapi_mcp_gateway.auth.flows.authorization_code import UpstreamTokenResponse
+from openapi_mcp_gateway.openapi import OperationInfo
 from openapi_mcp_gateway.scopes import (
     ConfiguredMcpScopePolicy,
     ScopeRegistry,
@@ -81,6 +82,15 @@ class TestSpecSecurityUpstreamScopePolicy:
             'admin',
         ]
 
+    def test_a_scope_a_broader_requested_one_implies_is_not_requested(self):
+        """``repo`` covers ``public_repo``, so asking for both would only widen the consent screen."""
+        operations = [
+            operation('listRepos', security=[{'oauth': ['public_repo']}]),
+            operation('deleteRepo', security=[{'oauth': ['repo']}]),
+        ]
+        spec_security = SpecSecurityUpstreamScopePolicy(SCHEMES, {'repo': ['public_repo']})
+        assert spec_security.requested_scopes(operations) == ['repo']
+
     def test_the_refusal_names_the_scopes_and_both_remedies(self):
         requirement = SpecSecurityUpstreamScopePolicy(SCHEMES, {}).requirement_for(DELETE_PET)
         assert requirement.refusal == DELETE_PET_UPSTREAM_REFUSAL
@@ -91,7 +101,7 @@ class TestUnrequestedScopeWarning:
 
     def test_each_client_is_warned_about_what_it_can_reach(self, caplog):
         """A reader never reaches ``deletePet``, so only the deleter hears about the scope it needs."""
-        mcp_policy = ConfiguredMcpScopePolicy(OperationScopesConfig(auto='tags'), [LIST_PETS, DELETE_PET], 'petstore')
+        mcp_policy = _tag_scopes(LIST_PETS, DELETE_PET)
         with caplog.at_level(logging.WARNING):
             SpecSecurityUpstreamScopePolicy(SCHEMES, {}).warn_on_unrequested_scopes(
                 [LIST_PETS, DELETE_PET],
@@ -123,11 +133,13 @@ class TestUpstreamScopePolicy:
         policy = build_upstream_scope_policy(False, SpecSecurityUpstreamScopePolicy(SCHEMES, {}), 'petstore')
         assert isinstance(policy, UnrestrictedUpstreamScopePolicy)
 
-    def test_enforcing_a_spec_without_an_oauth_scheme_warns(self, caplog):
+    def test_enforcing_a_spec_without_an_oauth_scheme_restricts_nothing(self, caplog):
+        """The lists stay public too, since no operation depends on the grant."""
         with caplog.at_level(logging.WARNING):
-            build_upstream_scope_policy(
+            policy = build_upstream_scope_policy(
                 True, SpecSecurityUpstreamScopePolicy({'basic': SCHEMES['basic']}, {}), 'petstore'
             )
+        assert isinstance(policy, UnrestrictedUpstreamScopePolicy)
         assert 'the spec declares no OAuth security scheme' in caplog.text
 
 
@@ -145,7 +157,7 @@ class TestScopeRegistryWithUpstreamScopes:
     def test_the_mcp_scopes_are_refused_before_the_upstream_grant(self, mcp_scopes, upstream_scopes, refused_for):
         """Only the MCP scopes can be stepped up for, so a client hears about them first."""
         scope_registry = ScopeRegistry(
-            ConfiguredMcpScopePolicy(OperationScopesConfig(auto='tags'), [DELETE_PET], 'petstore'),
+            _tag_scopes(DELETE_PET),
             SpecSecurityUpstreamScopePolicy(SCHEMES, {'admin': ['read:pets', 'write:pets']}),
         )
         scope_registry.register('delete_pet', DELETE_PET)
@@ -172,3 +184,8 @@ class TestGrantedScopes:
     def test_the_granted_scope_is_parsed_per_rfc_6749(self, scope, granted):
         response = UpstreamTokenResponse(access_token='token', refresh_token=None, expires_in=3600, scope=scope)
         assert response.granted_scopes(['previous']) == granted
+
+
+def _tag_scopes(*operations: OperationInfo) -> ConfiguredMcpScopePolicy:
+    """MCP scopes derived from the tags of ``operations``, as ``auth.operation_scopes.auto: tags`` does."""
+    return ConfiguredMcpScopePolicy(OperationScopesConfig(auto='tags'), operations, 'petstore')

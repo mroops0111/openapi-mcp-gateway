@@ -188,9 +188,7 @@ class TestUpstreamGrant:
     async def test_a_sign_in_records_the_upstream_grant(self, provider, mcp_client_info, stated, recorded):
         """An omitted ``scope`` means the upstream granted what the gateway requested."""
         token = await sign_in(provider, mcp_client_info, upstream_scope=stated)
-        access_token = await provider.load_access_token(token.access_token)
-        assert isinstance(access_token, BrokeredAccessToken)
-        assert access_token.upstream_scopes == recorded
+        assert await _upstream_scopes_of(provider, token.access_token) == recorded
 
     @pytest.mark.parametrize(
         ('stated', 'recorded'), [('read write admin', ['read', 'write', 'admin']), (None, ['read'])]
@@ -210,9 +208,7 @@ class TestUpstreamGrant:
         with patch('httpx.AsyncClient.post', AsyncMock(return_value=response)):
             rotated = await provider.exchange_refresh_token(mcp_client_info, refresh, [])
 
-        access_token = await provider.load_access_token(rotated.access_token)
-        assert isinstance(access_token, BrokeredAccessToken)
-        assert access_token.upstream_scopes == recorded
+        assert await _upstream_scopes_of(provider, rotated.access_token) == recorded
 
     async def test_a_token_stored_without_the_grant_holds_the_requested_scopes(
         self, provider, mcp_client_info, memory_store
@@ -224,9 +220,7 @@ class TestUpstreamGrant:
         del data['upstream_scopes']
         await memory_store.set('mcp_access_token', token.access_token, data, ttl=3600)
 
-        access_token = await provider.load_access_token(token.access_token)
-        assert isinstance(access_token, BrokeredAccessToken)
-        assert access_token.upstream_scopes == ['read', 'write']
+        assert await _upstream_scopes_of(provider, token.access_token) == ['read', 'write']
 
 
 class TestFullOAuthLifecycle:
@@ -608,3 +602,10 @@ class TestTokenBinding:
 
         with pytest.raises(TokenError):
             await provider.exchange_authorization_code(mcp_client_info, auth_code)
+
+
+async def _upstream_scopes_of(provider: AuthorizationCodeProvider, mcp_access_token: str) -> list[str]:
+    """The upstream grant the MCP access token ``mcp_access_token`` records."""
+    access_token = await provider.load_access_token(mcp_access_token)
+    assert isinstance(access_token, BrokeredAccessToken)
+    return access_token.upstream_scopes

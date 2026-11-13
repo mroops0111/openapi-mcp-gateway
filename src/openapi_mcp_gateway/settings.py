@@ -437,6 +437,11 @@ class OperationOverride(McpIntegration):
         """Whether this replaces ``x-mcp-integration``, which an override of ``security`` alone leaves as it is."""
         return self.model_fields_set != {'security'}
 
+    @property
+    def integration(self) -> McpIntegration:
+        """The ``x-mcp-integration`` this override puts in place of the spec's."""
+        return McpIntegration.model_validate(self.model_dump(exclude={'security'}, exclude_unset=True))
+
 
 class ServerConfig(pydantic.BaseModel):
     """One upstream API, with its OpenAPI location, auth, policy, and HTTP timeout."""
