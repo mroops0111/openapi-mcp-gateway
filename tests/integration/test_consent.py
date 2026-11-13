@@ -34,6 +34,18 @@ def app(petstore_json_path: pathlib.Path) -> ASGIApp:
 
 
 @pytest.fixture
+def scoped_browser(petstore_json_path: pathlib.Path) -> TestClient:
+    """A browser on a gateway whose ``agent`` is granted tag-derived scopes, and which requests ``read:pets``."""
+    gateway = authorization_code_gateway(
+        petstore_json_path,
+        {AGENT: {'scopes': ['pets:read', 'pets:write']}},
+        operation_scopes={'auto': 'tags'},
+        upstream={'scopes': ['read:pets']},
+    )
+    return _browser(gateway._build_app(transport='streamable-http'))
+
+
+@pytest.fixture
 def browser(app: ASGIApp) -> TestClient:
     """The browser the user signs in with, keeping its cookies across requests."""
     return _browser(app)
@@ -74,14 +86,8 @@ class TestConsentPage:
 class TestScopeDescriptions:
     """The page leads each scope with what it allows, as the spec and ``auth.operation_scopes`` describe it."""
 
-    def test_both_kinds_of_scope_are_described(self, petstore_json_path):
-        gateway = authorization_code_gateway(
-            petstore_json_path,
-            {AGENT: {'scopes': ['pets:read']}},
-            operation_scopes={'auto': 'tags'},
-            upstream={'scopes': ['read:pets']},
-        )
-        page = _open_consent(_browser(gateway._build_app(transport='streamable-http'))).text
+    def test_both_kinds_of_scope_are_described(self, scoped_browser):
+        page = _open_consent(scoped_browser, scope='pets:read').text
         assert 'Read pets<code>pets:read</code>' in page
         assert 'Read pets<code>read:pets</code>' in page
 
@@ -99,6 +105,12 @@ class TestConsentDecision:
         response = _open_consent(browser)
         assert response.status_code == 302
         assert response.headers['location'].startswith(f'{AUTHORIZE_URL}?')
+
+    def test_a_client_asking_for_more_scopes_is_asked_about_again(self, scoped_browser):
+        """An approval covers only the scopes the page showed."""
+        _decide(scoped_browser, _open_consent(scoped_browser, scope='pets:read'), 'approve')
+        assert _open_consent(scoped_browser, scope='pets:read').status_code == 302
+        assert _open_consent(scoped_browser, scope='pets:read pets:write').status_code == 200
 
     def test_an_approval_covers_only_its_own_client(self, browser):
         _decide(browser, _open_consent(browser), 'approve')
@@ -141,27 +153,30 @@ class TestForgedDecision:
         assert other_browser.get(str(page.url)).status_code == 400
 
 
-class TestBrowserBoundState:
-    """The upstream's callback finishes a sign-in only in the browser that approved it."""
+class TestUpstreamReturn:
+    """The upstream's redirect finishes a sign-in only in the browser that approved it."""
 
     def test_the_approving_browser_finishes_with_the_clients_state(self, browser):
-        location = self._callback(browser, browser).headers['location']
+        location = _return_from_upstream(browser, browser, code='upstream-code').headers['location']
         assert location.startswith(CLIENT_REDIRECT_URI)
         assert query_value(location, 'code').startswith('mcp_')
         assert query_value(location, 'state') == CLIENT_STATE
 
     def test_another_browser_cannot_finish(self, browser, other_browser):
         """A code delivered to another browser is the login CSRF the browser-bound ``state`` prevents."""
-        assert self._callback(browser, other_browser).status_code == 400
+        response = _return_from_upstream(browser, other_browser, code='upstream-code')
+        assert response.status_code == 400
+        assert response.headers['x-frame-options'] == 'DENY'
 
-    @staticmethod
-    def _callback(approving: TestClient, finishing: TestClient) -> httpx2.Response:
-        """Approve a sign-in in ``approving``, then deliver the upstream's redirect for it to ``finishing``."""
-        upstream_url = _decide(approving, _open_consent(approving), 'approve').headers['location']
-        with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())):
-            return finishing.get(
-                '/petstore/auth/callback', params={'code': 'upstream-code', 'state': query_value(upstream_url, 'state')}
-            )
+    @pytest.mark.parametrize(
+        ('upstream_error', 'client_error'), [('access_denied', 'access_denied'), ('invalid_scope', 'server_error')]
+    )
+    def test_an_upstream_refusal_reaches_the_client(self, browser, upstream_error, client_error):
+        """An error about the gateway's own request to the upstream reaches the client as ``server_error``."""
+        location = _return_from_upstream(browser, browser, error=upstream_error).headers['location']
+        assert location.startswith(CLIENT_REDIRECT_URI)
+        assert query_value(location, 'error') == client_error
+        assert query_value(location, 'state') == CLIENT_STATE
 
 
 def _browser(app: ASGIApp) -> TestClient:
@@ -169,8 +184,11 @@ def _browser(app: ASGIApp) -> TestClient:
     return TestClient(app, base_url=GATEWAY_URL, follow_redirects=False)
 
 
-def _open_consent(browser: TestClient, client_id: str = AGENT) -> httpx2.Response:
-    """Start a sign-in for ``client_id`` at the SDK's ``/authorize``, and follow it to the consent page."""
+def _open_consent(browser: TestClient, client_id: str = AGENT, scope: str | None = None) -> httpx2.Response:
+    """Start a sign-in for ``client_id`` at the SDK's ``/authorize``, asking for ``scope``, and follow it on.
+
+    The response is the consent page, or the redirect past it when no consent is needed.
+    """
     authorize = browser.get(
         '/petstore/authorize',
         params={
@@ -180,6 +198,7 @@ def _open_consent(browser: TestClient, client_id: str = AGENT) -> httpx2.Respons
             'code_challenge': CODE_CHALLENGE,
             'code_challenge_method': 'S256',
             'state': CLIENT_STATE,
+            **({'scope': scope} if scope else {}),
         },
     )
     assert authorize.status_code == 302
@@ -193,3 +212,13 @@ def _decide(
     sent = re.search(r'name="csrf_token" value="([^"]+)"', page.text)
     assert sent is not None
     return browser.post(str(page.url), data={'csrf_token': csrf_token or sent.group(1), 'decision': decision})
+
+
+def _return_from_upstream(approving: TestClient, finishing: TestClient, **answer: str) -> httpx2.Response:
+    """Approve a sign-in in ``approving``, then deliver the upstream's ``answer`` for it to ``finishing``.
+
+    ``answer`` is the ``code`` or ``error`` the upstream sends back.
+    """
+    upstream_url = _decide(approving, _open_consent(approving), 'approve').headers['location']
+    with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())):
+        return finishing.get('/petstore/auth/callback', params={**answer, 'state': query_value(upstream_url, 'state')})

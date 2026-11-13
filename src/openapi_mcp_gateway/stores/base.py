@@ -7,7 +7,7 @@ class TokenStore(abc.ABC):
 
     Used to correlate MCP OAuth artefacts with upstream API credentials.
     Common namespaces: ``mcp_client``, ``mcp_access_token``, ``mcp_refresh_token``,
-    ``mcp_auth_code``, ``mcp_auth_state``, ``api_access_token``.
+    ``mcp_auth_request``, ``mcp_auth_state``, ``mcp_auth_code``, ``mcp_consent``, ``api_access_token``.
     """
 
     @abc.abstractmethod

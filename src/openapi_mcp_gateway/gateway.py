@@ -370,7 +370,7 @@ class Gateway:
             server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions, scope_registry
         )
         if auth.provider is not None:
-            AuthorizationCodeRoutes(auth.provider, mcp_scope_policy.defined_mcp_scopes).register(mcp)
+            AuthorizationCodeRoutes(auth.provider, mcp_scope_policy).register(mcp)
 
         binding = UpstreamBinding(
             base_url=base_url,

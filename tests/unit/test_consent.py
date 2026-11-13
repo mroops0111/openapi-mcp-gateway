@@ -17,6 +17,7 @@ HOSTILE_PROMPT = ConsentPrompt(
     redirect_uri='https://app.example.com/cb?next="><img src=x>',
     upstream_scopes=[DescribedScope('read', None)],
     mcp_scopes=[DescribedScope('pets:read', '<b>Read</b> pets')],
+    opens_unscoped_tools=False,
     csrf_token='token',
 )
 
@@ -43,12 +44,16 @@ class TestConsentPage:
     def test_a_scope_without_a_description_is_shown_by_its_name(self):
         assert '<li><code>read</code></li>' in _page_text(HOSTILE_PROMPT)
 
-    @pytest.mark.parametrize(
-        ('mcp_scopes', 'shown'), [(None, 'Use every tool on petstore'), ([], 'No tools on petstore')]
-    )
-    def test_a_server_without_scopes_differs_from_a_client_without_any(self, mcp_scopes, shown):
-        """``None`` is a server without ``auth.operation_scopes``, where a token may use every tool."""
-        assert shown in _page_text(dataclasses.replace(HOSTILE_PROMPT, mcp_scopes=mcp_scopes))
+    @pytest.mark.parametrize('mcp_scopes', [[], HOSTILE_PROMPT.mcp_scopes])
+    def test_tools_open_to_every_client_are_named(self, mcp_scopes):
+        """A list of scopes alone would understate what a server that opens unscoped tools grants."""
+        prompt = dataclasses.replace(HOSTILE_PROMPT, mcp_scopes=mcp_scopes, opens_unscoped_tools=True)
+        page = _page_text(prompt)
+        assert 'Use the tools on petstore open to every client' in page
+        assert 'No tools' not in page
+
+    def test_a_client_with_nothing_open_to_it_is_told_so(self):
+        assert 'No tools on petstore' in _page_text(dataclasses.replace(HOSTILE_PROMPT, mcp_scopes=[]))
 
     def test_no_upstream_scopes_leaves_their_list_out(self):
         page = _page_text(dataclasses.replace(HOSTILE_PROMPT, upstream_scopes=[]))

@@ -92,7 +92,9 @@ class ConsentPrompt:
 
     ``client_name`` is whatever the client registered itself as, so the page shows ``redirect_uri`` first,
     the address the authorization code is sent to, which a client cannot fake.
-    ``mcp_scopes`` is ``None`` on a server without ``auth.operation_scopes``, where a token may use every tool.
+    ``mcp_scopes`` are the scopes the server defines that the client is granted.
+    ``opens_unscoped_tools`` says the tools no scope covers are open to every client,
+    which on a server without ``auth.operation_scopes`` is every tool.
     """
 
     server_name: str
@@ -101,7 +103,8 @@ class ConsentPrompt:
     client_name: str | None
     redirect_uri: str
     upstream_scopes: collections.abc.Sequence[DescribedScope]
-    mcp_scopes: collections.abc.Sequence[DescribedScope] | None
+    mcp_scopes: collections.abc.Sequence[DescribedScope]
+    opens_unscoped_tools: bool
     csrf_token: str
 
 
@@ -111,7 +114,7 @@ def consent_page(prompt: ConsentPrompt) -> HTMLResponse:
     server = html.escape(prompt.server_name)
     upstream_host = html.escape(prompt.upstream_host)
     upstream_scopes = (
-        f'<p class="label">{upstream_host} will be asked for</p>{_scope_list(prompt.upstream_scopes, "")}'
+        f'<p class="label">{upstream_host} will be asked for</p><ul>{_scope_items(prompt.upstream_scopes)}</ul>'
         if prompt.upstream_scopes
         else ''
     )
@@ -122,7 +125,7 @@ def consent_page(prompt: ConsentPrompt) -> HTMLResponse:
 <div class="redirect mono">{_redirect_label(prompt.redirect_uri)}</div>
 <p class="hint">{_HINT_ICON}<span>Approve only if you just started this sign-in from {client}.</span></p>
 <p class="label">{client} will be able to</p>
-{_mcp_scope_list(prompt.mcp_scopes, server)}
+{_mcp_scope_list(prompt, server)}
 {upstream_scopes}
 <details><summary>Client details</summary><p>Registered as <code>{html.escape(prompt.client_id)}</code></p></details>
 <form method="post">
@@ -164,22 +167,22 @@ def _redirect_label(redirect_uri: str) -> str:
     return f'{html.escape(scheme)}<b>{html.escape(origin.netloc)}</b>{html.escape(rest)}'
 
 
-def _mcp_scope_list(scopes: collections.abc.Sequence[DescribedScope] | None, server: str) -> str:
-    """What the client may do on ``server``, which is every tool on a server that defines no MCP scopes."""
-    if scopes is None:
-        return f'<ul><li>Use every tool on {server}</li></ul>'
-    return _scope_list(scopes, f'No tools on {server}')
+def _mcp_scope_list(prompt: ConsentPrompt, server: str) -> str:
+    """What the client may do on ``server``, which is ``server`` already escaped.
 
-
-def _scope_list(scopes: collections.abc.Sequence[DescribedScope], empty: str) -> str:
-    """``scopes`` as a list, each led by its description with its name beside it, or by its name alone.
-
-    ``empty`` is the one item an empty list shows, already escaped.
+    The tools open to every client are named as well, since a list of scopes alone would understate the grant.
     """
-    items = (
+    items = _scope_items(prompt.mcp_scopes)
+    if prompt.opens_unscoped_tools:
+        items += f'<li>Use the tools on {server} open to every client</li>'
+    return f'<ul>{items or f"<li>No tools on {server}</li>"}</ul>'
+
+
+def _scope_items(scopes: collections.abc.Sequence[DescribedScope]) -> str:
+    """``scopes`` as list items, each led by its description with its name beside it, or by its name alone."""
+    return ''.join(
         f'<li><span>{html.escape(scope.description)}<code>{html.escape(scope.name)}</code></span></li>'
         if scope.description
         else f'<li><code>{html.escape(scope.name)}</code></li>'
         for scope in scopes
     )
-    return f'<ul>{"".join(items) or f"<li>{empty}</li>"}</ul>'

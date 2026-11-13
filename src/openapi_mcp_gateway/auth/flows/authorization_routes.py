@@ -1,4 +1,3 @@
-import collections.abc
 import logging
 import secrets
 
@@ -7,6 +6,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
+from ...scopes import McpScopePolicy
 from .authorization_code import CALLBACK_PATH, CONSENT_PATH, AuthorizationCodeProvider
 from .consent import BrowserCookie, PendingAuthorization
 from .consent_page import PAGE_HEADERS, consent_page, error_page
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 # Why a consent page cannot go on, as the user reads it.
 _UNKNOWN_SIGN_IN = 'This sign-in has expired, was already finished, or was opened in another browser.'
 _TAMPERED_FORM = 'The approval form was not the one this gateway sent.'
+_INCOMPLETE_CALLBACK = 'The sign-in service sent you back without an answer.'
 
 
 class AuthorizationCodeRoutes:
@@ -26,14 +27,12 @@ class AuthorizationCodeRoutes:
     ``CONSENT_PATH`` shows the consent page and takes its decision,
     and ``CALLBACK_PATH`` is where the upstream sends the browser back.
     Each step reads the browser cookie, which ties the whole sign-in to the browser that approved it.
-    ``mcp_scope_descriptions`` is what each MCP scope the server defines allows, as the consent page lists it.
+    ``mcp_scope_policy`` tells the consent page what each MCP scope allows, and which tools need none.
     """
 
-    def __init__(
-        self, provider: AuthorizationCodeProvider, mcp_scope_descriptions: collections.abc.Mapping[str, str]
-    ) -> None:
+    def __init__(self, provider: AuthorizationCodeProvider, mcp_scope_policy: McpScopePolicy) -> None:
         self._provider = provider
-        self._mcp_scope_descriptions = mcp_scope_descriptions
+        self._mcp_scope_policy = mcp_scope_policy
         self._cookie = BrowserCookie(secure=provider.issuer.startswith('https://'))
 
     def register(self, mcp: MCPServer) -> None:
@@ -51,7 +50,7 @@ class AuthorizationCodeRoutes:
         if pending is None:
             response: Response = error_page(_UNKNOWN_SIGN_IN, 400)
         elif await self._provider.requires_consent(pending):
-            response = consent_page(await self._provider.consent_prompt(pending, self._mcp_scope_descriptions))
+            response = consent_page(await self._provider.consent_prompt(pending, self._mcp_scope_policy))
         else:
             response = _redirect(await self._provider.continue_to_upstream(pending), 302)
         self._cookie.attach(response, browser_id)
@@ -76,14 +75,24 @@ class AuthorizationCodeRoutes:
         return _redirect(redirect_uri, 303)
 
     async def finish_upstream(self, request: Request) -> Response:
-        """Take the upstream's redirect, and send the browser on to the MCP client with its authorization code."""
-        code = request.query_params.get('code')
-        state = request.query_params.get('state')
-        if not code or not state:
-            raise HTTPException(400, 'Missing code or state parameter')
-        redirect_uri = await self._provider.handle_upstream_callback(
-            code, state, self._cookie.read(request), request.query_params.get('iss')
-        )
+        """Take the upstream's redirect, and send the browser on to the MCP client with its code or the refusal.
+
+        A failure the client cannot be told about is shown on the gateway's error page.
+        """
+        query = request.query_params
+        state = query.get('state')
+        browser_id = self._cookie.read(request)
+        try:
+            if state and (error := query.get('error')):
+                redirect_uri = await self._provider.handle_upstream_error(
+                    error, state, browser_id, query.get('error_description')
+                )
+            elif state and (code := query.get('code')):
+                redirect_uri = await self._provider.handle_upstream_callback(code, state, browser_id, query.get('iss'))
+            else:
+                return error_page(_INCOMPLETE_CALLBACK, 400)
+        except HTTPException as exc:
+            return error_page(exc.detail, exc.status_code)
         return _redirect(redirect_uri, 302)
 
     async def _shown_authorization(self, request: Request) -> PendingAuthorization | None:

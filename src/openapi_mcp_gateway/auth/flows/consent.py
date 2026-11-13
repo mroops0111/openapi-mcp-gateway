@@ -1,3 +1,4 @@
+import collections.abc
 import re
 import secrets
 
@@ -52,23 +53,59 @@ class PendingAuthorization(pydantic.BaseModel):
 
 
 class ConsentRegistry:
-    """The clients each browser has approved on this server's consent page, kept in ``store`` for ``CONSENT_TTL``.
+    """The scopes each browser has approved for each client on this server's consent page, kept for ``CONSENT_TTL``.
 
     The gateway does not know the user before the upstream sign-in, so an approval belongs to the browser.
+    It covers only the scopes the page showed, so a client asking for more is asked about again.
+    MCP and upstream scopes are kept apart, since the same name may mean different things on each side.
     """
 
     def __init__(self, store: TokenStore, issuer: str) -> None:
         self._store = store
         self._issuer = issuer
 
-    async def is_approved(self, browser_id: str, client_id: str) -> bool:
-        return await self._store.get('mcp_consent', self._key(browser_id, client_id)) is not None
+    async def is_approved(
+        self,
+        browser_id: str,
+        client_id: str,
+        mcp_scopes: collections.abc.Iterable[str],
+        upstream_scopes: collections.abc.Iterable[str],
+    ) -> bool:
+        """Whether the browser already approved the client for every one of these scopes."""
+        approved = await self._approved(browser_id, client_id)
+        return approved is not None and approved.covers(mcp_scopes, upstream_scopes)
 
-    async def approve(self, browser_id: str, client_id: str) -> None:
-        await self._store.set('mcp_consent', self._key(browser_id, client_id), {'approved': True}, ttl=CONSENT_TTL)
+    async def approve(
+        self,
+        browser_id: str,
+        client_id: str,
+        mcp_scopes: collections.abc.Iterable[str],
+        upstream_scopes: collections.abc.Iterable[str],
+    ) -> None:
+        """Add these scopes to what the browser approved for the client, restarting the approval's lifetime."""
+        approved = await self._approved(browser_id, client_id) or ApprovedScopes()
+        merged = ApprovedScopes(
+            mcp_scopes=sorted({*approved.mcp_scopes, *mcp_scopes}),
+            upstream_scopes=sorted({*approved.upstream_scopes, *upstream_scopes}),
+        )
+        await self._store.set('mcp_consent', self._key(browser_id, client_id), merged.model_dump(), ttl=CONSENT_TTL)
+
+    async def _approved(self, browser_id: str, client_id: str) -> 'ApprovedScopes | None':
+        data = await self._store.get('mcp_consent', self._key(browser_id, client_id))
+        return ApprovedScopes.model_validate(data) if data else None
 
     def _key(self, browser_id: str, client_id: str) -> str:
         return f'{self._issuer} {browser_id} {client_id}'
+
+
+class ApprovedScopes(pydantic.BaseModel):
+    """The scopes a browser approved for one client, on each side of the gateway."""
+
+    mcp_scopes: list[str] = pydantic.Field(default_factory=list)
+    upstream_scopes: list[str] = pydantic.Field(default_factory=list)
+
+    def covers(self, mcp_scopes: collections.abc.Iterable[str], upstream_scopes: collections.abc.Iterable[str]) -> bool:
+        return set(mcp_scopes) <= set(self.mcp_scopes) and set(upstream_scopes) <= set(self.upstream_scopes)
 
 
 class BrowserCookie:
@@ -92,7 +129,7 @@ class BrowserCookie:
         return self.read(request) or secrets.token_hex(32)
 
     def attach(self, response: Response, browser_id: str) -> None:
-        """Set ``browser_id`` on ``response``, renewing it for as long as an approval lasts."""
+        """Set ``browser_id`` on ``response``, keeping it at least as long as an approval given now would last."""
         response.set_cookie(
             self._name,
             browser_id,

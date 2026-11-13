@@ -324,7 +324,7 @@ class TestUpstreamCallbackErrors:
         with pytest.raises(HTTPException) as exception_info:
             await provider.handle_upstream_callback('any-code', 'never-issued-state', BROWSER_ID)
         assert exception_info.value.status_code == 400
-        assert 'state' in exception_info.value.detail.lower()
+        assert 'expired' in exception_info.value.detail
 
     async def test_upstream_non_200_raises(self, provider, mcp_client_info):
         """A non-200 upstream token response surfaces as ``400 Upstream token exchange failed``."""
