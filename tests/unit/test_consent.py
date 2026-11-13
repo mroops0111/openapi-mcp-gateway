@@ -63,18 +63,18 @@ class TestConsentPage:
 class TestBrowserCookie:
     """The browser cookie is read back only in the form the gateway issues it."""
 
-    @pytest.mark.parametrize(('secure', 'name'), [(True, '__Host-mcp_gateway_browser'), (False, 'mcp_gateway_browser')])
+    @pytest.mark.parametrize(('secure', 'name'), [(True, '__Host-openapi-mcp-gateway-browser'), (False, 'openapi-mcp-gateway-browser')])
     def test_the_host_prefix_needs_https(self, secure, name):
         """Browsers refuse a ``__Host-`` cookie without ``Secure``, which plain HTTP cannot set."""
         assert BrowserCookie(secure).read(_request(f'{name}={BROWSER_ID}')) == BROWSER_ID
 
     @pytest.mark.parametrize('value', ['short', 'B0' * 32, 'b0' * 32 + 'extra'])
     def test_a_malformed_id_is_ignored(self, value):
-        assert BrowserCookie(secure=True).read(_request(f'__Host-mcp_gateway_browser={value}')) is None
+        assert BrowserCookie(secure=True).read(_request(f'__Host-openapi-mcp-gateway-browser={value}')) is None
 
     def test_a_new_browser_is_issued_an_id(self):
         browser_id = BrowserCookie(secure=True).read_or_issue(_request(''))
-        assert BrowserCookie(secure=True).read(_request(f'__Host-mcp_gateway_browser={browser_id}')) == browser_id
+        assert BrowserCookie(secure=True).read(_request(f'__Host-openapi-mcp-gateway-browser={browser_id}')) == browser_id
 
 
 def _page_text(prompt: ConsentPrompt) -> str:

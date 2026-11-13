@@ -17,7 +17,7 @@ CONSENT_TTL = 30 * 24 * 3600
 
 # The cookie naming the browser a sign-in runs in, and the form its value takes.
 # The ``__Host-`` prefix needs HTTPS, so a gateway served over plain HTTP, as in development, drops it.
-_BROWSER_COOKIE = 'mcp_gateway_browser'
+_BROWSER_COOKIE = 'openapi-mcp-gateway-browser'
 _SECURE_BROWSER_COOKIE = f'__Host-{_BROWSER_COOKIE}'
 _BROWSER_ID_PATTERN = re.compile(r'[0-9a-f]{64}')
 
