@@ -5,7 +5,7 @@ from starlette.requests import Request
 
 from openapi_mcp_gateway.auth.flows.consent import BrowserCookie
 from openapi_mcp_gateway.auth.flows.consent_page import ConsentPrompt, DescribedScope, consent_page
-from tests.oauth import BROWSER_ID
+from tests.oauth import BROWSER_ID, PLAIN_COOKIE, SECURE_COOKIE
 
 
 # A prompt for a client that registered itself under a name meant to break out of the page.
@@ -63,18 +63,18 @@ class TestConsentPage:
 class TestBrowserCookie:
     """The browser cookie is read back only in the form the gateway issues it."""
 
-    @pytest.mark.parametrize(('secure', 'name'), [(True, '__Host-openapi-mcp-gateway-browser'), (False, 'openapi-mcp-gateway-browser')])
+    @pytest.mark.parametrize(('secure', 'name'), [(True, SECURE_COOKIE), (False, PLAIN_COOKIE)])
     def test_the_host_prefix_needs_https(self, secure, name):
         """Browsers refuse a ``__Host-`` cookie without ``Secure``, which plain HTTP cannot set."""
         assert BrowserCookie(secure).read(_request(f'{name}={BROWSER_ID}')) == BROWSER_ID
 
     @pytest.mark.parametrize('value', ['short', 'B0' * 32, 'b0' * 32 + 'extra'])
     def test_a_malformed_id_is_ignored(self, value):
-        assert BrowserCookie(secure=True).read(_request(f'__Host-openapi-mcp-gateway-browser={value}')) is None
+        assert BrowserCookie(secure=True).read(_request(f'{SECURE_COOKIE}={value}')) is None
 
     def test_a_new_browser_is_issued_an_id(self):
         browser_id = BrowserCookie(secure=True).read_or_issue(_request(''))
-        assert BrowserCookie(secure=True).read(_request(f'__Host-openapi-mcp-gateway-browser={browser_id}')) == browser_id
+        assert BrowserCookie(secure=True).read(_request(f'{SECURE_COOKIE}={browser_id}')) == browser_id
 
 
 def _page_text(prompt: ConsentPrompt) -> str:

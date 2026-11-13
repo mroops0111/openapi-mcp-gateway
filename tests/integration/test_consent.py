@@ -11,6 +11,7 @@ from tests.constants import AUTHORIZE_URL, GATEWAY_URL
 from tests.oauth import (
     CLIENT_REDIRECT_URI,
     CLIENT_STATE,
+    SECURE_COOKIE,
     authorization_code_gateway,
     query_value,
     upstream_token_response,
@@ -74,7 +75,7 @@ class TestConsentPage:
 
     def test_the_browser_cookie_is_bound_to_the_gateway_host(self, browser):
         cookie = _open_consent(browser).headers['set-cookie']
-        assert cookie.startswith('__Host-openapi-mcp-gateway-browser=')
+        assert cookie.startswith(f'{SECURE_COOKIE}=')
         assert {'Secure', 'HttpOnly', 'SameSite=lax', 'Path=/'} <= {part.strip() for part in cookie.split(';')}
 
     def test_an_exempt_client_goes_straight_to_the_upstream(self, browser):

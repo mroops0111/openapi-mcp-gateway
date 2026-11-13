@@ -22,6 +22,10 @@ CLIENT_STATE = 'client-state'
 # The browser a sign-in runs in, as its cookie names it.
 BROWSER_ID = 'b0' * 32
 
+# The browser cookie's name over HTTPS, and over plain HTTP, where the ``__Host-`` prefix cannot be set.
+SECURE_COOKIE = '__Host-openapi-mcp-gateway-browser'
+PLAIN_COOKIE = 'openapi-mcp-gateway-browser'
+
 
 def authorization_code_gateway(
     spec: pathlib.Path,
