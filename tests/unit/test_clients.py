@@ -13,6 +13,15 @@ from tests.constants import BROWSER_ORIGIN, GATEWAY_ISSUER
 # The callback a web client registers, matched exactly.
 WEB_CALLBACK = f'{BROWSER_ORIGIN}/oauth/callback'
 
+# Addresses that resemble ``WEB_CALLBACK`` closely enough to pass a loose match.
+NEAR_MISSES = [
+    f'{WEB_CALLBACK}/extra',
+    f'{WEB_CALLBACK}?next=evil',
+    f'{BROWSER_ORIGIN}/oauth',
+    f'{BROWSER_ORIGIN}.evil.example.com/oauth/callback',
+    WEB_CALLBACK.replace('https://', 'http://'),
+]
+
 
 class TestScopeGrant:
     """A pre-registered client is granted scopes within its set rather than refused for asking outside it."""
@@ -63,6 +72,35 @@ class TestRedirectUris:
         assert str(client.validate_redirect_uri(AnyUrl(WEB_CALLBACK))) == WEB_CALLBACK
         with pytest.raises(InvalidRedirectUriError):
             client.validate_redirect_uri(AnyUrl('http://localhost:3000/callback'))
+
+    @pytest.mark.parametrize('redirect_uri', NEAR_MISSES)
+    @pytest.mark.parametrize('registered', ['pre-registered', 'dynamic'])
+    async def test_a_near_miss_of_a_registered_uri_is_refused(self, registered, redirect_uri):
+        """No prefix, suffix, or added query matches, as the MCP Security Best Practices require.
+
+        The SDK does the matching, so this pins its behaviour for both kinds of client.
+        """
+        client = (
+            await _pre_registered(redirect_uris=[WEB_CALLBACK])
+            if registered == 'pre-registered'
+            else OAuthClientInformationFull(client_id='dynamic', redirect_uris=[AnyUrl(WEB_CALLBACK)])
+        )
+        with pytest.raises(InvalidRedirectUriError):
+            client.validate_redirect_uri(AnyUrl(redirect_uri))
+
+
+class TestConsentRequirement:
+    """Every client passes the consent page unless the operator exempts a pre-registered one."""
+
+    @pytest.mark.parametrize(
+        ('client', 'required'), [({}, True), ({'consent': True}, True), ({'consent': False}, False)]
+    )
+    def test_a_pre_registered_client_follows_its_setting(self, client, required):
+        directory = PreRegisteredClientDirectory({'agent': ClientConfig.model_validate(client)}, ())
+        assert directory.requires_consent('agent') is required
+
+    def test_a_dynamically_registered_client_always_needs_consent(self, memory_store):
+        assert DynamicClientRegistry(memory_store, GATEWAY_ISSUER).requires_consent('anyone') is True
 
 
 class TestClientAuthentication:

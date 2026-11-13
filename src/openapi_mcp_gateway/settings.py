@@ -143,6 +143,8 @@ class ClientConfig(pydantic.BaseModel):
     Without ``redirect_uris`` any loopback redirect is accepted, on any port and path, as OAuth 2.1 requires,
     which is what a CLI client listening on a local port needs.
     ``scopes`` are every scope the client is granted, and each must be one ``auth.operation_scopes`` defines.
+    ``consent`` shows the gateway's consent page before the upstream sign-in.
+    Turning it off trusts the client on the operator's word, so the user is never asked which client they are signing in to.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid')
@@ -150,6 +152,7 @@ class ClientConfig(pydantic.BaseModel):
     client_secret: str | None = None
     redirect_uris: list[pydantic.AnyUrl] | None = pydantic.Field(default=None, min_length=1)
     scopes: list[str] = pydantic.Field(default_factory=list)
+    consent: bool = True
 
     @pydantic.field_validator('scopes')
     @classmethod

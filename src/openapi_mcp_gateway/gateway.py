@@ -12,12 +12,10 @@ from mcp.server import MCPServer
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.caching import CacheableMethod, CacheHint
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from starlette.exceptions import HTTPException
-from starlette.responses import RedirectResponse
 
 from .app import _ServerBundle, build_app, mount_mcp_apps, register_auth_routes, serve_lifespan
 from .auth.detector import detect_oauth_flows, detect_unsupported_oauth_flows
-from .auth.flows import AuthorizationCodeProvider, OAuthFlowSetup
+from .auth.flows import AuthorizationCodeProvider, AuthorizationCodeRoutes, OAuthFlowSetup
 from .auth.resolver import (
     AuthResolver,
     CompositeAuthResolver,
@@ -372,7 +370,7 @@ class Gateway:
             server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions, scope_registry
         )
         if auth.provider is not None:
-            self._register_oauth_callback(mcp, auth.provider)
+            AuthorizationCodeRoutes(auth.provider, mcp_scope_policy.defined_mcp_scopes).register(mcp)
 
         binding = UpstreamBinding(
             base_url=base_url,
@@ -518,19 +516,6 @@ class Gateway:
             cache_hints=_cache_hints(scope_registry),
             middleware=[ScopeFilterMiddleware(scope_registry)],
         )
-
-    @staticmethod
-    def _register_oauth_callback(mcp: MCPServer, auth_provider: AuthorizationCodeProvider) -> None:
-        _auth_provider = auth_provider
-
-        @mcp.custom_route('/auth/callback', methods=['GET'])
-        async def upstream_callback_handler(request, _provider=_auth_provider):
-            code = request.query_params.get('code')
-            state = request.query_params.get('state')
-            if not code or not state:
-                raise HTTPException(400, 'Missing code or state parameter')
-            redirect_uri = await _provider.handle_upstream_callback(code, state, request.query_params.get('iss'))
-            return RedirectResponse(status_code=302, url=redirect_uri)
 
     async def _run_shutdown_hooks(self) -> None:
         for hook in self._shutdown_hooks:

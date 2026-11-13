@@ -4,6 +4,7 @@ from .authorization_code import (
     IssuedTokenPolicy,
     UpstreamOAuthClient,
 )
+from .authorization_routes import AuthorizationCodeRoutes
 from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 from .client_credentials import ClientCredentialsFlowHandler
 from .clients import (
@@ -20,6 +21,7 @@ __all__ = [
     'OAUTH_FLOW_HANDLERS',
     'AuthorizationCodeFlowHandler',
     'AuthorizationCodeProvider',
+    'AuthorizationCodeRoutes',
     'ClientCredentialsFlowHandler',
     'ClientDirectory',
     'DynamicClientRegistry',

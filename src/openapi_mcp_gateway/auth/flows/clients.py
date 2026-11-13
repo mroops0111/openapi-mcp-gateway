@@ -38,6 +38,13 @@ class ClientDirectory(abc.ABC):
             error_description='This server accepts only pre-registered clients.',
         )
 
+    def requires_consent(self, client_id: str) -> bool:
+        """Whether a sign-in by ``client_id`` passes the gateway's consent page, which every client does by default.
+
+        A client that registered itself is vouched for by no one, so only an operator can exempt one.
+        """
+        return True
+
     def registration_options(self, mcp_endpoint_scopes: collections.abc.Sequence[str]) -> ClientRegistrationOptions:
         """The SDK's registration settings, granting a registered client ``mcp_endpoint_scopes``.
 
@@ -161,9 +168,13 @@ class PreRegisteredClientDirectory(ClientDirectory):
             client_id: PreRegisteredClient.from_config(client_id, client, mcp_endpoint_scopes)
             for client_id, client in clients.items()
         }
+        self._exempt_from_consent = frozenset(client_id for client_id, client in clients.items() if not client.consent)
 
     async def get(self, client_id: str) -> OAuthClientInformationFull | None:
         return self._clients.get(client_id)
+
+    def requires_consent(self, client_id: str) -> bool:
+        return client_id not in self._exempt_from_consent
 
 
 def _is_loopback(uri: AnyUrl) -> bool:
