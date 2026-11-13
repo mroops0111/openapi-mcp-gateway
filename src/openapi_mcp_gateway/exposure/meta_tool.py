@@ -12,7 +12,7 @@ from mcp.shared.inbound import MCP_NAME_HEADER, MCP_PARAM_HEADER_PREFIX, X_MCP_H
 from mcp.types import CallToolResult
 
 from ..openapi import ExposedTool, OperationInfo
-from ..scopes import OperationAccess, RequestTarget, UnrestrictedPolicy, current_grant
+from ..scopes import RequestTarget, ScopeRegistry, UnrestrictedMcpScopePolicy, current_grant
 from ._bm25 import BM25FIndex
 from ._shaping import shape_operation
 from ._shared import _get_override, build_input_schema, derive_description, derive_name
@@ -79,7 +79,7 @@ class MetaToolGenerator:
     The LLM searches, then gets, then calls, to discover and invoke a specific operation.
     Per-operation callables come from the same upstream closure the static path uses,
     so auth, path substitution, and request shape stay identical across modes.
-    Each operation's scope requirement is recorded in ``access`` under its name,
+    Each operation's scope requirement is recorded in ``scope_registry`` under its name,
     and search and get show only the operations the caller's token can use.
     """
 
@@ -88,11 +88,11 @@ class MetaToolGenerator:
         mcp: MCPServer,
         binding: UpstreamBinding,
         field_weight_overrides: typing.Mapping[str, float] | None = None,
-        access: OperationAccess | None = None,
+        scope_registry: ScopeRegistry | None = None,
     ):
         self.mcp = mcp
         self.binding = binding
-        self.access = access or OperationAccess(UnrestrictedPolicy())
+        self.scope_registry = scope_registry or ScopeRegistry(UnrestrictedMcpScopePolicy())
         # Overrides replace the default weight of the fields they name and leave the rest as they are.
         self.field_weights = {**DEFAULT_FIELD_WEIGHTS, **(field_weight_overrides or {})}
 
@@ -107,7 +107,7 @@ class MetaToolGenerator:
             input_schema = build_input_schema(shaped_operation)
             tool_override = _get_override(shaped_operation, 'tool')
             name = derive_name(shaped_operation, tool_override.name if tool_override else None)
-            self.access.register(name, operation)
+            self.scope_registry.register(name, operation)
             registered.append(
                 _RegisteredOperation(
                     name=name,
@@ -178,7 +178,7 @@ class MetaToolGenerator:
                 raise _unknown_operation_error(name)
             # A 2026-07-28 client lacking MCP scopes was already refused over HTTP with a scope challenge.
             # This refusal covers older clients, which send no Mcp-Param-Operation header, and a short upstream grant.
-            refusal = self.access.refusal(name, current_grant())
+            refusal = self.scope_registry.refusal(name, current_grant())
             if refusal is not None:
                 raise ToolError(refusal)
             return await operation.callable_(**arguments, ctx=ctx)
@@ -186,7 +186,7 @@ class MetaToolGenerator:
     def _visibility(self) -> typing.Callable[[str], bool]:
         """Whether the token on the current request may see each operation, by name."""
         grant = current_grant()
-        return lambda name: self.access.permits(name, grant)
+        return lambda name: self.scope_registry.permits(name, grant)
 
 
 @dataclasses.dataclass(frozen=True)

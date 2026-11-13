@@ -1,48 +1,39 @@
 import typing
 
-from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.shared.uri_template import UriTemplate
 
-from ..auth.flows.authorization_code import BrokeredAccessToken
 from ..openapi import OperationInfo
-from .policy import ScopePolicy
-from .requirement import ScopeRequirement, Unrestricted
-from .upstream import UnenforcedUpstreamScopes, UpstreamScopePolicy
+from .grant import TokenGrant
+from .policy import McpScopePolicy, UnrestrictedUpstreamScopePolicy, UpstreamScopePolicy
+from .requirement import ScopeRequirement, UnrestrictedRequirement
 
 
-class TokenGrant(typing.NamedTuple):
-    """The scopes an MCP token carries, and the scopes the upstream granted the user behind it."""
-
-    mcp_scopes: frozenset[str]
-    upstream_scopes: frozenset[str]
-
-
-class OperationAccess:
+class ScopeRegistry:
     """What each exposed name requires of a token, filled in as tools, operations and resources are registered.
 
-    A name requires the MCP scopes ``policy`` gives its operation, and the upstream scopes ``upstream_policy`` does.
+    A name requires the MCP scopes ``mcp_policy`` gives its operation, and the upstream scopes ``upstream_policy`` does.
     A tool or operation is known by its name, and a resource by its URI or URI template.
     A concrete URI a template expands to requires what the template does.
     A name it never registered, such as a dynamic meta-tool, requires nothing,
     since the operations behind it are what the scopes guard.
     """
 
-    def __init__(self, policy: ScopePolicy, upstream_policy: UpstreamScopePolicy | None = None) -> None:
-        self.policy = policy
-        self.upstream_policy = upstream_policy or UnenforcedUpstreamScopes()
-        self._requirements: dict[str, _Requirements] = {}
-        self._resource_templates: list[tuple[UriTemplate, _Requirements]] = []
+    def __init__(self, mcp_policy: McpScopePolicy, upstream_policy: UpstreamScopePolicy | None = None) -> None:
+        self.mcp_policy = mcp_policy
+        self.upstream_policy = upstream_policy or UnrestrictedUpstreamScopePolicy()
+        self._requirements: dict[str, _NameRequirements] = {}
+        self._resource_templates: list[tuple[UriTemplate, _NameRequirements]] = []
 
     @property
     def list_cache_scope(self) -> typing.Literal['public', 'private']:
         """The cache scope of the tool and resource lists, private once either policy makes them depend on the token."""
-        private = 'private' in (self.policy.list_cache_scope, self.upstream_policy.list_cache_scope)
+        private = 'private' in (self.mcp_policy.list_cache_scope, self.upstream_policy.list_cache_scope)
         return 'private' if private else 'public'
 
     def register(self, name: str, operation: OperationInfo) -> None:
         """Record what ``operation``, exposed as the tool or operation ``name``, requires."""
-        self._requirements[name] = _Requirements(
-            self.policy.requirement_for(operation), self.upstream_policy.requirement_for(operation)
+        self._requirements[name] = _NameRequirements(
+            self.mcp_policy.requirement_for(operation), self.upstream_policy.requirement_for(operation)
         )
 
     def register_resource(self, uri_template: str, operation: OperationInfo) -> None:
@@ -71,7 +62,7 @@ class OperationAccess:
         """Whether a token with ``grant`` may list and use ``name``."""
         return self.refusal(name, grant) is None
 
-    def _requirements_of(self, name: str) -> '_Requirements':
+    def _requirements_of(self, name: str) -> '_NameRequirements':
         if name in self._requirements:
             return self._requirements[name]
         return next(
@@ -80,16 +71,7 @@ class OperationAccess:
         )
 
 
-def current_grant() -> TokenGrant:
-    """The grant of the token on the request being handled, or an empty one outside an authenticated request."""
-    access_token = get_access_token()
-    if access_token is None:
-        return TokenGrant(frozenset(), frozenset())
-    upstream_scopes = access_token.upstream_scopes if isinstance(access_token, BrokeredAccessToken) else ()
-    return TokenGrant(frozenset(access_token.scopes), frozenset(upstream_scopes))
-
-
-class _Requirements(typing.NamedTuple):
+class _NameRequirements(typing.NamedTuple):
     """What one name requires of the MCP scopes and of the upstream grant."""
 
     mcp: ScopeRequirement
@@ -97,4 +79,4 @@ class _Requirements(typing.NamedTuple):
 
 
 # What a name nobody registered requires.
-_UNREGISTERED = _Requirements(Unrestricted(), Unrestricted())
+_UNREGISTERED = _NameRequirements(UnrestrictedRequirement(), UnrestrictedRequirement())

@@ -4,12 +4,12 @@ import pytest
 
 from openapi_mcp_gateway.auth.flows.authorization_code import UpstreamTokenResponse
 from openapi_mcp_gateway.scopes import (
-    OperationAccess,
-    ScopeCatalog,
-    SpecSecurityScopes,
+    ConfiguredMcpScopePolicy,
+    ScopeRegistry,
+    SpecSecurityUpstreamScopePolicy,
     TokenGrant,
-    UnenforcedUpstreamScopes,
-    UnrestrictedPolicy,
+    UnrestrictedMcpScopePolicy,
+    UnrestrictedUpstreamScopePolicy,
     build_upstream_scope_policy,
 )
 from openapi_mcp_gateway.settings import OperationScopesConfig
@@ -34,7 +34,7 @@ DELETE_PET_UPSTREAM_REFUSAL = (
 )
 
 
-class TestSpecSecurityScopes:
+class TestSpecSecurityUpstreamScopePolicy:
     """Each requirement is checked against the one credential the gateway holds upstream, an OAuth token."""
 
     @pytest.mark.parametrize(
@@ -53,16 +53,18 @@ class TestSpecSecurityScopes:
         ],
     )
     def test_a_requirement_follows_the_openapi_semantics(self, security, granted, met):
-        requirement = SpecSecurityScopes(SCHEMES, {}).requirement_for(operation(security=security))
+        requirement = SpecSecurityUpstreamScopePolicy(SCHEMES, {}).requirement_for(operation(security=security))
         assert requirement.is_met(frozenset(granted)) is met
 
     def test_a_spec_without_an_oauth_scheme_restricts_nothing(self):
         """Such a spec describes some other credential, so it says nothing about the token the gateway holds."""
-        spec_security = SpecSecurityScopes({'basic': SCHEMES['basic']}, {})
+        spec_security = SpecSecurityUpstreamScopePolicy({'basic': SCHEMES['basic']}, {})
         assert spec_security.requirement_for(operation(security=[{'basic': []}])).is_met(frozenset())
 
     def test_a_scope_holds_what_it_implies_transitively(self):
-        spec_security = SpecSecurityScopes(SCHEMES, {'repo': ['public_repo'], 'public_repo': ['repo:read']})
+        spec_security = SpecSecurityUpstreamScopePolicy(
+            SCHEMES, {'repo': ['public_repo'], 'public_repo': ['repo:read']}
+        )
         assert spec_security.held_scopes(['repo']) == {'repo', 'public_repo', 'repo:read'}
 
     def test_the_requested_scopes_are_every_scope_the_operations_name(self):
@@ -73,10 +75,14 @@ class TestSpecSecurityScopes:
             operation('getPet', security=[{'oauth': ['read:pets']}, {'oauth': ['admin']}]),
             operation('health', security=[{}]),
         ]
-        assert SpecSecurityScopes(SCHEMES, {}).requested_scopes(operations) == ['read:pets', 'write:pets', 'admin']
+        assert SpecSecurityUpstreamScopePolicy(SCHEMES, {}).requested_scopes(operations) == [
+            'read:pets',
+            'write:pets',
+            'admin',
+        ]
 
     def test_the_refusal_names_the_scopes_and_both_remedies(self):
-        requirement = SpecSecurityScopes(SCHEMES, {}).requirement_for(DELETE_PET)
+        requirement = SpecSecurityUpstreamScopePolicy(SCHEMES, {}).requirement_for(DELETE_PET)
         assert requirement.refusal == DELETE_PET_UPSTREAM_REFUSAL
 
 
@@ -85,9 +91,9 @@ class TestUnrequestedScopeWarning:
 
     def test_each_client_is_warned_about_what_it_can_reach(self, caplog):
         """A reader never reaches ``deletePet``, so only the deleter hears about the scope it needs."""
-        mcp_policy = ScopeCatalog(OperationScopesConfig(auto='tags'), [LIST_PETS, DELETE_PET], 'petstore')
+        mcp_policy = ConfiguredMcpScopePolicy(OperationScopesConfig(auto='tags'), [LIST_PETS, DELETE_PET], 'petstore')
         with caplog.at_level(logging.WARNING):
-            SpecSecurityScopes(SCHEMES, {}).warn_on_unrequested_scopes(
+            SpecSecurityUpstreamScopePolicy(SCHEMES, {}).warn_on_unrequested_scopes(
                 [LIST_PETS, DELETE_PET],
                 ['read:pets'],
                 mcp_policy,
@@ -103,8 +109,8 @@ class TestUnrequestedScopeWarning:
     def test_without_clients_every_operation_counts(self, caplog):
         operations = [LIST_PETS, operation('login', security=[{'basic': []}])]
         with caplog.at_level(logging.WARNING):
-            SpecSecurityScopes(SCHEMES, {}).warn_on_unrequested_scopes(
-                operations, [], UnrestrictedPolicy(), {}, 'petstore'
+            SpecSecurityUpstreamScopePolicy(SCHEMES, {}).warn_on_unrequested_scopes(
+                operations, [], UnrestrictedMcpScopePolicy(), {}, 'petstore'
             )
         assert '"petstore": every client can reach 2 operation(s)' in caplog.text
         assert '(listPets needs read:pets, login needs a non-OAuth credential)' in caplog.text
@@ -114,16 +120,18 @@ class TestUpstreamScopePolicy:
     """Only ``auth.upstream.enforce_scopes`` makes the upstream grant restrict anything."""
 
     def test_without_enforcement_the_grant_restricts_nothing(self):
-        policy = build_upstream_scope_policy(False, SpecSecurityScopes(SCHEMES, {}), 'petstore')
-        assert isinstance(policy, UnenforcedUpstreamScopes)
+        policy = build_upstream_scope_policy(False, SpecSecurityUpstreamScopePolicy(SCHEMES, {}), 'petstore')
+        assert isinstance(policy, UnrestrictedUpstreamScopePolicy)
 
     def test_enforcing_a_spec_without_an_oauth_scheme_warns(self, caplog):
         with caplog.at_level(logging.WARNING):
-            build_upstream_scope_policy(True, SpecSecurityScopes({'basic': SCHEMES['basic']}, {}), 'petstore')
+            build_upstream_scope_policy(
+                True, SpecSecurityUpstreamScopePolicy({'basic': SCHEMES['basic']}, {}), 'petstore'
+            )
         assert 'the spec declares no OAuth security scheme' in caplog.text
 
 
-class TestOperationAccessWithUpstreamScopes:
+class TestScopeRegistryWithUpstreamScopes:
     """A name needs the MCP scopes and the upstream grant both, and a refusal names the MCP scopes first."""
 
     @pytest.mark.parametrize(
@@ -136,17 +144,17 @@ class TestOperationAccessWithUpstreamScopes:
     )
     def test_the_mcp_scopes_are_refused_before_the_upstream_grant(self, mcp_scopes, upstream_scopes, refused_for):
         """Only the MCP scopes can be stepped up for, so a client hears about them first."""
-        access = OperationAccess(
-            ScopeCatalog(OperationScopesConfig(auto='tags'), [DELETE_PET], 'petstore'),
-            SpecSecurityScopes(SCHEMES, {'admin': ['read:pets', 'write:pets']}),
+        scope_registry = ScopeRegistry(
+            ConfiguredMcpScopePolicy(OperationScopesConfig(auto='tags'), [DELETE_PET], 'petstore'),
+            SpecSecurityUpstreamScopePolicy(SCHEMES, {'admin': ['read:pets', 'write:pets']}),
         )
-        access.register('delete_pet', DELETE_PET)
-        refusal = access.refusal('delete_pet', TokenGrant(frozenset(mcp_scopes), frozenset(upstream_scopes)))
+        scope_registry.register('delete_pet', DELETE_PET)
+        refusal = scope_registry.refusal('delete_pet', TokenGrant(frozenset(mcp_scopes), frozenset(upstream_scopes)))
         assert refusal == refused_for
 
     def test_the_lists_are_cached_per_token_once_the_grant_is_enforced(self):
-        access = OperationAccess(UnrestrictedPolicy(), SpecSecurityScopes(SCHEMES, {}))
-        assert access.list_cache_scope == 'private'
+        scope_registry = ScopeRegistry(UnrestrictedMcpScopePolicy(), SpecSecurityUpstreamScopePolicy(SCHEMES, {}))
+        assert scope_registry.list_cache_scope == 'private'
 
 
 class TestGrantedScopes:

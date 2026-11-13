@@ -10,10 +10,10 @@ from starlette.exceptions import HTTPException
 
 from openapi_mcp_gateway.auth.flows.authorization_code import (
     AuthorizationCodeProvider,
-    BrokeredAccessToken,
     IssuedTokenPolicy,
     UpstreamOAuthClient,
 )
+from openapi_mcp_gateway.scopes import BrokeredAccessToken
 from tests.constants import (
     API_URL,
     ATTACKER_URL,

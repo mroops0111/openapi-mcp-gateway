@@ -1,39 +1,51 @@
-from .access import OperationAccess, TokenGrant, current_grant
 from .derivation import SCOPE_DERIVATIONS, DerivedScope, NoDerivation, ScopeDerivation, TagMethodDerivation
-from .enforcement import NameHeaderTarget, RequestTarget, ScopeChallengeGate, ScopeFilterMiddleware
-from .policy import ScopeCatalog, ScopePolicy, UnrestrictedPolicy, build_mcp_scope_policy
-from .requirement import AnyScope, ScopeRequirement, Unreachable, Unrestricted
-from .upstream import (
-    AllScopesOfAnySet,
-    SpecSecurityScopes,
-    UnenforcedUpstreamScopes,
+from .enforcement import NameHeaderTarget, RequestTarget, ScopeChallengeMiddleware, ScopeFilterMiddleware
+from .grant import BrokeredAccessToken, TokenGrant, current_grant
+from .policy import (
+    ConfiguredMcpScopePolicy,
+    McpScopePolicy,
+    ScopePolicy,
+    SpecSecurityUpstreamScopePolicy,
+    UnrestrictedMcpScopePolicy,
+    UnrestrictedUpstreamScopePolicy,
     UpstreamScopePolicy,
+    build_mcp_scope_policy,
     build_upstream_scope_policy,
+)
+from .registry import ScopeRegistry
+from .requirement import (
+    AnyScopeRequirement,
+    AnyScopeSetRequirement,
+    ScopeRequirement,
+    UnreachableRequirement,
+    UnrestrictedRequirement,
 )
 
 
 __all__ = [
     'SCOPE_DERIVATIONS',
-    'AllScopesOfAnySet',
-    'AnyScope',
+    'AnyScopeRequirement',
+    'AnyScopeSetRequirement',
+    'BrokeredAccessToken',
+    'ConfiguredMcpScopePolicy',
     'DerivedScope',
+    'McpScopePolicy',
     'NameHeaderTarget',
     'NoDerivation',
-    'OperationAccess',
     'RequestTarget',
-    'ScopeCatalog',
-    'ScopeChallengeGate',
+    'ScopeChallengeMiddleware',
     'ScopeDerivation',
     'ScopeFilterMiddleware',
     'ScopePolicy',
+    'ScopeRegistry',
     'ScopeRequirement',
-    'SpecSecurityScopes',
+    'SpecSecurityUpstreamScopePolicy',
     'TagMethodDerivation',
     'TokenGrant',
-    'UnenforcedUpstreamScopes',
-    'Unreachable',
-    'Unrestricted',
-    'UnrestrictedPolicy',
+    'UnreachableRequirement',
+    'UnrestrictedMcpScopePolicy',
+    'UnrestrictedRequirement',
+    'UnrestrictedUpstreamScopePolicy',
     'UpstreamScopePolicy',
     'build_mcp_scope_policy',
     'build_upstream_scope_policy',

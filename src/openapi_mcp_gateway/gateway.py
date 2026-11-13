@@ -35,12 +35,12 @@ from .fastapi import (
 from .openapi import ExposedTool, McpIntegration, OpenAPISpec, OperationInfo, load_spec, parse_spec
 from .policy import filter_operations, unmatched_patterns
 from .scopes import (
+    McpScopePolicy,
     NameHeaderTarget,
-    OperationAccess,
     RequestTarget,
     ScopeFilterMiddleware,
-    ScopePolicy,
-    SpecSecurityScopes,
+    ScopeRegistry,
+    SpecSecurityUpstreamScopePolicy,
     build_mcp_scope_policy,
     build_upstream_scope_policy,
 )
@@ -358,7 +358,7 @@ class Gateway:
         mcp_scope_policy = build_mcp_scope_policy(server_config.auth.operation_scopes, operations, server_config.name)
         _refuse_undefined_mcp_scopes(server_config, mcp_scope_policy)
         upstream = server_config.auth.upstream
-        spec_security = SpecSecurityScopes(spec.security_schemes, upstream.scope_implies)
+        spec_security = SpecSecurityUpstreamScopePolicy(spec.security_schemes, upstream.scope_implies)
         if upstream.enforce_scopes and not upstream.scopes:
             server_config = _with_requested_upstream_scopes(server_config, spec_security.requested_scopes(operations))
         auth = self._resolve_auth(server_config, spec)
@@ -376,11 +376,11 @@ class Gateway:
                 f'Server "{server_config.name}": auth.upstream.enforce_scopes needs auth.flow authorization_code, '
                 f'but the spec resolves to {auth.flow_type}. Set auth.flow, or turn enforce_scopes off.'
             )
-        access = OperationAccess(
+        scope_registry = ScopeRegistry(
             mcp_scope_policy, build_upstream_scope_policy(upstream.enforce_scopes, spec_security, server_config.name)
         )
         mcp = self._build_mcp_server(
-            server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions, access
+            server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions, scope_registry
         )
         if auth.provider is not None:
             self._register_oauth_callback(mcp, auth.provider)
@@ -431,7 +431,7 @@ class Gateway:
                 mcp=mcp,
                 binding=binding,
                 field_weight_overrides=search.field_weights.model_dump(exclude_none=True) if search else None,
-                access=access,
+                scope_registry=scope_registry,
             ).register(operations)
             tool_call_target = DynamicOperationTarget()
         else:
@@ -440,10 +440,12 @@ class Gateway:
             )
             if resource_ops:
                 resource_names = ResourceGenerator(
-                    mcp=mcp, binding=binding, server_name=server_config.name, access=access
+                    mcp=mcp, binding=binding, server_name=server_config.name, scope_registry=scope_registry
                 ).register(resource_ops)
             if tool_ops:
-                exposed_tools = ToolGenerator(mcp=mcp, binding=binding, access=access).register(tool_ops)
+                exposed_tools = ToolGenerator(mcp=mcp, binding=binding, scope_registry=scope_registry).register(
+                    tool_ops
+                )
 
         self._servers.append(
             _ServerBundle(
@@ -455,7 +457,7 @@ class Gateway:
                 auth_settings=auth.settings,
                 token_verifier=auth.verifier,
                 protected_resource=auth.protected_resource,
-                access=access,
+                scope_registry=scope_registry,
                 tool_call_target=tool_call_target,
                 base_url=base_url,
                 auth_summary=_auth_summary(server_config.auth),
@@ -501,13 +503,13 @@ class Gateway:
         auth_settings: AuthSettings | None,
         token_verifier: typing.Any | None,
         instructions: str | None,
-        access: OperationAccess,
+        scope_registry: ScopeRegistry,
     ) -> MCPServer:
         """Build the MCP server, wiring whichever of provider or verifier the flow produced.
 
         The SDK rejects a server given both,
         since issuing tokens and validating someone else's are alternatives rather than layers.
-        ``access`` decides which tools each token sees and may call.
+        ``scope_registry`` decides which tools each token sees and may call.
         """
 
         @contextlib.asynccontextmanager
@@ -524,8 +526,8 @@ class Gateway:
             auth=auth_settings,
             instructions=instructions,
             lifespan=lifespan,
-            cache_hints=_cache_hints(access),
-            middleware=[ScopeFilterMiddleware(access)],
+            cache_hints=_cache_hints(scope_registry),
+            middleware=[ScopeFilterMiddleware(scope_registry)],
         )
 
     @staticmethod
@@ -761,9 +763,9 @@ def _policy_summary(policy: PolicyConfig) -> str:
     return ', '.join(filters) if filters else 'no filter, every operation exposed'
 
 
-def _cache_hints(access: OperationAccess) -> dict[CacheableMethod, CacheHint]:
+def _cache_hints(scope_registry: ScopeRegistry) -> dict[CacheableMethod, CacheHint]:
     """Freshness hints for the static lists, where the tool and resource lists turn private once they depend on the token."""
-    list_cache_scope = access.list_cache_scope
+    list_cache_scope = scope_registry.list_cache_scope
     return {
         'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=list_cache_scope),
         'resources/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=list_cache_scope),
@@ -772,7 +774,7 @@ def _cache_hints(access: OperationAccess) -> dict[CacheableMethod, CacheHint]:
     }
 
 
-def _refuse_undefined_mcp_scopes(server_config: ServerConfig, mcp_scope_policy: ScopePolicy) -> None:
+def _refuse_undefined_mcp_scopes(server_config: ServerConfig, mcp_scope_policy: McpScopePolicy) -> None:
     """Refuse a client granted a scope the server does not define, since it would open nothing."""
     undefined = {
         client_id: sorted(set(client.scopes) - set(mcp_scope_policy.defined_mcp_scopes))

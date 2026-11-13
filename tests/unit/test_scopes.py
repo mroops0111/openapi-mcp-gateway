@@ -5,15 +5,15 @@ import pytest
 from openapi_mcp_gateway.exposure import DynamicOperationTarget
 from openapi_mcp_gateway.openapi import OperationInfo
 from openapi_mcp_gateway.scopes import (
-    AnyScope,
+    AnyScopeRequirement,
+    ConfiguredMcpScopePolicy,
     NameHeaderTarget,
-    OperationAccess,
-    ScopeCatalog,
+    ScopeRegistry,
     TagMethodDerivation,
     TokenGrant,
-    Unreachable,
-    Unrestricted,
-    UnrestrictedPolicy,
+    UnreachableRequirement,
+    UnrestrictedMcpScopePolicy,
+    UnrestrictedRequirement,
     build_mcp_scope_policy,
 )
 from openapi_mcp_gateway.settings import OperationScopesConfig
@@ -34,20 +34,22 @@ class TestScopeRequirements:
     )
     def test_any_scope_is_met_by_any_one(self, granted, met):
         """Holding any one of the covering scopes is enough, since covering scopes add up."""
-        assert AnyScope(['issues:write', 'issues:triage']).is_met(granted) is met
+        assert AnyScopeRequirement(['issues:write', 'issues:triage']).is_met(granted) is met
 
     def test_any_scope_challenges_with_every_alternative(self):
         """The challenge names every scope that would satisfy the call, in a stable order, once each."""
-        requirement = AnyScope(['issues:write', 'issues:triage', 'issues:write'])
+        requirement = AnyScopeRequirement(['issues:write', 'issues:triage', 'issues:write'])
         assert requirement.challenge == ('issues:triage', 'issues:write')
         assert 'issues:triage, issues:write' in requirement.refusal
 
     def test_any_scope_needs_a_scope(self):
-        """A requirement nothing could meet is ``Unreachable``, never an empty ``AnyScope``."""
+        """A requirement nothing could meet is ``UnreachableRequirement``, never an empty ``AnyScopeRequirement``."""
         with pytest.raises(ValueError, match='at least one'):
-            AnyScope([])
+            AnyScopeRequirement([])
 
-    @pytest.mark.parametrize(('requirement', 'met'), [(Unrestricted(), True), (Unreachable(), False)])
+    @pytest.mark.parametrize(
+        ('requirement', 'met'), [(UnrestrictedRequirement(), True), (UnreachableRequirement(), False)]
+    )
     def test_unscoped_requirements_ignore_the_token(self, requirement, met):
         """Neither looks at the scopes, and neither names a scope to ask for."""
         assert requirement.is_met({'anything'}) is met
@@ -97,7 +99,7 @@ class TestTagMethodDerivation:
         assert list(TagMethodDerivation().derive(unscopable)) == []
 
 
-class TestScopeCatalog:
+class TestConfiguredMcpScopePolicy:
     """``auth.operation_scopes`` resolved against a server's operations."""
 
     def test_derived_and_manual_scopes_add_up(self):
@@ -106,7 +108,9 @@ class TestScopeCatalog:
         requirement = catalog.requirement_for(_operation_named('deletePet'))
         assert requirement.challenge == ('admin', 'pets:delete')
 
-    @pytest.mark.parametrize(('unscoped', 'expected'), [('deny', Unreachable), ('allow', Unrestricted)])
+    @pytest.mark.parametrize(
+        ('unscoped', 'expected'), [('deny', UnreachableRequirement), ('allow', UnrestrictedRequirement)]
+    )
     def test_unscoped_decides_an_operation_no_scope_covers(self, unscoped, expected):
         """An untagged operation under ``auto: tags`` is unscoped, like any other no scope covers."""
         catalog = _catalog(auto='tags', unscoped=unscoped)
@@ -153,33 +157,35 @@ class TestUnrestrictedPolicy:
 
     def test_every_operation_is_open(self):
         policy = build_mcp_scope_policy(None, PETSTORE_OPERATIONS, 'petstore')
-        assert isinstance(policy, UnrestrictedPolicy)
-        assert all(isinstance(policy.requirement_for(candidate), Unrestricted) for candidate in PETSTORE_OPERATIONS)
+        assert isinstance(policy, UnrestrictedMcpScopePolicy)
+        assert all(
+            isinstance(policy.requirement_for(candidate), UnrestrictedRequirement) for candidate in PETSTORE_OPERATIONS
+        )
         assert policy.defined_mcp_scopes == {}
         assert policy.list_cache_scope == 'public'
 
 
-class TestOperationAccess:
+class TestScopeRegistry:
     """Requirements looked up by the name a tool or operation is exposed as, or the URI a resource is read at."""
 
     def test_a_registered_name_carries_its_requirement(self):
-        access = OperationAccess(_catalog(auto='tags'))
-        access.register('delete_pet', _operation_named('deletePet'))
-        assert access.permits('delete_pet', _mcp_grant({'pets:delete'}))
-        assert not access.permits('delete_pet', _mcp_grant({'pets:write'}))
+        scope_registry = ScopeRegistry(_catalog(auto='tags'))
+        scope_registry.register('delete_pet', _operation_named('deletePet'))
+        assert scope_registry.permits('delete_pet', _mcp_grant({'pets:delete'}))
+        assert not scope_registry.permits('delete_pet', _mcp_grant({'pets:write'}))
 
     def test_an_unregistered_name_requires_nothing(self):
         """A dynamic meta-tool is never registered, since the operations behind it are what scopes guard."""
-        access = OperationAccess(_catalog(auto='tags'))
-        assert access.permits('search_operations', _mcp_grant(set()))
+        scope_registry = ScopeRegistry(_catalog(auto='tags'))
+        assert scope_registry.permits('search_operations', _mcp_grant(set()))
 
     @pytest.mark.parametrize('uri', ['petstore://pets/{petId}', 'petstore://pets/7'])
     def test_a_resource_template_covers_every_uri_it_expands_to(self, uri):
         """The template is what a listing names and the concrete URI what a read names, and both require the same."""
-        access = OperationAccess(_catalog(auto='tags'))
-        access.register_resource('petstore://pets/{petId}', _operation_named('getPetById'))
-        assert access.permits(uri, _mcp_grant({'pets:read'}))
-        assert not access.permits(uri, _mcp_grant({'pets:write'}))
+        scope_registry = ScopeRegistry(_catalog(auto='tags'))
+        scope_registry.register_resource('petstore://pets/{petId}', _operation_named('getPetById'))
+        assert scope_registry.permits(uri, _mcp_grant({'pets:read'}))
+        assert not scope_registry.permits(uri, _mcp_grant({'pets:write'}))
 
 
 class TestRequestTargets:
@@ -203,9 +209,9 @@ class TestRequestTargets:
         assert DynamicOperationTarget().resolve(headers) == expected
 
 
-def _catalog(**config: object) -> ScopeCatalog:
+def _catalog(**config: object) -> ConfiguredMcpScopePolicy:
     """A catalog over the petstore operations, configured as ``auth.operation_scopes`` would be."""
-    return ScopeCatalog(OperationScopesConfig.model_validate(config), PETSTORE_OPERATIONS, 'petstore')
+    return ConfiguredMcpScopePolicy(OperationScopesConfig.model_validate(config), PETSTORE_OPERATIONS, 'petstore')
 
 
 def _operation_named(operation_id: str) -> OperationInfo:

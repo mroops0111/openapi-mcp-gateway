@@ -21,6 +21,7 @@ from mcp.server.auth.settings import AuthSettings, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from starlette.exceptions import HTTPException
 
+from ...scopes import BrokeredAccessToken
 from ...stores.base import TokenStore
 from ..resolver import AuthorizationCodeAuthResolver
 from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
@@ -66,12 +67,6 @@ class UpstreamOAuthClient:
         so that pointing the gateway at another server still invalidates what the old one issued.
         """
         return self.issuer or self.token_url
-
-
-class BrokeredAccessToken(AccessToken):
-    """An MCP access token the gateway minted, carrying the scopes the upstream granted the user behind it."""
-
-    upstream_scopes: list[str] = pydantic.Field(default_factory=list)
 
 
 @dataclasses.dataclass(frozen=True)
