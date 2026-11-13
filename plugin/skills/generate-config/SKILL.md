@@ -126,12 +126,16 @@ servers:
       #   {<client_id>: {scopes: [...], client_secret: ${SOME_SECRET}, redirect_uris: [...]}}
       upstream: # everything the gateway sends to the upstream authorization server
         client_id: ${SOME_ID}
-        scopes: [...]
+        scopes: [...] # with enforce_scopes and none listed, the scopes the operations' security declares
         audience: https://the-api.example.com # when the API and its AS differ
+        # enforce_scopes: true, for authorization_code, an operation also needs the upstream scopes
+        #   its OpenAPI security declares, checked against what the upstream granted the user
+        # scope_implies: {repo: [public_repo]}, an upstream scope covering narrower ones
     policy: # the selector for which operations become tools
       allow: ["<operation_id>", "..."] # globs matched against operation ids, omit to expose all
     operations: # overrides only, applied to operations the policy kept
       <operation_id>:
+        security: [{<scheme>: [<scope>, ...]}] # optional, replaces a spec security that is wrong
         tool: # optional, omit for an as-is passthrough
           params_strategy: replace # or merge
           params:

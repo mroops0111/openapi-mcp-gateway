@@ -24,7 +24,7 @@ from starlette.responses import JSONResponse
 
 from .auth.flows import AuthorizationCodeProvider
 from .openapi import ExposedTool, OpenAPISpec
-from .scopes import OperationAccess, RequestTarget, ScopeChallengeGate
+from .scopes import RequestTarget, ScopeChallengeMiddleware, ScopeRegistry
 from .settings import DNSRebindingProtectionConfig, GatewayConfig
 from .stores.base import TokenStore
 
@@ -51,7 +51,7 @@ class _ServerBundle(typing.NamedTuple):
     spec: OpenAPISpec
     auth_provider: AuthorizationCodeProvider | None
     # What each tool or operation requires of a token's scopes, and how a call names the one it reaches.
-    access: OperationAccess
+    scope_registry: ScopeRegistry
     tool_call_target: RequestTarget
     auth_settings: AuthSettings | None = None
     token_verifier: typing.Any | None = None
@@ -321,8 +321,8 @@ def _guard_scopes(mcp_app: Starlette, bundle: _ServerBundle) -> None:
     )
     mcp_app.user_middleware.append(
         Middleware(
-            ScopeChallengeGate,
-            access=bundle.access,
+            ScopeChallengeMiddleware,
+            scope_registry=bundle.scope_registry,
             tool_call_target=bundle.tool_call_target,
             resource_metadata_url=resource_metadata_url,
         )

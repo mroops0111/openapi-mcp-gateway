@@ -12,14 +12,18 @@ from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeP
 CLIENT_REDIRECT_URI = 'http://localhost:3000/callback'
 
 
-def upstream_token_response(granted: str = 'upstream-access-token') -> MagicMock:
-    """Mock upstream token endpoint response granting ``granted`` plus a refresh token."""
+def upstream_token_response(granted: str = 'upstream-access-token', scope: str | None = None) -> MagicMock:
+    """Mock upstream token endpoint response granting ``granted`` plus a refresh token.
+
+    ``scope`` is the granted scope it states, which it omits when ``None``.
+    """
     response = MagicMock()
     response.status_code = 200
     response.json.return_value = {
         'access_token': granted,
         'refresh_token': 'upstream-refresh-token',
         'expires_in': 3600,
+        **({'scope': scope} if scope is not None else {}),
     }
     return response
 
@@ -44,9 +48,15 @@ async def authorize(
     return await provider.authorize(client, params)
 
 
-async def complete_upstream(provider: AuthorizationCodeProvider, state: str, iss: str | None = None) -> str:
-    """Deliver the upstream's redirect for ``state``, returning the redirect to the MCP client."""
-    with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())):
+async def complete_upstream(
+    provider: AuthorizationCodeProvider, state: str, iss: str | None = None, upstream_scope: str | None = None
+) -> str:
+    """Deliver the upstream's redirect for ``state``, returning the redirect to the MCP client.
+
+    The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``.
+    """
+    response = upstream_token_response(scope=upstream_scope)
+    with patch('httpx.AsyncClient.post', AsyncMock(return_value=response)):
         return await provider.handle_upstream_callback('upstream-code', state, iss)
 
 
@@ -60,9 +70,14 @@ async def sign_in(
     client: OAuthClientInformationFull,
     state: str = 'state-sign-in',
     scopes: list[str] | None = None,
+    upstream_scope: str | None = None,
 ) -> OAuthToken:
-    """Run a whole authorization through ``provider`` and return the MCP tokens it issues."""
+    """Run a whole authorization through ``provider`` and return the MCP tokens it issues.
+
+    The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``.
+    """
     await authorize(provider, client, state, scopes)
-    auth_code = await provider.load_authorization_code(client, code_in(await complete_upstream(provider, state)))
+    redirect = await complete_upstream(provider, state, upstream_scope=upstream_scope)
+    auth_code = await provider.load_authorization_code(client, code_in(redirect))
     assert auth_code is not None
     return await provider.exchange_authorization_code(client, auth_code)

@@ -1,6 +1,7 @@
 import contextlib
 import dataclasses
 import json
+import logging
 import pathlib
 import typing
 
@@ -12,6 +13,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, TextContent
 from starlette.testclient import TestClient
 
+from openapi_mcp_gateway.auth.flows import AuthorizationCodeProvider
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
@@ -48,25 +50,44 @@ READ_CHALLENGE = DELETE_CHALLENGE.replace('pets:delete', 'pets:read')
 # A pet read through the resource the petstore's ``getPetById`` is promoted to.
 PET_RESOURCE = 'petstore://pets/7'
 
+# The upstream scopes each petstore operation declares in its OpenAPI ``security``, keyed by operationId.
+UPSTREAM_SECURITY = {
+    'listPets': [{'oauth2': ['read:pets']}],
+    'getPetById': [{'oauth2': ['read:pets']}],
+    'createPet': [{'oauth2': ['write:pets']}],
+    'deletePet': [{'oauth2': ['read:pets', 'write:pets']}],
+}
+
+# Why a token whose upstream grant lacks what ``deletePet`` declares is refused.
+DELETE_UPSTREAM_REFUSAL = (
+    'The upstream token lacks the scopes deletePet needs (read:pets write:pets). '
+    'Add them to auth.upstream.scopes and sign in again, or correct its security under operations.deletePet.security.'
+)
+
 
 @pytest.fixture
 def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gateway]:
-    """Build a petstore gateway whose ``authorization_code`` server defines ``scopes`` for ``clients``."""
+    """Build a petstore gateway whose ``authorization_code`` server defines ``scopes`` for ``clients``.
+
+    ``upstream`` is merged into ``auth.upstream``, and ``spec`` replaces the petstore fixture.
+    """
 
     def make(
         operation_scopes: dict[str, typing.Any] | None = None,
         clients: dict[str, typing.Any] | None = None,
         style: str = 'static',
         promote_resources: bool = False,
+        upstream: dict[str, typing.Any] | None = None,
+        spec: pathlib.Path = petstore_json_path,
     ) -> Gateway:
         auth = {
             'type': 'oauth2',
-            'upstream': {'client_id': 'gateway', 'client_secret': 'secret', 'scopes': ['read']},
+            'upstream': {'client_id': 'gateway', 'client_secret': 'secret', 'scopes': ['read'], **(upstream or {})},
             'operation_scopes': operation_scopes if operation_scopes is not None else {'auto': 'tags'},
             'clients': clients or CLIENTS,
         }
         exposure = {'style': style, 'promote_resources': promote_resources}
-        server = {'name': 'petstore', 'spec': str(petstore_json_path), 'auth': auth, 'exposure': exposure}
+        server = {'name': 'petstore', 'spec': str(spec), 'auth': auth, 'exposure': exposure}
         return Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
 
     return make
@@ -243,6 +264,85 @@ class TestAuthorizationServer:
             make_gateway(clients={READER: {'scopes': ['pets:raed']}})
 
 
+class TestUpstreamGrant:
+    """With ``enforce_scopes``, an operation also needs the upstream scopes its ``security`` declares."""
+
+    @pytest.fixture
+    def secured_spec(self, petstore_json_path: pathlib.Path, tmp_path: pathlib.Path) -> pathlib.Path:
+        """The petstore fixture with each operation's upstream scopes declared."""
+        spec = json.loads(petstore_json_path.read_text())
+        for path_item in spec['paths'].values():
+            for operation in path_item.values():
+                if isinstance(operation, dict) and operation.get('operationId') in UPSTREAM_SECURITY:
+                    operation['security'] = UPSTREAM_SECURITY[operation['operationId']]
+        path = tmp_path / 'secured-petstore.json'
+        path.write_text(json.dumps(spec))
+        return path
+
+    @pytest.fixture
+    def make_enforcing_gateway(self, make_gateway, secured_spec) -> typing.Callable[..., Gateway]:
+        """A gateway enforcing the upstream grant, requesting both pet scopes unless ``upstream`` says otherwise."""
+
+        def make(style: str = 'static', **upstream: typing.Any) -> Gateway:
+            settings = {'enforce_scopes': True, 'scopes': ['read:pets', 'write:pets'], **upstream}
+            return make_gateway(spec=secured_spec, style=style, upstream=settings)
+
+        return make
+
+    @pytest.mark.parametrize(
+        ('upstream_scope', 'expected'),
+        [('read:pets', READ_TOOLS), ('read:pets write:pets', [*READ_TOOLS, 'delete_pet'])],
+    )
+    async def test_the_list_shows_only_what_the_grant_opens(self, make_enforcing_gateway, upstream_scope, expected):
+        async with _connect(make_enforcing_gateway(), DELETER, MODERN, upstream_scope) as session:
+            assert await _tool_names(session) == expected
+
+    @pytest.mark.parametrize(
+        ('style', 'tool', 'arguments'),
+        [
+            ('static', 'delete_pet', {'petId': '1'}),
+            ('dynamic', 'call_operation', {'name': 'delete_pet', 'arguments': {'petId': '1'}}),
+        ],
+    )
+    async def test_a_short_grant_is_a_tool_error_rather_than_a_challenge(
+        self, make_enforcing_gateway, upstream_requests, style, tool, arguments
+    ):
+        """Stepping up at the gateway cannot change what the upstream granted, so no client is challenged."""
+        async with _connect(make_enforcing_gateway(style), DELETER, MODERN, 'read:pets') as session:
+            result = await session.client.call_tool(tool, arguments)
+        assert result.is_error
+        # The meta-tool's refusal arrives prefixed by the SDK, as any error a tool raises does.
+        assert DELETE_UPSTREAM_REFUSAL in _text(result)
+        assert upstream_requests == []
+
+    async def test_missing_mcp_scopes_are_challenged_first(self, make_enforcing_gateway):
+        """A client can step up for the MCP scopes and not for the upstream grant, so it hears about them first."""
+        async with _connect(make_enforcing_gateway(), READER, MODERN, 'read:pets') as session:
+            with pytest.raises(MCPError):
+                await session.client.call_tool('delete_pet', {'petId': '1'})
+        assert session.refusal.headers['www-authenticate'] == DELETE_CHALLENGE
+
+    def test_without_requested_scopes_the_gateway_requests_what_the_operations_declare(self, make_enforcing_gateway):
+        gateway = make_enforcing_gateway(scopes=[])
+        assert _provider(gateway).upstream.scopes == ['read:pets', 'write:pets']
+
+    def test_startup_warns_about_operations_the_requested_scopes_cannot_open(self, make_gateway, secured_spec, caplog):
+        """The check runs without ``enforce_scopes`` as well, since the upstream refuses the call anyway."""
+        with caplog.at_level(logging.WARNING):
+            make_gateway(spec=secured_spec, upstream={'scopes': ['read:pets']})
+        assert '"deleter" can reach 1 operation(s) the requested upstream scopes cannot open' in caplog.text
+        assert '"reader"' not in caplog.text
+
+    def test_enforcing_a_flow_without_a_user_grant_is_refused(self, client_credentials_spec_path):
+        auth = {
+            'type': 'oauth2',
+            'upstream': {'client_id': 'gateway', 'client_secret': 'secret', 'enforce_scopes': True},
+        }
+        server = {'name': 'svc', 'spec': str(client_credentials_spec_path), 'auth': auth}
+        with pytest.raises(ValueError, match=r'enforce_scopes needs auth\.flow authorization_code'):
+            Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
+
+
 @dataclasses.dataclass
 class _Session:
     """An MCP client connected with one token, and every HTTP response it received, in order."""
@@ -256,19 +356,33 @@ class _Session:
         return self.responses[-1]
 
 
-async def _sign_in(gateway: Gateway, client_id: str, requested: str | None = None):
-    """Sign ``client_id`` in through the gateway's own authorization server, asking for ``requested``."""
-    provider = gateway.describe_servers()[0].auth_provider
-    assert provider is not None
+async def _sign_in(gateway: Gateway, client_id: str, requested: str | None = None, upstream_scope: str | None = None):
+    """Sign ``client_id`` in through the gateway's own authorization server, asking for ``requested``.
+
+    The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``.
+    """
+    provider = _provider(gateway)
     client = await provider.get_client(client_id)
     assert client is not None
-    return await sign_in(provider, client, scopes=client.validate_scope(requested))
+    return await sign_in(provider, client, scopes=client.validate_scope(requested), upstream_scope=upstream_scope)
+
+
+def _provider(gateway: Gateway) -> AuthorizationCodeProvider:
+    """The authorization server of the gateway's one server."""
+    provider = gateway.describe_servers()[0].auth_provider
+    assert provider is not None
+    return provider
 
 
 @contextlib.asynccontextmanager
-async def _connect(gateway: Gateway, client_id: str, mode: str) -> typing.AsyncIterator[_Session]:
-    """Serve ``gateway`` over HTTP and connect an MCP client speaking ``mode``, signed in as ``client_id``."""
-    token = await _sign_in(gateway, client_id)
+async def _connect(
+    gateway: Gateway, client_id: str, mode: str, upstream_scope: str | None = None
+) -> typing.AsyncIterator[_Session]:
+    """Serve ``gateway`` over HTTP and connect an MCP client speaking ``mode``, signed in as ``client_id``.
+
+    The upstream granted ``upstream_scope``, or what the gateway requested when ``None``.
+    """
+    token = await _sign_in(gateway, client_id, upstream_scope=upstream_scope)
     responses: list[httpx2.Response] = []
 
     async def record(response: httpx2.Response) -> None:

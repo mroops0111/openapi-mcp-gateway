@@ -441,6 +441,10 @@ class TestSettingsThatCannotTakeEffect:
                 {'type': 'oauth2', 'flow': 'client_credentials', 'upstream': {'issuer': ISSUER}},
                 'upstream.issuer',
             ),
+            (
+                {'type': 'oauth2', 'flow': 'client_credentials', 'upstream': {'enforce_scopes': True}},
+                'upstream.enforce_scopes',
+            ),
             ({'type': 'oauth2', 'flow': 'token_exchange', 'issuer': ISSUER, 'clients': {'agent': {}}}, 'clients'),
             (
                 {'type': 'oauth2', 'flow': 'client_credentials', 'operation_scopes': {}, 'clients': {'agent': {}}},
@@ -496,6 +500,7 @@ class TestScopeSettings:
             ),
             ({'clients': {'agent': {'scopes': ['pets:read']}}}, r'clients \(agent\) grant scopes'),
             ({'clients': {'agent': {'scopes': ['pets read']}}}, 'invalid scopes'),
+            ({'upstream': {'scope_implies': {'repo': ['public repo']}}}, 'invalid scopes'),
             (
                 {
                     'operation_scopes': {'manual': {'pets admin': {'description': 'd', 'operations': ['*']}}},

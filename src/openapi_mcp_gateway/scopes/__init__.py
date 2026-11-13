@@ -1,28 +1,55 @@
-from .access import OperationAccess, granted_mcp_scopes
 from .derivation import SCOPE_DERIVATIONS, DerivedScope, NoDerivation, ScopeDerivation, TagMethodDerivation
-from .enforcement import NameHeaderTarget, RequestTarget, ScopeChallengeGate, ScopeFilterMiddleware
-from .policy import ScopeCatalog, ScopePolicy, UnrestrictedPolicy, build_mcp_scope_policy
-from .requirement import AnyScope, ScopeRequirement, Unreachable, Unrestricted
+from .enforcement import NameHeaderTarget, RequestTarget, ScopeChallengeMiddleware, ScopeFilterMiddleware
+from .grant import BrokeredAccessToken, TokenGrant, current_grant
+from .policy import (
+    ConfiguredMcpScopePolicy,
+    McpScopePolicy,
+    ScopePolicy,
+    SpecSecurityUpstreamScopePolicy,
+    UnrestrictedMcpScopePolicy,
+    UnrestrictedScopePolicy,
+    UnrestrictedUpstreamScopePolicy,
+    UpstreamScopePolicy,
+    build_mcp_scope_policy,
+    build_upstream_scope_policy,
+)
+from .registry import ScopeRegistry
+from .requirement import (
+    AnyScopeRequirement,
+    AnyScopeSetRequirement,
+    ScopeRequirement,
+    UnreachableRequirement,
+    UnrestrictedRequirement,
+)
 
 
 __all__ = [
     'SCOPE_DERIVATIONS',
-    'AnyScope',
+    'AnyScopeRequirement',
+    'AnyScopeSetRequirement',
+    'BrokeredAccessToken',
+    'ConfiguredMcpScopePolicy',
     'DerivedScope',
+    'McpScopePolicy',
     'NameHeaderTarget',
     'NoDerivation',
-    'OperationAccess',
     'RequestTarget',
-    'ScopeCatalog',
-    'ScopeChallengeGate',
+    'ScopeChallengeMiddleware',
     'ScopeDerivation',
     'ScopeFilterMiddleware',
     'ScopePolicy',
+    'ScopeRegistry',
     'ScopeRequirement',
+    'SpecSecurityUpstreamScopePolicy',
     'TagMethodDerivation',
-    'Unreachable',
-    'Unrestricted',
-    'UnrestrictedPolicy',
+    'TokenGrant',
+    'UnreachableRequirement',
+    'UnrestrictedMcpScopePolicy',
+    'UnrestrictedRequirement',
+    'UnrestrictedScopePolicy',
+    'UnrestrictedUpstreamScopePolicy',
+    'UpstreamScopePolicy',
     'build_mcp_scope_policy',
-    'granted_mcp_scopes',
+    'build_upstream_scope_policy',
+    'current_grant',
 ]
