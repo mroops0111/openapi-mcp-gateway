@@ -153,6 +153,10 @@ class TestConfiguredMcpScopePolicy:
         """``tools/list`` is cached per token once scopes filter it."""
         assert _configured_policy(auto='tags').list_cache_scope == 'private'
 
+    @pytest.mark.parametrize(('unscoped', 'opens'), [('deny', False), ('allow', True)])
+    def test_unscoped_decides_whether_uncovered_operations_are_open(self, unscoped, opens):
+        assert _configured_policy(auto='tags', unscoped=unscoped).opens_unscoped_operations is opens
+
 
 class TestUnrestrictedMcpScopePolicy:
     """A server without ``auth.operation_scopes`` restricts nothing."""
@@ -165,6 +169,7 @@ class TestUnrestrictedMcpScopePolicy:
         )
         assert policy.defined_mcp_scopes == {}
         assert policy.list_cache_scope == 'public'
+        assert policy.opens_unscoped_operations is True
 
 
 class TestScopeRegistry:

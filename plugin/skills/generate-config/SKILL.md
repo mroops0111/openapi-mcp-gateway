@@ -123,7 +123,8 @@ servers:
       # operation_scopes: for authorization_code, which MCP scopes open which operations
       #   {auto: tags, unscoped: deny, manual: {<scope>: {description: ..., operations: ["DELETE *"]}}}
       # clients: the pre-registered clients allowed to sign in, which turns off dynamic registration
-      #   {<client_id>: {scopes: [...], client_secret: ${SOME_SECRET}, redirect_uris: [...]}}
+      #   {<client_id>: {scopes: [...], client_secret: ${SOME_SECRET}, redirect_uris: [...], consent: false}}
+      #   consent: false skips the gateway's consent page for a client the operator trusts (default true)
       upstream: # everything the gateway sends to the upstream authorization server
         client_id: ${SOME_ID}
         scopes: [...] # with enforce_scopes and none listed, the scopes the operations' security declares

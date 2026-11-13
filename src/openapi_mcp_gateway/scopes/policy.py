@@ -57,6 +57,11 @@ class McpScopePolicy(ScopePolicy):
     def defined_mcp_scopes(self) -> collections.abc.Mapping[str, str]:
         """Every scope the server defines, mapped to the description a person approving it is shown."""
 
+    @property
+    def opens_unscoped_operations(self) -> bool:
+        """Whether an operation no scope covers is open to every token, as it is unless a policy closes it."""
+        return True
+
 
 class UpstreamScopePolicy(ScopePolicy):
     """What each operation requires of the scopes the upstream granted the user behind a token."""
@@ -110,6 +115,10 @@ class ConfiguredMcpScopePolicy(McpScopePolicy):
     @property
     def defined_mcp_scopes(self) -> collections.abc.Mapping[str, str]:
         return self._defined_mcp_scopes
+
+    @property
+    def opens_unscoped_operations(self) -> bool:
+        return self._config.unscoped == 'allow'
 
     @property
     def list_cache_scope(self) -> typing.Literal['public', 'private']:

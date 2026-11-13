@@ -17,7 +17,7 @@ from openapi_mcp_gateway.auth.flows import AuthorizationCodeProvider
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
-from tests.oauth import sign_in
+from tests.oauth import authorization_code_gateway, sign_in
 from tests.serving import serve
 
 
@@ -80,15 +80,13 @@ def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gatew
         upstream: dict[str, typing.Any] | None = None,
         spec: pathlib.Path = petstore_json_path,
     ) -> Gateway:
-        auth = {
-            'type': 'oauth2',
-            'upstream': {'client_id': 'gateway', 'client_secret': 'secret', 'scopes': ['read'], **(upstream or {})},
-            'operation_scopes': operation_scopes if operation_scopes is not None else {'auto': 'tags'},
-            'clients': clients or CLIENTS,
-        }
-        exposure = {'style': style, 'promote_resources': promote_resources}
-        server = {'name': 'petstore', 'spec': str(spec), 'auth': auth, 'exposure': exposure}
-        return Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
+        return authorization_code_gateway(
+            spec,
+            clients or CLIENTS,
+            operation_scopes=operation_scopes if operation_scopes is not None else {'auto': 'tags'},
+            upstream=upstream,
+            exposure={'style': style, 'promote_resources': promote_resources},
+        )
 
     return make
 

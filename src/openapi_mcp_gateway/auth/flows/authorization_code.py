@@ -21,11 +21,13 @@ from mcp.server.auth.settings import AuthSettings, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from starlette.exceptions import HTTPException
 
-from ...scopes import BrokeredAccessToken
+from ...scopes import BrokeredAccessToken, McpScopePolicy
 from ...stores.base import TokenStore
 from ..resolver import AuthorizationCodeAuthResolver
 from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
 from .clients import ClientDirectory, DynamicClientRegistry, PreRegisteredClientDirectory
+from .consent import PENDING_AUTHORIZATION_TTL, ConsentRegistry, PendingAuthorization
+from .consent_page import ConsentPrompt, DescribedScope
 
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,13 @@ logger = logging.getLogger(__name__)
 # and exists only so the OAuth machinery has a scope to name.
 DEFAULT_MCP_SCOPE = 'api'
 
+# Where each server's browser-facing pages sit, under the server's own path.
+CONSENT_PATH = '/auth/consent'
+CALLBACK_PATH = '/auth/callback'
+
+# The upstream authorization errors that mean the same to the MCP client, and so reach it unchanged.
+_FORWARDED_UPSTREAM_ERRORS = frozenset({'access_denied', 'temporarily_unavailable'})
+
 
 @dataclasses.dataclass(frozen=True)
 class UpstreamOAuthClient:
@@ -43,6 +52,8 @@ class UpstreamOAuthClient:
 
     ``callback_url`` is the gateway's own address,
     and belongs here because it is only ever meaningful as the ``redirect_uri`` of this conversation.
+
+    ``scope_descriptions`` maps each upstream scope to what it allows, as the spec's OAuth flow states it.
 
     ``issuer`` is the upstream authorization server's RFC 8414 issuer identifier.
     It is what an RFC 9207 ``iss`` on the authorization response is compared against,
@@ -55,6 +66,7 @@ class UpstreamOAuthClient:
     client_secret: str
     callback_url: str
     scopes: list[str] = dataclasses.field(default_factory=list)
+    scope_descriptions: dict[str, str] = dataclasses.field(default_factory=dict)
     audience_params: dict[str, str] = dataclasses.field(default_factory=dict)
     issuer: str | None = None
 
@@ -123,6 +135,11 @@ class AuthorizationCodeProvider:
 
     ``clients`` is where the clients allowed to sign in are found.
     It defaults to Dynamic Client Registration into ``store``.
+
+    Every sign-in passes the gateway's consent page at ``CONSENT_PATH`` before it reaches the upstream,
+    which is what the MCP spec asks of a proxy holding one static ``client_id`` at the upstream.
+    The upstream's own consent names the gateway, never the MCP client behind it,
+    and may be skipped once given, so without this page any registered client could collect a code silently.
     """
 
     def __init__(
@@ -139,6 +156,7 @@ class AuthorizationCodeProvider:
         self.issued_tokens = issued_tokens
         self.issuer = issuer
         self.clients = clients or DynamicClientRegistry(store, issuer)
+        self._consents = ConsentRegistry(store, issuer)
         self._prefix = prefix
 
     # MCP SDK OAuthAuthorizationServerProvider interface
@@ -150,24 +168,101 @@ class AuthorizationCodeProvider:
         await self.clients.register(client_info)
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
-        """Return the upstream authorize URL after stashing PKCE/state payload in ``store``."""
-        client_id = self._require_client_id(client)
-        state = params.state or secrets.token_hex(16)
+        """Record the sign-in and send the browser to the consent page, the first place the gateway sees the browser.
 
-        # The expected issuer is recorded with the request it belongs to, as the MCP spec requires,
-        # so the callback checks the response against the server this request was sent to,
-        # even if configuration changed in between.
-        state_data = {
-            'redirect_uri': str(params.redirect_uri),
-            'code_challenge': params.code_challenge,
-            'redirect_uri_provided_explicitly': params.redirect_uri_provided_explicitly,
-            'client_id': client_id,
+        The SDK hands this method no request, so whether the browser already approved the client is decided there.
+        The expected upstream issuer is recorded with the request it belongs to, as the MCP spec requires,
+        so the callback checks the response against the server this request was sent to,
+        even if configuration changed in between.
+        """
+        pending = PendingAuthorization(
+            request_id=secrets.token_urlsafe(32),
+            client_id=self._require_client_id(client),
+            redirect_uri=str(params.redirect_uri),
+            redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
+            code_challenge=params.code_challenge,
             # The scopes the SDK settled on for this client, always with the endpoint scopes every request must hold.
-            'scopes': list(dict.fromkeys([*self.issued_tokens.scopes, *(params.scopes or [])])),
-            'upstream_issuer': self.upstream.issuer,
-            'upstream_authorization_server': self.upstream.authorization_server,
-        }
-        await self.store.set('mcp_auth_state', state, state_data, ttl=900)
+            scopes=list(dict.fromkeys([*self.issued_tokens.scopes, *(params.scopes or [])])),
+            client_state=params.state,
+            csrf_token=secrets.token_urlsafe(32),
+            upstream_issuer=self.upstream.issuer,
+            **self._binding(),
+        )
+        await self._store_pending(pending)
+        return f'{self.issuer}{CONSENT_PATH}?{urllib.parse.urlencode({"request": pending.request_id})}'
+
+    async def claim_authorization(self, request_id: str, browser_id: str) -> PendingAuthorization | None:
+        """The sign-in waiting under ``request_id``, bound to ``browser_id`` by the first browser to open it.
+
+        ``None`` when it expired, belongs to another server, or another browser opened it first,
+        so a consent link passed on to someone else is worthless to them.
+        """
+        pending = await self._load_pending(request_id)
+        if pending is not None and pending.browser_id is None:
+            pending = pending.model_copy(update={'browser_id': browser_id})
+            await self._store_pending(pending)
+        return self._opened_by(pending, browser_id)
+
+    async def shown_authorization(self, request_id: str, browser_id: str) -> PendingAuthorization | None:
+        """The sign-in waiting under ``request_id`` if ``browser_id`` opened it, or ``None`` for any other browser."""
+        return self._opened_by(await self._load_pending(request_id), browser_id)
+
+    async def requires_consent(self, pending: PendingAuthorization) -> bool:
+        """Whether the browser behind ``pending`` has to approve its client before the upstream sign-in."""
+        if not self.clients.requires_consent(pending.client_id):
+            return False
+        return not await self._consents.is_approved(
+            pending.bound_browser_id, pending.client_id, pending.scopes, self.upstream.scopes
+        )
+
+    async def consent_prompt(self, pending: PendingAuthorization, mcp_scope_policy: McpScopePolicy) -> ConsentPrompt:
+        """What the consent page shows for ``pending``, its MCP access read from ``mcp_scope_policy``."""
+        client = await self.clients.get(pending.client_id)
+        return ConsentPrompt(
+            server_name=self._prefix,
+            upstream_host=urllib.parse.urlsplit(self.upstream.authorization_url).netloc,
+            client_id=pending.client_id,
+            client_name=client.client_name if client else None,
+            redirect_uri=pending.redirect_uri,
+            upstream_scopes=[
+                DescribedScope(scope, self.upstream.scope_descriptions.get(scope)) for scope in self.upstream.scopes
+            ],
+            mcp_scopes=[
+                DescribedScope(scope, mcp_scope_policy.defined_mcp_scopes[scope])
+                for scope in pending.scopes
+                if scope in mcp_scope_policy.defined_mcp_scopes
+            ],
+            opens_unscoped_tools=mcp_scope_policy.opens_unscoped_operations,
+            csrf_token=pending.csrf_token,
+        )
+
+    async def approve(self, pending: PendingAuthorization) -> str:
+        """Record that the browser approved the client, and return the upstream authorize URL."""
+        await self._consents.approve(pending.bound_browser_id, pending.client_id, pending.scopes, self.upstream.scopes)
+        logger.info('OAuth consent approved: client_id=%s', pending.client_id)
+        return await self.continue_to_upstream(pending)
+
+    async def deny(self, pending: PendingAuthorization) -> str:
+        """End the sign-in, and return the redirect telling the client the user refused, per RFC 6749 §4.1.2.1."""
+        await self.store.delete('mcp_auth_request', pending.request_id)
+        logger.info('OAuth consent denied: client_id=%s', pending.client_id)
+        return construct_redirect_uri(
+            pending.redirect_uri,
+            error='access_denied',
+            error_description='The user denied the sign-in',
+            state=pending.client_state,
+            iss=self.issuer,
+        )
+
+    async def continue_to_upstream(self, pending: PendingAuthorization) -> str:
+        """Return the upstream authorize URL, under a fresh ``state`` only the browser behind ``pending`` can finish.
+
+        The client's own ``state`` is never sent upstream.
+        It is kept with the sign-in and handed back to the client at the end, as RFC 6749 requires.
+        """
+        state = secrets.token_urlsafe(32)
+        await self.store.set('mcp_auth_state', state, pending.model_dump(), ttl=PENDING_AUTHORIZATION_TTL)
+        await self.store.delete('mcp_auth_request', pending.request_id)
 
         query_params = {
             'client_id': self.upstream.client_id,
@@ -330,25 +425,19 @@ class AuthorizationCodeProvider:
 
     # Gateway-specific methods
 
-    async def handle_upstream_callback(self, code: str, state: str, iss: str | None = None) -> str:
+    async def handle_upstream_callback(
+        self, code: str, state: str, browser_id: str | None, iss: str | None = None
+    ) -> str:
         """Finish the browser redirect by swapping the upstream ``code`` for MCP auth artefacts.
 
-        Validates ``state`` and the RFC 9207 ``iss``, exchanges tokens at the upstream token endpoint,
+        Validates ``state`` against the browser that approved the sign-in and the RFC 9207 ``iss``,
+        exchanges tokens at the upstream token endpoint,
         persists the upstream credentials, builds an MCP authorization code, and returns the client redirect URI.
-        The ``iss`` check runs before the code leaves the gateway,
+        The checks run before the code leaves the gateway,
         since a mix-up attack succeeds the moment the code reaches the wrong token endpoint.
         """
-        state_data = await self.store.get('mcp_auth_state', state)
-        if not state_data:
-            logger.warning('OAuth callback rejected: reason=invalid_state state=%s', state)
-            raise HTTPException(400, 'Invalid state parameter')
-
-        self._validate_upstream_response_issuer(state_data, iss)
-
-        redirect_uri = state_data['redirect_uri']
-        code_challenge = state_data['code_challenge']
-        redirect_uri_provided_explicitly = state_data['redirect_uri_provided_explicitly']
-        client_id = state_data['client_id']
+        pending = await self._pending_upstream(state, browser_id)
+        self._validate_upstream_response_issuer(pending, iss)
 
         upstream_token = await self._request_upstream_token(
             {
@@ -365,20 +454,19 @@ class AuthorizationCodeProvider:
             mcp_auth_code,
             {
                 'code': mcp_auth_code,
-                'client_id': client_id,
-                'redirect_uri': redirect_uri,
-                'redirect_uri_provided_explicitly': redirect_uri_provided_explicitly,
+                'client_id': pending.client_id,
+                'redirect_uri': pending.redirect_uri,
+                'redirect_uri_provided_explicitly': pending.redirect_uri_provided_explicitly,
                 'expires_at': time.time() + 300,
-                # State stored before the grant was recorded with it carries the endpoint scopes alone.
-                'scopes': state_data.get('scopes', list(self.issued_tokens.scopes)),
-                'code_challenge': code_challenge,
+                'scopes': pending.scopes,
+                'code_challenge': pending.code_challenge,
                 'upstream_scopes': upstream_token.granted_scopes(self.upstream.scopes),
                 **self._binding(),
             },
             ttl=300,
         )
 
-        await self._store_api_token(client_id, upstream_token.access_token, upstream_token.expires_in)
+        await self._store_api_token(pending.client_id, upstream_token.access_token, upstream_token.expires_in)
 
         await self.store.set_mapping(
             'mcp_auth_code', mcp_auth_code, 'api_access_token', upstream_token.access_token, ttl=300
@@ -392,13 +480,35 @@ class AuthorizationCodeProvider:
 
         logger.info(
             'Upstream OAuth callback handled: client_id=%s expires_in=%s refresh=%s',
-            client_id,
+            pending.client_id,
             upstream_token.expires_in,
             bool(upstream_token.refresh_token),
         )
         # Per RFC 9207, name this authorization server in its own response, as its metadata advertises,
         # so an MCP client talking to several authorization servers can tell which one answered.
-        return construct_redirect_uri(redirect_uri, code=mcp_auth_code, state=state, iss=self.issuer)
+        return construct_redirect_uri(
+            pending.redirect_uri, code=mcp_auth_code, state=pending.client_state, iss=self.issuer
+        )
+
+    async def handle_upstream_error(
+        self, error: str, state: str, browser_id: str | None, error_description: str | None = None
+    ) -> str:
+        """End a sign-in the upstream refused, and return the redirect telling the client, per RFC 6749 §4.1.2.1.
+
+        ``access_denied`` and ``temporarily_unavailable`` mean the same to the client and pass through.
+        Any other error concerns the gateway's own request to the upstream, so the client hears ``server_error``.
+        """
+        pending = await self._pending_upstream(state, browser_id)
+        await self.store.delete('mcp_auth_state', state)
+        logger.info('Upstream OAuth refused the sign-in: client_id=%s error=%s', pending.client_id, error)
+        forwarded = error if error in _FORWARDED_UPSTREAM_ERRORS else 'server_error'
+        return construct_redirect_uri(
+            pending.redirect_uri,
+            error=forwarded,
+            error_description=error_description or f'The upstream authorization server answered {error}',
+            state=pending.client_state,
+            iss=self.issuer,
+        )
 
     async def get_api_access_token(self) -> str | None:
         """Map the active MCP access token (from request context) to the upstream bearer."""
@@ -435,18 +545,57 @@ class AuthorizationCodeProvider:
         """
         return data.get('upstream_scopes', list(self.upstream.scopes))
 
-    def _validate_upstream_response_issuer(self, state_data: dict[str, typing.Any], iss: str | None) -> None:
+    async def _store_pending(self, pending: PendingAuthorization) -> None:
+        """Keep ``pending`` under its request id until the browser leaves for the upstream."""
+        await self.store.set(
+            'mcp_auth_request', pending.request_id, pending.model_dump(), ttl=PENDING_AUTHORIZATION_TTL
+        )
+
+    async def _load_pending(self, request_id: str) -> PendingAuthorization | None:
+        """The sign-in waiting at this server's consent page under ``request_id``."""
+        data = await self.store.get('mcp_auth_request', request_id)
+        return PendingAuthorization.model_validate(data) if data and self._is_bound_here(data) else None
+
+    @staticmethod
+    def _opened_by(pending: PendingAuthorization | None, browser_id: str) -> PendingAuthorization | None:
+        """``pending`` when ``browser_id`` is the browser it is bound to, else ``None``."""
+        if pending is not None and pending.browser_id != browser_id:
+            logger.warning('OAuth consent rejected: reason=other_browser client_id=%s', pending.client_id)
+            return None
+        return pending
+
+    async def _pending_upstream(self, state: str, browser_id: str | None) -> PendingAuthorization:
+        """The sign-in the upstream's callback under ``state`` finishes, which ``browser_id`` must have approved.
+
+        Raises ``HTTPException`` when ``state`` names none of this server's sign-ins against the current upstream,
+        including one recorded before sign-ins were tied to a browser, or when another browser delivers it.
+        A sign-in recorded against another upstream is refused outright,
+        since its code would otherwise be redeemed at a token endpoint that never issued it.
+        """
+        data = await self.store.get('mcp_auth_state', state)
+        pending = self._parse_pending(data) if data and self._is_bound_here(data) else None
+        if pending is None:
+            logger.warning('OAuth callback rejected: reason=invalid_state')
+            raise HTTPException(400, 'This sign-in has expired or was already finished')
+        if browser_id is None or pending.browser_id != browser_id:
+            logger.warning('OAuth callback rejected: reason=other_browser client_id=%s', pending.client_id)
+            raise HTTPException(400, 'This sign-in was started in another browser')
+        return pending
+
+    @staticmethod
+    def _parse_pending(data: dict[str, typing.Any]) -> PendingAuthorization | None:
+        """``data`` as a sign-in, or ``None`` for a record from before sign-ins were tied to a browser."""
+        try:
+            return PendingAuthorization.model_validate(data)
+        except pydantic.ValidationError:
+            return None
+
+    def _validate_upstream_response_issuer(self, pending: PendingAuthorization, iss: str | None) -> None:
         """Apply RFC 9207 to the upstream's authorization response, before its code is redeemed.
 
         A present ``iss`` must equal the issuer recorded for this request, compared exactly as the RFC requires.
-        A response to a request recorded against another upstream is refused outright,
-        since its code would otherwise be redeemed at a token endpoint that never issued it.
         """
-        if state_data.get('upstream_authorization_server') != self.upstream.authorization_server:
-            logger.warning('OAuth callback rejected: reason=upstream_changed')
-            raise HTTPException(400, 'The upstream authorization server changed during sign-in; start again')
-
-        recorded_issuer = state_data.get('upstream_issuer')
+        recorded_issuer = pending.upstream_issuer
         if iss is None:
             return
         if not recorded_issuer:
@@ -621,7 +770,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             raise ValueError(f'Server "{entry.name}": authorization_code flow requires token_url.')
 
         gateway_url = flow_context.gateway_url.rstrip('/')
-        callback_url = f'{gateway_url}{flow_context.mount_path}/auth/callback'
+        callback_url = f'{gateway_url}{flow_context.mount_path}{CALLBACK_PATH}'
 
         # The scopes every token carries and every request must hold, granted on top of a client's own scopes.
         # With auth.operation_scopes there are none, since each operation names its own scopes instead.
@@ -643,6 +792,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
                 client_secret=client_secret,
                 callback_url=callback_url,
                 scopes=list(entry.auth.upstream.scopes),
+                scope_descriptions=oauth_flow.scopes,
                 audience_params=entry.auth.upstream.resolve_audience_params(),
                 issuer=entry.auth.upstream.resolve_issuer(),
             ),

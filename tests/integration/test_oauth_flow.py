@@ -25,11 +25,17 @@ from tests.constants import (
     TOKEN_URL,
 )
 from tests.oauth import (
+    BROWSER_ID,
     CLIENT_REDIRECT_URI,
+    CLIENT_STATE,
     authorize,
+    begin_upstream,
     code_in,
     complete_upstream,
+    deliver_callback,
+    query_value,
     sign_in,
+    state_in,
     upstream_token_response,
 )
 
@@ -143,15 +149,23 @@ class TestClientRegistration:
 
 
 class TestAuthorize:
-    """``authorize`` builds the upstream authorization URL with carried-over state."""
+    """``authorize`` sends the browser to the consent page, which sends it on to the upstream."""
 
-    async def test_authorize_returns_upstream_url(self, provider, mcp_client_info):
-        """The returned URL points at upstream and carries ``client_id`` / ``state`` / ``scope``."""
-        url = await authorize(provider, mcp_client_info, 'test-state')
+    async def test_authorize_sends_the_browser_to_the_consent_page(self, provider, mcp_client_info):
+        """``authorize`` has no request to read a cookie from, so the consent page decides what happens next."""
+        url = await authorize(provider, mcp_client_info)
+        assert url.startswith(f'{GATEWAY_ISSUER}/auth/consent?request=')
+
+    async def test_the_upstream_url_carries_the_gateway_client_and_scopes(self, provider, mcp_client_info):
+        url = await begin_upstream(provider, mcp_client_info)
         assert url.startswith(f'{AUTHORIZE_URL}?')
-        assert 'client_id=gateway-client-id' in url
-        assert 'state=test-state' in url
-        assert 'scope=read+write' in url
+        assert query_value(url, 'client_id') == 'gateway-client-id'
+        assert query_value(url, 'scope') == 'read write'
+
+    async def test_the_upstream_gets_a_fresh_state_rather_than_the_clients(self, provider, mcp_client_info):
+        """The client's ``state`` is chosen by whoever crafted the link, so it cannot tie the sign-in to a browser."""
+        url = await begin_upstream(provider, mcp_client_info)
+        assert state_in(url) != CLIENT_STATE
 
 
 class TestGrantedScopes:
@@ -163,22 +177,6 @@ class TestGrantedScopes:
         provider = make_provider(issued_tokens=IssuedTokenPolicy(scopes=['a', 'b']))
         token = await sign_in(provider, mcp_client_info, scopes=requested)
         assert token.scope == granted
-
-    async def test_state_stored_without_scopes_grants_the_endpoint_scopes(
-        self, provider, mcp_client_info, memory_store
-    ):
-        """A sign-in started before an upgrade still completes, as the state it stored lacks the grant."""
-        await authorize(provider, mcp_client_info, 'state-old')
-        state_data = await memory_store.get('mcp_auth_state', 'state-old')
-        assert state_data is not None
-        del state_data['scopes']
-        await memory_store.set('mcp_auth_state', 'state-old', state_data, ttl=900)
-
-        auth_code = await provider.load_authorization_code(
-            mcp_client_info, code_in(await complete_upstream(provider, 'state-old'))
-        )
-        assert auth_code is not None
-        assert auth_code.scopes == ['api']
 
 
 class TestUpstreamGrant:
@@ -228,10 +226,9 @@ class TestFullOAuthLifecycle:
 
     async def test_full_flow(self, provider, mcp_client_info, memory_store):
         """Walk through every step of the OAuth lifecycle and verify token mappings."""
-        upstream_url = await authorize(provider, mcp_client_info, 'state-xyz', scopes=['read', 'write'])
-        assert 'state=state-xyz' in upstream_url
+        upstream_url = await begin_upstream(provider, mcp_client_info, scopes=['read', 'write'])
 
-        redirect = await complete_upstream(provider, 'state-xyz')
+        redirect = await complete_upstream(provider, upstream_url)
         mcp_auth_code = code_in(redirect)
         assert mcp_auth_code.startswith('mcp_')
 
@@ -280,7 +277,7 @@ class TestConfigurableTokenTtl:
         """A provider built with a custom access TTL mints tokens expiring on that cadence."""
         provider = make_provider(issued_tokens=IssuedTokenPolicy(access_token_ttl=7200, refresh_token_ttl=604800))
 
-        token = await sign_in(provider, mcp_client_info, 'state-ttl')
+        token = await sign_in(provider, mcp_client_info)
 
         assert token.expires_in == 7200
 
@@ -325,13 +322,13 @@ class TestUpstreamCallbackErrors:
     async def test_invalid_state_raises(self, provider):
         """An unknown ``state`` value triggers ``400 Invalid state parameter``."""
         with pytest.raises(HTTPException) as exception_info:
-            await provider.handle_upstream_callback('any-code', 'never-issued-state')
+            await provider.handle_upstream_callback('any-code', 'never-issued-state', BROWSER_ID)
         assert exception_info.value.status_code == 400
-        assert 'state' in exception_info.value.detail.lower()
+        assert 'expired' in exception_info.value.detail
 
     async def test_upstream_non_200_raises(self, provider, mcp_client_info):
         """A non-200 upstream token response surfaces as ``400 Upstream token exchange failed``."""
-        await authorize(provider, mcp_client_info, 'state-bad-upstream')
+        upstream_url = await begin_upstream(provider, mcp_client_info)
 
         bad_response = MagicMock()
         bad_response.status_code = 401
@@ -341,13 +338,13 @@ class TestUpstreamCallbackErrors:
             patch('httpx.AsyncClient.post', new_callable=AsyncMock, return_value=bad_response),
             pytest.raises(HTTPException) as exception_info,
         ):
-            await provider.handle_upstream_callback('upstream-code', 'state-bad-upstream')
+            await deliver_callback(provider, upstream_url)
         assert exception_info.value.status_code == 400
         assert 'invalid_client' in exception_info.value.detail
 
     async def test_upstream_missing_access_token_raises(self, provider, mcp_client_info):
         """A 200 response without ``access_token`` surfaces as ``400 Upstream returned no access_token``."""
-        await authorize(provider, mcp_client_info, 'state-missing-token')
+        upstream_url = await begin_upstream(provider, mcp_client_info)
 
         empty_response = MagicMock()
         empty_response.status_code = 200
@@ -357,7 +354,7 @@ class TestUpstreamCallbackErrors:
             patch('httpx.AsyncClient.post', new_callable=AsyncMock, return_value=empty_response),
             pytest.raises(HTTPException) as exception_info,
         ):
-            await provider.handle_upstream_callback('upstream-code', 'state-missing-token')
+            await deliver_callback(provider, upstream_url)
         assert exception_info.value.status_code == 400
         assert 'access_token' in exception_info.value.detail
 
@@ -371,17 +368,17 @@ class TestUpstreamAudienceParams:
 
     async def test_authorize_url_carries_audience(self, audience_provider, mcp_client_info):
         """The browser redirect names the API, since consent binds the audience."""
-        url = await authorize(audience_provider, mcp_client_info, 'state-aud')
+        url = await begin_upstream(audience_provider, mcp_client_info)
 
         assert urllib.parse.urlencode({'audience': API_URL}) in url
 
     async def test_code_exchange_carries_audience(self, audience_provider, mcp_client_info):
         """The authorization_code grant names the API as well as the authorize request."""
-        await authorize(audience_provider, mcp_client_info, 'state-aud')
+        upstream_url = await begin_upstream(audience_provider, mcp_client_info)
 
         post_mock = AsyncMock(return_value=upstream_token_response())
         with patch('httpx.AsyncClient.post', post_mock):
-            await audience_provider.handle_upstream_callback('upstream-code', 'state-aud')
+            await deliver_callback(audience_provider, upstream_url)
 
         assert post_mock.await_args is not None
         posted = post_mock.await_args.kwargs['data']
@@ -394,7 +391,7 @@ class TestUpstreamAudienceParams:
         Dropping the audience here would return a token the upstream refuses,
         and that failure would only surface once the first token expired.
         """
-        token = await sign_in(audience_provider, mcp_client_info, 'state-aud')
+        token = await sign_in(audience_provider, mcp_client_info)
         assert token.refresh_token is not None
         refresh = await audience_provider.load_refresh_token(mcp_client_info, token.refresh_token)
         assert refresh is not None
@@ -413,13 +410,13 @@ class TestUpstreamAudienceParams:
 
     async def test_unconfigured_provider_sends_no_audience(self, provider, mcp_client_info):
         """An upstream that issues its own tokens sees no audience keys at all."""
-        url = await authorize(provider, mcp_client_info, 'state-plain')
+        url = await begin_upstream(provider, mcp_client_info)
         assert 'audience=' not in url
         assert 'resource=' not in url
 
         post_mock = AsyncMock(return_value=upstream_token_response())
         with patch('httpx.AsyncClient.post', post_mock):
-            await provider.handle_upstream_callback('upstream-code', 'state-plain')
+            await deliver_callback(provider, url)
 
         assert post_mock.await_args is not None
         posted = post_mock.await_args.kwargs['data']
@@ -430,12 +427,12 @@ class TestUpstreamAudienceParams:
 class TestUpstreamAuthorizationResponseIssuer:
     """RFC 9207 ``iss`` on the upstream's authorization response, checked before the code is redeemed."""
 
-    async def _callback_outcome(self, provider, state: str, iss: str | None) -> tuple[str | None, AsyncMock]:
+    async def _callback_outcome(self, provider, upstream_url: str, iss: str | None) -> tuple[str | None, AsyncMock]:
         """Deliver the upstream's redirect, returning the result (``None`` if refused) and the token mock."""
         post_mock = AsyncMock(return_value=upstream_token_response())
         with patch('httpx.AsyncClient.post', post_mock):
             try:
-                return await provider.handle_upstream_callback('upstream-code', state, iss), post_mock
+                return await deliver_callback(provider, upstream_url, iss), post_mock
             except HTTPException as exc:
                 assert exc.status_code == 400
                 return None, post_mock
@@ -443,9 +440,9 @@ class TestUpstreamAuthorizationResponseIssuer:
     async def test_mismatched_iss_is_rejected_before_the_code_is_redeemed(self, make_provider, mcp_client_info):
         """A response naming another issuer never reaches the token endpoint, the mix-up defence."""
         provider = make_provider(upstream_issuer=ISSUER)
-        await authorize(provider, mcp_client_info, 'state-mixup')
+        upstream_url = await begin_upstream(provider, mcp_client_info)
 
-        result, post_mock = await self._callback_outcome(provider, 'state-mixup', ATTACKER_URL)
+        result, post_mock = await self._callback_outcome(provider, upstream_url, ATTACKER_URL)
 
         assert result is None
         post_mock.assert_not_awaited()
@@ -453,9 +450,9 @@ class TestUpstreamAuthorizationResponseIssuer:
     async def test_iss_is_compared_without_normalisation(self, make_provider, mcp_client_info):
         """A trailing slash is a different issuer, since RFC 9207 forbids normalising before comparison."""
         provider = make_provider(upstream_issuer=ISSUER)
-        await authorize(provider, mcp_client_info, 'state-slash')
+        upstream_url = await begin_upstream(provider, mcp_client_info)
 
-        result, post_mock = await self._callback_outcome(provider, 'state-slash', f'{ISSUER}/')
+        result, post_mock = await self._callback_outcome(provider, upstream_url, f'{ISSUER}/')
 
         assert result is None
         post_mock.assert_not_awaited()
@@ -463,9 +460,9 @@ class TestUpstreamAuthorizationResponseIssuer:
     async def test_matching_iss_proceeds(self, make_provider, mcp_client_info):
         """The recorded issuer is accepted and the code is redeemed."""
         provider = make_provider(upstream_issuer=ISSUER)
-        await authorize(provider, mcp_client_info, 'state-match')
+        upstream_url = await begin_upstream(provider, mcp_client_info)
 
-        result, post_mock = await self._callback_outcome(provider, 'state-match', ISSUER)
+        result, post_mock = await self._callback_outcome(provider, upstream_url, ISSUER)
 
         assert result is not None
         post_mock.assert_awaited_once()
@@ -473,27 +470,27 @@ class TestUpstreamAuthorizationResponseIssuer:
     async def test_absent_iss_proceeds(self, make_provider, mcp_client_info):
         """An upstream that sends no ``iss`` still works, since most do not send one yet."""
         provider = make_provider(upstream_issuer=ISSUER)
-        await authorize(provider, mcp_client_info, 'state-quiet')
+        upstream_url = await begin_upstream(provider, mcp_client_info)
 
-        result, _ = await self._callback_outcome(provider, 'state-quiet', None)
+        result, _ = await self._callback_outcome(provider, upstream_url, None)
 
         assert result is not None
 
     async def test_without_a_configured_issuer_a_present_iss_cannot_be_checked(self, provider, mcp_client_info):
         """Behaviour is unchanged for a config that names no upstream issuer."""
-        await authorize(provider, mcp_client_info, 'state-unconfigured')
+        upstream_url = await begin_upstream(provider, mcp_client_info)
 
-        result, _ = await self._callback_outcome(provider, 'state-unconfigured', ATTACKER_URL)
+        result, _ = await self._callback_outcome(provider, upstream_url, ATTACKER_URL)
 
         assert result is not None
 
     async def test_a_response_for_a_previous_upstream_is_rejected(self, make_provider, mcp_client_info):
         """A sign-in started before the upstream changed is not finished against the new one."""
         before = make_provider(upstream_issuer=ISSUER)
-        await authorize(before, mcp_client_info, 'state-moved')
+        upstream_url = await begin_upstream(before, mcp_client_info)
 
         after = make_provider(upstream_issuer='https://new-idp.example.com')
-        result, post_mock = await self._callback_outcome(after, 'state-moved', ISSUER)
+        result, post_mock = await self._callback_outcome(after, upstream_url, ISSUER)
 
         assert result is None
         post_mock.assert_not_awaited()
@@ -504,13 +501,13 @@ class TestGatewayAuthorizationResponseIssuer:
 
     async def test_redirect_to_the_mcp_client_carries_iss(self, provider, mcp_client_info):
         """``iss`` equals the issuer the gateway's metadata publishes for this server."""
-        await authorize(provider, mcp_client_info, 'state-own-iss')
+        redirect = await complete_upstream(provider, await begin_upstream(provider, mcp_client_info))
 
-        redirect = await complete_upstream(provider, 'state-own-iss')
+        assert query_value(redirect, 'iss') == GATEWAY_ISSUER
 
-        query = urllib.parse.parse_qs(urllib.parse.urlparse(redirect).query)
-        assert query['iss'] == [GATEWAY_ISSUER]
-        assert query['state'] == ['state-own-iss']
+    async def test_redirect_to_the_mcp_client_carries_its_own_state(self, provider, mcp_client_info):
+        redirect = await complete_upstream(provider, await begin_upstream(provider, mcp_client_info))
+        assert query_value(redirect, 'state') == CLIENT_STATE
 
 
 class TestClientRegistrationBinding:
@@ -592,8 +589,8 @@ class TestTokenBinding:
         The client-wide fallback this replaced could hand one user's upstream token to another user,
         when both sign in through the same ``client_id``.
         """
-        await authorize(provider, mcp_client_info, 'state-lost')
-        record = await memory_store.get('mcp_auth_code', code_in(await complete_upstream(provider, 'state-lost')))
+        redirect = await complete_upstream(provider, await begin_upstream(provider, mcp_client_info))
+        record = await memory_store.get('mcp_auth_code', code_in(redirect))
         # The same code under a new key carries no upstream token mapping, as if that mapping had expired.
         await memory_store.set('mcp_auth_code', 'mcp_orphan', {**record, 'code': 'mcp_orphan'})
         await memory_store.set_mapping('client', 'mcp-client-123', 'api_access_token', 'someone-elses-token')
