@@ -1,0 +1,80 @@
+{"id": "stripe-q001", "relevant": {"post_customers": 2}}
+{"id": "stripe-q002", "relevant": {"post_payment_intents": 2}}
+{"id": "stripe-q003", "relevant": {"post_payment_intents_intent_capture": 2}}
+{"id": "stripe-q004", "relevant": {"get_charges_charge": 2, "get_charges": 1}}
+{"id": "stripe-q005", "relevant": {"post_invoices_invoice_finalize": 2}}
+{"id": "stripe-q006", "relevant": {"post_invoiceitems": 2}}
+{"id": "stripe-q007", "relevant": {"post_subscriptions": 2, "post_customers_customer_subscriptions": 2}}
+{"id": "stripe-q008", "relevant": {"post_subscriptions_subscription_resume": 2}}
+{"id": "stripe-q009", "relevant": {"post_prices": 2, "post_plans": 1}}
+{"id": "stripe-q010", "relevant": {"post_products": 2}}
+{"id": "stripe-q011", "relevant": {"post_promotion_codes": 2}}
+{"id": "stripe-q012", "relevant": {"post_payouts_payout_reverse": 2}}
+{"id": "stripe-q013", "relevant": {"get_disputes": 2}}
+{"id": "stripe-q014", "relevant": {"post_account_links": 2}}
+{"id": "stripe-q015", "relevant": {"post_transfers": 2}}
+{"id": "stripe-q016", "relevant": {"post_checkout_sessions": 2}}
+{"id": "stripe-q017", "relevant": {"post_billing_portal_sessions": 2}}
+{"id": "stripe-q018", "relevant": {"post_tax_rates": 2}}
+{"id": "stripe-q019", "relevant": {"post_terminal_connection_tokens": 2}}
+{"id": "stripe-q020", "relevant": {"post_webhook_endpoints": 2}}
+{"id": "stripe-q021", "relevant": {"post_identity_verification_sessions": 2}}
+{"id": "stripe-q022", "relevant": {"post_issuing_cardholders": 2}}
+{"id": "stripe-q023", "relevant": {"post_quotes_quote_accept": 2}}
+{"id": "stripe-q024", "relevant": {"post_reporting_report_runs": 2}}
+{"id": "stripe-q025", "relevant": {"post_treasury_outbound_payments": 2}}
+{"id": "stripe-q026", "relevant": {"post_shipping_rates": 2}}
+{"id": "stripe-q027", "relevant": {"get_billing_credit_grants": 2}}
+{"id": "stripe-q028", "relevant": {"get_customers_search": 2, "get_customers": 1}}
+{"id": "stripe-q029", "relevant": {"post_customers_customer_balance_transactions": 2, "post_billing_credit_grants": 1}}
+{"id": "stripe-q030", "relevant": {"post_customers_customer_tax_ids": 2, "post_tax_ids": 1}}
+{"id": "stripe-q031", "relevant": {"post_refunds_refund_cancel": 2}}
+{"id": "stripe-q032", "relevant": {"post_invoices_invoice_send": 2}}
+{"id": "stripe-q033", "relevant": {"post_invoices_invoice_pay": 2}}
+{"id": "stripe-q034", "relevant": {"post_subscriptions_subscription_pause": 2, "post_subscriptions_subscription_exposed_id": 1}}
+{"id": "stripe-q035", "relevant": {"post_subscriptions_subscription_exposed_id": 2, "post_subscription_items_item": 1, "post_customers_customer_subscriptions_subscription_exposed_id": 1}}
+{"id": "stripe-q036", "relevant": {"post_products_id": 2}}
+{"id": "stripe-q037", "relevant": {"post_coupons": 2}}
+{"id": "stripe-q038", "relevant": {"delete_customers_customer_discount": 2}}
+{"id": "stripe-q039", "relevant": {"post_payouts": 2}}
+{"id": "stripe-q040", "relevant": {"get_balance": 2}}
+{"id": "stripe-q041", "relevant": {"post_disputes_dispute": 2, "post_files": 1}}
+{"id": "stripe-q042", "relevant": {"get_accounts": 2}}
+{"id": "stripe-q043", "relevant": {"post_accounts_account_persons": 2, "post_accounts_account_people": 2}}
+{"id": "stripe-q044", "relevant": {"get_checkout_sessions_session_line_items": 2, "get_checkout_sessions_session": 1}}
+{"id": "stripe-q045", "relevant": {"post_payment_links": 2}}
+{"id": "stripe-q046", "relevant": {"post_tax_calculations": 2}}
+{"id": "stripe-q047", "relevant": {"post_terminal_readers_reader_refund_payment": 2, "post_terminal_refunds": 1}}
+{"id": "stripe-q048", "relevant": {"delete_webhook_endpoints_webhook_endpoint": 2}}
+{"id": "stripe-q049", "relevant": {"post_billing_meter_events": 2}}
+{"id": "stripe-q050", "relevant": {"post_radar_value_list_items": 2}}
+{"id": "stripe-q051", "relevant": {"get_quotes_quote_pdf": 2}}
+{"id": "stripe-q052", "relevant": {"post_setup_intents": 2, "post_payment_methods_payment_method_attach": 1}}
+{"id": "stripe-q053", "relevant": {"post_climate_orders": 2}}
+{"id": "stripe-q054", "relevant": {"post_apple_pay_domains": 2, "post_payment_method_domains": 2}}
+{"id": "stripe-q055", "relevant": {"delete_customers_customer": 2}}
+{"id": "stripe-q056", "relevant": {"post_payment_intents_intent_increment_authorization": 2}}
+{"id": "stripe-q057", "relevant": {"post_charges_charge_capture": 2, "post_payment_intents_intent_capture": 1}}
+{"id": "stripe-q058", "relevant": {"post_refunds": 2, "post_charges_charge_refunds": 2, "post_charges_charge_refund": 1}}
+{"id": "stripe-q059", "relevant": {"post_invoices_invoice_mark_uncollectible": 2}}
+{"id": "stripe-q060", "relevant": {"post_invoices_create_preview": 2}}
+{"id": "stripe-q061", "relevant": {"post_credit_notes": 2, "get_credit_notes_preview": 1}}
+{"id": "stripe-q062", "relevant": {"delete_subscriptions_subscription_exposed_id": 2, "delete_customers_customer_subscriptions_subscription_exposed_id": 2}}
+{"id": "stripe-q063", "relevant": {"post_subscription_schedules": 2, "post_subscription_schedules_schedule": 1}}
+{"id": "stripe-q064", "relevant": {"post_prices_price": 2}}
+{"id": "stripe-q065", "relevant": {"delete_products_id": 2}}
+{"id": "stripe-q066", "relevant": {"post_promotion_codes_promotion_code": 2}}
+{"id": "stripe-q067", "relevant": {"post_payouts_payout_cancel": 2}}
+{"id": "stripe-q068", "relevant": {"get_balance_transactions": 2, "post_reporting_report_runs": 1}}
+{"id": "stripe-q069", "relevant": {"post_disputes_dispute_close": 2, "post_charges_charge_dispute_close": 1}}
+{"id": "stripe-q070", "relevant": {"post_accounts_account_reject": 2}}
+{"id": "stripe-q071", "relevant": {"post_transfers_id_reversals": 2}}
+{"id": "stripe-q072", "relevant": {"post_checkout_sessions_session_expire": 2}}
+{"id": "stripe-q073", "relevant": {"post_billing_portal_sessions": 2}}
+{"id": "stripe-q074", "relevant": {"post_tax_registrations": 2}}
+{"id": "stripe-q075", "relevant": {"post_terminal_readers_reader_cancel_action": 2}}
+{"id": "stripe-q076", "relevant": {"get_events": 2}}
+{"id": "stripe-q077", "relevant": {"post_test_helpers_test_clocks_test_clock_advance": 2, "post_test_helpers_test_clocks": 1}}
+{"id": "stripe-q078", "relevant": {"post_payment_methods_payment_method_detach": 2, "delete_customers_customer_sources_id": 1}}
+{"id": "stripe-q079", "relevant": {"post_issuing_cards_card": 2}}
+{"id": "stripe-q080", "relevant": {"get_entitlements_active_entitlements": 2}}

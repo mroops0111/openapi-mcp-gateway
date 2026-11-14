@@ -1,0 +1,80 @@
+{"_id": "asana-q001", "text": "Create a task called 'Draft Q3 budget memo' in the Finance project", "metadata": {"style": "literal"}}
+{"_id": "asana-q002", "text": "Mark the launch checklist task as finished", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q003", "text": "The 'Old vendor onboarding' to-do was a mistake and shouldn't exist anymore", "metadata": {"style": "indirect"}}
+{"_id": "asana-q004", "text": "Make a copy of the 'Weekly newsletter' to-do, including its subtasks", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q005", "text": "Search tasks in our workspace for anything mentioning 'invoice'", "metadata": {"style": "literal"}}
+{"_id": "asana-q006", "text": "Ticket ENG-482 came up in standup and I have no idea where it stands", "metadata": {"style": "indirect"}}
+{"_id": "asana-q007", "text": "Create a subtask under 'Website redesign' for writing alt text", "metadata": {"style": "literal"}}
+{"_id": "asana-q008", "text": "Show me the child items broken out under the 'Annual audit' to-do", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q009", "text": "'Fix login bug' should really live underneath the 'Auth overhaul' work item instead of standing on its own", "metadata": {"style": "indirect"}}
+{"_id": "asana-q010", "text": "Set dependencies for the 'Deploy to production' task so it waits on 'QA sign-off'", "metadata": {"style": "literal"}}
+{"_id": "asana-q011", "text": "What has to be finished before I can start on 'Print brochures'?", "metadata": {"style": "indirect"}}
+{"_id": "asana-q012", "text": "Detach 'Ship hardware' so it's no longer blocked by 'Vendor contract'", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q013", "text": "Add a tag 'urgent' to the 'Renew SSL certificate' task", "metadata": {"style": "literal"}}
+{"_id": "asana-q014", "text": "Make a new label called 'customer-facing' for everyone in our org to use", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q015", "text": "Get tasks from the 'needs-review' tag", "metadata": {"style": "literal"}}
+{"_id": "asana-q016", "text": "Our tag list is cluttered with 'temp-2023' and nobody has used it in ages", "metadata": {"style": "indirect"}}
+{"_id": "asana-q017", "text": "Also file the 'Press release draft' to-do under the Marketing Launch board", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q018", "text": "Keep Priya in the loop on every change to the 'Contract renewal' task", "metadata": {"style": "indirect"}}
+{"_id": "asana-q019", "text": "Remove followers from a task: take Marco off 'Q4 planning'", "metadata": {"style": "literal"}}
+{"_id": "asana-q020", "text": "Create a project called Q3 Launch", "metadata": {"style": "literal"}}
+{"_id": "asana-q021", "text": "Archive the 'Spring campaign' board", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q022", "text": "We're doing another office move next year and want to reuse everything we set up for the last one", "metadata": {"style": "indirect"}}
+{"_id": "asana-q023", "text": "Delete the 'Test sandbox' project", "metadata": {"style": "literal"}}
+{"_id": "asana-q024", "text": "Search projects in the workspace for 'onboarding'", "metadata": {"style": "literal"}}
+{"_id": "asana-q025", "text": "Add users to a project: put Dana and Lee on 'Website relaunch'", "metadata": {"style": "literal"}}
+{"_id": "asana-q026", "text": "Jordan transferred to Sales and shouldn't have access to the Engineering Roadmap project anymore", "metadata": {"style": "indirect"}}
+{"_id": "asana-q027", "text": "Who has access to the Partner Portal board?", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q028", "text": "Instantiate a project from the 'Client onboarding' project template", "metadata": {"style": "literal"}}
+{"_id": "asana-q029", "text": "Turn our 'Hiring pipeline' board into a reusable blueprint", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q030", "text": "What starter layouts does the design team have available when they spin up new work?", "metadata": {"style": "indirect"}}
+{"_id": "asana-q031", "text": "Create a status update on the Billing Migration project saying we're on track", "metadata": {"style": "literal"}}
+{"_id": "asana-q032", "text": "Leadership wants to see how Billing Migration has been trending week to week based on what the owner reported", "metadata": {"style": "indirect"}}
+{"_id": "asana-q033", "text": "Remove the check-in I posted by mistake on the Billing Migration board", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q034", "text": "Write an overview doc for the Q1 Hackathon board explaining its goals", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q035", "text": "Create a section in the Sprint 14 project called 'In Review'", "metadata": {"style": "literal"}}
+{"_id": "asana-q036", "text": "Shift the 'Done' column to the end of the board", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q037", "text": "Add task to section: drop 'Update FAQ' into 'This Week'", "metadata": {"style": "literal"}}
+{"_id": "asana-q038", "text": "List everything sitting in the 'Backlog' column", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q039", "text": "Create a portfolio for all the 2027 product launches", "metadata": {"style": "literal"}}
+{"_id": "asana-q040", "text": "Put the Mobile App v2 board into our Product Launches collection", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q041", "text": "I need a single view of every initiative we're tracking in the Exec Dashboard portfolio", "metadata": {"style": "indirect"}}
+{"_id": "asana-q042", "text": "Add users to a portfolio and give Sam access to Exec Dashboard", "metadata": {"style": "literal"}}
+{"_id": "asana-q043", "text": "Create a goal to reach 10,000 active users by Q2", "metadata": {"style": "literal"}}
+{"_id": "asana-q044", "text": "Our signups hit 6,400 this week, so the 'Grow active users' objective should reflect that", "metadata": {"style": "indirect"}}
+{"_id": "asana-q045", "text": "Link the 'Launch referral program' objective as contributing to 'Grow active users'", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q046", "text": "What bigger company objective does our 'Improve NPS' goal ladder up to?", "metadata": {"style": "indirect"}}
+{"_id": "asana-q047", "text": "Leave a note on the 'Vendor shortlist' to-do saying I've emailed all three vendors", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q048", "text": "Who said what on the 'Pricing page copy' task? I missed the whole discussion", "metadata": {"style": "indirect"}}
+{"_id": "asana-q049", "text": "Delete a story: remove my last comment on the API spec task", "metadata": {"style": "literal"}}
+{"_id": "asana-q050", "text": "Post a remark on the 'Expand to EMEA' objective noting the budget was approved", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q051", "text": "I'm curious which emoji people responded with on my announcement", "metadata": {"style": "indirect"}}
+{"_id": "asana-q052", "text": "Upload an attachment, the signed contract PDF, to the 'Legal review' task", "metadata": {"style": "literal"}}
+{"_id": "asana-q053", "text": "Show me all the files hanging off the 'Brand guidelines' to-do", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q054", "text": "I put the wrong mockup on the homepage task and it's confusing the designers", "metadata": {"style": "indirect"}}
+{"_id": "asana-q055", "text": "Create a custom field called 'Priority' with High, Medium and Low options", "metadata": {"style": "literal"}}
+{"_id": "asana-q056", "text": "Add a 'Critical' choice to the Priority dropdown", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q057", "text": "I want to track estimated hours as a column on the Sprint 14 project", "metadata": {"style": "indirect"}}
+{"_id": "asana-q058", "text": "Which extra fields are configured on the Hiring Pipeline board?", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q059", "text": "Create a team named Data Platform", "metadata": {"style": "literal"}}
+{"_id": "asana-q060", "text": "Bring Hana onto the Design squad", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q061", "text": "I'm putting together the Growth team's org chart and need everyone who's on it", "metadata": {"style": "indirect"}}
+{"_id": "asana-q062", "text": "Get users in the workspace", "metadata": {"style": "literal"}}
+{"_id": "asana-q063", "text": "Our contractor Tim finished his engagement and shouldn't be able to get into our Asana at all anymore", "metadata": {"style": "indirect"}}
+{"_id": "asana-q064", "text": "Invite the new hire, jamie@acme.com, into our company's Asana", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q065", "text": "What's on Elena's plate in My Tasks right now?", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q066", "text": "I want to quickly jump back to the projects I starred", "metadata": {"style": "indirect"}}
+{"_id": "asana-q067", "text": "Establish a webhook for changes on the Support Queue project", "metadata": {"style": "literal"}}
+{"_id": "asana-q068", "text": "Our Slack integration should stop getting pinged whenever Support Queue changes", "metadata": {"style": "indirect"}}
+{"_id": "asana-q069", "text": "Create a time tracking entry of 2 hours on the 'Bug triage' task", "metadata": {"style": "literal"}}
+{"_id": "asana-q070", "text": "I logged 5 hours yesterday on the design review but it was really 3", "metadata": {"style": "indirect"}}
+{"_id": "asana-q071", "text": "How many hours have people clocked against 'Data migration'?", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q072", "text": "I'll be on vacation Dec 20 through Jan 3, so people shouldn't expect replies from me", "metadata": {"style": "indirect"}}
+{"_id": "asana-q073", "text": "Let Mei into the Finance board, she asked to join yesterday", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q074", "text": "Security wants to know who changed permission settings across our org last month", "metadata": {"style": "indirect"}}
+{"_id": "asana-q075", "text": "Run the 'Notify finance' automation now", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q076", "text": "Spin up a new to-do from the 'Bug report' blueprint", "metadata": {"style": "paraphrase"}}
+{"_id": "asana-q077", "text": "We rescheduled the Fall Event, and every parent item still shows the old schedule even though its children moved", "metadata": {"style": "indirect"}}
+{"_id": "asana-q078", "text": "Tell me what changed in the Support Queue project since I last checked", "metadata": {"style": "indirect"}}
+{"_id": "asana-q079", "text": "Create a record in the Vendors table for Acme Supplies", "metadata": {"style": "literal"}}
+{"_id": "asana-q080", "text": "Mark all my notifications as read", "metadata": {"style": "literal"}}

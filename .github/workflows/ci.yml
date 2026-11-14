@@ -66,6 +66,24 @@ jobs:
       - run: uv sync --extra dev --extra redis
       - run: uv run pytest -m smoke -v --tb=short
 
+  search-benchmark:
+    name: Search Benchmark
+    runs-on: ubuntu-latest
+    # Ranks the committed queries through search_operations and fails below evals/search/v1/baseline.json.
+    # It calls no model. The pinned specs download once and are cached by their checksums.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/openapi-mcp-gateway/specs
+          key: benchmark-specs-${{ hashFiles('evals/**/benchmark.yaml') }}
+      - run: uv sync --extra dev --extra redis
+      - run: uv run python -m openapi_mcp_gateway.evals search validate evals/search/v1
+      - run: uv run python -m openapi_mcp_gateway.evals search check evals/search/v1
+
   build:
     name: Build
     runs-on: ubuntu-latest

@@ -1,0 +1,80 @@
+{"_id": "discord-q001", "text": "Send a message to the #announcements channel saying the server will be down for maintenance tonight", "metadata": {"style": "literal"}}
+{"_id": "discord-q002", "text": "Wipe the last 50 spam posts in #general in one go", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q003", "text": "I posted the wrong release date in #updates and the text I already put out there is now incorrect", "metadata": {"style": "indirect"}}
+{"_id": "discord-q004", "text": "Pull the recent chat history from #off-topic so my bot can summarize it", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q005", "text": "Our announcement in the news channel should also show up in all the servers that follow us", "metadata": {"style": "indirect"}}
+{"_id": "discord-q006", "text": "Add a thumbs up reaction to this message", "metadata": {"style": "literal"}}
+{"_id": "discord-q007", "text": "Who responded with the party emoji on the giveaway post?", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q008", "text": "One user keeps slapping an offensive emoji under my announcement and it's only theirs that's a problem", "metadata": {"style": "indirect"}}
+{"_id": "discord-q009", "text": "Stick the event schedule message to the top of #events", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q010", "text": "That old meeting notice is still highlighted at the top of #team even though the meeting happened last week", "metadata": {"style": "indirect"}}
+{"_id": "discord-q011", "text": "Create a thread from this message so we can discuss the bug report there", "metadata": {"style": "literal"}}
+{"_id": "discord-q012", "text": "Open a new side discussion called 'Patch notes feedback' in #feedback", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q013", "text": "My bot keeps getting pinged about everything in the raid-planning thread and it has no reason to be in there anymore", "metadata": {"style": "indirect"}}
+{"_id": "discord-q014", "text": "Pull @Mia into the design-review thread", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q015", "text": "I want to see every conversation branch currently going on across my whole server", "metadata": {"style": "indirect"}}
+{"_id": "discord-q016", "text": "List the thread members of the 'release-1.4' thread", "metadata": {"style": "literal"}}
+{"_id": "discord-q017", "text": "Create a text channel named bot-logs in my guild", "metadata": {"style": "literal"}}
+{"_id": "discord-q018", "text": "Rename #general-chat to #lounge and turn on a 10 second slowmode", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q019", "text": "The #old-memes channel hasn't been used in a year and is just clutter", "metadata": {"style": "indirect"}}
+{"_id": "discord-q020", "text": "Reorder the categories in my server so Voice sits beneath Text", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q021", "text": "I'd like posts from the official Discord Developers announcement channel to appear automatically in my #dev-news", "metadata": {"style": "indirect"}}
+{"_id": "discord-q022", "text": "Stop the Muted role from being able to type in #general", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q023", "text": "Jake says he can't post images in #media and I can't figure out why", "metadata": {"style": "indirect"}}
+{"_id": "discord-q024", "text": "Get guild member permissions for user 555012345", "metadata": {"style": "literal"}}
+{"_id": "discord-q025", "text": "Create a channel invite for #welcome that expires in 24 hours", "metadata": {"style": "literal"}}
+{"_id": "discord-q026", "text": "Kill the invite code abc123 so nobody else can use it", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q027", "text": "Someone sent me discord.gg/xyz789 and I have no idea which server that is", "metadata": {"style": "indirect"}}
+{"_id": "discord-q028", "text": "Show every active join link for my server", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q029", "text": "Create a webhook in #deploys", "metadata": {"style": "literal"}}
+{"_id": "discord-q030", "text": "Post a build status into the channel through our CI hook using its id and token", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q031", "text": "I want GitHub push events to land directly in #commits without writing any glue code", "metadata": {"style": "indirect"}}
+{"_id": "discord-q032", "text": "The URL for our alerts webhook got committed to a public repo and anyone could post with it now", "metadata": {"style": "indirect"}}
+{"_id": "discord-q033", "text": "Get the guild info for server 987654321", "metadata": {"style": "literal"}}
+{"_id": "discord-q034", "text": "Change my server's icon and name", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q035", "text": "Somebody wiped the #rules channel yesterday and I need to know who it was", "metadata": {"style": "indirect"}}
+{"_id": "discord-q036", "text": "Look through every message on my server for mentions of 'refund'", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q037", "text": "Leave guild 123456789 with my bot", "metadata": {"style": "literal"}}
+{"_id": "discord-q038", "text": "Kick @Spammer123 out of the server", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q039", "text": "Dave's nickname is offensive and can't stay like that", "metadata": {"style": "indirect"}}
+{"_id": "discord-q040", "text": "Update my own guild member nickname to 'Helper'", "metadata": {"style": "literal"}}
+{"_id": "discord-q041", "text": "Loads of accounts haven't been online in 30 days and they're inflating our member count", "metadata": {"style": "indirect"}}
+{"_id": "discord-q042", "text": "Create a guild role called Moderators with a blue color", "metadata": {"style": "literal"}}
+{"_id": "discord-q043", "text": "Give @Sam the VIP role", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q044", "text": "Lena stepped down from moderating, so she shouldn't have mod powers anymore", "metadata": {"style": "indirect"}}
+{"_id": "discord-q045", "text": "How many people hold each rank on my server?", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q046", "text": "The Helpers color never shows on anyone's name because the Members role ranks above it in the hierarchy", "metadata": {"style": "indirect"}}
+{"_id": "discord-q047", "text": "Ban user 777888999 from the guild and delete their messages from the last day", "metadata": {"style": "literal"}}
+{"_id": "discord-q048", "text": "Lift the ban on @Rex, his appeal went through", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q049", "text": "A raid of 200 bot accounts just joined and every single one of them must never come back", "metadata": {"style": "indirect"}}
+{"_id": "discord-q050", "text": "Create a guild emoji named pepehappy from this image", "metadata": {"style": "literal"}}
+{"_id": "discord-q051", "text": "Rename the :kek: custom emote on my server to :lol:", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q052", "text": "Create an application emoji called loading_spinner for my bot", "metadata": {"style": "literal"}}
+{"_id": "discord-q053", "text": "Upload a new custom sticker of our mascot to my server", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q054", "text": "I'm curious which official sticker sets Discord makes available to everyone", "metadata": {"style": "indirect"}}
+{"_id": "discord-q055", "text": "Delete the guild sticker named 'oldlogo'", "metadata": {"style": "literal"}}
+{"_id": "discord-q056", "text": "Create a global application command called /weather", "metadata": {"style": "literal"}}
+{"_id": "discord-q057", "text": "Register a /ticket slash command only in my test server", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q058", "text": "My bot still shows an old /legacy-help command everywhere that doesn't do anything anymore", "metadata": {"style": "indirect"}}
+{"_id": "discord-q059", "text": "Overwrite all of my bot's global slash commands with this new list in one call", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q060", "text": "Right now anyone in my server can run /purge, but it should really be for admins only", "metadata": {"style": "indirect"}}
+{"_id": "discord-q061", "text": "Answer the button click my bot just received with an ephemeral message", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q062", "text": "Users run my slash command and get 'This interaction failed' because the bot never acknowledges it", "metadata": {"style": "indirect"}}
+{"_id": "discord-q063", "text": "Create a guild scheduled event for Friday's movie night", "metadata": {"style": "literal"}}
+{"_id": "discord-q064", "text": "How many people said they're interested in Saturday's tournament?", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q065", "text": "The weekly game night won't happen next week because of the holiday, but it continues as normal after that", "metadata": {"style": "indirect"}}
+{"_id": "discord-q066", "text": "Create a stage instance in the Town Hall stage channel with the topic 'Q&A'", "metadata": {"style": "literal"}}
+{"_id": "discord-q067", "text": "The town hall talk is over but the stage still shows as live", "metadata": {"style": "indirect"}}
+{"_id": "discord-q068", "text": "Create an auto moderation rule that blocks the word 'crypto'", "metadata": {"style": "literal"}}
+{"_id": "discord-q069", "text": "People keep dropping invite links to other servers and I want them caught before anyone even sees them", "metadata": {"style": "indirect"}}
+{"_id": "discord-q070", "text": "Get my own user", "metadata": {"style": "literal"}}
+{"_id": "discord-q071", "text": "My bot needs to privately message @Kim but they've never talked before", "metadata": {"style": "indirect"}}
+{"_id": "discord-q072", "text": "Which servers is my bot currently in?", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q073", "text": "List my connections", "metadata": {"style": "literal"}}
+{"_id": "discord-q074", "text": "Send a soundboard sound in the voice channel I'm in", "metadata": {"style": "literal"}}
+{"_id": "discord-q075", "text": "Create a guild template from my server's current setup", "metadata": {"style": "literal"}}
+{"_id": "discord-q076", "text": "Update the voice channel status of 'Squad' to 'Playing Valorant'", "metadata": {"style": "literal"}}
+{"_id": "discord-q077", "text": "Get the entitlements for my application", "metadata": {"style": "literal"}}
+{"_id": "discord-q078", "text": "Get the guild welcome screen", "metadata": {"style": "literal"}}
+{"_id": "discord-q079", "text": "Close the lunch vote in #votes right now instead of waiting for the timer", "metadata": {"style": "paraphrase"}}
+{"_id": "discord-q080", "text": "Accept the pending membership application from @newbie", "metadata": {"style": "paraphrase"}}

@@ -1,0 +1,80 @@
+{"_id": "stripe-q001", "text": "Create a customer named Jane Doe with email jane.doe@example.com", "metadata": {"style": "literal"}}
+{"_id": "stripe-q002", "text": "Create a PaymentIntent for $49.99 USD", "metadata": {"style": "literal"}}
+{"_id": "stripe-q003", "text": "Capture PaymentIntent pi_3Mt for the hotel booking", "metadata": {"style": "literal"}}
+{"_id": "stripe-q004", "text": "Retrieve charge ch_3LmN", "metadata": {"style": "literal"}}
+{"_id": "stripe-q005", "text": "Finalize invoice in_1Abc", "metadata": {"style": "literal"}}
+{"_id": "stripe-q006", "text": "Create an invoice item for a $200 onboarding fee on cus_5", "metadata": {"style": "literal"}}
+{"_id": "stripe-q007", "text": "Create a subscription for cus_4 on price_monthly", "metadata": {"style": "literal"}}
+{"_id": "stripe-q008", "text": "Resume subscription sub_12", "metadata": {"style": "literal"}}
+{"_id": "stripe-q009", "text": "Create a price of $15 per month for product prod_A", "metadata": {"style": "literal"}}
+{"_id": "stripe-q010", "text": "Create a product called Premium Coffee Beans", "metadata": {"style": "literal"}}
+{"_id": "stripe-q011", "text": "Create a promotion code SUMMER25 for coupon co_25", "metadata": {"style": "literal"}}
+{"_id": "stripe-q012", "text": "Reverse payout po_88", "metadata": {"style": "literal"}}
+{"_id": "stripe-q013", "text": "List all disputes", "metadata": {"style": "literal"}}
+{"_id": "stripe-q014", "text": "Create an account link for acct_1 so they can finish onboarding", "metadata": {"style": "literal"}}
+{"_id": "stripe-q015", "text": "Create a transfer of $80 to connected account acct_3", "metadata": {"style": "literal"}}
+{"_id": "stripe-q016", "text": "Create a Checkout Session for two T-shirts", "metadata": {"style": "literal"}}
+{"_id": "stripe-q017", "text": "Create a portal session for cus_8", "metadata": {"style": "literal"}}
+{"_id": "stripe-q018", "text": "Create a tax rate of 8.875% for New York sales tax", "metadata": {"style": "literal"}}
+{"_id": "stripe-q019", "text": "Create a connection token for our POS app", "metadata": {"style": "literal"}}
+{"_id": "stripe-q020", "text": "Create a webhook endpoint at https://api.example.com/stripe", "metadata": {"style": "literal"}}
+{"_id": "stripe-q021", "text": "Create a VerificationSession to check a user's driver's license", "metadata": {"style": "literal"}}
+{"_id": "stripe-q022", "text": "Create a cardholder for employee Maria Lopez", "metadata": {"style": "literal"}}
+{"_id": "stripe-q023", "text": "Accept quote qt_5", "metadata": {"style": "literal"}}
+{"_id": "stripe-q024", "text": "Create a report run for balance activity in Q3", "metadata": {"style": "literal"}}
+{"_id": "stripe-q025", "text": "Create an OutboundPayment of $500 from financial account fa_1", "metadata": {"style": "literal"}}
+{"_id": "stripe-q026", "text": "Create a shipping rate for $5 flat ground shipping", "metadata": {"style": "literal"}}
+{"_id": "stripe-q027", "text": "List credit grants for customer cus_2", "metadata": {"style": "literal"}}
+{"_id": "stripe-q028", "text": "Find shoppers whose email ends in @acme.io", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q029", "text": "Give cus_77 $25 in store credit they can spend on future bills", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q030", "text": "Save buyer cus_9's VAT number DE123456789 on their profile", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q031", "text": "Call back the reimbursement re_44 that's still pending", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q032", "text": "Email the bill in_55 to the client so they can pay it on their own", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q033", "text": "Charge the outstanding amount on bill in_88 right now with the card on file", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q034", "text": "Put membership sub_12 on hold for three months while the customer travels", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q035", "text": "Move sub_7 from the Basic tier to Premium", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q036", "text": "Rename catalog item prod_X to 'Starter Kit v2' and swap its picture", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q037", "text": "Make a 20%-off deal that lasts three months", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q038", "text": "Stop giving cus_6 their 10% off", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q039", "text": "Send $5,000 from my Stripe funds to my bank", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q040", "text": "How much money is available in my Stripe account right now?", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q041", "text": "Upload our shipping proof and receipt as evidence for chargeback dp_12", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q042", "text": "Show me every seller on our platform", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q043", "text": "Add the business owner's details to acct_5: Jane Smith, 30% stake", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q044", "text": "What did the buyer purchase in cs_44? Show me the items", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q045", "text": "Make a shareable URL I can text to clients so they can pay $30 for a yoga class", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q046", "text": "Work out how much sales tax applies to a $100 sale shipped to Austin, TX", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q047", "text": "Give money back at the counter: have the shopper tap their card on reader tmr_5 for ch_31", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q048", "text": "Get rid of our old notification URL we_123 completely", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q049", "text": "Record 30 API calls of usage for cus_3 under the api_requests counter", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q050", "text": "Add fraudster@spam.com to our blocklist", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q051", "text": "Get me the PDF of proposal qt_9 so I can send it to the prospect", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q052", "text": "Store a card for future use without charging it now", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q053", "text": "Purchase 2 tonnes of carbon removal", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q054", "text": "Register shop.example.com so Apple Pay buttons show up on it", "metadata": {"style": "paraphrase"}}
+{"_id": "stripe-q055", "text": "A client emailed asking us to erase everything we hold about them under GDPR, they're cus_Q81", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q056", "text": "The hotel guest ordered room service, so the hold on pi_3Q needs to cover $40 more than we originally approved", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q057", "text": "We only authorized ch_55 at checkout and the item just shipped today", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q058", "text": "The customer sent the shoes back in their original box; their order was paid with ch_9", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q059", "text": "The client went bankrupt and we're never going to see the money for in_77", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q060", "text": "What would cus_12's next bill look like if we bumped them to the Pro plan?", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q061", "text": "We billed a client for 12 seats on paid invoice in_33 but they only had 10, fix that", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q062", "text": "The customer on sub_99 told us they're done with us and never want to be billed again", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q063", "text": "sub_5 should drop to the cheaper price starting January 1st, not now", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q064", "text": "We're retiring the old $9 tier price_old9 so new signups can't pick it anymore", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q065", "text": "We discontinued the ceramic mug prod_M and it has no prices, it shouldn't be in our catalog at all", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q066", "text": "Influencer code BOGO22 is being shared on deal sites and abused", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q067", "text": "I sent withdrawal po_77 to the wrong bank account and it hasn't left yet", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q068", "text": "Accounting needs every fee and net amount that hit our books in October to reconcile", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q069", "text": "We looked at chargeback dp_4 and honestly the customer is right, we're not going to fight it", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q070", "text": "Marketplace vendor acct_22 got caught selling counterfeit goods", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q071", "text": "We paid photographer acct_8 $120 via tr_61 for a shoot that got cancelled and need the money back from them", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q072", "text": "The item sold out, so the payment page cs_test_12 a shopper left open shouldn't work anymore", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q073", "text": "Subscribers keep emailing support to change their card; cus_31 just did again and I want them to handle it themselves", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q074", "text": "We just registered for VAT in Ireland and Stripe needs to start collecting there", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q075", "text": "The cashier rang up the wrong amount and reader tmr_1 is still waiting for a tap", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q076", "text": "Our server was down for two hours yesterday and missed notifications; what happened in that window?", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q077", "text": "I need to see what happens in test mode when a 30-day trial ends without waiting a month", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q078", "text": "cus_8 says they lost the card ending 4242 (pm_77) and don't want it kept on file", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q079", "text": "An employee lost company card ic_55 on a business trip", "metadata": {"style": "indirect"}}
+{"_id": "stripe-q080", "text": "Before showing the premium dashboard, check whether cus_7 is allowed to use it", "metadata": {"style": "indirect"}}
