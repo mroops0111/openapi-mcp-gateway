@@ -536,8 +536,6 @@ servers:
 
 Raise a field when it describes operations well in your spec, and lower it when it repeats boilerplate. To fix a single operation that ranks poorly, rewrite its `description` through `operations` instead, since search reads the overridden text.
 
-Search is measured on every PR against 320 judged requests over GitHub, Stripe, Asana, and Discord. On the test split, a request worded like its operation's summary finds that operation on the first page every time, with nDCG@10 of 0.88. A paraphrased or indirect request finds it about three times in ten, with nDCG@10 of 0.10. [`evals/`](evals/README.md) has the method, the full results, and the commands to run it.
-
 </details>
 
 ### Logging
