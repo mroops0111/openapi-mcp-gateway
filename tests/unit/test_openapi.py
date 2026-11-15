@@ -568,6 +568,31 @@ class TestParseSpec:
         assert 'oauth2' in self.spec.security_schemes
 
 
+class TestUnnamedParameters:
+    """A parameter a spec leaves without a name, as Notion's published spec does."""
+
+    def test_is_skipped_and_the_rest_are_kept(self, caplog):
+        raw = {
+            'openapi': '3.0.3',
+            'info': {'title': 'Unnamed', 'version': '1'},
+            'paths': {
+                '/pages/{id}': {
+                    'get': {
+                        'operationId': 'getPage',
+                        'parameters': [
+                            {'name': 'id', 'in': 'path', 'required': True, 'schema': {'type': 'string'}},
+                            {'name': '', 'in': 'header', 'schema': {'type': 'string'}},
+                        ],
+                        'responses': {'200': {'description': 'ok'}},
+                    }
+                }
+            },
+        }
+        operation = parse_spec(raw).operations[0]
+        assert [parameter.name for parameter in operation.parameters] == ['id']
+        assert 'no name' in caplog.text
+
+
 class TestResponseMedia:
     """Fields the success response declares as ``contentEncoding: base64`` are found in each response at call time."""
 
