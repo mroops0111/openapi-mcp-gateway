@@ -2,10 +2,10 @@ You are a relevance assessor for a retrieval benchmark, judging independently, t
 
 ## Your input
 
-- {operations_file} lists every operation, one per line, as name, method, path, and summary. Where a spec has no summary, the column holds the start of the operation's description, or nothing, and the operation is read from its name and path.
-- {queries_file} holds {query_count} requests, one per line, each as an id and a text.
+- {operations_input} lists every operation, one per line, as name, method, path, and summary. Where a spec has no summary, the column holds the start of the operation's description, or nothing, and the operation is read from its name and path.
+- {queries_input} holds {query_count} requests, one per line, each as an id and a text.
 
-Only look at those two files. Do not open any other file, including any file of answers someone else wrote, and do not run any search engine or ranking script. Your judgements must be your own. You may read and search those two files.
+Only look at those. Do not open anything else, including any answers someone else wrote, and do not run any search engine or ranking script. Your judgements must be your own. {search_note}
 
 ## How to judge
 
@@ -15,12 +15,8 @@ For each request, find every operation that is relevant and grade it:
 - 1: would also get the user there, but is a lesser answer. Examples are a list operation when a get-by-id operation is the better answer, a general update operation when a specific operation does exactly this, and an operation that is a necessary close step of the same goal.
 - Leave everything else out, which counts as 0.
 
-Every request must have at least one operation graded 2. Search the file for each request, trying several words and synonyms, so you do not miss an operation that would also serve. Do not grade an operation 1 just because it is in the same area, since it has to actually help with this request.
+Every request must have at least one operation graded 2. Search the operation list for each request, trying several words and synonyms, so you do not miss an operation that would also serve. Do not grade an operation 1 just because it is in the same area, since it has to actually help with this request.
 
 ## Output
 
-Write {output_file} as JSON Lines, one line per request, in the input order:
-
-{{"id": "...", "relevant": {{"operation_name": 2}}}}
-
-Every key of relevant must be an exact name from the operation file, so check each one against it. When done, reply with only the number of requests judged and how many have more than one operation graded 2.
+{output_instructions}

@@ -1,4 +1,5 @@
-# Generic: dynamic exposure for the whole Discord API; steers the model away from deprecated duplicates.
+# A config that knows nothing of the intent,
+# with dynamic exposure for the whole Discord API and notes that steer the model away from deprecated duplicates.
 servers:
   discord:
     exposure: {style: dynamic}

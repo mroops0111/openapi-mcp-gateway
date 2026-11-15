@@ -80,7 +80,8 @@ async def run(
     """Run every chosen task under every chosen variant and model, as many times as the manifest says.
 
     Each scenario's tasks for one variant and one model are a Pydantic Evals dataset, evaluated one task at a time,
-    since they share one replay upstream. An empty choice means all of them.
+    since they share one replay upstream.
+    An empty choice means all of them.
     """
     scenarios = _chosen(benchmark.scenarios, scenario_names, 'scenario')
     models = _chosen(benchmark.manifest.models, model_names, 'model')

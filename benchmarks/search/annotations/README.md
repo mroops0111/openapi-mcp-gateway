@@ -25,6 +25,19 @@ The commands below write their working files into a directory of your choosing, 
 
 New annotations make a new benchmark version. Raise `version` in `benchmark.yaml`, and record in the dataset card which model played each annotator and on what date.
 
+## Automated Annotation
+
+`search annotations annotate` runs steps 1 to 4 with both annotators run through Pydantic AI, so a fresh annotation is one command followed by steps 5 to 8:
+
+```bash
+uv run python -m openapi_mcp_gateway.benchmarks search annotations annotate benchmarks/search work \
+  --author-model anthropic:claude-sonnet-5-5 --assessor-model openai:<model>
+```
+
+Each annotator gets the same template as a hand-run one, with its operation list in the prompt and a tool that searches the list for a word, never the ranker. It answers in structured output, and is sent back to fix an answer that names an operation the spec does not serve, or that skips a query or a style. Every raw exchange is kept as `<role>.messages.json` beside the answers, and `provenance.json` records each annotator's model, finishing time, Pydantic AI version, and token usage, since a model's output cannot be reproduced.
+
+It needs the `benchmarks` extra and each provider's API key in its usual variable.
+
 ## Annotators
 
 The two annotators should be independent, which a run of this procedure can make stronger than version 1 did.

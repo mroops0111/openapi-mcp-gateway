@@ -49,7 +49,7 @@ class RunOutcome(pydantic.BaseModel):
 
 
 class ScenarioRun:
-    """One scenario served for a run: the replay upstream, and a gateway per variant, both on loopback ports.
+    """One scenario served for a run, with the replay upstream and a gateway per variant, both on loopback ports.
 
     A model reaches each server over HTTP, as a real client would, through Pydantic AI's MCP toolset.
     """
@@ -107,9 +107,10 @@ class ScenarioRun:
         )
 
     def tool_prefix(self, server: str) -> str:
-        """What a server's tool names start with: nothing for one server, and its name when several share a run.
+        """What a server's tool names start with, nothing for one server and its name when several share a run.
 
-        Two servers can both have a tool of one name, such as ``call_operation``, so a run with several tells them apart.
+        Two servers can both have a tool of one name, such as ``call_operation``,
+        so a run with several tells them apart.
         """
         return f'{server}_' if len(self.scenario.servers) > 1 else ''
 

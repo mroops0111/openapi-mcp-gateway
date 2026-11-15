@@ -1,4 +1,5 @@
-# Intent-scoped policy plus dynamic exposure: GitHub issues/PRs/comments/labels, Asana projects/sections/users/tasks/comments.
+# The intent-scoped policies behind dynamic exposure, covering GitHub issues, pull requests, comments, and labels,
+# Asana projects/sections/users/tasks/comments.
 servers:
   github:
     exposure:

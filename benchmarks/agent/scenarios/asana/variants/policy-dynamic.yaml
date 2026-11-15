@@ -1,9 +1,10 @@
-# Policy plus dynamic exposure: the same task-planning operation set behind search/get/call meta-tools.
+# The policy behind dynamic exposure,
+# so the same task-planning operations sit behind the search, get, and call meta-tools.
 servers:
   asana:
     policy:
       allow:
-        # Context lookups: workspaces, teams, users, typeahead search
+        # Context lookups, such as workspaces, teams, users, and typeahead search
         - getWorkspaces
         - getWorkspace
         - getTeamsForWorkspace

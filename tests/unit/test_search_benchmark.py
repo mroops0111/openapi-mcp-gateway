@@ -6,11 +6,14 @@ import typing
 
 import pytest
 from click.testing import CliRunner
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from openapi_mcp_gateway.benchmarks.cli import main
 from openapi_mcp_gateway.benchmarks.search import (
     annotation_workflow,
     annotations,
+    automated_annotation,
     dataset,
     markdown,
     overlap,
@@ -19,7 +22,13 @@ from openapi_mcp_gateway.benchmarks.search import (
 )
 from openapi_mcp_gateway.benchmarks.search.baseline import Baseline
 from openapi_mcp_gateway.benchmarks.search.metrics import NormalizedDiscountedCumulativeGain, Recall, ReciprocalRank
-from openapi_mcp_gateway.benchmarks.search.systems import GatewaySystem, Retriever, SpecCorpus, System
+from openapi_mcp_gateway.benchmarks.search.systems import (
+    GatewaySystem,
+    PydanticAIKeywordSystem,
+    Retriever,
+    SpecCorpus,
+    System,
+)
 from openapi_mcp_gateway.benchmarks.significance import macro_mean, paired_bootstrap
 from openapi_mcp_gateway.benchmarks.spec_pins import SpecChecksumError, SpecPin, sha256_of
 from tests.conftest import FIXTURES_DIR
@@ -487,6 +496,58 @@ class TestAnnotationWorkflow:
         kept = {annotation.id: annotation for annotation in annotations.read_annotations(annotations_file)}
         assert kept['pets-q002'].adjudication is not None
         assert annotations.build_spec_dataset(benchmark_directory, 'pets')[1].adjudicated_count == 1
+
+
+class TestPydanticAIKeywordSystem:
+    """Pydantic AI's keyword tool search, run through the framework's public API."""
+
+    async def test_ranks_by_the_framework_search(self, tmp_path):
+        benchmark = dataset.load(_petstore_benchmark(tmp_path))
+        corpus = await runner.load_corpus(benchmark, 'pets')
+        async with PydanticAIKeywordSystem().open(corpus) as retriever:
+            ranking = await retriever.rank('delete a pet', 20)
+        assert ranking[0] == 'delete_pet'
+        assert len(ranking) == len(set(ranking))
+
+
+class TestAutomatedAnnotation:
+    """Both annotators run through Pydantic AI, with scripted models in place of providers."""
+
+    async def test_annotates_retries_a_wrong_name_and_feeds_collect(self, tmp_path):
+        benchmark_directory = _petstore_benchmark(tmp_path)
+        _copy_annotation_templates(benchmark_directory)
+        work_directory = tmp_path / 'work'
+        author_answers = [
+            [{'text': 'list pets', 'style': 'literal', 'relevant': {'no_such_operation': 2}}],
+            [
+                {'text': 'list pets', 'style': 'literal', 'relevant': {'list_pets': 2}},
+                {'text': 'a new animal arrived', 'style': 'paraphrase', 'relevant': {'create_pet': 2}},
+                {'text': 'the dog moved away', 'style': 'indirect', 'relevant': {'delete_pet': 2}},
+            ],
+        ]
+        assessed = [
+            {'id': f'pets-q00{number}', 'relevant': {name: 2}}
+            for number, name in [(1, 'list_pets'), (2, 'create_pet'), (3, 'delete_pet')]
+        ]
+
+        def author(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': author_answers.pop(0)})])
+
+        def assessor(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': assessed})])
+
+        manifest = dataset.load_manifest(benchmark_directory)
+        runs = await automated_annotation.annotate(
+            manifest,
+            benchmark_directory,
+            work_directory,
+            author_model=FunctionModel(author),
+            assessor_model=FunctionModel(assessor),
+        )
+        assert [(run.role, run.model_requests) for run in runs] == [('query author', 2), ('independent assessor', 1)]
+        assert (work_directory / 'pets' / automated_annotation.PROVENANCE_FILE).exists()
+        assert annotation_workflow.collect(manifest, benchmark_directory, work_directory) == {'pets': 3}
+        assert annotations.build_spec_dataset(benchmark_directory, 'pets')[1].shared_answer_count == 3
 
 
 def _annotation(

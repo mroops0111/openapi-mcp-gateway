@@ -1,4 +1,5 @@
-# Intent-agnostic baseline: dynamic exposure on both large APIs, plus rules that suit any use of them.
+# A config that knows nothing of the intent,
+# with dynamic exposure on both large APIs and rules that suit any use of them.
 servers:
   github:
     exposure:

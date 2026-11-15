@@ -3,7 +3,7 @@ servers:
   asana:
     policy:
       allow:
-        # Context lookups: workspaces, teams, users, typeahead search
+        # Context lookups, such as workspaces, teams, users, and typeahead search
         - getWorkspaces
         - getWorkspace
         - getTeamsForWorkspace

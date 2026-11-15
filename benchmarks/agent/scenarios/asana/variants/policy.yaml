@@ -1,9 +1,10 @@
-# Policy only: keep the task, project, section, user and comment operations a team needs to plan and track work.
+# The policy alone, keeping what a team needs to plan and track work.
+# That is its tasks, projects, sections, users, and comments.
 servers:
   asana:
     policy:
       allow:
-        # Context lookups: workspaces, teams, users, typeahead search
+        # Context lookups, such as workspaces, teams, users, and typeahead search
         - getWorkspaces
         - getWorkspace
         - getTeamsForWorkspace

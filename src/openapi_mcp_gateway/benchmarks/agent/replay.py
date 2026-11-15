@@ -60,9 +60,11 @@ class _OperationRoute(pydantic.BaseModel):
 class ReplayUpstream:
     """Stands in for every upstream API of a run, answering each request from the spec and recording it.
 
-    A request a task overrides gets the override. Any other request that matches an operation of the spec gets
-    that operation's documented example, or a fixed sample built from its response schema, so a model can call
-    any operation, not only the ones a task expected. A request that matches no operation gets a 404.
+    A request a task overrides gets the override.
+    Any other request that matches an operation of the spec gets that operation's documented example,
+    or a fixed sample built from its response schema,
+    so a model can call any operation, not only the ones a task expected.
+    A request that matches no operation gets a 404.
     The gateway reaches server ``name`` at ``<base URL>/<name>``.
     """
 

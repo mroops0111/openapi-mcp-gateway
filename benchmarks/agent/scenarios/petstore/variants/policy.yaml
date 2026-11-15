@@ -1,4 +1,4 @@
-# Policy only: pet catalog and store/order operations; user accounts and image upload hidden.
+# The policy alone, keeping the pet catalog and the store order operations, and hiding user accounts and image upload.
 servers:
   petstore:
     policy:

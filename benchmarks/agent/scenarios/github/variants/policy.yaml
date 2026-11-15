@@ -1,4 +1,4 @@
-# Policy only: narrow GitHub to issue triage and pull request review, plus the lookups they need.
+# The policy alone, narrowing GitHub to issue triage and pull request review, and the lookups they need.
 servers:
   github:
     policy:

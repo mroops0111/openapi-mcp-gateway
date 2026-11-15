@@ -1,4 +1,4 @@
-# Intent policy only: customers, subscriptions, invoices, refunds and their billing lookups.
+# The intent policy alone, keeping customers, subscriptions, invoices, refunds, and their billing lookups.
 servers:
   stripe:
     policy:
@@ -28,7 +28,7 @@ servers:
         - "GET /v1/balance_transactions*"
         - "GET /v1/events*"
       deny:
-        # legacy card/bank-source APIs and cash-balance funding: not needed for shop billing
+        # The legacy card and bank source APIs and cash balance funding, which shop billing does not need
         - "* /v1/customers/*/bank_accounts*"
         - "* /v1/customers/*/cards*"
         - "* /v1/customers/*/sources*"

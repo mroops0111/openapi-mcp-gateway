@@ -25,8 +25,8 @@ class ValidationProblem(pydantic.BaseModel):
 async def validate(benchmark: Benchmark) -> list[ValidationProblem]:
     """Prove every task can pass and every variant still reaches what an in-intent task needs, calling no model.
 
-    Each task's solution runs under the baseline through the real gateway and the replay upstream, and has to pass
-    the grader, so a task can never expect a call the gateway cannot make or the grader cannot see.
+    Each task's solution runs under the baseline through the real gateway and the replay upstream,
+    and has to pass the grader, so a task can never expect a call the gateway cannot make or the grader cannot see.
     A variant that hides an operation an in-intent task needs is a problem in that variant's config.
     An out-of-intent task may lose its operation to a variant, since showing that cost is what it is for.
     """

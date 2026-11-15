@@ -130,7 +130,7 @@ class Variant(pydantic.BaseModel):
 
 
 class Scenario(pydantic.BaseModel):
-    """One realistic use of one or more APIs: its intent, its servers, its tasks, and the variants compared on it."""
+    """One realistic use of one or more APIs, with its intent, servers, tasks, and the variants compared on it."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
@@ -176,7 +176,7 @@ class Benchmark(pydantic.BaseModel):
 def load(root: pathlib.Path) -> Benchmark:
     """Load and validate the agent benchmark in ``root``, raising ``DatasetError`` on any inconsistency.
 
-    Each scenario is a directory holding ``scenario.yaml``, ``tasks.yaml``, and one file per variant under ``variants/``.
+    Each scenario is a directory of its intent and servers, its tasks, and one file per variant.
     """
     manifest = _validated(Manifest, _read_yaml(root / MANIFEST_FILE), root / MANIFEST_FILE)
     scenarios = {}

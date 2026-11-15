@@ -1,4 +1,5 @@
-# Policy only: read/navigate pages, blocks and databases, append/edit content, update database entries.
+# The policy alone, keeping what reads pages, blocks, and databases, adds and edits content,
+# and updates database entries.
 servers:
   notion:
     policy:

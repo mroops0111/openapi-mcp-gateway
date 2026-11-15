@@ -21,7 +21,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --extra dev --extra redis
+      - run: uv sync --extra dev --extra redis --extra benchmarks
       - run: uv run ruff check src/ tests/
       - run: uv run ruff format --check src/ tests/
 
@@ -33,7 +33,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --extra dev --extra redis
+      - run: uv sync --extra dev --extra redis --extra benchmarks
       - run: uv run basedpyright src/ tests/
 
   test:
@@ -49,7 +49,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-      - run: uv sync --extra dev --extra redis
+      - run: uv sync --extra dev --extra redis --extra benchmarks
       - run: uv run pytest tests/ -v --tb=short
 
   smoke:
@@ -63,7 +63,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --extra dev --extra redis
+      - run: uv sync --extra dev --extra redis --extra benchmarks
       - run: uv run pytest -m smoke -v --tb=short
 
   search-benchmark:
@@ -80,8 +80,25 @@ jobs:
         with:
           path: ~/.cache/openapi-mcp-gateway/specs
           key: benchmark-specs-${{ hashFiles('benchmarks/**/benchmark.yaml') }}
-      - run: uv sync --extra dev --extra redis
+      - run: uv sync --extra dev --extra redis --extra benchmarks
       - run: uv run python -m openapi_mcp_gateway.benchmarks search check benchmarks/search
+
+  agent-benchmark:
+    name: Agent Benchmark
+    runs-on: ubuntu-latest
+    # Proves every agent benchmark task passes with its solution and every variant reaches its in-intent tasks.
+    # It calls no model, so it needs no API key. The pinned specs download once and are cached by their checksums.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/openapi-mcp-gateway/specs
+          key: benchmark-specs-${{ hashFiles('benchmarks/**/benchmark.yaml') }}
+      - run: uv sync --extra dev --extra redis --extra benchmarks
+      - run: uv run python -m openapi_mcp_gateway.benchmarks agent validate benchmarks/agent
 
   build:
     name: Build

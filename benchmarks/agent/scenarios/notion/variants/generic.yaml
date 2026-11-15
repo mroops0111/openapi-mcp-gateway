@@ -1,4 +1,5 @@
-# Generic: send the Notion-Version header once and hide it from every tool; no filtering.
+# A config that knows nothing of the intent,
+# sending the Notion-Version header once and hiding it from every tool, with no filtering.
 servers:
   notion:
     headers:

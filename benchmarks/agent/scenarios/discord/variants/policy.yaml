@@ -1,4 +1,4 @@
-# Policy only: narrows the Discord API to member, role, channel and message moderation.
+# The policy alone, narrowing the Discord API to member, role, channel, and message moderation.
 servers:
   discord:
     policy:

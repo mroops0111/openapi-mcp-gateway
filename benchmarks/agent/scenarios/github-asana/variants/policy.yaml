@@ -1,4 +1,5 @@
-# Intent-scoped policy only: GitHub issues/PRs/comments/labels, Asana projects/sections/users/tasks/comments.
+# The intent-scoped policies alone, keeping GitHub issues, pull requests, comments, and labels,
+# and Asana projects, sections, users, tasks, and comments.
 servers:
   github:
     policy:

@@ -130,6 +130,48 @@ def search_annotations_prepare_assessment(benchmark_directory: pathlib.Path, wor
         click.echo(f'Wrote {path}')
 
 
+@search_annotations.command('annotate')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+@click.argument('work_directory', type=WORK_DIRECTORY)
+@click.option('--author-model', required=True, help='The query author, as Pydantic AI names a model.')
+@click.option('--assessor-model', required=True, help='The independent assessor, ideally from another provider.')
+@click.option('--spec', 'spec_names', multiple=True, help='A spec to annotate. Repeat for several; the default is all.')
+def search_annotations_annotate(
+    benchmark_directory: pathlib.Path,
+    work_directory: pathlib.Path,
+    author_model: str,
+    assessor_model: str,
+    spec_names: tuple[str, ...],
+) -> None:
+    """Stages 1 and 2 with the annotators run through Pydantic AI, writing what collect reads into WORK_DIRECTORY.
+
+    It runs models, which needs the benchmarks extra and the providers' API keys in their usual variables.
+    """
+    try:
+        from .search import automated_annotation
+    except ImportError as error:
+        raise click.ClickException(
+            f'Annotating needs the benchmarks extra, such as uv sync --extra benchmarks ({error})'
+        ) from error
+    manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
+    runs = _without_traceback(
+        lambda: asyncio.run(
+            automated_annotation.annotate(
+                manifest,
+                benchmark_directory,
+                work_directory,
+                author_model=author_model,
+                assessor_model=assessor_model,
+                specs=spec_names,
+            )
+        )
+    )
+    for run in runs:
+        click.echo(
+            f'{run.spec} {run.role}: {run.model}, {run.input_tokens} input and {run.output_tokens} output tokens'
+        )
+
+
 @search_annotations.command('collect')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 @click.argument('work_directory', type=WORK_DIRECTORY)
@@ -218,7 +260,7 @@ def agent_run(
 @agent.command('validate')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 def agent_validate(benchmark_directory: pathlib.Path) -> None:
-    """Prove every task of BENCHMARK_DIRECTORY can pass and every variant reaches it, calling no model, as CI runs it."""
+    """Prove every task of BENCHMARK_DIRECTORY can pass and every variant reaches it, calling no model, for CI."""
     agent_dataset, _, _, _, agent_validation = _agent_modules()
     benchmark = _without_traceback(lambda: agent_dataset.load(benchmark_directory))
     problems = _without_traceback(lambda: asyncio.run(agent_validation.validate(benchmark)))

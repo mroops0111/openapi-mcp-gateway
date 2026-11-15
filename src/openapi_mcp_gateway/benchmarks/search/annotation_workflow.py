@@ -34,7 +34,28 @@ QUERY_COUNT = 80
 STYLE_COUNTS: dict[Style, int] = {'literal': 27, 'paraphrase': 27, 'indirect': 26}
 QUERIES_PER_AREA = 6
 
+# What each annotator writes, one object per line, when it is run by hand.
+MANUAL_OUTPUT_EXAMPLES = {
+    QUERY_AUTHOR_OUTPUT_FILE: '{"text": "...", "style": "literal", "relevant": {"operation_name": 2, "other_operation_name": 1}}',
+    INDEPENDENT_ASSESSOR_OUTPUT_FILE: '{"id": "...", "relevant": {"operation_name": 2}}',
+}
+
 RecordType = typing.TypeVar('RecordType', bound=pydantic.BaseModel)
+
+
+class InstructionInputs(pydantic.BaseModel):
+    """What an annotator's instructions say about where its input comes from and where its answer goes.
+
+    An annotator run by hand reads files and writes one,
+    and one run through Pydantic AI reads the prompt and answers in structured output, so the same template serves both.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
+
+    operations_input: str
+    queries_input: str
+    search_note: str
+    output_instructions: str
 
 
 class AuthoredQuery(pydantic.BaseModel):
@@ -61,19 +82,8 @@ def prepare_authoring(manifest: Manifest, root: pathlib.Path, work_directory: pa
     instruction_files = []
     for spec in manifest.specs:
         spec_directory = work_directory / spec
-        spec_directory.mkdir(parents=True, exist_ok=True)
-        _write_operations(spec_directory / OPERATIONS_FILE, list_operations(corpus_server(manifest, root, spec)))
-        instructions = _render(
-            root / ANNOTATIONS_DIRECTORY / QUERY_AUTHOR_TEMPLATE,
-            spec=spec,
-            operations_file=spec_directory / OPERATIONS_FILE,
-            output_file=spec_directory / QUERY_AUTHOR_OUTPUT_FILE,
-            query_count=QUERY_COUNT,
-            queries_per_area=QUERIES_PER_AREA,
-            literal_count=STYLE_COUNTS['literal'],
-            paraphrase_count=STYLE_COUNTS['paraphrase'],
-            indirect_count=STYLE_COUNTS['indirect'],
-        )
+        write_operation_list(manifest, root, spec, spec_directory)
+        instructions = query_author_instructions(root, spec, _manual_inputs(spec_directory, QUERY_AUTHOR_OUTPUT_FILE))
         instruction_files.append(_write_text(spec_directory / QUERY_AUTHOR_INSTRUCTIONS_FILE, instructions))
     return instruction_files
 
@@ -86,20 +96,59 @@ def prepare_assessment(manifest: Manifest, root: pathlib.Path, work_directory: p
     instruction_files = []
     for spec in manifest.specs:
         spec_directory = work_directory / spec
-        authored_queries = _read_records(spec_directory / QUERY_AUTHOR_OUTPUT_FILE, AuthoredQuery)
-        with (spec_directory / ASSESSOR_QUERIES_FILE).open('w', encoding='utf-8') as file:
-            for query_id, authored_query in zip(_query_ids(spec, len(authored_queries)), authored_queries, strict=True):
-                file.write(json.dumps({'id': query_id, 'text': authored_query.text}, ensure_ascii=False) + '\n')
-        instructions = _render(
-            root / ANNOTATIONS_DIRECTORY / INDEPENDENT_ASSESSOR_TEMPLATE,
-            spec=spec,
-            operations_file=spec_directory / OPERATIONS_FILE,
-            queries_file=spec_directory / ASSESSOR_QUERIES_FILE,
-            output_file=spec_directory / INDEPENDENT_ASSESSOR_OUTPUT_FILE,
-            query_count=len(authored_queries),
-        )
+        query_count = len(write_assessor_queries(spec, spec_directory))
+        inputs = _manual_inputs(spec_directory, INDEPENDENT_ASSESSOR_OUTPUT_FILE)
+        instructions = independent_assessor_instructions(root, spec, query_count, inputs)
         instruction_files.append(_write_text(spec_directory / INDEPENDENT_ASSESSOR_INSTRUCTIONS_FILE, instructions))
     return instruction_files
+
+
+def write_operation_list(
+    manifest: Manifest, root: pathlib.Path, spec: str, spec_directory: pathlib.Path
+) -> pathlib.Path:
+    """Write ``spec``'s operation list, as the annotators read it, into ``spec_directory``."""
+    spec_directory.mkdir(parents=True, exist_ok=True)
+    path = spec_directory / OPERATIONS_FILE
+    _write_operations(path, list_operations(corpus_server(manifest, root, spec)))
+    return path
+
+
+def write_assessor_queries(spec: str, spec_directory: pathlib.Path) -> list[dict[str, str]]:
+    """Give each authored query its id and write the queries the assessor sees, without the author's judgements."""
+    authored_queries = _read_records(spec_directory / QUERY_AUTHOR_OUTPUT_FILE, AuthoredQuery)
+    queries = [
+        {'id': query_id, 'text': authored_query.text}
+        for query_id, authored_query in zip(_query_ids(spec, len(authored_queries)), authored_queries, strict=True)
+    ]
+    lines = [json.dumps(query, ensure_ascii=False) for query in queries]
+    _write_text(spec_directory / ASSESSOR_QUERIES_FILE, '\n'.join(lines) + '\n')
+    return queries
+
+
+def query_author_instructions(root: pathlib.Path, spec: str, inputs: InstructionInputs) -> str:
+    """The query author's instructions for ``spec``, rendered from the template beside the annotations."""
+    return _render(
+        root / ANNOTATIONS_DIRECTORY / QUERY_AUTHOR_TEMPLATE,
+        spec=spec,
+        query_count=QUERY_COUNT,
+        queries_per_area=QUERIES_PER_AREA,
+        literal_count=STYLE_COUNTS['literal'],
+        paraphrase_count=STYLE_COUNTS['paraphrase'],
+        indirect_count=STYLE_COUNTS['indirect'],
+        **inputs.model_dump(),
+    )
+
+
+def independent_assessor_instructions(
+    root: pathlib.Path, spec: str, query_count: int, inputs: InstructionInputs
+) -> str:
+    """The independent assessor's instructions for ``spec``, rendered from the template beside the annotations."""
+    return _render(
+        root / ANNOTATIONS_DIRECTORY / INDEPENDENT_ASSESSOR_TEMPLATE,
+        spec=spec,
+        query_count=query_count,
+        **inputs.model_dump(),
+    )
 
 
 def collect(manifest: Manifest, root: pathlib.Path, work_directory: pathlib.Path) -> dict[str, int]:
@@ -175,6 +224,19 @@ def _check_judgements(location: str, relevant: typing.Mapping[str, int], served:
         raise DatasetError(f'{location}: grades {wrong_grades} are not one of {list(GRADES)}')
     if ANSWER_GRADE not in relevant.values():
         raise DatasetError(f'{location}: no operation is graded {ANSWER_GRADE}')
+
+
+def _manual_inputs(spec_directory: pathlib.Path, output_file: str) -> InstructionInputs:
+    example = MANUAL_OUTPUT_EXAMPLES[output_file]
+    return InstructionInputs(
+        operations_input=str(spec_directory / OPERATIONS_FILE),
+        queries_input=str(spec_directory / ASSESSOR_QUERIES_FILE),
+        search_note='You may read and search those files.',
+        output_instructions=(
+            f'Write {spec_directory / output_file} as JSON Lines, one object per line:\n\n{example}\n\n'
+            'Every key of relevant must be an exact name from the operation file, so check each one against it.'
+        ),
+    )
 
 
 def _query_ids(spec: str, count: int) -> list[str]:
