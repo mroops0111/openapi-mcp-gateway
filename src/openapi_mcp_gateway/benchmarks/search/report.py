@@ -11,9 +11,6 @@ from .runner import QueryResult, Results
 from .scoring import METRIC_NAMES
 
 
-# The metrics a comparison between two systems is reported on.
-COMPARED_METRICS = ('ndcg@10', 'recall@20')
-
 # How many of a query's top operations a report keeps, enough to see what outranked the answer.
 KEPT_RANKING_LENGTH = 10
 
@@ -88,7 +85,7 @@ class Report(pydantic.BaseModel):
 
 
 def build_report(benchmark: Benchmark, split: Split, results: Results) -> Report:
-    """Summarize ``results``, and compare the gated system with every other one that ran."""
+    """Summarize ``results``, and compare the gated system with every other one that ran on the gated metrics."""
     gated_system = benchmark.manifest.gate.system
     reference_system = gated_system if gated_system in results else None
     return Report(
@@ -97,7 +94,9 @@ def build_report(benchmark: Benchmark, split: Split, results: Results) -> Report
         gateway_version=importlib.metadata.version('openapi-mcp-gateway'),
         reference_system=reference_system,
         systems={name: summarize(system_results) for name, system_results in results.items()},
-        comparisons=_comparisons(results, reference_system) if reference_system else [],
+        comparisons=_comparisons(results, reference_system, benchmark.manifest.gate.metrics)
+        if reference_system
+        else [],
         queries={
             name: [_query_record(result) for result in system_results] for name, system_results in results.items()
         },
@@ -140,12 +139,12 @@ def compare(first: typing.Sequence[QueryResult], second: typing.Sequence[QueryRe
     return paired_bootstrap(differences_by_spec)
 
 
-def _comparisons(results: Results, reference_system: str) -> list[Comparison]:
+def _comparisons(results: Results, reference_system: str, metrics: typing.Sequence[str]) -> list[Comparison]:
     comparisons = []
     for name, system_results in results.items():
         if name == reference_system:
             continue
-        for metric in COMPARED_METRICS:
+        for metric in metrics:
             difference = compare(results[reference_system], system_results, metric)
             comparisons.append(
                 Comparison(

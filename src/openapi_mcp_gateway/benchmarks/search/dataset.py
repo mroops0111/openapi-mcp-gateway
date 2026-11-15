@@ -187,7 +187,10 @@ def _load_queries(path: pathlib.Path) -> dict[str, Query]:
         if not line.strip():
             continue
         location = f'{path}:{line_number}'
-        record = json.loads(line)
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise DatasetError(f'{location}: {error}') from error
         try:
             query = Query.model_validate(
                 {
@@ -212,7 +215,10 @@ def _load_judgements(path: pathlib.Path, queries: typing.Mapping[str, Query]) ->
             raise DatasetError(f'{path}: the header must be {", ".join(QRELS_HEADER)}')
         for row in reader:
             location = f'{path}:{reader.line_num}'
-            query_id, operation, grade = row['query-id'], row['corpus-id'], int(row['score'])
+            query_id, operation, score = row['query-id'], row['corpus-id'], row['score']
+            if not score.isdigit():
+                raise DatasetError(f'{location}: score {score!r} is not a whole number')
+            grade = int(score)
             if query_id not in queries:
                 raise DatasetError(f'{location}: unknown query id {query_id!r}')
             if grade not in GRADES:

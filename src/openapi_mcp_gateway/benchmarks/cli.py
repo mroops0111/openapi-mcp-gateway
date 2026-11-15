@@ -6,15 +6,21 @@ import sys
 import typing
 
 import click
+import httpx
 
+from .gateway_connection import ToolCallError
 from .search import annotation_workflow, annotations, dataset, markdown, overlap, report, runner
 from .search.baseline import Baseline
+from .spec_pins import SpecChecksumError
 
 
 BENCHMARK_DIRECTORY = click.Path(exists=True, file_okay=False, path_type=pathlib.Path)
 WORK_DIRECTORY = click.Path(file_okay=False, path_type=pathlib.Path)
 
 StepResult = typing.TypeVar('StepResult')
+
+# The errors a command reports in one line, since each names what to fix, where any other error is a bug to trace.
+HANDLED_ERRORS = (dataset.DatasetError, SpecChecksumError, ToolCallError, FileNotFoundError, httpx.HTTPError)
 
 
 @click.group()
@@ -144,10 +150,11 @@ def search_annotations_build(benchmark_directory: pathlib.Path) -> None:
     A query whose annotators share no answer stops the build until an adjudication for it is added.
     """
     manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
-    for spec in manifest.specs:
-        spec_dataset, agreement = _without_traceback(
-            lambda spec=spec: annotations.build_spec_dataset(benchmark_directory, spec)
-        )
+    # Every spec is built before any is written, so a spec that needs an adjudication leaves the data as it was.
+    built = _without_traceback(
+        lambda: {spec: annotations.build_spec_dataset(benchmark_directory, spec) for spec in manifest.specs}
+    )
+    for spec, (spec_dataset, agreement) in built.items():
         dataset.write_spec_dataset(benchmark_directory, spec_dataset)
         click.echo(
             f'{spec}: {agreement.query_count} queries, shared answer on {agreement.shared_answer_count}, '
@@ -156,8 +163,8 @@ def search_annotations_build(benchmark_directory: pathlib.Path) -> None:
 
 
 def _without_traceback(step: typing.Callable[[], StepResult]) -> StepResult:
-    """Run ``step``, turning a benchmark's own errors into a command-line error without a traceback."""
+    """Run ``step``, turning the errors bad data, a stale pin, or an unreachable spec raise into a clean error."""
     try:
         return step()
-    except dataset.DatasetError as error:
+    except HANDLED_ERRORS as error:
         raise click.ClickException(str(error)) from error

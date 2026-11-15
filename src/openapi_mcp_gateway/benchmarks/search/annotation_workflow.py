@@ -7,7 +7,7 @@ import typing
 import pydantic
 
 from ..gateway_connection import OperationListing, list_operations
-from .annotations import ANNOTATIONS_DIRECTORY, Annotation
+from .annotations import ANNOTATIONS_DIRECTORY, Annotation, read_annotations
 from .dataset import GRADES, STYLES, DatasetError, Manifest, Style
 from .metrics import ANSWER_GRADE
 from .runner import corpus_server
@@ -107,8 +107,11 @@ def collect(manifest: Manifest, root: pathlib.Path, work_directory: pathlib.Path
 
     Raises ``DatasetError`` when an annotator names an operation the spec does not serve, gives a grade outside 1 and 2,
     or leaves a query without an answer, so a mistake is caught before it reaches the judgements.
+    Nothing is written until every spec passes, so a failure leaves the annotations as they were.
+    An adjudication already in a spec's file is kept when its query's text and judgements are unchanged,
+    since it settled exactly that disagreement.
     """
-    query_counts = {}
+    annotations_by_spec: dict[str, list[Annotation]] = {}
     for spec in manifest.specs:
         spec_directory = work_directory / spec
         served = {row['name'] for row in _read_operations(spec_directory / OPERATIONS_FILE)}
@@ -117,6 +120,7 @@ def collect(manifest: Manifest, root: pathlib.Path, work_directory: pathlib.Path
             assessed.id: assessed
             for assessed in _read_records(spec_directory / INDEPENDENT_ASSESSOR_OUTPUT_FILE, AssessedQuery)
         }
+        existing = _existing_annotations(root / ANNOTATIONS_DIRECTORY / f'{spec}.jsonl')
         annotations = []
         for query_id, authored_query in zip(_query_ids(spec, len(authored_queries)), authored_queries, strict=True):
             if query_id not in assessed_queries:
@@ -126,23 +130,40 @@ def collect(manifest: Manifest, root: pathlib.Path, work_directory: pathlib.Path
                 ('independent assessor', assessed_queries[query_id].relevant),
             ):
                 _check_judgements(f'{spec} {query_id}, {annotator}', relevant, served)
-            annotations.append(
-                Annotation(
-                    id=query_id,
-                    text=authored_query.text,
-                    style=authored_query.style,
-                    annotator_a=authored_query.relevant,
-                    annotator_b=assessed_queries[query_id].relevant,
-                )
+            annotation = Annotation(
+                id=query_id,
+                text=authored_query.text,
+                style=authored_query.style,
+                annotator_a=authored_query.relevant,
+                annotator_b=assessed_queries[query_id].relevant,
             )
+            annotations.append(_with_kept_adjudication(annotation, existing.get(query_id)))
         style_counts = collections.Counter(annotation.style for annotation in annotations)
         missing_styles = [style for style in STYLES if not style_counts[style]]
         if missing_styles:
             raise DatasetError(f'{spec}: the query author wrote no {", ".join(missing_styles)} queries')
+        annotations_by_spec[spec] = annotations
+    for spec, annotations in annotations_by_spec.items():
         lines = [annotation.model_dump_json(exclude_none=True) for annotation in annotations]
         _write_text(root / ANNOTATIONS_DIRECTORY / f'{spec}.jsonl', '\n'.join(lines) + '\n')
-        query_counts[spec] = len(annotations)
-    return query_counts
+    return {spec: len(annotations) for spec, annotations in annotations_by_spec.items()}
+
+
+def _existing_annotations(path: pathlib.Path) -> dict[str, Annotation]:
+    if not path.exists():
+        return {}
+    return {annotation.id: annotation for annotation in read_annotations(path)}
+
+
+def _with_kept_adjudication(annotation: Annotation, existing: Annotation | None) -> Annotation:
+    if existing is None or existing.adjudication is None:
+        return annotation
+    unchanged = (existing.text, existing.annotator_a, existing.annotator_b) == (
+        annotation.text,
+        annotation.annotator_a,
+        annotation.annotator_b,
+    )
+    return annotation.model_copy(update={'adjudication': existing.adjudication}) if unchanged else annotation
 
 
 def _check_judgements(location: str, relevant: typing.Mapping[str, int], served: set[str]) -> None:

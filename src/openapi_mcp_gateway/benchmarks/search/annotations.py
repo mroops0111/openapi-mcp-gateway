@@ -6,7 +6,7 @@ import typing
 
 import pydantic
 
-from .dataset import SPLITS, STYLES, DatasetError, Query, SpecDataset, Split, Style
+from .dataset import GRADES, SPLITS, STYLES, DatasetError, Query, SpecDataset, Split, Style
 from .metrics import ANSWER_GRADE, answers_in
 
 
@@ -29,6 +29,17 @@ class Adjudication(pydantic.BaseModel):
 
     relevant: dict[str, int]
     note: str
+
+    @pydantic.field_validator('relevant')
+    @classmethod
+    def _validate_relevant(cls, relevant: dict[str, int]) -> dict[str, int]:
+        """Refuse a grade outside 1 and 2, or judgements with no answer, as a merged query would be refused."""
+        wrong_grades = sorted(grade for grade in relevant.values() if grade not in GRADES)
+        if wrong_grades:
+            raise ValueError(f'grades {wrong_grades} are not one of {list(GRADES)}')
+        if ANSWER_GRADE not in relevant.values():
+            raise ValueError(f'no operation is graded {ANSWER_GRADE}')
+        return relevant
 
 
 class Annotation(pydantic.BaseModel):

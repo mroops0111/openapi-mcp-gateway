@@ -174,6 +174,11 @@ class TestAnnotations:
         assert annotations.cohens_kappa([(2, 2), (1, 1), (0, 0)]) == 1.0
         assert annotations.cohens_kappa([(2, 2), (2, 1), (1, 2), (1, 1)]) == 0.0
 
+    @pytest.mark.parametrize('relevant', [{'a': 3}, {'a': 1}])
+    def test_an_adjudication_needs_valid_grades_and_an_answer(self, relevant):
+        with pytest.raises(ValueError, match='grade'):
+            _annotation('q1', {'a': 2}, {'b': 2}, adjudication={'relevant': relevant, 'note': ''})
+
     def test_splits_are_stratified_and_stable(self):
         annotated = [_annotation(f'q{index:02d}', {'a': 2}, {'a': 2}) for index in range(15)]
         split_by_query = annotations.assign_splits(annotated)
@@ -286,6 +291,18 @@ class TestRun:
         )
         assert len(raised.regressions(baseline, 0.01)) == 2
 
+        other_split = baseline.model_copy(update={'split': 'dev'})
+        assert baseline.regressions(other_split, 0.01) == ["split is 'dev' in this run but 'test' in the baseline"]
+
+    async def test_comparisons_follow_the_gated_metrics(self, tmp_path):
+        benchmark_directory = _petstore_benchmark(tmp_path)
+        manifest = benchmark_directory / dataset.MANIFEST_FILE
+        manifest.write_text(manifest.read_text() + '  metrics: [mrr@10]\n')
+        benchmark = dataset.load(benchmark_directory)
+        results = await runner.run(benchmark, 'test', runner.select_systems(benchmark))
+        built_report = report.build_report(benchmark, 'test', results)
+        assert {comparison.metric for comparison in built_report.comparisons} == {'mrr@10'}
+
 
 class TestCli:
     """The commands CI and a developer run."""
@@ -317,6 +334,22 @@ class TestCli:
         result = CliRunner().invoke(main, arguments)
         assert result.exit_code == 1
         assert 'Unknown system' in result.output
+
+    def test_a_stale_pin_is_a_clean_error(self, tmp_path):
+        benchmark_directory = _petstore_benchmark(tmp_path)
+        (benchmark_directory / 'petstore.json').write_text('{}')
+        result = CliRunner().invoke(main, ['search', 'run', str(benchmark_directory)])
+        assert result.exit_code == 1
+        assert 'SHA-256' in result.output
+        assert 'Traceback' not in result.output
+
+    def test_a_malformed_query_line_is_a_clean_error(self, tmp_path):
+        benchmark_directory = _petstore_benchmark(tmp_path)
+        with (benchmark_directory / 'pets' / 'queries.jsonl').open('a') as file:
+            file.write('{not json\n')
+        result = CliRunner().invoke(main, ['search', 'run', str(benchmark_directory)])
+        assert result.exit_code == 1
+        assert 'queries.jsonl:4' in result.output
 
     def test_check_refuses_a_paraphrase_that_repeats_its_answer(self, tmp_path):
         """A mislabelled query fails the check before any ranking runs."""
@@ -406,6 +439,54 @@ class TestAnnotationWorkflow:
         result = CliRunner().invoke(main, arguments)
         assert result.exit_code == 1
         assert 'stage before this one' in result.output
+
+    def test_collect_keeps_an_adjudication_for_an_unchanged_query(self, tmp_path):
+        benchmark_directory = _petstore_benchmark(tmp_path)
+        _copy_annotation_templates(benchmark_directory)
+        work_directory = tmp_path / 'work'
+        manifest = dataset.load_manifest(benchmark_directory)
+        annotation_workflow.prepare_authoring(manifest, benchmark_directory, work_directory)
+        _write_jsonl(
+            work_directory / 'pets' / annotation_workflow.QUERY_AUTHOR_OUTPUT_FILE,
+            [
+                {'text': 'list my pets', 'style': 'literal', 'relevant': {'list_pets': 2}},
+                {'text': 'a new animal arrived', 'style': 'paraphrase', 'relevant': {'create_pet': 2}},
+                {'text': 'the dog moved to a farm', 'style': 'indirect', 'relevant': {'delete_pet': 2}},
+            ],
+        )
+        annotation_workflow.prepare_assessment(manifest, benchmark_directory, work_directory)
+        _write_jsonl(
+            work_directory / 'pets' / annotation_workflow.INDEPENDENT_ASSESSOR_OUTPUT_FILE,
+            [
+                {'id': 'pets-q001', 'relevant': {'list_pets': 2}},
+                {'id': 'pets-q002', 'relevant': {'create_pet_with_owner': 2}},
+                {'id': 'pets-q003', 'relevant': {'delete_pet': 2}},
+            ],
+        )
+        annotation_workflow.collect(manifest, benchmark_directory, work_directory)
+        annotations_file = benchmark_directory / annotations.ANNOTATIONS_DIRECTORY / 'pets.jsonl'
+        with pytest.raises(dataset.DatasetError, match='pets-q002'):
+            annotations.build_spec_dataset(benchmark_directory, 'pets')
+        queries_before = (benchmark_directory / 'pets' / dataset.QUERIES_FILE).read_text()
+        result = CliRunner().invoke(main, ['search', 'annotations', 'build', str(benchmark_directory)])
+        assert result.exit_code == 1
+        assert (benchmark_directory / 'pets' / dataset.QUERIES_FILE).read_text() == queries_before
+
+        adjudicated = [
+            annotation.model_copy(
+                update={'adjudication': annotations.Adjudication(relevant={'create_pet': 2}, note='either fits')}
+            )
+            if annotation.id == 'pets-q002'
+            else annotation
+            for annotation in annotations.read_annotations(annotations_file)
+        ]
+        annotations_file.write_text(
+            ''.join(annotation.model_dump_json(exclude_none=True) + '\n' for annotation in adjudicated)
+        )
+        annotation_workflow.collect(manifest, benchmark_directory, work_directory)
+        kept = {annotation.id: annotation for annotation in annotations.read_annotations(annotations_file)}
+        assert kept['pets-q002'].adjudication is not None
+        assert annotations.build_spec_dataset(benchmark_directory, 'pets')[1].adjudicated_count == 1
 
 
 def _annotation(

@@ -46,7 +46,19 @@ class Baseline(pydantic.BaseModel):
         path.write_text(self.model_dump_json(indent=2) + '\n', encoding='utf-8')
 
     def regressions(self, current: 'Baseline', tolerance: float) -> list[str]:
-        """Each number of ``current`` more than ``tolerance`` below this baseline, described in one line."""
+        """Each number of ``current`` more than ``tolerance`` below this baseline, described in one line.
+
+        A run of another benchmark version, system, or split measures something else, so it fails outright,
+        and the baseline is rewritten with ``search check --update`` in the PR that makes the change.
+        """
+        identity = ('benchmark_version', 'system', 'split')
+        mismatches = [
+            f'{field} is {getattr(current, field)!r} in this run but {getattr(self, field)!r} in the baseline'
+            for field in identity
+            if getattr(current, field) != getattr(self, field)
+        ]
+        if mismatches:
+            return mismatches
         expected_by_scope = {'macro': self.macro, **self.specs}
         measured_by_scope = {'macro': current.macro, **current.specs}
         failures = []
