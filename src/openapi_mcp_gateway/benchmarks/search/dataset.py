@@ -6,6 +6,7 @@ import typing
 import pydantic
 import yaml
 
+from ..errors import BenchmarkDataError
 from ..spec_pins import SpecPin
 from .metrics import ANSWER_GRADE
 from .scoring import METRIC_NAMES
@@ -26,8 +27,8 @@ SPLITS: tuple[Split, ...] = typing.get_args(Split)
 GRADES = (1, ANSWER_GRADE)
 
 
-class DatasetError(ValueError):
-    """The benchmark's files are inconsistent."""
+class DatasetError(BenchmarkDataError):
+    """The search benchmark's files are inconsistent."""
 
 
 class Gate(pydantic.BaseModel):

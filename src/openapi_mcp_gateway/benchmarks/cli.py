@@ -8,6 +8,7 @@ import typing
 import click
 import httpx
 
+from .errors import BenchmarkDataError
 from .gateway_connection import ToolCallError
 from .search import annotation_workflow, annotations, dataset, markdown, overlap, report, runner
 from .search.baseline import Baseline
@@ -20,7 +21,7 @@ WORK_DIRECTORY = click.Path(file_okay=False, path_type=pathlib.Path)
 StepResult = typing.TypeVar('StepResult')
 
 # The errors a command reports in one line, since each names what to fix, where any other error is a bug to trace.
-HANDLED_ERRORS = (dataset.DatasetError, SpecChecksumError, ToolCallError, FileNotFoundError, httpx.HTTPError)
+HANDLED_ERRORS = (BenchmarkDataError, SpecChecksumError, ToolCallError, FileNotFoundError, httpx.HTTPError)
 
 
 @click.group()
@@ -160,6 +161,88 @@ def search_annotations_build(benchmark_directory: pathlib.Path) -> None:
             f'{spec}: {agreement.query_count} queries, shared answer on {agreement.shared_answer_count}, '
             f'kappa {agreement.kappa:.3f}, {agreement.adjudicated_count} adjudicated'
         )
+
+
+@main.group()
+def agent() -> None:
+    """Whether a model finishes real tasks through the gateway, compared with one tool per operation.
+
+    It runs models, which needs the benchmarks extra and the providers' API keys in their usual variables.
+    """
+
+
+@agent.command('run')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+@click.option(
+    '--scenario', 'scenario_names', multiple=True, help='A scenario to run. Repeat for several; the default is all.'
+)
+@click.option(
+    '--variant', 'variant_names', multiple=True, help='A variant to run. Repeat for several; the default is all.'
+)
+@click.option('--model', 'model_names', multiple=True, help='A model to run. Repeat for several; the default is all.')
+@click.option('--split', type=click.Choice(['practice', 'final']), default='final', show_default=True)
+@click.option('--repetitions', type=click.IntRange(min=1), help="Runs per task, in place of the manifest's count.")
+@click.option(
+    '--output', type=click.Path(dir_okay=False, path_type=pathlib.Path), help='Write the full report as JSON.'
+)
+def agent_run(
+    benchmark_directory: pathlib.Path,
+    scenario_names: tuple[str, ...],
+    variant_names: tuple[str, ...],
+    model_names: tuple[str, ...],
+    split: str,
+    repetitions: int | None,
+    output: pathlib.Path | None,
+) -> None:
+    """Run BENCHMARK_DIRECTORY's tasks under each variant and model, and print the tables."""
+    agent_dataset, agent_markdown, agent_report, agent_runner, _ = _agent_modules()
+    benchmark = _without_traceback(lambda: agent_dataset.load(benchmark_directory))
+    records = _without_traceback(
+        lambda: asyncio.run(
+            agent_runner.run(
+                benchmark,
+                scenario_names=scenario_names,
+                variant_names=variant_names,
+                model_names=model_names,
+                split=split,
+                repetitions=repetitions,
+            )
+        )
+    )
+    built_report = agent_report.build_report(benchmark, records)
+    if output is not None:
+        output.write_text(built_report.model_dump_json(indent=2) + '\n', encoding='utf-8')
+    click.echo(agent_markdown.to_markdown(built_report), nl=False)
+
+
+@agent.command('validate')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+def agent_validate(benchmark_directory: pathlib.Path) -> None:
+    """Prove every task of BENCHMARK_DIRECTORY can pass and every variant reaches it, calling no model, as CI runs it."""
+    agent_dataset, _, _, _, agent_validation = _agent_modules()
+    benchmark = _without_traceback(lambda: agent_dataset.load(benchmark_directory))
+    problems = _without_traceback(lambda: asyncio.run(agent_validation.validate(benchmark)))
+    task_count = sum(len(scenario.tasks) for scenario in benchmark.scenarios.values())
+    if problems:
+        for problem in problems:
+            click.echo(f'{problem.scenario} {problem.task_id} under {problem.variant}: {problem.problem}', err=True)
+        sys.exit(1)
+    click.echo(f'All {task_count} tasks pass with their solutions, and every variant reaches its in-intent tasks.')
+
+
+def _agent_modules() -> tuple[typing.Any, ...]:
+    """The agent benchmark's modules, imported only when a command needs them, since they need the benchmarks extra."""
+    try:
+        from .agent import dataset as agent_dataset
+        from .agent import markdown as agent_markdown
+        from .agent import report as agent_report
+        from .agent import runner as agent_runner
+        from .agent import validation as agent_validation
+    except ImportError as error:
+        raise click.ClickException(
+            f'The agent benchmark needs the benchmarks extra, such as uv sync --extra benchmarks ({error})'
+        ) from error
+    return agent_dataset, agent_markdown, agent_report, agent_runner, agent_validation
 
 
 def _without_traceback(step: typing.Callable[[], StepResult]) -> StepResult:

@@ -38,6 +38,11 @@ dependencies = [
 [project.optional-dependencies]
 redis = ["redis>=7.4.0"]
 oidc = ["pyjwt[crypto]>=2.15.1"]
+# The agent benchmark and annotation, which drive models from several providers through one framework.
+benchmarks = [
+    "pydantic-ai-slim[anthropic,openai,google,mcp]>=2.68.0",
+    "pydantic-evals>=2.68.0",
+]
 dev = [
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1.post1",
