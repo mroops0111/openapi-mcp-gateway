@@ -5,7 +5,7 @@ import typing
 import pydantic
 
 from ...settings import ServerConfig
-from .dataset import Benchmark, DatasetError, JudgedQuery, Split, Style
+from .dataset import Benchmark, DatasetError, JudgedQuery, Manifest, Split, Style
 from .scoring import RANKING_DEPTH, score_all
 from .systems import SpecCorpus, System, served_operations
 
@@ -40,9 +40,9 @@ def select_systems(benchmark: Benchmark, names: typing.Sequence[str] = ()) -> di
     return {name: declared[name] for name in names} if names else dict(declared)
 
 
-def corpus_server(benchmark: Benchmark, spec: str) -> ServerConfig:
+def corpus_server(manifest: Manifest, root: pathlib.Path, spec: str) -> ServerConfig:
     """The server config that lists ``spec``'s operations, with its pinned document fetched to a local file."""
-    path = benchmark.manifest.specs[spec].fetch(benchmark.root)
+    path = manifest.specs[spec].fetch(root)
     return ServerConfig.model_validate({**CORPUS_SERVER, 'name': spec, 'spec': str(path)})
 
 
@@ -51,7 +51,7 @@ async def load_corpus(benchmark: Benchmark, spec: str) -> SpecCorpus:
 
     A judgement no system could retrieve would quietly lower every score, so it is refused instead.
     """
-    server = corpus_server(benchmark, spec)
+    server = corpus_server(benchmark.manifest, benchmark.root, spec)
     operations = await served_operations(server)
     missing = sorted(benchmark.specs[spec].judged_operations() - set(operations))
     if missing:

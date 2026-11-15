@@ -8,7 +8,15 @@ import pytest
 from click.testing import CliRunner
 
 from openapi_mcp_gateway.benchmarks.cli import main
-from openapi_mcp_gateway.benchmarks.search import annotations, dataset, markdown, overlap, report, runner
+from openapi_mcp_gateway.benchmarks.search import (
+    annotation_workflow,
+    annotations,
+    dataset,
+    markdown,
+    overlap,
+    report,
+    runner,
+)
 from openapi_mcp_gateway.benchmarks.search.baseline import Baseline
 from openapi_mcp_gateway.benchmarks.search.metrics import NormalizedDiscountedCumulativeGain, Recall, ReciprocalRank
 from openapi_mcp_gateway.benchmarks.search.systems import GatewaySystem, Retriever, SpecCorpus, System
@@ -18,6 +26,7 @@ from tests.conftest import FIXTURES_DIR
 
 
 PETSTORE = FIXTURES_DIR / 'petstore.json'
+REPOSITORY_ANNOTATIONS = pathlib.Path(__file__).parents[2] / 'benchmarks' / 'search' / 'annotations'
 
 MANIFEST = """\
 version: 1
@@ -309,13 +318,94 @@ class TestCli:
         assert result.exit_code == 1
         assert 'Unknown system' in result.output
 
-    def test_validate_flags_a_paraphrase_that_repeats_its_answer(self, tmp_path):
+    def test_check_refuses_a_paraphrase_that_repeats_its_answer(self, tmp_path):
+        """A mislabelled query fails the check before any ranking runs."""
         benchmark_directory = _petstore_benchmark(tmp_path)
         queries = benchmark_directory / 'pets' / 'queries.jsonl'
         queries.write_text(queries.read_text().replace('"literal"}}\n{"_id": "p2"', '"paraphrase"}}\n{"_id": "p2"'))
-        result = CliRunner().invoke(main, ['search', 'validate', str(benchmark_directory)])
+        result = CliRunner().invoke(main, ['search', 'check', str(benchmark_directory), '--update'])
         assert result.exit_code == 1
         assert 'p1 (paraphrase' in result.output
+        assert not (benchmark_directory / dataset.BASELINE_FILE).exists()
+
+
+class TestAnnotationWorkflow:
+    """The four stages that make the data anew, with the annotators played by fixed files."""
+
+    def test_the_stages_turn_two_annotators_output_into_a_benchmark(self, tmp_path):
+        benchmark_directory = _petstore_benchmark(tmp_path)
+        _copy_annotation_templates(benchmark_directory)
+        work_directory = tmp_path / 'work'
+        cli = CliRunner()
+
+        stage = cli.invoke(
+            main, ['search', 'annotations', 'prepare-authoring', str(benchmark_directory), str(work_directory)]
+        )
+        assert stage.exit_code == 0, stage.output
+        operations = (work_directory / 'pets' / annotation_workflow.OPERATIONS_FILE).read_text()
+        assert operations.splitlines()[0] == 'name\tmethod\tpath\tsummary'
+        assert 'list_pets\tGET\t/pets' in operations
+        instructions = (work_directory / 'pets' / annotation_workflow.QUERY_AUTHOR_INSTRUCTIONS_FILE).read_text()
+        assert 'operations of the pets API' in instructions
+
+        _write_jsonl(
+            work_directory / 'pets' / annotation_workflow.QUERY_AUTHOR_OUTPUT_FILE,
+            [
+                {'text': 'list my pets', 'style': 'literal', 'relevant': {'list_pets': 2}},
+                {'text': 'I need a new animal on record', 'style': 'paraphrase', 'relevant': {'create_pet': 2}},
+                {'text': 'the dog went to live on a farm', 'style': 'indirect', 'relevant': {'delete_pet': 2}},
+            ],
+        )
+        stage = cli.invoke(
+            main, ['search', 'annotations', 'prepare-assessment', str(benchmark_directory), str(work_directory)]
+        )
+        assert stage.exit_code == 0, stage.output
+        assessor_queries = (work_directory / 'pets' / annotation_workflow.ASSESSOR_QUERIES_FILE).read_text()
+        assert '"id": "pets-q002"' in assessor_queries
+        assert 'create_pet' not in assessor_queries
+
+        _write_jsonl(
+            work_directory / 'pets' / annotation_workflow.INDEPENDENT_ASSESSOR_OUTPUT_FILE,
+            [
+                {'id': 'pets-q001', 'relevant': {'list_pets': 2}},
+                {'id': 'pets-q002', 'relevant': {'create_pet': 2, 'create_pet_with_owner': 1}},
+                {'id': 'pets-q003', 'relevant': {'delete_pet': 2}},
+            ],
+        )
+        stage = cli.invoke(main, ['search', 'annotations', 'collect', str(benchmark_directory), str(work_directory)])
+        assert stage.exit_code == 0, stage.output
+        stage = cli.invoke(main, ['search', 'annotations', 'build', str(benchmark_directory)])
+        assert stage.exit_code == 0, stage.output
+        assert 'pets: 3 queries, shared answer on 3' in stage.output
+
+        rebuilt = dataset.load(benchmark_directory).specs['pets']
+        assert rebuilt.judgements['dev']['pets-q002'] == {'create_pet': 2, 'create_pet_with_owner': 1}
+
+    def test_collect_refuses_an_operation_the_spec_does_not_serve(self, tmp_path):
+        benchmark_directory = _petstore_benchmark(tmp_path)
+        _copy_annotation_templates(benchmark_directory)
+        work_directory = tmp_path / 'work'
+        manifest = dataset.load_manifest(benchmark_directory)
+        annotation_workflow.prepare_authoring(manifest, benchmark_directory, work_directory)
+        _write_jsonl(
+            work_directory / 'pets' / annotation_workflow.QUERY_AUTHOR_OUTPUT_FILE,
+            [{'text': 'adopt this kitten', 'style': 'literal', 'relevant': {'adopt_pet': 2}}],
+        )
+        annotation_workflow.prepare_assessment(manifest, benchmark_directory, work_directory)
+        _write_jsonl(
+            work_directory / 'pets' / annotation_workflow.INDEPENDENT_ASSESSOR_OUTPUT_FILE,
+            [{'id': 'pets-q001', 'relevant': {'create_pet': 2}}],
+        )
+        with pytest.raises(dataset.DatasetError, match='adopt_pet'):
+            annotation_workflow.collect(manifest, benchmark_directory, work_directory)
+
+    def test_a_stage_run_out_of_order_says_which_comes_first(self, tmp_path):
+        benchmark_directory = _petstore_benchmark(tmp_path)
+        _copy_annotation_templates(benchmark_directory)
+        arguments = ['search', 'annotations', 'prepare-assessment', str(benchmark_directory), str(tmp_path / 'work')]
+        result = CliRunner().invoke(main, arguments)
+        assert result.exit_code == 1
+        assert 'stage before this one' in result.output
 
 
 def _annotation(
@@ -334,6 +424,18 @@ def _annotation(
             'adjudication': adjudication,
         }
     )
+
+
+def _copy_annotation_templates(benchmark_directory: pathlib.Path) -> None:
+    templates = REPOSITORY_ANNOTATIONS
+    target = benchmark_directory / annotations.ANNOTATIONS_DIRECTORY
+    target.mkdir(exist_ok=True)
+    for template in (annotation_workflow.QUERY_AUTHOR_TEMPLATE, annotation_workflow.INDEPENDENT_ASSESSOR_TEMPLATE):
+        shutil.copy(templates / template, target / template)
+
+
+def _write_jsonl(path: pathlib.Path, records: list[dict[str, typing.Any]]) -> None:
+    path.write_text(''.join(json.dumps(record) + '\n' for record in records))
 
 
 def _petstore_benchmark(root: pathlib.Path) -> pathlib.Path:

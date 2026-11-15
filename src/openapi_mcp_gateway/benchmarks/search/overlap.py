@@ -5,8 +5,10 @@ import typing
 import pydantic
 
 from ...exposure._bm25 import tokenize
+from ..gateway_connection import list_operations
 from .dataset import SPLITS, STYLES, Benchmark, Query, Style
 from .metrics import answers_in
+from .runner import corpus_server
 
 
 # A paraphrase or indirect query may repeat at most this share of its answer's terms.
@@ -55,12 +57,19 @@ def best_term_overlap(query: str, answers: typing.Iterable[str], summaries: typi
     return max((term_overlap(query, f'{name} {summaries.get(name, "")}') for name in answers), default=0.0)
 
 
-def check_styles(benchmark: Benchmark, summaries_by_spec: typing.Mapping[str, typing.Mapping[str, str]]) -> StyleReport:
+def check_styles(benchmark: Benchmark) -> StyleReport:
     """Measure every query's overlap with its answers, flagging a non-literal one above the limit.
 
     A style label written by hand can be wrong in the direction that flatters a lexical ranker,
     a paraphrase that still says the operation's words, so the label is checked against the overlap.
     """
+    summaries_by_spec = {
+        spec: {
+            listing.name: listing.summary
+            for listing in list_operations(corpus_server(benchmark.manifest, benchmark.root, spec))
+        }
+        for spec in benchmark.specs
+    }
     overlaps_by_style: dict[Style, list[float]] = collections.defaultdict(list)
     flagged_queries: list[FlaggedQuery] = []
     for spec, spec_dataset in benchmark.specs.items():

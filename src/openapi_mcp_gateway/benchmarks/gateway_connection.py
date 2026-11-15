@@ -2,6 +2,7 @@ import contextlib
 import json
 import typing
 
+import pydantic
 from mcp import Client
 from mcp.types import CallToolResult, TextContent
 
@@ -12,6 +13,18 @@ from ..settings import GatewayConfig, ServerConfig
 
 class ToolCallError(RuntimeError):
     """A tool the benchmark called returned an error result."""
+
+
+class OperationListing(pydantic.BaseModel):
+    """One operation as a gateway lists it, with the spec's own summary and description."""
+
+    model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
+
+    name: str
+    method: str
+    path: str
+    summary: str
+    description: str
 
 
 def build_gateway(server: ServerConfig) -> Gateway:
@@ -41,19 +54,27 @@ async def call_tool(client: Client, name: str, arguments: dict[str, typing.Any])
     return json.loads(_text_of(result))
 
 
-def operation_summaries(server: ServerConfig) -> dict[str, str]:
-    """Each operation's name, as the model is shown it, mapped to its spec summary, or ``''`` when it has none.
+def list_operations(server: ServerConfig) -> list[OperationListing]:
+    """Every operation a gateway serving ``server`` exposes, with its name as the model is shown it.
 
-    Names come from the gateway itself, so renames and policy apply, and summaries from the spec.
+    Names come from the gateway itself, so renames and policy apply, and summaries and descriptions from the spec.
     """
     static_server = server.model_copy(update={'exposure': server.exposure.model_copy(update={'style': 'static'})})
     gateway = build_gateway(static_server)
     document = load_spec(server.spec)
-    summaries: dict[str, str] = {}
+    listings = []
     for tool in gateway.describe()['servers'][0]['tools']:
         operation = document.get('paths', {}).get(tool['path'], {}).get(tool['method'], {})
-        summaries[tool['name']] = ' '.join(str(operation.get('summary') or '').split())
-    return summaries
+        listings.append(
+            OperationListing(
+                name=tool['name'],
+                method=tool['method'].upper(),
+                path=tool['path'],
+                summary=' '.join(str(operation.get('summary') or '').split()),
+                description=' '.join(str(operation.get('description') or '').split()),
+            )
+        )
+    return listings
 
 
 def _text_of(result: CallToolResult) -> str:

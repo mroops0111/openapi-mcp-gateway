@@ -25,7 +25,7 @@ Discord's spec has no summaries or descriptions, so its operations are searchabl
 | **paraphrase** | the same intent in other words | "Wipe the last 50 spam posts in #general in one go" | 0.07 |
 | **indirect** | the goal, not the action | "I posted the wrong release date and the text is now incorrect" | 0.10 |
 
-Overlap is the share of the answer's name and summary terms the query repeats, after the tokenizing and stemming search applies. `search validate` refuses a paraphrase or indirect query above 0.5. One indirect query, `asana-q077`, was over that line as first written and was reworded.
+Overlap is the share of the answer's name and summary terms the query repeats, after the tokenizing and stemming search applies. `search check` refuses a paraphrase or indirect query above 0.5. One indirect query, `asana-q077`, was over that line as first written and was reworded.
 
 ## Judgements
 
@@ -44,7 +44,7 @@ Two annotators judged every query independently. [`annotations/`](annotations/) 
 
 Kappa is computed over the grade of every operation either annotator judged, so it leaves out the operations both left at `0` and runs lower than a kappa over the whole corpus would. The annotators agree on the answer itself almost everywhere, and disagree over which lesser operations count.
 
-`python -m openapi_mcp_gateway.benchmarks search build benchmarks/search` rebuilds the queries and qrels from the annotations.
+[`annotations/README.md`](annotations/README.md) describes how the data is annotated again, and `search annotations build` rebuilds the queries and judgements from the annotations.
 
 ## Splits
 

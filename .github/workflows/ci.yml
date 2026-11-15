@@ -69,7 +69,7 @@ jobs:
   search-benchmark:
     name: Search Benchmark
     runs-on: ubuntu-latest
-    # Ranks the committed queries through search_operations and fails below benchmarks/search/baseline.json.
+    # Checks the committed data, ranks its queries through search_operations, and fails below the baseline.
     # It calls no model. The pinned specs download once and are cached by their checksums.
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +81,6 @@ jobs:
           path: ~/.cache/openapi-mcp-gateway/specs
           key: benchmark-specs-${{ hashFiles('benchmarks/**/benchmark.yaml') }}
       - run: uv sync --extra dev --extra redis
-      - run: uv run python -m openapi_mcp_gateway.benchmarks search validate benchmarks/search
       - run: uv run python -m openapi_mcp_gateway.benchmarks search check benchmarks/search
 
   build:

@@ -17,6 +17,7 @@ src/openapi_mcp_gateway/benchmarks/   code, shipped in the package
   search/
     dataset.py                        the manifest, queries, and judgements, loaded and validated
     annotations.py                    two annotators' judgements merged into one set, and their agreement
+    annotation_workflow.py            the stages that prepare each annotator's files and collect what they write
     metrics.py                        Metric and its kinds, nDCG, reciprocal rank, and recall
     scoring.py                        the metrics this benchmark reports
     systems.py                        System and its kinds, the gateway's search and a random floor
@@ -32,7 +33,8 @@ benchmarks/                           data, not shipped
     README.md                         what the data holds, how it was made, and its known biases
     baseline.json                     the gated scores CI compares against
     annotations/<spec>.jsonl          each query's two annotations and any adjudication
-    annotations/README.md             the instructions each annotator was given
+    annotations/README.md             how the data is annotated again, stage by stage
+    annotations/*.txt                 the instructions each annotator is given, as templates
     <spec>/queries.jsonl              queries, in BEIR's format
     <spec>/qrels/{dev,test}.tsv       graded judgements, in BEIR's format, which names them qrels and its splits dev and test
 ```
@@ -49,9 +51,9 @@ The gateway system reaches the gateway the way a model does, through MCP, so ren
 uv run python -m openapi_mcp_gateway.benchmarks search run benchmarks/search        # every system, test split
 uv run python -m openapi_mcp_gateway.benchmarks search run benchmarks/search --split dev --system default
 uv run python -m openapi_mcp_gateway.benchmarks search check benchmarks/search      # what CI runs
-uv run python -m openapi_mcp_gateway.benchmarks search validate benchmarks/search   # file checks and style overlap
-uv run python -m openapi_mcp_gateway.benchmarks search build benchmarks/search      # rebuild qrels from annotations
 ```
+
+`check` first checks the data, that its files agree and that no paraphrase or indirect query repeats its answer's words, and then compares the gated system with the baseline. `search annotations` holds the four stages that make the data anew, which [`search/annotations/README.md`](search/annotations/README.md) walks through.
 
 The first run downloads about 30 MB of pinned specs into `~/.cache/openapi-mcp-gateway`, or the directory `OPENAPI_MCP_GATEWAY_CACHE` names. A run takes a few seconds after that.
 

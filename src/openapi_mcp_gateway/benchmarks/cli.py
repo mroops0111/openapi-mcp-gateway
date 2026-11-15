@@ -7,12 +7,12 @@ import typing
 
 import click
 
-from .gateway_connection import operation_summaries
-from .search import annotations, dataset, markdown, overlap, report, runner
+from .search import annotation_workflow, annotations, dataset, markdown, overlap, report, runner
 from .search.baseline import Baseline
 
 
 BENCHMARK_DIRECTORY = click.Path(exists=True, file_okay=False, path_type=pathlib.Path)
+WORK_DIRECTORY = click.Path(file_okay=False, path_type=pathlib.Path)
 
 StepResult = typing.TypeVar('StepResult')
 
@@ -30,39 +30,6 @@ def main(verbose: bool) -> None:
 @main.group()
 def search() -> None:
     """How well search_operations ranks the operation a request asks for."""
-
-
-@search.command('build')
-@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
-def search_build(benchmark_directory: pathlib.Path) -> None:
-    """Merge the annotations in BENCHMARK_DIRECTORY into its queries and judgements, and report the agreement."""
-    manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
-    for spec in manifest.specs:
-        spec_dataset, agreement = _without_traceback(
-            lambda spec=spec: annotations.build_spec_dataset(benchmark_directory, spec)
-        )
-        dataset.write_spec_dataset(benchmark_directory, spec_dataset)
-        click.echo(
-            f'{spec}: {agreement.query_count} queries, shared answer on {agreement.shared_answer_count}, '
-            f'kappa {agreement.kappa:.3f}, {agreement.adjudicated_count} adjudicated'
-        )
-
-
-@search.command('validate')
-@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
-def search_validate(benchmark_directory: pathlib.Path) -> None:
-    """Check BENCHMARK_DIRECTORY's files, and that no paraphrase or indirect query repeats its answer's words."""
-    benchmark = _without_traceback(lambda: dataset.load(benchmark_directory))
-    summaries_by_spec = {spec: operation_summaries(runner.corpus_server(benchmark, spec)) for spec in benchmark.specs}
-    style_report = overlap.check_styles(benchmark, summaries_by_spec)
-    for style, mean in style_report.mean_overlaps().items():
-        click.echo(f'{style}: mean overlap {mean:.2f} over {len(style_report.overlaps_by_style[style])}')
-    if style_report.flagged_queries:
-        click.echo(f'\nQueries that repeat more than {overlap.MAX_NON_LITERAL_OVERLAP:.0%} of their answer:')
-        for flagged in style_report.flagged_queries:
-            click.echo(f'{flagged.query.id} ({flagged.query.style}, {flagged.overlap:.2f}): {flagged.query.text}')
-        sys.exit(1)
-    click.echo('All queries are consistent.')
 
 
 @search.command('run')
@@ -91,15 +58,28 @@ def search_run(
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 @click.option('--update', is_flag=True, help='Write this run as the new baseline instead of comparing against it.')
 def search_check(benchmark_directory: pathlib.Path, update: bool) -> None:
-    """Fail when the gated system scores below BENCHMARK_DIRECTORY's baseline, as CI runs it."""
+    """Check BENCHMARK_DIRECTORY's data, then fail when the gated system scores below its baseline, as CI runs it.
+
+    The data passes when its files agree and no paraphrase or indirect query repeats its answer's words.
+    """
     benchmark = _without_traceback(lambda: dataset.load(benchmark_directory))
+    style_report = _without_traceback(lambda: overlap.check_styles(benchmark))
+    for style, mean in style_report.mean_overlaps().items():
+        click.echo(f'{style}: mean overlap {mean:.2f} over {len(style_report.overlaps_by_style[style])} queries')
+    if style_report.flagged_queries:
+        click.echo(f'\nQueries that repeat more than {overlap.MAX_NON_LITERAL_OVERLAP:.0%} of their answer:', err=True)
+        for flagged in style_report.flagged_queries:
+            query = flagged.query
+            click.echo(f'{query.id} ({query.style}, {flagged.overlap:.2f}): {query.text}', err=True)
+        sys.exit(1)
+
     gate = benchmark.manifest.gate
     systems = _without_traceback(lambda: runner.select_systems(benchmark, [gate.system]))
     results = _without_traceback(lambda: asyncio.run(runner.run(benchmark, gate.split, systems)))
     current = Baseline.from_report(report.build_report(benchmark, gate.split, results), gate)
     if update:
         current.save(benchmark.baseline_path)
-        click.echo(f'Wrote {benchmark.baseline_path}')
+        click.echo(f'\nWrote {benchmark.baseline_path}')
         return
     if not benchmark.baseline_path.exists():
         raise click.ClickException(f'{benchmark.baseline_path} not found; run with --update to create it')
@@ -110,6 +90,69 @@ def search_check(benchmark_directory: pathlib.Path, update: bool) -> None:
         click.echo('\n'.join(failures), err=True)
         sys.exit(1)
     click.echo(f'\nWithin {gate.tolerance} of the baseline.')
+
+
+@search.group('annotations')
+def search_annotations() -> None:
+    """Make the queries and judgements anew, in four stages, for when the data is annotated again.
+
+    The two annotators run between the stages, from the files and instructions each stage writes.
+    """
+
+
+@search_annotations.command('prepare-authoring')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+@click.argument('work_directory', type=WORK_DIRECTORY)
+def search_annotations_prepare_authoring(benchmark_directory: pathlib.Path, work_directory: pathlib.Path) -> None:
+    """Stage 1 writes each spec's operation list and the query author's instructions into WORK_DIRECTORY."""
+    manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
+    for path in annotation_workflow.prepare_authoring(manifest, benchmark_directory, work_directory):
+        click.echo(f'Wrote {path}')
+
+
+@search_annotations.command('prepare-assessment')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+@click.argument('work_directory', type=WORK_DIRECTORY)
+def search_annotations_prepare_assessment(benchmark_directory: pathlib.Path, work_directory: pathlib.Path) -> None:
+    """Stage 2 writes each spec's queries, without the author's answers, and the independent assessor's instructions."""
+    manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
+    paths = _without_traceback(
+        lambda: annotation_workflow.prepare_assessment(manifest, benchmark_directory, work_directory)
+    )
+    for path in paths:
+        click.echo(f'Wrote {path}')
+
+
+@search_annotations.command('collect')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+@click.argument('work_directory', type=WORK_DIRECTORY)
+def search_annotations_collect(benchmark_directory: pathlib.Path, work_directory: pathlib.Path) -> None:
+    """Stage 3 checks both annotators' output and writes it as BENCHMARK_DIRECTORY's annotations."""
+    manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
+    query_counts = _without_traceback(
+        lambda: annotation_workflow.collect(manifest, benchmark_directory, work_directory)
+    )
+    for spec, query_count in query_counts.items():
+        click.echo(f'{spec}: {query_count} queries collected')
+
+
+@search_annotations.command('build')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+def search_annotations_build(benchmark_directory: pathlib.Path) -> None:
+    """Stage 4 merges BENCHMARK_DIRECTORY's annotations into its queries and judgements, and reports the agreement.
+
+    A query whose annotators share no answer stops the build until an adjudication for it is added.
+    """
+    manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
+    for spec in manifest.specs:
+        spec_dataset, agreement = _without_traceback(
+            lambda spec=spec: annotations.build_spec_dataset(benchmark_directory, spec)
+        )
+        dataset.write_spec_dataset(benchmark_directory, spec_dataset)
+        click.echo(
+            f'{spec}: {agreement.query_count} queries, shared answer on {agreement.shared_answer_count}, '
+            f'kappa {agreement.kappa:.3f}, {agreement.adjudicated_count} adjudicated'
+        )
 
 
 def _without_traceback(step: typing.Callable[[], StepResult]) -> StepResult:
