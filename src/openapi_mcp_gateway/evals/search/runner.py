@@ -1,18 +1,22 @@
 import dataclasses
 import logging
+import pathlib
 import typing
 
 from ...settings import ServerConfig
-from .. import corpus, target
-from .dataset import Benchmark, DatasetError, Split, Style
-from .metrics import DEPTH, METRICS, score
-from .retriever import GatewaySearch, RandomRanking, Retriever, list_operations
+from .. import corpus
+from .dataset import Benchmark, DatasetError, Query, Split, Style
+from .scoring import DEPTH, score_all
+from .systems import SpecCorpus, System, served_operations
 
 
 logger = logging.getLogger(__name__)
 
-# The floor every run reports beside the configured variants. No variant may take the name.
-RANDOM = 'random'
+# The server config a spec's operations are listed under, before any system narrows or renames them.
+_CORPUS_SERVER = {'exposure': {'style': 'dynamic'}}
+
+# System name, then every query result for it.
+Results = dict[str, list['QueryResult']]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -26,73 +30,51 @@ class QueryResult:
     scores: dict[str, float]
 
 
-# Variant name, then every query result for it.
-Results = dict[str, list[QueryResult]]
-
-
-def server_config(benchmark: Benchmark, spec: str, variant: str) -> ServerConfig:
-    """The server config that serves ``spec`` under ``variant``, with the pinned spec fetched to a local file."""
-    pin = benchmark.manifest.specs[spec]
-    path = corpus.fetch(pin, benchmark.root)
-    return ServerConfig.model_validate({**benchmark.manifest.variants[variant], 'name': spec, 'spec': str(path)})
-
-
-async def run(
-    benchmark: Benchmark,
-    split: Split,
-    variants: typing.Sequence[str] | None = None,
-    *,
-    include_random: bool = True,
-) -> Results:
-    """Rank every query of ``split`` under each variant, and under the random floor unless told not to.
-
-    Raises ``DatasetError`` when a judged operation is not one the gateway serves,
-    since a judgement nothing can retrieve would quietly lower every score.
-    """
-    names = list(variants) if variants is not None else list(benchmark.manifest.variants)
-    unknown = [name for name in names if name not in benchmark.manifest.variants]
+def build_systems(benchmark: Benchmark, names: typing.Sequence[str] | None = None) -> list[System]:
+    """The systems the manifest declares, or only those ``names``, raising ``DatasetError`` for an unknown one."""
+    declared = benchmark.manifest.systems
+    chosen = list(names) if names else list(declared)
+    unknown = [name for name in chosen if name not in declared]
     if unknown:
-        raise DatasetError(f'Unknown variant(s) {unknown}; the benchmark defines {sorted(benchmark.manifest.variants)}')
-    if RANDOM in benchmark.manifest.variants:
-        raise DatasetError(f'No variant may be named {RANDOM!r}, which is the built-in floor')
+        raise DatasetError(f'Unknown system(s) {unknown}; the benchmark declares {sorted(declared)}')
+    return [System.from_spec(name, declared[name].kind, declared[name].config) for name in chosen]
 
-    results: Results = {name: [] for name in names}
-    if include_random:
-        results[RANDOM] = []
+
+def corpus_server(benchmark: Benchmark, spec: str) -> ServerConfig:
+    """The server config that lists ``spec``'s operations, with its pinned document fetched to a local file."""
+    path = corpus.fetch(benchmark.manifest.specs[spec], benchmark.root)
+    return ServerConfig.model_validate({**_CORPUS_SERVER, 'name': spec, 'spec': str(path)})
+
+
+async def load_corpus(benchmark: Benchmark, spec: str) -> SpecCorpus:
+    """List ``spec``'s operations, checking every judged one is among them.
+
+    A judgement no system could retrieve would quietly lower every score, so it is refused instead.
+    """
+    server = corpus_server(benchmark, spec)
+    operations = await served_operations(server)
+    missing = sorted(benchmark.specs[spec].judged_operations() - set(operations))
+    if missing:
+        raise DatasetError(f'{spec} does not serve the judged operation(s) {missing}')
+    return SpecCorpus(name=spec, spec_path=pathlib.Path(server.spec), operations=operations)
+
+
+async def run(benchmark: Benchmark, split: Split, systems: typing.Sequence[System]) -> Results:
+    """Rank every query of ``split`` under each system, spec by spec."""
+    results: Results = {system.name: [] for system in systems}
     for spec, spec_set in benchmark.specs.items():
+        spec_corpus = await load_corpus(benchmark, spec)
         queries = spec_set.split(split)
-        for name in names:
-            async with target.connect(server_config(benchmark, spec, name)) as client:
-                operations = await list_operations(client)
-                missing = _unserved_judgements(queries, set(operations))
-                if not missing:
-                    results[name].extend(await _rank_all(GatewaySearch(client), spec, queries))
-            # Raised outside the client, whose task group would otherwise wrap it in an exception group.
-            if missing:
-                raise DatasetError(f'{spec} under {name} does not serve the judged operation(s) {missing}')
-            if include_random and name == names[0]:
-                results[RANDOM].extend(await _rank_all(RandomRanking(operations), spec, queries))
-            logger.info('Ranked %d %s queries of %s under %s', len(queries), split, spec, name)
+        for system in systems:
+            async with system.open(spec_corpus) as retriever:
+                for query, judgements in queries:
+                    ranking = await retriever.rank(query.text, DEPTH)
+                    results[system.name].append(_result(spec, query, ranking, judgements))
+            logger.info('Ranked %d %s queries of %s under %s', len(queries), split, spec, system.name)
     return results
 
 
-async def _rank_all(
-    retriever: Retriever, spec: str, queries: typing.Sequence[tuple[typing.Any, dict[str, int]]]
-) -> list[QueryResult]:
-    results = []
-    for query, judgements in queries:
-        ranking = await retriever.rank(query.text, DEPTH)
-        results.append(
-            QueryResult(
-                spec=spec,
-                query_id=query.id,
-                style=query.style,
-                ranking=ranking,
-                scores={metric.name: score(metric, ranking, judgements) for metric in METRICS},
-            )
-        )
-    return results
-
-
-def _unserved_judgements(queries: typing.Sequence[tuple[typing.Any, dict[str, int]]], served: set[str]) -> list[str]:
-    return sorted({name for _, judgements in queries for name in judgements} - served)
+def _result(spec: str, query: Query, ranking: list[str], judgements: dict[str, int]) -> QueryResult:
+    return QueryResult(
+        spec=spec, query_id=query.id, style=query.style, ranking=ranking, scores=score_all(ranking, judgements)
+    )

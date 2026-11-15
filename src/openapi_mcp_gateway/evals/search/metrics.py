@@ -1,71 +1,77 @@
-"""Ranking metrics over graded relevance judgements, computed per query.
-
-Grades follow TREC: ``2`` for the operation that does what was asked, ``1`` for one that would also get there,
-and anything unjudged is ``0``.
-nDCG uses every grade, with linear gain as ``trec_eval`` computes it.
-MRR and recall count only grade ``2``, the answer itself, so a lesser operation ranked first is not a hit.
-"""
-
+import abc
 import math
 import typing
 
 
-# The grade that marks the answer itself, as opposed to an acceptable lesser one.
+# The grade that marks the answer itself, as TREC grades it.
+# Grade 1 marks an operation that would also get there, and anything unjudged is 0.
 ANSWER_GRADE = 2
 
 
-class Metric(typing.NamedTuple):
-    """A metric's reported name and its cutoff."""
+class Metric(abc.ABC):
+    """A score from ``0`` to ``1`` for how well one ranking serves one query, looking at the top ``cutoff`` only.
 
-    name: str
-    cutoff: int
+    A metric that counts hits counts only ``ANSWER_GRADE``, so a lesser operation ranked first is not a hit.
+    A new metric is a new subclass listed in ``scoring.METRICS``, and nothing that scores or reports changes.
+    """
 
+    # The metric's family, which its reported name starts with, such as ``ndcg`` in ``ndcg@10``.
+    family: typing.ClassVar[str]
 
-# What every run reports. nDCG@10 is the headline, as in BEIR.
-# Recall@20 is whether the answer is on the first page search_operations returns, which holds 20.
-NDCG_AT_10 = Metric('ndcg@10', 10)
-RECALL_AT_20 = Metric('recall@20', 20)
-MRR_AT_10 = Metric('mrr@10', 10)
-RECALL_AT_1 = Metric('recall@1', 1)
-METRICS = (NDCG_AT_10, RECALL_AT_20, MRR_AT_10, RECALL_AT_1)
+    def __init__(self, cutoff: int):
+        self.cutoff = cutoff
 
-# How deep a ranking must go for every metric above.
-DEPTH = max(metric.cutoff for metric in METRICS)
+    @property
+    def name(self) -> str:
+        return f'{self.family}@{self.cutoff}'
 
-
-def score(metric: Metric, ranking: typing.Sequence[str], judgements: typing.Mapping[str, int]) -> float:
-    """Score one query's ``ranking`` against its ``judgements``, a grade per relevant operation name."""
-    if metric.name.startswith('ndcg'):
-        return ndcg(ranking, judgements, metric.cutoff)
-    if metric.name.startswith('mrr'):
-        return reciprocal_rank(ranking, judgements, metric.cutoff)
-    if metric.name.startswith('recall'):
-        return recall(ranking, judgements, metric.cutoff)
-    raise ValueError(f'Unknown metric: {metric.name}')
+    @abc.abstractmethod
+    def score(self, ranking: typing.Sequence[str], judgements: typing.Mapping[str, int]) -> float:
+        """Score ``ranking`` against ``judgements``, a grade per relevant operation name."""
 
 
-def ndcg(ranking: typing.Sequence[str], judgements: typing.Mapping[str, int], cutoff: int) -> float:
-    """Normalised discounted cumulative gain at ``cutoff``, or ``0`` when nothing is judged relevant."""
-    ideal = _dcg(sorted(judgements.values(), reverse=True)[:cutoff])
-    if ideal == 0:
+class NDCG(Metric):
+    """Normalised discounted cumulative gain, which rewards every relevant operation by its grade and rank.
+
+    Gain is linear in the grade, as ``trec_eval`` computes it.
+    """
+
+    family = 'ndcg'
+
+    def score(self, ranking: typing.Sequence[str], judgements: typing.Mapping[str, int]) -> float:
+        ideal = _dcg(sorted(judgements.values(), reverse=True)[: self.cutoff])
+        if ideal == 0:
+            return 0.0
+        return _dcg([judgements.get(name, 0) for name in ranking[: self.cutoff]]) / ideal
+
+
+class ReciprocalRank(Metric):
+    """One over the rank of the first answer, or ``0`` when no answer is within the cutoff."""
+
+    family = 'mrr'
+
+    def score(self, ranking: typing.Sequence[str], judgements: typing.Mapping[str, int]) -> float:
+        for rank, name in enumerate(ranking[: self.cutoff], start=1):
+            if judgements.get(name, 0) >= ANSWER_GRADE:
+                return 1 / rank
         return 0.0
-    return _dcg([judgements.get(name, 0) for name in ranking[:cutoff]]) / ideal
 
 
-def reciprocal_rank(ranking: typing.Sequence[str], judgements: typing.Mapping[str, int], cutoff: int) -> float:
-    """One over the rank of the first answer within ``cutoff``, or ``0`` when none is there."""
-    for rank, name in enumerate(ranking[:cutoff], start=1):
-        if judgements.get(name, 0) >= ANSWER_GRADE:
-            return 1 / rank
-    return 0.0
+class Recall(Metric):
+    """The share of a query's answers ranked within the cutoff."""
+
+    family = 'recall'
+
+    def score(self, ranking: typing.Sequence[str], judgements: typing.Mapping[str, int]) -> float:
+        answers = answers_of(judgements)
+        if not answers:
+            return 0.0
+        return len(answers.intersection(ranking[: self.cutoff])) / len(answers)
 
 
-def recall(ranking: typing.Sequence[str], judgements: typing.Mapping[str, int], cutoff: int) -> float:
-    """The share of answers ranked within ``cutoff``."""
-    answers = {name for name, grade in judgements.items() if grade >= ANSWER_GRADE}
-    if not answers:
-        return 0.0
-    return len(answers.intersection(ranking[:cutoff])) / len(answers)
+def answers_of(judgements: typing.Mapping[str, int]) -> set[str]:
+    """The operations graded as the answer itself."""
+    return {name for name, grade in judgements.items() if grade >= ANSWER_GRADE}
 
 
 def _dcg(grades: typing.Iterable[int]) -> float:

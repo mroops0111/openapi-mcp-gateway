@@ -1,14 +1,3 @@
-"""A search benchmark on disk: a manifest, and per spec its queries and relevance judgements.
-
-The per-spec files follow BEIR's layout, so other retrieval tools can read them unchanged::
-
-    benchmark.yaml
-    <spec>/queries.jsonl        {"_id": ..., "text": ..., "metadata": {"style": ...}} per line
-    <spec>/qrels/<split>.tsv    query-id, corpus-id, score, with a header row
-
-A corpus id is an operation name as ``search_operations`` returns it.
-"""
-
 import csv
 import dataclasses
 import json
@@ -19,25 +8,52 @@ import pydantic
 import yaml
 
 from ..corpus import SpecPin
-from .metrics import ANSWER_GRADE, METRICS
+from .metrics import ANSWER_GRADE
+from .scoring import METRIC_NAMES
 
 
 MANIFEST = 'benchmark.yaml'
 BASELINE = 'baseline.json'
+QUERIES = 'queries.jsonl'
+QRELS = 'qrels'
+QRELS_HEADER = ['query-id', 'corpus-id', 'score']
 
 Style = typing.Literal['literal', 'paraphrase', 'indirect']
-STYLES: tuple[Style, ...] = typing.get_args(Style)
 Split = typing.Literal['dev', 'test']
+STYLES: tuple[Style, ...] = typing.get_args(Style)
 SPLITS: tuple[Split, ...] = typing.get_args(Split)
-_GRADES = (1, ANSWER_GRADE)
+GRADES = (1, ANSWER_GRADE)
+
+
+class DatasetError(ValueError):
+    """The benchmark's files are inconsistent."""
+
+
+class SystemSpec(pydantic.BaseModel):
+    """One system to compare, written in the manifest as a single key that names its kind, such as ``random``."""
+
+    model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
+
+    kind: str
+    config: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+
+    @pydantic.model_validator(mode='before')
+    @classmethod
+    def _from_single_key(cls, value: typing.Any) -> typing.Any:
+        if isinstance(value, dict) and set(value) - {'kind', 'config'}:
+            if len(value) != 1:
+                raise ValueError(f'A system is one key naming its kind, such as gateway: {{...}}, not {sorted(value)}')
+            kind, config = next(iter(value.items()))
+            return {'kind': kind, 'config': config or {}}
+        return value
 
 
 class Gate(pydantic.BaseModel):
-    """What CI holds a change to: these metrics of one variant, on one split, against the committed baseline."""
+    """What CI holds a change to, which is these metrics of one system, on one split, against the baseline."""
 
     model_config = pydantic.ConfigDict(extra='forbid')
 
-    variant: str
+    system: str
     split: Split = 'test'
     metrics: list[str] = pydantic.Field(default_factory=lambda: ['ndcg@10', 'recall@20'])
     # How far a metric may fall below the baseline before the gate fails.
@@ -46,34 +62,26 @@ class Gate(pydantic.BaseModel):
     @pydantic.field_validator('metrics')
     @classmethod
     def _known_metrics(cls, metrics: list[str]) -> list[str]:
-        known = {metric.name for metric in METRICS}
-        unknown = sorted(set(metrics) - known)
+        unknown = sorted(set(metrics) - set(METRIC_NAMES))
         if unknown:
-            raise ValueError(f'Unknown metric(s) {unknown}; choose from {sorted(known)}')
+            raise ValueError(f'Unknown metric(s) {unknown}; choose from {list(METRIC_NAMES)}')
         return metrics
 
 
 class Manifest(pydantic.BaseModel):
-    """``benchmark.yaml``: which specs, which gateway configurations to compare, and what CI gates on.
-
-    A variant is the part of a server's config that differs between systems, such as ``exposure``.
-    The runner fills in each spec's ``name`` and ``spec``, so one variant applies to every spec.
-    """
+    """The manifest in ``benchmark.yaml``, naming the specs, the systems to compare on them, and the CI gate."""
 
     model_config = pydantic.ConfigDict(extra='forbid')
 
     version: int = pydantic.Field(ge=1)
     specs: dict[str, SpecPin] = pydantic.Field(min_length=1)
-    variants: dict[str, dict[str, typing.Any]] = pydantic.Field(min_length=1)
+    systems: dict[str, SystemSpec] = pydantic.Field(min_length=1)
     gate: Gate
 
     @pydantic.model_validator(mode='after')
-    def _gate_names_a_variant(self) -> typing.Self:
-        if self.gate.variant not in self.variants:
-            raise ValueError(f'gate.variant {self.gate.variant!r} is not one of the variants {sorted(self.variants)}')
-        for name, variant in self.variants.items():
-            if {'name', 'spec'} & set(variant):
-                raise ValueError(f'Variant {name!r} cannot set name or spec, which come from each spec')
+    def _gate_names_a_system(self) -> typing.Self:
+        if self.gate.system not in self.systems:
+            raise ValueError(f'gate.system {self.gate.system!r} is not one of the systems {sorted(self.systems)}')
         return self
 
 
@@ -97,6 +105,10 @@ class SpecSet:
         """The queries of ``split`` with their judgements, in file order."""
         return [(self.queries[query_id], judgements) for query_id, judgements in self.qrels[split].items()]
 
+    def judged_operations(self) -> set[str]:
+        """Every operation any split judges relevant."""
+        return {name for split in self.qrels.values() for judgements in split.values() for name in judgements}
+
 
 @dataclasses.dataclass(frozen=True)
 class Benchmark:
@@ -109,32 +121,50 @@ class Benchmark:
         return self.root / BASELINE
 
 
-class DatasetError(ValueError):
-    """The benchmark's files are inconsistent."""
-
-
 def load(root: pathlib.Path) -> Benchmark:
-    """Load and validate the benchmark in ``root``, raising ``DatasetError`` on any inconsistency."""
+    """Load and validate the benchmark in ``root``, raising ``DatasetError`` on any inconsistency.
+
+    Each spec's files follow BEIR's layout, so other retrieval tools read them unchanged.
+    ``<spec>/queries.jsonl`` holds one query per line, and ``<spec>/qrels/<split>.tsv`` holds its graded judgements,
+    each corpus id an operation name as ``search_operations`` returns it.
+    """
     manifest = load_manifest(root)
     return Benchmark(root=root, manifest=manifest, specs={name: _load_spec_set(root, name) for name in manifest.specs})
 
 
 def load_manifest(root: pathlib.Path) -> Manifest:
     """Load ``benchmark.yaml`` alone, for steps that run before the queries exist."""
-    manifest_path = root / MANIFEST
-    if not manifest_path.exists():
-        raise DatasetError(f'{manifest_path} not found')
+    path = root / MANIFEST
+    if not path.exists():
+        raise DatasetError(f'{path} not found')
     try:
-        return Manifest.model_validate(yaml.safe_load(manifest_path.read_text(encoding='utf-8')))
+        return Manifest.model_validate(yaml.safe_load(path.read_text(encoding='utf-8')))
     except pydantic.ValidationError as error:
-        raise DatasetError(f'{manifest_path}: {error}') from error
+        raise DatasetError(f'{path}: {error}') from error
+
+
+def write_spec_set(root: pathlib.Path, spec_set: SpecSet) -> None:
+    """Write ``spec_set`` in the layout ``load`` reads."""
+    directory = root / spec_set.name
+    (directory / QRELS).mkdir(parents=True, exist_ok=True)
+    with (directory / QUERIES).open('w', encoding='utf-8') as file:
+        for query in spec_set.queries.values():
+            record = {'_id': query.id, 'text': query.text, 'metadata': {'style': query.style}}
+            file.write(json.dumps(record, ensure_ascii=False) + '\n')
+    for split in SPLITS:
+        with (directory / QRELS / f'{split}.tsv').open('w', encoding='utf-8', newline='') as file:
+            writer = csv.writer(file, delimiter='\t', lineterminator='\n')
+            writer.writerow(QRELS_HEADER)
+            for query_id, judgements in spec_set.qrels[split].items():
+                for operation, grade in sorted(judgements.items(), key=lambda item: (-item[1], item[0])):
+                    writer.writerow([query_id, operation, grade])
 
 
 def _load_spec_set(root: pathlib.Path, name: str) -> SpecSet:
     directory = root / name
-    queries = _load_queries(directory / 'queries.jsonl')
+    queries = _load_queries(directory / QUERIES)
     qrels: dict[Split, dict[str, dict[str, int]]] = {
-        split: _load_qrels(directory / 'qrels' / f'{split}.tsv', queries) for split in SPLITS
+        split: _load_qrels(directory / QRELS / f'{split}.tsv', queries) for split in SPLITS
     }
     in_both = set(qrels['dev']) & set(qrels['test'])
     if in_both:
@@ -168,34 +198,17 @@ def _load_qrels(path: pathlib.Path, queries: typing.Mapping[str, Query]) -> dict
     qrels: dict[str, dict[str, int]] = {}
     with path.open(encoding='utf-8', newline='') as file:
         reader = csv.DictReader(file, delimiter='\t')
-        if reader.fieldnames != ['query-id', 'corpus-id', 'score']:
-            raise DatasetError(f'{path}: the header must be query-id, corpus-id, score')
+        if reader.fieldnames != QRELS_HEADER:
+            raise DatasetError(f'{path}: the header must be {", ".join(QRELS_HEADER)}')
         for row in reader:
             where = f'{path}:{reader.line_num}'
             query_id, operation, grade = row['query-id'], row['corpus-id'], int(row['score'])
             if query_id not in queries:
                 raise DatasetError(f'{where}: unknown query id {query_id!r}')
-            if grade not in _GRADES:
-                raise DatasetError(f'{where}: grade {grade} is not one of {list(_GRADES)}')
+            if grade not in GRADES:
+                raise DatasetError(f'{where}: grade {grade} is not one of {list(GRADES)}')
             qrels.setdefault(query_id, {})[operation] = grade
     without_answer = sorted(query_id for query_id, judged in qrels.items() if ANSWER_GRADE not in judged.values())
     if without_answer:
         raise DatasetError(f'{path}: queries {without_answer} have no operation graded {ANSWER_GRADE}')
     return qrels
-
-
-def write_spec_set(root: pathlib.Path, spec_set: SpecSet) -> None:
-    """Write ``spec_set`` in the layout ``load`` reads, for tools that build or revise a benchmark."""
-    directory = root / spec_set.name
-    (directory / 'qrels').mkdir(parents=True, exist_ok=True)
-    with (directory / 'queries.jsonl').open('w', encoding='utf-8') as file:
-        for query in spec_set.queries.values():
-            record = {'_id': query.id, 'text': query.text, 'metadata': {'style': query.style}}
-            file.write(json.dumps(record, ensure_ascii=False) + '\n')
-    for split in SPLITS:
-        with (directory / 'qrels' / f'{split}.tsv').open('w', encoding='utf-8', newline='') as file:
-            writer = csv.writer(file, delimiter='\t', lineterminator='\n')
-            writer.writerow(['query-id', 'corpus-id', 'score'])
-            for query_id, judgements in spec_set.qrels[split].items():
-                for operation, grade in sorted(judgements.items(), key=lambda item: (-item[1], item[0])):
-                    writer.writerow([query_id, operation, grade])
