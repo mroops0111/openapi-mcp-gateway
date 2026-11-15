@@ -1,0 +1,80 @@
+{"_id": "github-q001", "text": "Create an issue in acme/api titled 'Login page crashes on Safari'", "metadata": {"style": "literal"}}
+{"_id": "github-q002", "text": "Close out ticket #318 in octo/website and mark it as completed", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q003", "text": "Nobody has picked up #77 in acme/api yet, and janedoe said she has time this sprint", "metadata": {"style": "indirect"}}
+{"_id": "github-q004", "text": "Leave a note on ticket 45 in acme/api saying the fix has been deployed", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q005", "text": "The thread on issue #902 in acme/web has turned into a flame war and I want it to stop growing", "metadata": {"style": "indirect"}}
+{"_id": "github-q006", "text": "Create a milestone called v2.0 due December 1 in acme/api", "metadata": {"style": "literal"}}
+{"_id": "github-q007", "text": "Merge pull request #318 in octo/backend using squash", "metadata": {"style": "literal"}}
+{"_id": "github-q008", "text": "Propose folding my feature/login branch into main on acme/web so the team can look at it", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q009", "text": "I need maria and the security team to look over my changes in PR 77 on acme/api before it goes in", "metadata": {"style": "indirect"}}
+{"_id": "github-q010", "text": "Create a review for pull request 88 in acme/api approving the changes", "metadata": {"style": "literal"}}
+{"_id": "github-q011", "text": "Create a private repository for the authenticated user called dotfiles", "metadata": {"style": "literal"}}
+{"_id": "github-q012", "text": "I'm leaving the company soon, so my side project jdoe/metrics-bot should live under the acme organization from now on", "metadata": {"style": "indirect"}}
+{"_id": "github-q013", "text": "Replace all repository topics on acme/api with rest, golang and microservice", "metadata": {"style": "literal"}}
+{"_id": "github-q014", "text": "Get branch protection for main in acme/api", "metadata": {"style": "literal"}}
+{"_id": "github-q015", "text": "Require two approving reviews before anything lands on main in acme/web", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q016", "text": "We shipped v3 and the release-2.x branch in acme/api is just dead weight now", "metadata": {"style": "indirect"}}
+{"_id": "github-q017", "text": "Compare two commits in acme/api: what changed between v1.2.0 and v1.3.0?", "metadata": {"style": "literal"}}
+{"_id": "github-q018", "text": "Fetch the package.json file from the main branch of acme/web", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q019", "text": "There's a typo in docs/setup.md in acme/api, 'recieve' should be 'receive', just fix it straight on main", "metadata": {"style": "indirect"}}
+{"_id": "github-q020", "text": "Get the latest release of acme/cli", "metadata": {"style": "literal"}}
+{"_id": "github-q021", "text": "Publish version 2.4.0 of acme/cli tagged v2.4.0", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q022", "text": "Write up a changelog of everything merged in acme/cli since v2.3.0 so I can paste it into the new version's page", "metadata": {"style": "indirect"}}
+{"_id": "github-q023", "text": "Attach the compiled linux-amd64 binary as a download on acme/cli's v2.4.0 version", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q024", "text": "Get a release by tag name v1.0.0 in jdoe/tool", "metadata": {"style": "literal"}}
+{"_id": "github-q025", "text": "Create a repository webhook on acme/api that posts to https://hooks.example.com/gh", "metadata": {"style": "literal"}}
+{"_id": "github-q026", "text": "Resend payload 5521 that hook 12 on acme/api failed to get through while our endpoint was down", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q027", "text": "Our Slack integration stopped getting events from acme/api yesterday; what did GitHub try to send and what response codes came back?", "metadata": {"style": "indirect"}}
+{"_id": "github-q028", "text": "Add a repository collaborator: give bsmith write access to acme/api", "metadata": {"style": "literal"}}
+{"_id": "github-q029", "text": "Does kchen have admin rights on acme/infra?", "metadata": {"style": "indirect"}}
+{"_id": "github-q030", "text": "Revoke tlee's access to jdoe/website", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q031", "text": "Create a deployment status marking deployment 991 in acme/api as success", "metadata": {"style": "literal"}}
+{"_id": "github-q032", "text": "Before anyone ships acme/api to production, I want deploys gated behind a production stage that needs sign-off from the leads", "metadata": {"style": "indirect"}}
+{"_id": "github-q033", "text": "Regenerate the GitHub Pages site for jdoe/jdoe.github.io", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q034", "text": "I want my own copy of torvalds/linux to hack on", "metadata": {"style": "indirect"}}
+{"_id": "github-q035", "text": "Bring my copy jdoe/react up to date with the original facebook/react main", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q036", "text": "Give the green light to the waiting production rollout in run 556677 of acme/api", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q037", "text": "Re-run failed jobs from workflow run 123456 in acme/api", "metadata": {"style": "literal"}}
+{"_id": "github-q038", "text": "Manually kick off the deploy.yml pipeline on the main branch of acme/web", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q039", "text": "The nightly build in acme/api has been stuck for three hours and is hogging a runner", "metadata": {"style": "indirect"}}
+{"_id": "github-q040", "text": "Create or update a repository secret NPM_TOKEN in acme/web", "metadata": {"style": "literal"}}
+{"_id": "github-q041", "text": "CI run 98765 in acme/api went red and I want to read the raw output to figure out why", "metadata": {"style": "indirect"}}
+{"_id": "github-q042", "text": "Create an organization invitation for alice@example.com to join acme", "metadata": {"style": "literal"}}
+{"_id": "github-q043", "text": "Who belongs to the acme org?", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q044", "text": "Ban spammer123 from everything in acme", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q045", "text": "Create a team called platform-eng in the acme org", "metadata": {"style": "literal"}}
+{"_id": "github-q046", "text": "Put dave in the backend group of acme as a maintainer", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q047", "text": "The frontend team in acme keeps getting permission denied when pushing to acme/design-system", "metadata": {"style": "indirect"}}
+{"_id": "github-q048", "text": "Follow a user: follow torvalds", "metadata": {"style": "literal"}}
+{"_id": "github-q049", "text": "Register my new laptop's id_ed25519.pub with my GitHub account so I can clone over SSH", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q050", "text": "Who am I logged in as right now?", "metadata": {"style": "indirect"}}
+{"_id": "github-q051", "text": "Change the bio on my GitHub profile to 'Rust enthusiast'", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q052", "text": "Create a gist with my .bashrc file", "metadata": {"style": "literal"}}
+{"_id": "github-q053", "text": "Show the gists I've favorited", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q054", "text": "That snippet I shared on Gist yesterday has an API key in it, it can't stay online", "metadata": {"style": "indirect"}}
+{"_id": "github-q055", "text": "List check runs for a Git reference: the feature/x branch in acme/api", "metadata": {"style": "literal"}}
+{"_id": "github-q056", "text": "Retry the flaky lint CI job 4455 on acme/api", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q057", "text": "My linter bot found 12 warnings and they should show up inline on the commit's CI results in acme/api", "metadata": {"style": "indirect"}}
+{"_id": "github-q058", "text": "List code scanning alerts for a repository: open ones in acme/api", "metadata": {"style": "literal"}}
+{"_id": "github-q059", "text": "Mark CodeQL finding 17 in acme/web as a false positive", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q060", "text": "Our external SAST tool produced a results file and those findings should appear in the Security tab of acme/api", "metadata": {"style": "indirect"}}
+{"_id": "github-q061", "text": "Show me the vulnerable dependency warnings Dependabot raised for acme/web", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q062", "text": "Someone pushed an AWS key to acme/api, GitHub flagged it as alert 3, and we've already rotated the key", "metadata": {"style": "indirect"}}
+{"_id": "github-q063", "text": "List packages for an organization: the container packages in acme", "metadata": {"style": "literal"}}
+{"_id": "github-q064", "text": "The 1.0.3-beta image of my container package webapp is broken and nobody should be able to pull it anymore", "metadata": {"style": "indirect"}}
+{"_id": "github-q065", "text": "Bring back the npm library acme-utils that was removed from the acme org last week", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q066", "text": "Put issue #45 from acme/api onto acme's planning board #3", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q067", "text": "List items for an organization owned project: project 5 in acme", "metadata": {"style": "literal"}}
+{"_id": "github-q068", "text": "I have an idea I want on my personal planning board, but it's not worth opening a real issue for yet", "metadata": {"style": "indirect"}}
+{"_id": "github-q069", "text": "Mark notifications as read", "metadata": {"style": "literal"}}
+{"_id": "github-q070", "text": "Add vercel/next.js to my favorites on GitHub", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q071", "text": "I'm getting way too many emails about acme/monorepo and just want to stop hearing about it", "metadata": {"style": "indirect"}}
+{"_id": "github-q072", "text": "Find every place in acme's source that calls deprecatedAuth(", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q073", "text": "Search repositories for Rust web frameworks with more than 1000 stars", "metadata": {"style": "literal"}}
+{"_id": "github-q074", "text": "Has anyone already reported a 'null pointer in parser' bug in acme/api before I file one?", "metadata": {"style": "indirect"}}
+{"_id": "github-q075", "text": "My script keeps getting 403s from GitHub, how many calls do I have left this hour?", "metadata": {"style": "indirect"}}
+{"_id": "github-q076", "text": "Get a gitignore template for Python", "metadata": {"style": "literal"}}
+{"_id": "github-q077", "text": "Spin up a cloud dev environment for acme/api on the main branch", "metadata": {"style": "paraphrase"}}
+{"_id": "github-q078", "text": "My codespace has been idling all afternoon and burning through my monthly hours", "metadata": {"style": "indirect"}}
+{"_id": "github-q079", "text": "Add users to the Copilot subscription for an organization: give ana and raj seats in acme", "metadata": {"style": "literal"}}
+{"_id": "github-q080", "text": "acme/game hit the front page and random accounts are piling onto our issues; only existing contributors should be able to chime in for a while", "metadata": {"style": "indirect"}}
