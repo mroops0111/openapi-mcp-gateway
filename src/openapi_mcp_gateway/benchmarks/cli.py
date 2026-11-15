@@ -1,0 +1,120 @@
+import asyncio
+import json
+import logging
+import pathlib
+import sys
+import typing
+
+import click
+
+from .gateway_connection import operation_summaries
+from .search import annotations, dataset, markdown, overlap, report, runner
+from .search.baseline import Baseline
+
+
+BENCHMARK_DIRECTORY = click.Path(exists=True, file_okay=False, path_type=pathlib.Path)
+
+StepResult = typing.TypeVar('StepResult')
+
+
+@click.group()
+@click.option('-v', '--verbose', is_flag=True, help='Log progress, including each spec and system as it runs.')
+def main(verbose: bool) -> None:
+    """Benchmarks of what the gateway does for a model."""
+    # The gateway logs every registration at INFO, which buries a benchmark's own output.
+    logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(name)s: %(message)s')
+    if verbose:
+        logging.getLogger('openapi_mcp_gateway.benchmarks').setLevel(logging.INFO)
+
+
+@main.group()
+def search() -> None:
+    """How well search_operations ranks the operation a request asks for."""
+
+
+@search.command('build')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+def search_build(benchmark_directory: pathlib.Path) -> None:
+    """Merge the annotations in BENCHMARK_DIRECTORY into its queries and judgements, and report the agreement."""
+    manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
+    for spec in manifest.specs:
+        spec_dataset, agreement = _without_traceback(
+            lambda spec=spec: annotations.build_spec_dataset(benchmark_directory, spec)
+        )
+        dataset.write_spec_dataset(benchmark_directory, spec_dataset)
+        click.echo(
+            f'{spec}: {agreement.query_count} queries, shared answer on {agreement.shared_answer_count}, '
+            f'kappa {agreement.kappa:.3f}, {agreement.adjudicated_count} adjudicated'
+        )
+
+
+@search.command('validate')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+def search_validate(benchmark_directory: pathlib.Path) -> None:
+    """Check BENCHMARK_DIRECTORY's files, and that no paraphrase or indirect query repeats its answer's words."""
+    benchmark = _without_traceback(lambda: dataset.load(benchmark_directory))
+    summaries_by_spec = {spec: operation_summaries(runner.corpus_server(benchmark, spec)) for spec in benchmark.specs}
+    style_report = overlap.check_styles(benchmark, summaries_by_spec)
+    for style, mean in style_report.mean_overlaps().items():
+        click.echo(f'{style}: mean overlap {mean:.2f} over {len(style_report.overlaps_by_style[style])}')
+    if style_report.flagged_queries:
+        click.echo(f'\nQueries that repeat more than {overlap.MAX_NON_LITERAL_OVERLAP:.0%} of their answer:')
+        for flagged in style_report.flagged_queries:
+            click.echo(f'{flagged.query.id} ({flagged.query.style}, {flagged.overlap:.2f}): {flagged.query.text}')
+        sys.exit(1)
+    click.echo('All queries are consistent.')
+
+
+@search.command('run')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+@click.option('--split', type=click.Choice(dataset.SPLITS), default='test', show_default=True)
+@click.option(
+    '--system', 'system_names', multiple=True, help='A system to run. Repeat for several; the default is all.'
+)
+@click.option(
+    '--output', type=click.Path(dir_okay=False, path_type=pathlib.Path), help='Write the full report as JSON.'
+)
+def search_run(
+    benchmark_directory: pathlib.Path, split: dataset.Split, system_names: tuple[str, ...], output: pathlib.Path | None
+) -> None:
+    """Rank BENCHMARK_DIRECTORY's queries under each system and print the tables."""
+    benchmark = _without_traceback(lambda: dataset.load(benchmark_directory))
+    systems = _without_traceback(lambda: runner.select_systems(benchmark, system_names))
+    results = _without_traceback(lambda: asyncio.run(runner.run(benchmark, split, systems)))
+    built_report = report.build_report(benchmark, split, results)
+    if output is not None:
+        output.write_text(built_report.model_dump_json(indent=2) + '\n', encoding='utf-8')
+    click.echo(markdown.to_markdown(built_report), nl=False)
+
+
+@search.command('check')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+@click.option('--update', is_flag=True, help='Write this run as the new baseline instead of comparing against it.')
+def search_check(benchmark_directory: pathlib.Path, update: bool) -> None:
+    """Fail when the gated system scores below BENCHMARK_DIRECTORY's baseline, as CI runs it."""
+    benchmark = _without_traceback(lambda: dataset.load(benchmark_directory))
+    gate = benchmark.manifest.gate
+    systems = _without_traceback(lambda: runner.select_systems(benchmark, [gate.system]))
+    results = _without_traceback(lambda: asyncio.run(runner.run(benchmark, gate.split, systems)))
+    current = Baseline.from_report(report.build_report(benchmark, gate.split, results), gate)
+    if update:
+        current.save(benchmark.baseline_path)
+        click.echo(f'Wrote {benchmark.baseline_path}')
+        return
+    if not benchmark.baseline_path.exists():
+        raise click.ClickException(f'{benchmark.baseline_path} not found; run with --update to create it')
+    failures = Baseline.load(benchmark.baseline_path).regressions(current, gate.tolerance)
+    click.echo(json.dumps({'macro': current.macro, 'specs': current.specs}, indent=2))
+    if failures:
+        click.echo(f'\nBelow the baseline by more than {gate.tolerance}:', err=True)
+        click.echo('\n'.join(failures), err=True)
+        sys.exit(1)
+    click.echo(f'\nWithin {gate.tolerance} of the baseline.')
+
+
+def _without_traceback(step: typing.Callable[[], StepResult]) -> StepResult:
+    """Run ``step``, turning a benchmark's own errors into a command-line error without a traceback."""
+    try:
+        return step()
+    except dataset.DatasetError as error:
+        raise click.ClickException(str(error)) from error

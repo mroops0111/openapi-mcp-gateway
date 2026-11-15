@@ -1,23 +1,27 @@
 import abc
 import contextlib
-import dataclasses
 import hashlib
 import pathlib
 import random
 import typing
 
+import pydantic
 from mcp import Client
 
 from ...settings import ServerConfig
-from ..target import call_tool, connect
+from ..gateway_connection import call_tool, connect
 
 
 SEARCH_TOOL = 'search_operations'
 
+# Stand-ins for the fields every spec fills in, so a gateway system's server fragment can be checked on its own.
+PLACEHOLDER_SERVER_FIELDS = {'name': 'placeholder', 'spec': 'placeholder.json'}
 
-@dataclasses.dataclass(frozen=True)
-class SpecCorpus:
+
+class SpecCorpus(pydantic.BaseModel):
     """One spec as every system sees it, with its name, a local copy of its document, and every operation it serves."""
+
+    model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
     name: str
     spec_path: pathlib.Path
@@ -30,45 +34,18 @@ class Retriever(typing.Protocol):
     async def rank(self, query: str, depth: int) -> list[str]: ...
 
 
-class SystemConfigError(ValueError):
-    """A manifest names a system kind that does not exist, or configures one wrongly."""
+class System(pydantic.BaseModel, abc.ABC):
+    """A way of ranking a spec's operations, opened once per spec to rank every query of it.
 
-
-class System(abc.ABC):
-    """A named way of ranking operations, opened once per spec to rank every query of it.
-
-    Each subclass declares its ``kind``, the key a manifest names it by, and registers itself on definition.
-    A new kind of system, such as another framework's tool search, is a new subclass,
+    A manifest declares each system as a mapping whose ``type`` picks the subclass,
+    and the manifest validates its whole configuration on load.
+    A new kind of system, such as another framework's tool search, is a new subclass added to ``Manifest.systems``,
     and the runner, the report, and the CI gate stay as they are.
     """
 
-    kind: typing.ClassVar[str]
-    _kinds: typing.ClassVar[dict[str, type['System']]] = {}
+    model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
-    def __init__(self, name: str):
-        self.name = name
-
-    def __init_subclass__(cls, **kwargs: typing.Any):
-        super().__init_subclass__(**kwargs)
-        # Only a class that names its own kind is one a manifest can ask for.
-        # ABCMeta works out the abstract methods after this hook runs, so they cannot be what decides.
-        if 'kind' in cls.__dict__:
-            if cls.kind in System._kinds:
-                raise TypeError(f'System kind {cls.kind!r} is already taken by {System._kinds[cls.kind].__name__}')
-            System._kinds[cls.kind] = cls
-
-    @classmethod
-    def from_spec(cls, name: str, kind: str, config: typing.Mapping[str, typing.Any]) -> 'System':
-        """Build the system a manifest declares under ``name``, raising ``SystemConfigError`` for an unknown kind."""
-        system_class = System._kinds.get(kind)
-        if system_class is None:
-            raise SystemConfigError(f'System {name!r} has unknown kind {kind!r}; choose from {sorted(System._kinds)}')
-        return system_class.configure(name, config)
-
-    @classmethod
-    @abc.abstractmethod
-    def configure(cls, name: str, config: typing.Mapping[str, typing.Any]) -> typing.Self:
-        """Build this kind of system from its manifest entry."""
+    type: str
 
     @abc.abstractmethod
     def open(self, corpus: SpecCorpus) -> contextlib.AbstractAsyncContextManager[Retriever]:
@@ -78,25 +55,29 @@ class System(abc.ABC):
 class GatewaySystem(System):
     """The gateway's own ``search_operations``, called over MCP exactly as a model would call it.
 
-    Its config is the part of a server config that differs between gateway systems, such as ``exposure``.
+    ``server`` is the part of a server config that differs between gateway systems, such as ``exposure``.
     The spec's ``name`` and ``spec`` are filled in for each spec.
     """
 
-    kind = 'gateway'
+    type: typing.Literal['gateway'] = 'gateway'
+    server: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
 
-    def __init__(self, name: str, server: typing.Mapping[str, typing.Any]):
-        super().__init__(name)
-        self._server = dict(server)
-
+    @pydantic.field_validator('server')
     @classmethod
-    def configure(cls, name: str, config: typing.Mapping[str, typing.Any]) -> typing.Self:
-        if {'name', 'spec'} & set(config):
-            raise SystemConfigError(f'System {name!r} cannot set name or spec, which come from each spec')
-        return cls(name, config)
+    def _validate_server(cls, server: dict[str, typing.Any]) -> dict[str, typing.Any]:
+        """Refuse a fragment that sets what each spec fills in, or that no server config would accept."""
+        taken = sorted(set(server) & set(PLACEHOLDER_SERVER_FIELDS))
+        if taken:
+            raise ValueError(f'server cannot set {taken}, which come from each spec')
+        try:
+            ServerConfig.model_validate({**server, **PLACEHOLDER_SERVER_FIELDS})
+        except pydantic.ValidationError as error:
+            raise ValueError(f'server is not a valid server config fragment: {error}') from error
+        return server
 
     def server_config(self, corpus: SpecCorpus) -> ServerConfig:
         """The server config this system serves ``corpus`` with."""
-        return ServerConfig.model_validate({**self._server, 'name': corpus.name, 'spec': str(corpus.spec_path)})
+        return ServerConfig.model_validate({**self.server, 'name': corpus.name, 'spec': str(corpus.spec_path)})
 
     @contextlib.asynccontextmanager
     async def open(self, corpus: SpecCorpus) -> typing.AsyncIterator[Retriever]:
@@ -107,13 +88,7 @@ class GatewaySystem(System):
 class RandomSystem(System):
     """A floor to compare against, ranking every operation in an order fixed by the query's text alone."""
 
-    kind = 'random'
-
-    @classmethod
-    def configure(cls, name: str, config: typing.Mapping[str, typing.Any]) -> typing.Self:
-        if config:
-            raise SystemConfigError(f'System {name!r} of kind random takes no configuration')
-        return cls(name)
+    type: typing.Literal['random'] = 'random'
 
     @contextlib.asynccontextmanager
     async def open(self, corpus: SpecCorpus) -> typing.AsyncIterator[Retriever]:

@@ -30,8 +30,8 @@ class Metric(abc.ABC):
         """Score ``ranking`` against ``judgements``, a grade per relevant operation name."""
 
 
-class NDCG(Metric):
-    """Normalised discounted cumulative gain, which rewards every relevant operation by its grade and rank.
+class NormalizedDiscountedCumulativeGain(Metric):
+    """Rewards every relevant operation by its grade and rank, relative to the best ranking possible.
 
     Gain is linear in the grade, as ``trec_eval`` computes it.
     """
@@ -39,10 +39,10 @@ class NDCG(Metric):
     family = 'ndcg'
 
     def score(self, ranking: typing.Sequence[str], judgements: typing.Mapping[str, int]) -> float:
-        ideal = _dcg(sorted(judgements.values(), reverse=True)[: self.cutoff])
+        ideal = _discounted_cumulative_gain(sorted(judgements.values(), reverse=True)[: self.cutoff])
         if ideal == 0:
             return 0.0
-        return _dcg([judgements.get(name, 0) for name in ranking[: self.cutoff]]) / ideal
+        return _discounted_cumulative_gain([judgements.get(name, 0) for name in ranking[: self.cutoff]]) / ideal
 
 
 class ReciprocalRank(Metric):
@@ -63,16 +63,16 @@ class Recall(Metric):
     family = 'recall'
 
     def score(self, ranking: typing.Sequence[str], judgements: typing.Mapping[str, int]) -> float:
-        answers = answers_of(judgements)
+        answers = answers_in(judgements)
         if not answers:
             return 0.0
         return len(answers.intersection(ranking[: self.cutoff])) / len(answers)
 
 
-def answers_of(judgements: typing.Mapping[str, int]) -> set[str]:
+def answers_in(judgements: typing.Mapping[str, int]) -> set[str]:
     """The operations graded as the answer itself."""
     return {name for name, grade in judgements.items() if grade >= ANSWER_GRADE}
 
 
-def _dcg(grades: typing.Iterable[int]) -> float:
+def _discounted_cumulative_gain(grades: typing.Iterable[int]) -> float:
     return sum(grade / math.log2(rank + 1) for rank, grade in enumerate(grades, start=1))

@@ -17,21 +17,23 @@ specs:
     source: https://raw.githubusercontent.com/discord/discord-api-spec/3a21a01249a763cd47f1dfec3da91c5ba71bb974/specs/openapi.json
     sha256: ef338088f4c6a73fdb9840acd1ce2bf8f16c1870f4437bfc563418c7e0de7278
 
-# The systems compared, each one key naming its kind.
-# A gateway system is the part of a server config that differs, applied to every spec.
+# The systems compared. Each one's type picks its kind.
+# A gateway system's server is the part of a server config that differs, applied to every spec.
 systems:
   default:
-    gateway:
+    type: gateway
+    server:
       exposure:
         style: dynamic
   equal-weights:
-    gateway:
+    type: gateway
+    server:
       exposure:
         style: dynamic
         search:
           field_weights: {name: 1, summary: 1, description: 1, path: 1, tags: 1}
   random:
-    random: {}
+    type: random
 
 # CI fails when a gated metric of this system falls more than `tolerance` below baseline.json.
 gate:

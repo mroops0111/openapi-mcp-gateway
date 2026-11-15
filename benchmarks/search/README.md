@@ -44,7 +44,7 @@ Two annotators judged every query independently. [`annotations/`](annotations/) 
 
 Kappa is computed over the grade of every operation either annotator judged, so it leaves out the operations both left at `0` and runs lower than a kappa over the whole corpus would. The annotators agree on the answer itself almost everywhere, and disagree over which lesser operations count.
 
-`python -m openapi_mcp_gateway.evals search build evals/search` rebuilds the queries and qrels from the annotations.
+`python -m openapi_mcp_gateway.benchmarks search build benchmarks/search` rebuilds the queries and qrels from the annotations.
 
 ## Splits
 

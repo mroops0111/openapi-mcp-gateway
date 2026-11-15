@@ -1,7 +1,8 @@
-import dataclasses
 import random
 import statistics
 import typing
+
+import pydantic
 
 
 # Enough resamples that the interval's ends move by well under a hundredth between seeds.
@@ -9,9 +10,10 @@ DEFAULT_RESAMPLES = 10_000
 DEFAULT_CONFIDENCE = 0.95
 
 
-@dataclasses.dataclass(frozen=True)
-class Difference:
+class Difference(pydantic.BaseModel):
     """How much one system scores above another, with a bootstrap confidence interval around it."""
+
+    model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
     mean: float
     low: float
@@ -43,10 +45,10 @@ def paired_bootstrap(
     """
     if not differences_by_stratum or any(not values for values in differences_by_stratum.values()):
         raise ValueError('Every stratum needs at least one paired difference')
-    rng = random.Random(seed)
+    generator = random.Random(seed)
     strata = [list(values) for values in differences_by_stratum.values()]
     estimates = sorted(
-        statistics.fmean(statistics.fmean(rng.choices(values, k=len(values))) for values in strata)
+        statistics.fmean(statistics.fmean(generator.choices(values, k=len(values))) for values in strata)
         for _ in range(resamples)
     )
     tail = (1 - confidence) / 2

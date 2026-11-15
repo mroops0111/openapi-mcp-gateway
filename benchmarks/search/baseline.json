@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "benchmark_version": 1,
   "system": "default",
   "split": "test",
   "gateway_version": "0.8.0",

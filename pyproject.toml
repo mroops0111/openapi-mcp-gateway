@@ -112,7 +112,7 @@ line-ending = "auto"
 "tests/**/*.py" = ["S101", "S105", "S106", "S603", "S607"]
 "__init__.py" = ["F401"]
 # Benchmarks draw seeded samples so a run can be repeated, which is what the standard generator is for.
-"src/openapi_mcp_gateway/evals/**/*.py" = ["S311"]
+"src/openapi_mcp_gateway/benchmarks/**/*.py" = ["S311"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["openapi_mcp_gateway"]
