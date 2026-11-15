@@ -32,6 +32,8 @@ systems:
         style: dynamic
         search:
           field_weights: {name: 1, summary: 1, description: 1, path: 1, tags: 1}
+  pydantic-ai-keywords:
+    type: pydantic-ai-keywords
   random:
     type: random
 

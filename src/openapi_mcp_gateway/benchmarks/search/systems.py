@@ -9,10 +9,13 @@ import pydantic
 from mcp import Client
 
 from ...settings import ServerConfig
-from ..gateway_connection import call_tool, connect
+from ..gateway_connection import OperationListing, call_tool, connect, list_operations
 
 
 SEARCH_TOOL = 'search_operations'
+
+# The tool Pydantic AI's tool search gives a model for finding deferred tools.
+SEARCH_TOOLS_TOOL = 'search_tools'
 
 # Stand-ins for the fields every spec fills in, so a gateway system's server fragment can be checked on its own.
 PLACEHOLDER_SERVER_FIELDS = {'name': 'placeholder', 'spec': 'placeholder.json'}
@@ -95,6 +98,22 @@ class RandomSystem(System):
         yield RandomRanking(corpus.operations)
 
 
+class PydanticAIKeywordSystem(System):
+    """Pydantic AI's own tool search with its keyword strategy, a common agent framework's default to compare with.
+
+    Every operation becomes a deferred Pydantic AI tool with its name and its spec text as the description,
+    and a scripted model asks the framework's ``search_tools`` for the query, so the ranking is the framework's own.
+    It needs the benchmarks extra, which is imported only when the system opens.
+    """
+
+    type: typing.Literal['pydantic-ai-keywords'] = 'pydantic-ai-keywords'
+
+    @contextlib.asynccontextmanager
+    async def open(self, corpus: SpecCorpus) -> typing.AsyncIterator[Retriever]:
+        server = ServerConfig.model_validate({'name': corpus.name, 'spec': str(corpus.spec_path)})
+        yield PydanticAIKeywordSearch(list_operations(server))
+
+
 class GatewaySearch:
     """Ranks by calling ``search_operations``, following its pages until the ranking is deep enough."""
 
@@ -111,6 +130,49 @@ class GatewaySearch:
                 break
             arguments = {'query': query, 'cursor': page['nextCursor']}
         return names[:depth]
+
+
+class PydanticAIKeywordSearch:
+    """Ranks by running Pydantic AI's ``search_tools`` once per query, through the framework's public API."""
+
+    def __init__(self, listings: typing.Sequence[OperationListing]):
+        from pydantic_ai import Tool
+
+        self._tools = [
+            Tool(
+                _never_called,
+                name=listing.name,
+                description=' '.join(part for part in (listing.summary, listing.description) if part),
+                defer_loading=True,
+            )
+            for listing in listings
+        ]
+
+    async def rank(self, query: str, depth: int) -> list[str]:
+        from pydantic_ai import Agent, capture_run_messages
+        from pydantic_ai.capabilities import ToolSearch
+        from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+        from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+        def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            searched = any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+            if searched:
+                return ModelResponse(parts=[TextPart('Done.')])
+            return ModelResponse(parts=[ToolCallPart(tool_name=SEARCH_TOOLS_TOOL, args={'queries': [query]})])
+
+        agent = Agent(
+            FunctionModel(respond),
+            tools=self._tools,
+            capabilities=[ToolSearch(strategy='keywords', max_results=depth)],
+        )
+        with capture_run_messages() as messages:
+            await agent.run(query)
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart) and part.tool_name == SEARCH_TOOLS_TOOL:
+                    content = part.content if isinstance(part.content, dict) else {}
+                    return [match['name'] for match in content.get('discovered_tools', [])][:depth]
+        return []
 
 
 class RandomRanking:
@@ -136,3 +198,7 @@ async def served_operations(server: ServerConfig) -> tuple[str, ...]:
             if 'nextCursor' not in page:
                 return tuple(names)
             arguments = {'cursor': page['nextCursor']}
+
+
+def _never_called() -> None:
+    """The function behind every deferred tool, which search finds but nothing calls."""

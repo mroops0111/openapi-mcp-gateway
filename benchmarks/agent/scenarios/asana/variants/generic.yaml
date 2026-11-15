@@ -1,0 +1,17 @@
+# Generic: dynamic exposure for the full Asana API, with intent-agnostic instructions and one spec-default fix.
+servers:
+  asana:
+    exposure:
+      style: dynamic
+    instructions: |
+      Asana identifies every object by gid. Start from get_workspaces to find the workspace gid, and use
+      typeahead_for_workspace to find projects, users, teams, tags, or tasks by name.
+      Never set opt_pretty. Use limit and the returned next_page.offset to page through lists.
+    operations:
+      searchTasksForWorkspace:
+        tool:
+          params_strategy: merge
+          params:
+            resource_subtype:
+              default: default_task
+              description: Task kind to return. Use default_task for ordinary tasks, milestone for milestones.

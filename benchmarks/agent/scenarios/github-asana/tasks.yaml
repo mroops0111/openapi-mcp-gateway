@@ -1,0 +1,360 @@
+- id: github-asana-t01
+  prompt: >-
+    Every open issue in acme/web labelled release-blocker needs a task in our Web Platform project in Asana
+    (Acme Engineering workspace). Create one task per issue, named exactly like the issue title.
+  split: practice
+  in_intent: true
+  expected_calls:
+    - server: asana
+      method: POST
+      path: /tasks
+      body: {data: {name: Checkout page times out on Safari, projects: ['1202000000000011']}}
+    - server: asana
+      method: POST
+      path: /tasks
+      body: {data: {name: Password reset email links expire immediately, projects: ['1202000000000011']}}
+  solution:
+    - server: github
+      operation: issues_list_for_repo
+      arguments: {owner: acme, repo: web, state: open, labels: release-blocker}
+    - server: asana
+      operation: create_task
+      arguments: {data: {name: Checkout page times out on Safari, projects: ['1202000000000011']}}
+    - server: asana
+      operation: create_task
+      arguments: {data: {name: Password reset email links expire immediately, projects: ['1202000000000011']}}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues
+      body:
+        - {number: 412, title: Checkout page times out on Safari, state: open, labels: [{name: release-blocker}]}
+        - {number: 415, title: Password reset email links expire immediately, state: open, labels: [{name: release-blocker}, {name: auth}]}
+        - {number: 418, title: Footer links misaligned on tablet, state: open, labels: [{name: ui}]}
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}, {gid: '1202000000000021', name: API Platform}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}, {gid: '1202000000000021', name: API Platform}]}
+
+- id: github-asana-t02
+  prompt: >-
+    The Asana task "Add rate limiting to public API" in the API Platform project (Acme Engineering workspace)
+    is ready for engineering. Open a GitHub issue for it in acme/api with the same title, then leave a comment
+    on the Asana task with the link to the new issue.
+  split: practice
+  in_intent: true
+  expected_calls:
+    - server: github
+      method: POST
+      path: /repos/{owner}/{repo}/issues
+      path_parameters: {owner: acme, repo: api}
+      body: {title: Add rate limiting to public API}
+    - server: asana
+      method: POST
+      path: /tasks/{task_gid}/stories
+      path_parameters: {task_gid: '1203000000000101'}
+  solution:
+    - server: github
+      operation: issues_create
+      arguments: {owner: acme, repo: api, title: Add rate limiting to public API, body: Tracked in Asana (API Platform).}
+    - server: asana
+      operation: create_story_for_task
+      arguments: {task_gid: '1203000000000101', data: {text: 'GitHub issue: https://github.com/acme/api/issues/230'}}
+  responses:
+    - server: github
+      method: POST
+      path: /repos/acme/api/issues
+      body: {number: 230, title: Add rate limiting to public API, state: open, html_url: 'https://github.com/acme/api/issues/230'}
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000021', name: API Platform}, {gid: '1202000000000022', name: API Docs}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000021', name: API Platform}, {gid: '1202000000000022', name: API Docs}]}
+    - server: asana
+      method: GET
+      path: /projects/1202000000000021/tasks
+      body: {data: [{gid: '1203000000000101', name: Add rate limiting to public API}, {gid: '1203000000000102', name: Add rate limiting dashboard}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/tasks/search
+      body: {data: [{gid: '1203000000000101', name: Add rate limiting to public API}, {gid: '1203000000000102', name: Add rate limiting dashboard}]}
+
+- id: github-asana-t03
+  prompt: >-
+    Clean up the Web Platform project in Asana (Acme Engineering workspace): each task there links its acme/web
+    GitHub issue in the description. Mark complete every task whose GitHub issue has since been closed, and leave
+    the rest alone.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1203000000000201'}
+      body: {data: {completed: true}}
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1203000000000203'}
+      body: {data: {completed: true}}
+  solution:
+    - server: github
+      operation: issues_get
+      arguments: {owner: acme, repo: web, issue_number: 501}
+    - server: asana
+      operation: update_task
+      arguments: {task_gid: '1203000000000201', data: {completed: true}}
+    - server: asana
+      operation: update_task
+      arguments: {task_gid: '1203000000000203', data: {completed: true}}
+  responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects/1202000000000011/tasks
+      body:
+        data:
+          - {gid: '1203000000000201', name: Session cookie not cleared on logout, completed: false, notes: 'GitHub: https://github.com/acme/web/issues/501'}
+          - {gid: '1203000000000202', name: Image uploads fail over 10MB, completed: false, notes: 'GitHub: https://github.com/acme/web/issues/502'}
+          - {gid: '1203000000000203', name: Search results ignore locale, completed: false, notes: 'GitHub: https://github.com/acme/web/issues/503'}
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues/501
+      body: {number: 501, title: Session cookie not cleared on logout, state: closed, state_reason: completed}
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues/502
+      body: {number: 502, title: Image uploads fail over 10MB, state: open}
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues/503
+      body: {number: 503, title: Search results ignore locale, state: closed, state_reason: completed}
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues
+      body:
+        - {number: 502, title: Image uploads fail over 10MB, state: open}
+
+- id: github-asana-t04
+  prompt: >-
+    In Asana, under the "Q4 performance work" task in the Web Platform project (Acme Engineering workspace),
+    add a subtask for each open pull request in acme/web labelled perf. Name each subtask after the PR title.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: asana
+      method: POST
+      path: /tasks/{task_gid}/subtasks
+      path_parameters: {task_gid: '1203000000000301'}
+      body: {data: {name: Lazy-load product images}}
+    - server: asana
+      method: POST
+      path: /tasks/{task_gid}/subtasks
+      path_parameters: {task_gid: '1203000000000301'}
+      body: {data: {name: Cache rendered navigation menu}}
+  solution:
+    - server: github
+      operation: pulls_list
+      arguments: {owner: acme, repo: web, state: open}
+    - server: asana
+      operation: create_subtask_for_task
+      arguments: {task_gid: '1203000000000301', data: {name: Lazy-load product images}}
+    - server: asana
+      operation: create_subtask_for_task
+      arguments: {task_gid: '1203000000000301', data: {name: Cache rendered navigation menu}}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/web/pulls
+      body:
+        - {number: 640, title: Lazy-load product images, state: open, labels: [{name: perf}]}
+        - {number: 641, title: Update copyright year, state: open, labels: [{name: chore}]}
+        - {number: 645, title: Cache rendered navigation menu, state: open, labels: [{name: perf}, {name: frontend}]}
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects/1202000000000011/tasks
+      body: {data: [{gid: '1203000000000301', name: Q4 performance work}, {gid: '1203000000000302', name: Q3 performance work}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/tasks/search
+      body: {data: [{gid: '1203000000000301', name: Q4 performance work}, {gid: '1203000000000302', name: Q3 performance work}]}
+
+- id: github-asana-t05
+  prompt: >-
+    The Bugs section of our Web Platform project in Asana (Acme Engineering workspace) has bugs nobody has filed
+    on GitHub yet. For each task in that section that is still open, create an issue in acme/web titled with the
+    task name and labelled bug.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: github
+      method: POST
+      path: /repos/{owner}/{repo}/issues
+      path_parameters: {owner: acme, repo: web}
+      body: {title: Cart badge shows stale item count, labels: [bug]}
+    - server: github
+      method: POST
+      path: /repos/{owner}/{repo}/issues
+      path_parameters: {owner: acme, repo: web}
+      body: {title: Date picker crashes on leap day, labels: [bug]}
+  solution:
+    - server: asana
+      operation: get_tasks_for_section
+      arguments: {section_gid: '1204000000000011'}
+    - server: github
+      operation: issues_create
+      arguments: {owner: acme, repo: web, title: Cart badge shows stale item count, labels: [bug]}
+    - server: github
+      operation: issues_create
+      arguments: {owner: acme, repo: web, title: Date picker crashes on leap day, labels: [bug]}
+  responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects/1202000000000011/sections
+      body: {data: [{gid: '1204000000000010', name: Backlog}, {gid: '1204000000000011', name: Bugs}, {gid: '1204000000000012', name: In Review}]}
+    - server: asana
+      method: GET
+      path: /sections/1204000000000011/tasks
+      body:
+        data:
+          - {gid: '1203000000000401', name: Cart badge shows stale item count, completed: false}
+          - {gid: '1203000000000402', name: Login spinner never stops on 500, completed: true}
+          - {gid: '1203000000000403', name: Date picker crashes on leap day, completed: false}
+    - server: asana
+      method: GET
+      path: /sections/1204000000000010/tasks
+      body: {data: [{gid: '1203000000000404', name: Explore new design tokens, completed: false}]}
+
+- id: github-asana-t06
+  prompt: >-
+    Set the due date of the Asana task "Ship billing v2" in the API Platform project (Acme Engineering workspace)
+    to match the due date of the "Billing v2" milestone in acme/api.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1203000000000501'}
+      body: {data: {due_on: '2026-12-04'}}
+  solution:
+    - server: github
+      operation: issues_list_milestones
+      arguments: {owner: acme, repo: api, state: open}
+    - server: asana
+      operation: update_task
+      arguments: {task_gid: '1203000000000501', data: {due_on: '2026-12-04'}}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/api/milestones
+      body:
+        - {number: 7, title: Billing v2, state: open, due_on: '2026-12-04T08:00:00Z'}
+        - {number: 8, title: Billing v3, state: open, due_on: '2027-03-12T08:00:00Z'}
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000021', name: API Platform}, {gid: '1202000000000022', name: API Docs}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000021', name: API Platform}, {gid: '1202000000000022', name: API Docs}]}
+    - server: asana
+      method: GET
+      path: /projects/1202000000000021/tasks
+      body: {data: [{gid: '1203000000000501', name: Ship billing v2}, {gid: '1203000000000502', name: Ship billing v2 docs}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/tasks/search
+      body: {data: [{gid: '1203000000000501', name: Ship billing v2}, {gid: '1203000000000502', name: Ship billing v2 docs}]}
+
+- id: github-asana-t07
+  prompt: >-
+    Publish a release of acme/web tagged v3.2.0, titled "v3.2.0", with release notes generated automatically.
+  split: final
+  in_intent: false
+  expected_calls:
+    - server: github
+      method: POST
+      path: /repos/{owner}/{repo}/releases
+      path_parameters: {owner: acme, repo: web}
+      body: {tag_name: v3.2.0, name: v3.2.0, generate_release_notes: true}
+  solution:
+    - server: github
+      operation: repos_create_release
+      arguments: {owner: acme, repo: web, tag_name: v3.2.0, name: v3.2.0, generate_release_notes: true}
+
+- id: github-asana-t08
+  prompt: >-
+    Create a new Asana project called "Offsite 2027 planning" in the Acme Marketing workspace.
+  split: final
+  in_intent: false
+  expected_calls:
+    - server: asana
+      method: POST
+      path: /workspaces/{workspace_gid}/projects
+      path_parameters: {workspace_gid: '1201000000000002'}
+      body: {data: {name: Offsite 2027 planning}}
+  solution:
+    - server: asana
+      operation: create_project_for_workspace
+      arguments: {workspace_gid: '1201000000000002', data: {name: Offsite 2027 planning}}
+  responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}

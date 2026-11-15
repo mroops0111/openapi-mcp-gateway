@@ -1,0 +1,112 @@
+# Tailored: same policy, version header sent once, central tools renamed/described and responses trimmed.
+servers:
+  notion:
+    policy:
+      allow:
+        - retrieveAPage
+        - updatePageProperties
+        - retrieveAPagePropertyItem
+        - retrieveABlock
+        - retrieveBlockChildren
+        - appendBlockChildren
+        - updateABlock
+        - retrieveADatabase
+        - queryADatabase
+    headers:
+      Notion-Version: "2022-06-28"
+    instructions: |
+      Team notes live in Notion pages and databases. There is no search tool: start from a known
+      page or database id, list a page's content with get_page_content (child_page / child_database
+      blocks lead to sub-pages), and find database entries with query_database. Database entries are
+      pages; change their fields with update_page_properties, using property names and types from
+      get_database.
+    operations:
+      retrieveAPage:
+        tool:
+          name: get_page
+          description: Get a page's metadata and properties (title, database fields). Use get_page_content for its body.
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+          response: |
+            {"id": id, "url": url, "parent": parent, "archived": archived,
+             "last_edited_time": last_edited_time, "properties": properties}
+      updatePageProperties:
+        tool:
+          description: |
+            Update properties of a page, e.g. fields of a database entry. `properties` maps property
+            name to a Notion property value, e.g. {"Status": {"select": {"name": "Done"}}},
+            {"Name": {"title": [{"text": {"content": "New title"}}]}}, {"Due": {"date": {"start": "2026-11-20"}}}.
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+          response: |
+            {"id": id, "url": url, "properties": properties}
+      retrieveBlockChildren:
+        tool:
+          name: get_page_content
+          description: |
+            List the content blocks of a page (or of a block with children), with their text.
+            Blocks of type child_page / child_database are sub-pages / databases; their id can be
+            opened with get_page_content, get_page or query_database. Use next_cursor when has_more is true.
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+            id: { description: "Page or block id." }
+            page_size: { default: "100" }
+          response: |
+            {"results": [results.(
+                $c := $lookup($, type);
+                {"id": id, "type": type, "has_children": has_children,
+                 "text": $c.rich_text ? $join($c.rich_text.plain_text, "") : $c.title,
+                 "checked": $c.checked})],
+             "has_more": has_more, "next_cursor": next_cursor}
+      appendBlockChildren:
+        tool:
+          name: append_page_content
+          description: |
+            Append content blocks to the end of a page (or block). `children` is a list of blocks, e.g.
+            {"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": "Hello"}}]}}.
+            Other types: heading_1/2/3, bulleted_list_item, numbered_list_item, to_do (with "checked"), quote, code.
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+            id: { description: "Page or block id to append to." }
+          response: |
+            {"appended": [results.{"id": id, "type": type}]}
+      updateABlock:
+        tool:
+          description: |
+            Replace the content of an existing block, e.g. {"paragraph": {"rich_text": [{"type": "text", "text": {"content": "new text"}}]}}.
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      retrieveABlock:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      retrieveADatabase:
+        tool:
+          name: get_database
+          description: Get a database's title and property schema (property names, types, select options).
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+          response: |
+            {"id": id, "url": url, "title": $join(title.plain_text, ""),
+             "properties": $each(properties, function($v, $k) {
+               {"name": $k, "type": $v.type,
+                "options": $lookup($v, $v.type).options.name}})}
+      queryADatabase:
+        tool:
+          name: query_database
+          description: |
+            Find entries (pages) in a database, optionally filtered, e.g.
+            {"property": "Status", "select": {"equals": "Done"}}. Returns each entry's id, url and properties.
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+          response: |
+            {"results": [results.{"id": id, "url": url, "properties": properties}],
+             "has_more": has_more, "next_cursor": next_cursor}

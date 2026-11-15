@@ -5,7 +5,7 @@ import pydantic
 from ..gateway_connection import list_operations
 from .dataset import BASELINE_VARIANT, Benchmark, ExpectedCall, Scenario
 from .harness import ScenarioRun
-from .solution import SolutionToolMissingError, solution_model
+from .solution import solution_model
 
 
 PATH_PARAMETER = re.compile(r'\{[^}/]+\}')
@@ -46,11 +46,7 @@ async def _validate_solutions(scenario_run: ScenarioRun) -> list[ValidationProbl
     async with scenario_run.serving(), scenario_run.gateway(BASELINE_VARIANT) as mcp_urls:
         for task in scenario.tasks:
             agent = scenario_run.agent(solution_model(task, prefixes), None, mcp_urls)
-            try:
-                outcome = await scenario_run.run_task(agent, task)
-            except SolutionToolMissingError as error:
-                problems.append(_problem(scenario, task.id, BASELINE_VARIANT, str(error)))
-                continue
+            outcome = await scenario_run.run_task(agent, task)
             if outcome.tool_errors:
                 problems.append(
                     _problem(

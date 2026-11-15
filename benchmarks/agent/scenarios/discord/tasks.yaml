@@ -1,0 +1,224 @@
+- id: discord-t01
+  prompt: >-
+    In our server (guild 81384788765712384), give the member quietfox the Helper role. They've been answering
+    questions in support for weeks.
+  split: practice
+  in_intent: true
+  expected_calls:
+    - server: discord
+      method: PUT
+      path: /guilds/{guild_id}/members/{user_id}/roles/{role_id}
+      path_parameters: {guild_id: '81384788765712384', user_id: '200000000000000011', role_id: '300000000000000021'}
+  solution:
+    - server: discord
+      operation: add_guild_member_role
+      arguments: {guild_id: '81384788765712384', user_id: '200000000000000011', role_id: '300000000000000021'}
+  responses:
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members/search
+      body:
+        - {user: {id: '200000000000000011', username: quietfox, global_name: Quiet Fox}, nick: null, roles: []}
+        - {user: {id: '200000000000000012', username: quietfox_alt, global_name: Not Quiet}, nick: null, roles: []}
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members
+      body:
+        - {user: {id: '200000000000000011', username: quietfox, global_name: Quiet Fox}, nick: null, roles: []}
+        - {user: {id: '200000000000000012', username: quietfox_alt, global_name: Not Quiet}, nick: null, roles: []}
+        - {user: {id: '200000000000000013', username: brightowl, global_name: Bright Owl}, nick: null, roles: []}
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/roles
+      body:
+        - {id: '81384788765712384', name: '@everyone', position: 0, permissions: '0'}
+        - {id: '300000000000000021', name: Helper, position: 2, permissions: '0'}
+        - {id: '300000000000000022', name: Helper Trainee, position: 1, permissions: '0'}
+        - {id: '300000000000000023', name: Moderator, position: 3, permissions: '0'}
+
+- id: discord-t02
+  prompt: >-
+    The account spambot_9000 just flooded our server (guild 81384788765712384) with scam links. Ban them and wipe
+    their messages from the last 24 hours.
+  split: practice
+  in_intent: true
+  expected_calls:
+    - server: discord
+      method: PUT
+      path: /guilds/{guild_id}/bans/{user_id}
+      path_parameters: {guild_id: '81384788765712384', user_id: '200000000000000031'}
+      body: {delete_message_seconds: 86400}
+  solution:
+    - server: discord
+      operation: ban_user_from_guild
+      arguments: {guild_id: '81384788765712384', user_id: '200000000000000031', delete_message_seconds: 86400}
+  responses:
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members/search
+      body:
+        - {user: {id: '200000000000000031', username: spambot_9000, global_name: Free Nitro}, nick: null, roles: []}
+        - {user: {id: '200000000000000032', username: spambot_hunter, global_name: Spam Hunter}, nick: null, roles: []}
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members
+      body:
+        - {user: {id: '200000000000000031', username: spambot_9000, global_name: Free Nitro}, nick: null, roles: []}
+        - {user: {id: '200000000000000032', username: spambot_hunter, global_name: Spam Hunter}, nick: null, roles: []}
+
+- id: discord-t03
+  prompt: >-
+    Please change the server nickname of xX_Gamer_Xx to just "Gamer" in guild 81384788765712384. The current one
+    is way too long and full of symbols.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: discord
+      method: PATCH
+      path: /guilds/{guild_id}/members/{user_id}
+      path_parameters: {guild_id: '81384788765712384', user_id: '200000000000000041'}
+      body: {nick: Gamer}
+  solution:
+    - server: discord
+      operation: update_guild_member
+      arguments: {guild_id: '81384788765712384', user_id: '200000000000000041', nick: Gamer}
+  responses:
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members/search
+      body:
+        - {user: {id: '200000000000000041', username: xX_Gamer_Xx, global_name: null}, nick: "~*~xX_GAMER_Xx~*~ (pro) !!!", roles: []}
+        - {user: {id: '200000000000000042', username: xX_Gamer_Xx2, global_name: null}, nick: null, roles: []}
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members
+      body:
+        - {user: {id: '200000000000000041', username: xX_Gamer_Xx, global_name: null}, nick: "~*~xX_GAMER_Xx~*~ (pro) !!!", roles: []}
+        - {user: {id: '200000000000000042', username: xX_Gamer_Xx2, global_name: null}, nick: null, roles: []}
+
+- id: discord-t04
+  prompt: >-
+    Someone posted a fake giveaway link in #general on our server (guild 81384788765712384), the message that says
+    "FREE NITRO click here". Delete that message, leave everything else.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: discord
+      method: DELETE
+      path: /channels/{channel_id}/messages/{message_id}
+      path_parameters: {channel_id: '400000000000000051', message_id: '500000000000000062'}
+  solution:
+    - server: discord
+      operation: delete_message
+      arguments: {channel_id: '400000000000000051', message_id: '500000000000000062'}
+  responses:
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/channels
+      body:
+        - {id: '400000000000000050', name: announcements, type: 0, guild_id: '81384788765712384'}
+        - {id: '400000000000000051', name: general, type: 0, guild_id: '81384788765712384'}
+        - {id: '400000000000000052', name: general-offtopic, type: 0, guild_id: '81384788765712384'}
+    - server: discord
+      method: GET
+      path: /channels/400000000000000051/messages
+      body:
+        - {id: '500000000000000061', channel_id: '400000000000000051', content: "anyone up for a game tonight?", author: {id: '200000000000000013', username: brightowl}}
+        - {id: '500000000000000062', channel_id: '400000000000000051', content: "FREE NITRO click here https://dlscord-gift.example/claim", author: {id: '200000000000000077', username: giftbot}}
+        - {id: '500000000000000063', channel_id: '400000000000000051', content: "is the free nitro link real? looks sketchy", author: {id: '200000000000000011', username: quietfox}}
+
+- id: discord-t05
+  prompt: >-
+    Create a new role called "Event Staff" in guild 81384788765712384. It should show separately in the member list
+    and people should be able to @mention it.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: discord
+      method: POST
+      path: /guilds/{guild_id}/roles
+      path_parameters: {guild_id: '81384788765712384'}
+      body: {name: Event Staff, hoist: true, mentionable: true}
+  solution:
+    - server: discord
+      operation: create_guild_role
+      arguments: {guild_id: '81384788765712384', name: Event Staff, hoist: true, mentionable: true}
+
+- id: discord-t06
+  prompt: >-
+    Pin the "Server rules updated" post in #announcements on guild 81384788765712384 so new folks see it first.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: discord
+      method: PUT
+      path: /channels/{channel_id}/messages/pins/{message_id}
+      path_parameters: {channel_id: '400000000000000050', message_id: '500000000000000072'}
+  solution:
+    - server: discord
+      operation: create_pin
+      arguments: {channel_id: '400000000000000050', message_id: '500000000000000072'}
+  responses:
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/channels
+      body:
+        - {id: '400000000000000049', name: announcements-archive, type: 0, guild_id: '81384788765712384'}
+        - {id: '400000000000000050', name: announcements, type: 5, guild_id: '81384788765712384'}
+        - {id: '400000000000000051', name: general, type: 0, guild_id: '81384788765712384'}
+    - server: discord
+      method: GET
+      path: /channels/400000000000000050/messages
+      body:
+        - {id: '500000000000000071', channel_id: '400000000000000050', content: "Movie night moved to Saturday!", author: {id: '200000000000000090', username: modlead}, pinned: false}
+        - {id: '500000000000000072', channel_id: '400000000000000050', content: "Server rules updated: please re-read #rules, especially the section on self-promo.", author: {id: '200000000000000090', username: modlead}, pinned: false}
+    - server: discord
+      method: GET
+      path: /channels/400000000000000049/messages
+      body:
+        - {id: '500000000000000081', channel_id: '400000000000000049', content: "Server rules updated (2024 edition)", author: {id: '200000000000000090', username: modlead}, pinned: false}
+
+- id: discord-t07
+  prompt: >-
+    Add a slash command called "ping" to our bot, just for guild 81384788765712384, with the description
+    "Check if the bot is alive".
+  split: final
+  in_intent: false
+  expected_calls:
+    - server: discord
+      method: POST
+      path: /applications/{application_id}/guilds/{guild_id}/commands
+      path_parameters: {application_id: '600000000000000001', guild_id: '81384788765712384'}
+      body: {name: ping, description: Check if the bot is alive}
+  solution:
+    - server: discord
+      operation: create_guild_application_command
+      arguments: {application_id: '600000000000000001', guild_id: '81384788765712384', name: ping, description: Check if the bot is alive}
+  responses:
+    - server: discord
+      method: GET
+      path: /applications/@me
+      body: {id: '600000000000000001', name: ModHelper Bot, description: Moderation helper, bot_public: false}
+
+- id: discord-t08
+  prompt: >-
+    Movie Night is cancelled for good. Delete that scheduled event from guild 81384788765712384, but keep the
+    Game Night event.
+  split: final
+  in_intent: false
+  expected_calls:
+    - server: discord
+      method: DELETE
+      path: /guilds/{guild_id}/scheduled-events/{guild_scheduled_event_id}
+      path_parameters: {guild_id: '81384788765712384', guild_scheduled_event_id: '700000000000000002'}
+  solution:
+    - server: discord
+      operation: delete_guild_scheduled_event
+      arguments: {guild_id: '81384788765712384', guild_scheduled_event_id: '700000000000000002'}
+  responses:
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/scheduled-events
+      body:
+        - {id: '700000000000000001', guild_id: '81384788765712384', name: Game Night, status: 1, entity_type: 2, scheduled_start_time: '2026-11-20T20:00:00Z'}
+        - {id: '700000000000000002', guild_id: '81384788765712384', name: Movie Night, status: 1, entity_type: 2, scheduled_start_time: '2026-11-22T20:00:00Z'}

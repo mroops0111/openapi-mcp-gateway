@@ -1,0 +1,247 @@
+# Moderation policy, dynamic exposure, and shaping of the core moderation operations.
+servers:
+  discord:
+    policy:
+      allow:
+        # context and lookups
+        - get_my_user
+        - list_my_guilds
+        - get_user
+        - get_guild
+        # members
+        - list_guild_members
+        - search_guild_members
+        - get_guild_member
+        - update_guild_member
+        - delete_guild_member
+        - add_guild_member_role
+        - delete_guild_member_role
+        - get_guild_member_permissions
+        - preview_prune_guild
+        - prune_guild
+        - get_guild_join_requests
+        - action_guild_join_request
+        - create_dm
+        # bans
+        - list_guild_bans
+        - get_guild_ban
+        - ban_user_from_guild
+        - unban_user_from_guild
+        - bulk_ban_users_from_guild
+        # roles
+        - list_guild_roles
+        - get_guild_role
+        - create_guild_role
+        - update_guild_role
+        - delete_guild_role
+        - bulk_update_guild_roles
+        - guild_role_member_counts
+        - get_guild_role_permissions
+        # channels
+        - list_guild_channels
+        - get_channel
+        - create_guild_channel
+        - update_channel
+        - delete_channel
+        - bulk_update_guild_channels
+        - get_channel_member_permissions
+        - get_channel_role_permissions
+        - set_channel_permission_overwrite
+        - delete_channel_permission_overwrite
+        # threads
+        - get_active_guild_threads
+        - list_public_archived_threads
+        - list_private_archived_threads
+        - thread_search
+        - list_thread_members
+        - delete_thread_member
+        # messages
+        - list_messages
+        - get_message
+        - create_message
+        - update_message
+        - delete_message
+        - bulk_delete_messages
+        - guild_search
+        - list_pins
+        - create_pin
+        - delete_pin
+        - list_message_reactions_by_emoji
+        - delete_all_message_reactions
+        - delete_all_message_reactions_by_emoji
+        - delete_user_message_reaction
+        # moderation tooling
+        - list_guild_audit_log_entries
+        - list_auto_moderation_rules
+        - get_auto_moderation_rule
+        - create_auto_moderation_rule
+        - update_auto_moderation_rule
+        - delete_auto_moderation_rule
+        - list_guild_invites
+        - list_channel_invites
+        - invite_resolve
+        - invite_revoke
+    exposure: {style: dynamic}
+    instructions: |
+      Discord server moderation. IDs are snowflake strings. Find the server with list_my_guilds,
+      then channels, roles and members with list_channels, list_roles and search_members.
+      Timeouts are set via update_member communication_disabled_until (ISO 8601, max 28 days ahead);
+      clear with null. Prefer bulk_delete_messages for 2-100 messages under 14 days old.
+    operations:
+      list_my_guilds:
+        tool:
+          name: list_my_servers
+          description: List the Discord servers (guilds) the bot is in, with their ids and names.
+          response: '[$.{"id": id, "name": name}]'
+      list_guild_members:
+        tool:
+          name: list_members
+          description: List members of a server, paginated by user id (pass the last user id as after).
+          params_strategy: merge
+          params:
+            limit: {default: 100}
+          response: '[$.{"user_id": user.id, "username": user.username, "global_name": user.global_name, "nick": nick, "roles": roles, "joined_at": joined_at, "timed_out_until": communication_disabled_until, "bot": user.bot}]'
+      search_guild_members:
+        tool:
+          name: search_members
+          description: Find server members whose username or nickname starts with query. Use this to resolve a member's user id.
+          params_strategy: merge
+          params:
+            limit: {default: 25}
+          response: '[$.{"user_id": user.id, "username": user.username, "global_name": user.global_name, "nick": nick, "roles": roles, "joined_at": joined_at, "timed_out_until": communication_disabled_until}]'
+      get_guild_member:
+        tool:
+          name: get_member
+          description: Get one server member, including their nickname, role ids, join date and timeout.
+      update_guild_member:
+        tool:
+          name: update_member
+          description: |
+            Edit a server member: nickname (nick), full role list (roles replaces all roles),
+            voice mute/deafen, move or disconnect from voice (channel_id), or time out
+            (communication_disabled_until: ISO 8601 timestamp, null removes the timeout).
+          params_strategy: merge
+          params:
+            flags: {hidden: true}
+      delete_guild_member:
+        tool:
+          name: kick_member
+          description: Kick (remove) a member from the server. They can rejoin with an invite.
+      add_guild_member_role:
+        tool:
+          name: add_member_role
+          description: Give a member one role, leaving their other roles unchanged.
+      delete_guild_member_role:
+        tool:
+          name: remove_member_role
+          description: Remove one role from a member, leaving their other roles unchanged.
+      ban_user_from_guild:
+        tool:
+          name: ban_member
+          description: Ban a user from the server, optionally deleting their messages from the last delete_message_seconds (up to 604800, i.e. 7 days).
+          params_strategy: merge
+          params:
+            delete_message_days: {hidden: true}
+      unban_user_from_guild:
+        tool:
+          name: unban_user
+          description: Lift a user's ban from the server.
+      list_guild_bans:
+        tool:
+          name: list_bans
+          description: List banned users of the server with the ban reason.
+          response: '[$.{"user_id": user.id, "username": user.username, "reason": reason}]'
+      list_guild_roles:
+        tool:
+          name: list_roles
+          description: List the server's roles with id, name, position, color and permission bitfield.
+          response: '[$.{"id": id, "name": name, "position": position, "color": color, "permissions": permissions, "hoist": hoist, "mentionable": mentionable, "managed": managed}]'
+      create_guild_role:
+        tool:
+          name: create_role
+          description: Create a role in the server (name, permissions bitfield, color, hoist, mentionable).
+      update_guild_role:
+        tool:
+          name: update_role
+          description: Edit a role's name, permissions, color, hoist or mentionable setting.
+      delete_guild_role:
+        tool:
+          name: delete_role
+          description: Delete a role from the server.
+      list_guild_channels:
+        tool:
+          name: list_channels
+          description: List the server's channels and categories (type 4) with id, name, type, category (parent_id), position and topic. Threads are not included.
+          response: '[$.{"id": id, "name": name, "type": type, "parent_id": parent_id, "position": position, "topic": topic, "nsfw": nsfw, "rate_limit_per_user": rate_limit_per_user}]'
+      get_channel:
+        tool:
+          description: Get one channel or thread by id, including its permission overwrites.
+      create_guild_channel:
+        tool:
+          name: create_channel
+          description: Create a channel in the server (type 0 text, 2 voice, 4 category, 5 announcement, 15 forum); set parent_id to place it in a category.
+      update_channel:
+        tool:
+          description: Edit a channel or thread (name, topic, slowmode, category, archived/locked for threads).
+      delete_channel:
+        tool:
+          description: Delete a channel or category, or delete a thread.
+      bulk_update_guild_channels:
+        tool:
+          name: reorder_channels
+          description: Change positions and categories of several channels at once.
+      set_channel_permission_overwrite:
+        tool:
+          name: set_channel_permissions
+          description: Set allow/deny permission bits on a channel for a role (type 0) or member (type 1); overwrite_id is the role or user id.
+      delete_channel_permission_overwrite:
+        tool:
+          name: remove_channel_permissions
+          description: Remove a role's or member's permission overwrite from a channel.
+      list_messages:
+        tool:
+          description: List recent messages in a channel or thread, newest first; page with before/after/around a message id.
+          params_strategy: merge
+          params:
+            limit: {default: 50}
+          response: '[$.{"id": id, "author_id": author.id, "author": author.username, "content": content, "timestamp": timestamp, "pinned": pinned, "attachments": $count(attachments), "embeds": $count(embeds)}]'
+      get_message:
+        tool:
+          description: Get a single message by channel and message id.
+      delete_message:
+        tool:
+          description: Delete one message.
+      bulk_delete_messages:
+        tool:
+          description: Delete 2 to 100 messages from one channel in a single call. Messages older than 14 days cannot be bulk deleted; delete those one at a time.
+      create_message:
+        tool:
+          name: send_message
+          description: Post a message in a channel (content text), e.g. a moderator notice.
+      guild_search:
+        tool:
+          name: search_messages
+          description: Search messages across the server by text (content), author, channel, mentions, attachments or links.
+      create_pin:
+        tool:
+          name: pin_message
+          description: Pin a message in its channel.
+      delete_pin:
+        tool:
+          name: unpin_message
+          description: Unpin a message from its channel.
+      list_pins:
+        tool:
+          name: list_pinned_messages
+          description: List pinned messages in a channel.
+      get_active_guild_threads:
+        tool:
+          name: list_active_threads
+          description: List all active (unarchived) threads in the server.
+      list_guild_audit_log_entries:
+        tool:
+          name: list_audit_log
+          description: List the server's audit log (kicks, bans, role and channel changes), filterable by user_id, target_id and action_type.
+          params_strategy: merge
+          params:
+            limit: {default: 50}

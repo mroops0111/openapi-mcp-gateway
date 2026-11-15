@@ -1,0 +1,6 @@
+# Policy only: pet catalog and store/order operations; user accounts and image upload hidden.
+servers:
+  petstore:
+    policy:
+      allow: ["* /pet", "* /pet/*", "* /store/*"]
+      deny: ["uploadFile"]

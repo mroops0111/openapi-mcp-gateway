@@ -1,0 +1,66 @@
+# Generic: send the Notion-Version header once and hide it from every tool; no filtering.
+servers:
+  notion:
+    headers:
+      Notion-Version: "2022-06-28"
+    operations:
+      retrieveABlock:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      updateABlock:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      deleteABlock:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      retrieveBlockChildren:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      appendBlockChildren:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      retrieveComments:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      retrieveADatabase:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      updateADatabase:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      queryADatabase:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      retrieveAPage:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      updatePageProperties:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }
+      retrieveAUser:
+        tool:
+          params_strategy: merge
+          params:
+            Notion-Version: { hidden: true }

@@ -1,0 +1,168 @@
+# Tailored: triage/review policy, dynamic exposure, and shaping of the central issue and pull request operations.
+servers:
+  github:
+    policy:
+      allow:
+        - "issues/*"
+        - "pulls/*"
+        - "reactions/*-issue"
+        - "reactions/*-issue-comment"
+        - "reactions/*-pull-request-*comment"
+        - "search/issues-and-pull-requests"
+        - "search/labels"
+        - "search/users"
+        - "repos/get"
+        - "repos/list-for-org"
+        - "repos/list-for-authenticated-user"
+        - "repos/list-collaborators"
+        - "repos/check-collaborator"
+        - "repos/get-collaborator-permission-level"
+        - "repos/list-branches"
+        - "repos/get-branch"
+        - "repos/list-commits"
+        - "repos/get-commit"
+        - "repos/compare-commits"
+        - "repos/get-content"
+        - "repos/list-pull-requests-associated-with-commit"
+        - "repos/get-combined-status-for-ref"
+        - "repos/list-commit-statuses-for-ref"
+        - "checks/list-for-ref"
+        - "checks/list-suites-for-ref"
+        - "checks/get"
+        - "checks/list-annotations"
+        - "checks/rerequest-run"
+        - "users/get-authenticated"
+        - "users/get-by-username"
+        - "orgs/list-issue-types"
+        - "teams/list"
+        - "teams/list-members-in-org"
+      deny:
+        - "issues/*-issue-artifact*"
+        - "issues/list-issue-artifacts"
+    exposure: {style: dynamic}
+    instructions: |
+      Use this server to triage issues and review pull requests. Find work with
+      search_issues_and_pull_requests (GitHub search syntax, e.g. "repo:owner/name is:issue is:open no:label")
+      or the list operations. Repository issue lists also include pull requests (is_pull_request: true).
+      Label, assign, and milestone issues with the add/remove/set operations; close an issue via update_issue
+      with state "closed" and a state_reason. Review a PR by reading get_pull_request and list_pull_request_files,
+      then create_pull_request_review with event APPROVE, REQUEST_CHANGES, or COMMENT.
+    operations:
+      search/issues-and-pull-requests:
+        tool:
+          name: search_issues_and_pull_requests
+          description: |
+            Search issues and pull requests with GitHub search syntax, for example
+            "repo:octo/app is:issue is:open label:bug", "is:pr is:open review-requested:@me",
+            "no:assignee", "milestone:v2". Returns total_count and compact items.
+          params_strategy: merge
+          params:
+            advanced_search: { hidden: true }
+            search_type: { hidden: true }
+          response: |
+            {
+              "total_count": total_count,
+              "items": [items.{
+                "number": number, "title": title, "state": state, "state_reason": state_reason,
+                "repository": $substringAfter(repository_url, "/repos/"),
+                "is_pull_request": $exists(pull_request),
+                "user": user.login, "labels": [labels.name], "assignees": [assignees.login],
+                "milestone": milestone.title, "comments": comments,
+                "created_at": created_at, "updated_at": updated_at, "html_url": html_url
+              }]
+            }
+      issues/list-for-repo:
+        tool:
+          name: list_repository_issues
+          description: List issues in a repository, filterable by state, labels, assignee ("none" for unassigned, "*" for any), milestone, creator, and since. Pull requests are included and flagged with is_pull_request.
+          params_strategy: merge
+          params:
+            issue_field_values: { hidden: true }
+          response: |
+            [$.{
+              "number": number, "title": title, "state": state,
+              "is_pull_request": $exists(pull_request),
+              "user": user.login, "labels": [labels.name], "assignees": [assignees.login],
+              "milestone": milestone.title, "comments": comments,
+              "created_at": created_at, "updated_at": updated_at
+            }]
+      issues/get:
+        tool:
+          name: get_issue
+          response: |
+            {
+              "number": number, "title": title, "state": state, "state_reason": state_reason,
+              "body": body, "user": user.login, "labels": [labels.name], "assignees": [assignees.login],
+              "milestone": milestone ? { "number": milestone.number, "title": milestone.title },
+              "type": type.name, "comments": comments, "locked": locked,
+              "is_pull_request": $exists(pull_request),
+              "created_at": created_at, "updated_at": updated_at, "closed_at": closed_at, "html_url": html_url
+            }
+      issues/update:
+        tool:
+          name: update_issue
+          description: Update an issue's title, body, state (close with state "closed" plus state_reason completed, not_planned, or duplicate; reopen with "open"), labels or assignees (both replace the whole set), milestone number, or type.
+          params_strategy: merge
+          params:
+            assignee: { hidden: true }
+            issue_field_values: { hidden: true }
+          response: |
+            { "number": number, "title": title, "state": state, "state_reason": state_reason,
+              "labels": [labels.name], "assignees": [assignees.login], "milestone": milestone.title }
+      issues/list-comments:
+        tool:
+          name: list_issue_comments
+          description: List comments on an issue or pull request conversation (not inline review comments).
+          response: |
+            [$.{ "id": id, "user": user.login, "body": body, "created_at": created_at, "author_association": author_association }]
+      pulls/list:
+        tool:
+          name: list_pull_requests
+          response: |
+            [$.{
+              "number": number, "title": title, "state": state, "draft": draft,
+              "user": user.login, "head": head.ref, "base": base.ref,
+              "labels": [labels.name], "assignees": [assignees.login],
+              "requested_reviewers": [requested_reviewers.login],
+              "created_at": created_at, "updated_at": updated_at
+            }]
+      pulls/get:
+        tool:
+          name: get_pull_request
+          response: |
+            {
+              "number": number, "title": title, "state": state, "draft": draft, "body": body,
+              "user": user.login, "head": head.ref, "head_sha": head.sha, "base": base.ref,
+              "merged": merged, "mergeable": mergeable, "mergeable_state": mergeable_state,
+              "labels": [labels.name], "assignees": [assignees.login],
+              "requested_reviewers": [requested_reviewers.login], "requested_teams": [requested_teams.slug],
+              "milestone": milestone.title, "commits": commits, "additions": additions,
+              "deletions": deletions, "changed_files": changed_files,
+              "comments": comments, "review_comments": review_comments,
+              "created_at": created_at, "updated_at": updated_at, "html_url": html_url
+            }
+      pulls/list-files:
+        tool:
+          name: list_pull_request_files
+          description: List files changed in a pull request, each with status (added, modified, removed, renamed), line counts, and the patch text.
+          response: |
+            [$.{ "filename": filename, "status": status, "additions": additions, "deletions": deletions,
+                 "previous_filename": previous_filename, "patch": patch }]
+      pulls/list-reviews:
+        tool:
+          name: list_pull_request_reviews
+          response: |
+            [$.{ "id": id, "user": user.login, "state": state, "body": body, "submitted_at": submitted_at, "commit_id": commit_id }]
+      pulls/create-review:
+        tool:
+          name: create_pull_request_review
+          description: Review a pull request. Set event to APPROVE, REQUEST_CHANGES, or COMMENT (body required for the latter two); omit event to leave the review pending. Optional comments add inline comments by path and line.
+          params_strategy: merge
+          params:
+            commit_id: { hidden: true }
+          response: |
+            { "id": id, "state": state, "user": user.login, "html_url": html_url }
+      pulls/merge:
+        tool:
+          name: merge_pull_request
+          description: Merge a pull request with merge_method merge, squash, or rebase. Pass sha (the head SHA) to make sure it has not changed since review.

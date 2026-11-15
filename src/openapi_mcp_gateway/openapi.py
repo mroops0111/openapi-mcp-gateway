@@ -978,7 +978,9 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                     param = _resolve_ref(raw, param['$ref'])
                 if not param.get('name'):
                     # A parameter with no name cannot be sent, and would otherwise break the tool's signature.
-                    logger.warning('Skipping a %s parameter with no name on %s %s', param.get('in', 'query'), method, path)
+                    logger.warning(
+                        'Skipping a %s parameter with no name on %s %s', param.get('in', 'query'), method, path
+                    )
                     continue
                 param_key = f'{param.get("in", "query")}:{param["name"]}'
                 if param_key in seen_params:

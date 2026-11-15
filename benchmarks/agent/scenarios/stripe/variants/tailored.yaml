@@ -1,0 +1,202 @@
+# Intent policy + dynamic exposure + shaping of the core customer/subscription/invoice/refund operations.
+servers:
+  stripe:
+    exposure:
+      style: dynamic
+    policy:
+      allow:
+        - "* /v1/customers*"
+        - "* /v1/subscriptions*"
+        - "* /v1/subscription_items*"
+        - "* /v1/subscription_schedules*"
+        - "* /v1/invoices*"
+        - "* /v1/invoiceitems*"
+        - "GET /v1/invoice_payments*"
+        - "* /v1/credit_notes*"
+        - "* /v1/refunds*"
+        - "GET /v1/charges*"
+        - "* /v1/charges/*/refund*"
+        - "GET /v1/payment_intents*"
+        - "GET /v1/payment_methods*"
+        - "* /v1/payment_methods/*/attach"
+        - "* /v1/payment_methods/*/detach"
+        - "* /v1/prices*"
+        - "* /v1/products"
+        - "* /v1/products/search"
+        - "* /v1/products/{id}"
+        - "* /v1/coupons*"
+        - "* /v1/promotion_codes*"
+        - "GET /v1/tax_rates*"
+        - "GET /v1/balance_transactions*"
+        - "GET /v1/events*"
+      deny:
+        # legacy card/bank-source APIs and cash-balance funding: not needed for shop billing
+        - "* /v1/customers/*/bank_accounts*"
+        - "* /v1/customers/*/cards*"
+        - "* /v1/customers/*/sources*"
+        - "* /v1/customers/*/cash_balance*"
+        - "* /v1/customers/*/funding_instructions"
+        - "GET /v1/charges/*/dispute"
+    instructions: |
+      Shop billing on Stripe. Amounts are integers in the currency's smallest unit (cents).
+      Find a customer by email with search_customers (query: email:'x@y.com') or list_customers(email=...).
+      List tools return {has_more, data}; page with starting_after=<last id in data>.
+      Refund a payment with create_refund (body: payment_intent or charge, optional amount, reason).
+    operations:
+      GetCustomers:
+        tool:
+          name: list_customers
+          description: List customers, newest first. Filter by exact email. Returns summary fields; use get_customer for full details.
+          params_strategy: merge
+          params:
+            expand: { hidden: true }
+            ending_before: { hidden: true }
+            test_clock: { hidden: true }
+            limit: { default: 20 }
+          response: |
+            {"has_more": has_more, "data": [data.{"id": id, "email": email, "name": name, "description": description, "created": created, "currency": currency, "balance": balance, "delinquent": delinquent, "default_payment_method": invoice_settings.default_payment_method, "metadata": metadata}]}
+      GetCustomersSearch:
+        tool:
+          name: search_customers
+          description: "Search customers with Stripe search syntax, e.g. email:'a@b.com', name~'Smith', metadata['key']:'value'."
+          params_strategy: merge
+          params:
+            expand: { hidden: true }
+          response: |
+            {"has_more": has_more, "next_page": next_page, "data": [data.{"id": id, "email": email, "name": name, "description": description, "created": created, "currency": currency, "balance": balance, "delinquent": delinquent, "default_payment_method": invoice_settings.default_payment_method, "metadata": metadata}]}
+      GetCustomersCustomer:
+        tool:
+          name: get_customer
+          description: Retrieve one customer by ID (cus_...).
+      PostCustomers:
+        tool:
+          name: create_customer
+          description: Create a customer. Common body fields - email, name, description, phone, metadata, payment_method, invoice_settings[default_payment_method].
+      PostCustomersCustomer:
+        tool:
+          name: update_customer
+          description: Update a customer (cus_...). Common body fields - email, name, description, metadata, invoice_settings[default_payment_method].
+      DeleteCustomersCustomer:
+        tool:
+          name: delete_customer
+          description: Permanently delete a customer and cancel their active subscriptions.
+      GetSubscriptions:
+        tool:
+          name: list_subscriptions
+          description: List subscriptions, filterable by customer, price and status (default excludes canceled; use status=all to include them).
+          params_strategy: merge
+          params:
+            expand: { hidden: true }
+            ending_before: { hidden: true }
+            test_clock: { hidden: true }
+            customer_account: { hidden: true }
+            limit: { default: 20 }
+          response: |
+            {"has_more": has_more, "data": [data.{"id": id, "customer": customer, "status": status, "created": created, "start_date": start_date, "cancel_at_period_end": cancel_at_period_end, "cancel_at": cancel_at, "canceled_at": canceled_at, "trial_end": trial_end, "current_period_end": current_period_end, "collection_method": collection_method, "latest_invoice": latest_invoice, "default_payment_method": default_payment_method, "metadata": metadata, "items": [items.data.{"id": id, "price": price.id, "product": price.product, "unit_amount": price.unit_amount, "currency": price.currency, "interval": price.recurring.interval, "quantity": quantity, "current_period_end": current_period_end}]}]}
+      GetSubscriptionsSubscriptionExposedId:
+        tool:
+          name: get_subscription
+          description: Retrieve one subscription by ID (sub_...), including its items and prices.
+          params_strategy: merge
+          params:
+            subscription_exposed_id: { description: "Subscription ID (sub_...)." }
+      PostSubscriptions:
+        tool:
+          name: create_subscription
+          description: Subscribe a customer. Body - customer, items[0][price], items[0][quantity], optional trial_period_days, default_payment_method, collection_method, coupon/discounts, metadata.
+      PostSubscriptionsSubscriptionExposedId:
+        tool:
+          name: update_subscription
+          description: Update a subscription (sub_...) - change price/quantity via items[0][id] + items[0][price], set cancel_at_period_end=true to cancel at period end, proration_behavior, metadata.
+          params_strategy: merge
+          params:
+            subscription_exposed_id: { description: "Subscription ID (sub_...)." }
+      DeleteSubscriptionsSubscriptionExposedId:
+        tool:
+          name: cancel_subscription
+          description: Cancel a subscription immediately. Optional body - invoice_now, prorate. To cancel at period end instead, use update_subscription with cancel_at_period_end=true.
+          params_strategy: merge
+          params:
+            subscription_exposed_id: { description: "Subscription ID (sub_...)." }
+      GetInvoices:
+        tool:
+          name: list_invoices
+          description: List invoices, filterable by customer, subscription, status (draft, open, paid, uncollectible, void) and collection method.
+          params_strategy: merge
+          params:
+            expand: { hidden: true }
+            ending_before: { hidden: true }
+            customer_account: { hidden: true }
+            limit: { default: 20 }
+          response: |
+            {"has_more": has_more, "data": [data.{"id": id, "number": number, "customer": customer, "customer_email": customer_email, "subscription": subscription ? subscription : parent.subscription_details.subscription, "status": status, "currency": currency, "total": total, "amount_due": amount_due, "amount_paid": amount_paid, "amount_remaining": amount_remaining, "created": created, "due_date": due_date, "collection_method": collection_method, "billing_reason": billing_reason, "hosted_invoice_url": hosted_invoice_url}]}
+      GetInvoicesInvoice:
+        tool:
+          name: get_invoice
+          description: Retrieve one invoice by ID (in_...), including line items and payment status.
+      PostInvoices:
+        tool:
+          name: create_invoice
+          description: Create a draft invoice for a customer. Body - customer, collection_method, days_until_due, description, auto_advance, metadata. Add lines with create_invoice_item, then finalize_invoice.
+      PostInvoiceitems:
+        tool:
+          name: create_invoice_item
+          description: Add a line item to a customer's draft or upcoming invoice. Body - customer, invoice (optional), amount + currency or pricing[price], quantity, description.
+      PostInvoicesInvoiceFinalize:
+        tool:
+          name: finalize_invoice
+          description: Finalize a draft invoice so it can be paid or sent.
+      PostInvoicesInvoicePay:
+        tool:
+          name: pay_invoice
+          description: Attempt to collect payment on an open invoice now, optionally with a payment_method or paid_out_of_band=true.
+      PostInvoicesInvoiceSend:
+        tool:
+          name: send_invoice
+          description: Email an open invoice to the customer.
+      PostInvoicesInvoiceVoid:
+        tool:
+          name: void_invoice
+          description: Void a finalized invoice that should not be collected.
+      GetRefunds:
+        tool:
+          name: list_refunds
+          description: List refunds, filterable by charge or payment_intent.
+          params_strategy: merge
+          params:
+            expand: { hidden: true }
+            ending_before: { hidden: true }
+            limit: { default: 20 }
+          response: |
+            {"has_more": has_more, "data": [data.{"id": id, "amount": amount, "currency": currency, "charge": charge, "payment_intent": payment_intent, "status": status, "reason": reason, "created": created, "metadata": metadata}]}
+      PostRefunds:
+        tool:
+          name: create_refund
+          description: Refund a payment. Body - payment_intent (pi_...) or charge (ch_...); optional amount (smallest currency unit, defaults to the full remaining amount), reason (duplicate, fraudulent, requested_by_customer), metadata.
+      GetRefundsRefund:
+        tool:
+          name: get_refund
+          description: Retrieve one refund by ID (re_...).
+      GetCharges:
+        tool:
+          name: list_charges
+          description: List charges (payments), filterable by customer or payment_intent. Shows amount refunded so far.
+          params_strategy: merge
+          params:
+            expand: { hidden: true }
+            ending_before: { hidden: true }
+            transfer_group: { hidden: true }
+            limit: { default: 20 }
+          response: |
+            {"has_more": has_more, "data": [data.{"id": id, "amount": amount, "amount_refunded": amount_refunded, "refunded": refunded, "currency": currency, "customer": customer, "payment_intent": payment_intent, "invoice": invoice, "status": status, "paid": paid, "description": description, "created": created}]}
+      GetPrices:
+        tool:
+          name: list_prices
+          description: List prices, filterable by product, active, type (one_time, recurring), currency and lookup_keys.
+          params_strategy: merge
+          params:
+            expand: { hidden: true }
+            ending_before: { hidden: true }
+            limit: { default: 50 }
+          response: |
+            {"has_more": has_more, "data": [data.{"id": id, "product": product, "nickname": nickname, "lookup_key": lookup_key, "active": active, "type": type, "unit_amount": unit_amount, "currency": currency, "interval": recurring.interval, "interval_count": recurring.interval_count}]}

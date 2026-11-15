@@ -1,0 +1,4 @@
+# What the user wants these APIs for. The scenario's own config was written from this sentence alone.
+intent: "Handle a shop's billing: customers, their subscriptions and invoices, and refunds."
+servers:
+  stripe: stripe

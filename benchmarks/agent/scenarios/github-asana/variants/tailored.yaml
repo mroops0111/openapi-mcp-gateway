@@ -1,0 +1,405 @@
+# Intent-scoped policy, dynamic exposure, plus tool shaping and per-server instructions: GitHub issues/PRs/comments/labels, Asana projects/sections/users/tasks/comments.
+servers:
+  github:
+    exposure:
+      style: dynamic
+    policy:
+      allow:
+        # issues: find, read, create, update
+        - "issues/list"
+        - "issues/list-for-org"
+        - "issues/list-for-authenticated-user"
+        - "issues/list-for-repo"
+        - "issues/get"
+        - "issues/create"
+        - "issues/update"
+        - "issues/list-events"
+        - "issues/list-events-for-timeline"
+        - "issues/list-sub-issues"
+        - "issues/get-parent"
+        # issue comments
+        - "issues/list-comments"
+        - "issues/list-comments-for-repo"
+        - "issues/get-comment"
+        - "issues/create-comment"
+        - "issues/update-comment"
+        # labels, assignees, milestones
+        - "issues/list-labels-on-issue"
+        - "issues/add-labels"
+        - "issues/set-labels"
+        - "issues/remove-label"
+        - "issues/list-labels-for-repo"
+        - "issues/get-label"
+        - "issues/create-label"
+        - "issues/list-assignees"
+        - "issues/add-assignees"
+        - "issues/remove-assignees"
+        - "issues/list-milestones"
+        - "issues/get-milestone"
+        # pull requests
+        - "pulls/list"
+        - "pulls/get"
+        - "pulls/update"
+        - "pulls/check-if-merged"
+        - "pulls/list-files"
+        - "pulls/list-commits"
+        - "pulls/list-reviews"
+        - "pulls/list-requested-reviewers"
+        - "pulls/list-review-comments"
+        - "pulls/list-review-comments-for-repo"
+        - "pulls/get-review-comment"
+        # finding things
+        - "search/issues-and-pull-requests"
+        - "search/repos"
+        - "repos/get"
+        - "repos/list-for-org"
+        - "repos/list-for-user"
+        - "repos/list-for-authenticated-user"
+        - "users/get-authenticated"
+        - "users/get-by-username"
+    instructions: |
+      GitHub is the source of the engineering work: issues and pull requests in repositories.
+      Use it to find and read issues/PRs (and their comments and labels), and to write back
+      status, labels, and comments such as a link to the matching Asana task.
+      Task tracking itself (projects, sections, assignees, due dates, completion) lives in Asana, not here.
+      Issue comments and PR conversation comments both go through the issue comment operations
+      (a PR's number works as an issue_number).
+    operations:
+      search/issues-and-pull-requests:
+        tool:
+          name: search_issues_and_prs
+          description: |
+            Search issues and pull requests across GitHub with search qualifiers in q, e.g.
+            "repo:OWNER/REPO is:issue is:open label:bug", "is:pr is:merged", "involves:USER", or a
+            keyword. Returns number, title, state, labels, assignees and URL for each match; is_pull_request
+            tells PRs from issues.
+          params_strategy: merge
+          params:
+            advanced_search: { hidden: true }
+            search_type: { hidden: true }
+            per_page: { default: 30 }
+          response: |
+            {
+              "total_count": total_count,
+              "items": [items.{
+                "number": number,
+                "title": title,
+                "state": state,
+                "is_pull_request": $exists(pull_request),
+                "repository_url": repository_url,
+                "html_url": html_url,
+                "user": user.login,
+                "labels": [labels.name],
+                "assignees": [assignees.login],
+                "milestone": milestone.title,
+                "comments": comments,
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "closed_at": closed_at
+              }]
+            }
+      issues/list-for-repo:
+        tool:
+          name: list_repo_issues
+          description: |
+            List issues in a repository, filtered by state, labels, assignee, milestone, or since.
+            Note that GitHub returns pull requests here too; is_pull_request marks them.
+          response: |
+            [$.{
+              "number": number,
+              "title": title,
+              "state": state,
+              "is_pull_request": $exists(pull_request),
+              "html_url": html_url,
+              "user": user.login,
+              "labels": [labels.name],
+              "assignees": [assignees.login],
+              "milestone": milestone.title,
+              "comments": comments,
+              "created_at": created_at,
+              "updated_at": updated_at,
+              "closed_at": closed_at
+            }]
+      issues/get:
+        tool:
+          name: get_issue
+          description: Get one issue (or PR, by its number) with its body, state, labels, assignees and milestone.
+          response: |
+            {
+              "number": number,
+              "title": title,
+              "state": state,
+              "state_reason": state_reason,
+              "is_pull_request": $exists(pull_request),
+              "body": body,
+              "html_url": html_url,
+              "user": user.login,
+              "labels": [labels.name],
+              "assignees": [assignees.login],
+              "milestone": milestone.title,
+              "comments": comments,
+              "created_at": created_at,
+              "updated_at": updated_at,
+              "closed_at": closed_at
+            }
+      issues/update:
+        tool:
+          name: update_issue
+          description: |
+            Update an issue or PR's title, body, state (open/closed, with state_reason), assignees,
+            milestone, or labels. Setting labels replaces all of them; use add/remove label operations
+            to change one.
+          response: |
+            {
+              "number": number,
+              "title": title,
+              "state": state,
+              "state_reason": state_reason,
+              "html_url": html_url,
+              "labels": [labels.name],
+              "assignees": [assignees.login]
+            }
+      issues/create-comment:
+        tool:
+          name: comment_on_issue
+          description: Add a comment to an issue or pull request (use the PR number as issue_number). Markdown body.
+          response: |
+            { "id": id, "html_url": html_url, "user": user.login, "created_at": created_at }
+      issues/list-comments:
+        tool:
+          name: list_issue_comments
+          description: List the conversation comments on an issue or pull request (use the PR number as issue_number).
+          response: |
+            [$.{ "id": id, "user": user.login, "body": body, "created_at": created_at, "updated_at": updated_at, "html_url": html_url }]
+      pulls/list:
+        tool:
+          name: list_pull_requests
+          description: List pull requests in a repository, filtered by state, base or head branch.
+          response: |
+            [$.{
+              "number": number,
+              "title": title,
+              "state": state,
+              "draft": draft,
+              "merged_at": merged_at,
+              "html_url": html_url,
+              "user": user.login,
+              "head": head.ref,
+              "base": base.ref,
+              "labels": [labels.name],
+              "assignees": [assignees.login],
+              "requested_reviewers": [requested_reviewers.login],
+              "created_at": created_at,
+              "updated_at": updated_at,
+              "closed_at": closed_at
+            }]
+      pulls/get:
+        tool:
+          name: get_pull_request
+          description: Get one pull request with its body, state, merge status, branches, labels, and reviewers.
+          response: |
+            {
+              "number": number,
+              "title": title,
+              "state": state,
+              "draft": draft,
+              "merged": merged,
+              "merged_at": merged_at,
+              "mergeable_state": mergeable_state,
+              "body": body,
+              "html_url": html_url,
+              "user": user.login,
+              "head": head.ref,
+              "base": base.ref,
+              "labels": [labels.name],
+              "assignees": [assignees.login],
+              "requested_reviewers": [requested_reviewers.login],
+              "milestone": milestone.title,
+              "comments": comments,
+              "review_comments": review_comments,
+              "commits": commits,
+              "changed_files": changed_files,
+              "created_at": created_at,
+              "updated_at": updated_at,
+              "closed_at": closed_at
+            }
+  asana:
+    exposure:
+      style: dynamic
+    policy:
+      allow:
+        # workspaces, teams, projects
+        - "getWorkspaces"
+        - "getWorkspace"
+        - "getTeamsForWorkspace"
+        - "getProjects"
+        - "getProject"
+        - "getProjectsForWorkspace"
+        - "getProjectsForTeam"
+        - "searchProjectsForWorkspace"
+        - "getCustomFieldSettingsForProject"
+        - "typeaheadForWorkspace"
+        # sections
+        - "getSectionsForProject"
+        - "getSection"
+        - "createSectionForProject"
+        - "addTaskForSection"
+        # users
+        - "getUsers"
+        - "getUser"
+        - "getUsersForWorkspace"
+        - "getUserForWorkspace"
+        # tasks
+        - "getTasks"
+        - "getTask"
+        - "createTask"
+        - "updateTask"
+        - "getTasksForProject"
+        - "getTasksForSection"
+        - "searchTasksForWorkspace"
+        - "getSubtasksForTask"
+        - "createSubtaskForTask"
+        - "getProjectsForTask"
+        - "addProjectForTask"
+        - "removeProjectForTask"
+        - "addFollowersForTask"
+        - "removeFollowerForTask"
+        # tags (mirror GitHub labels)
+        - "getTags"
+        - "getTagsForWorkspace"
+        - "getTagsForTask"
+        - "createTagForWorkspace"
+        - "addTagForTask"
+        - "removeTagForTask"
+        # comments (stories)
+        - "getStoriesForTask"
+        - "createStoryForTask"
+        - "getStory"
+        - "updateStory"
+    instructions: |
+      Asana is where GitHub engineering work is tracked as tasks. Navigate workspace -> project -> section,
+      and look up users to assign. Create one task per GitHub issue or PR, putting its URL in the task notes,
+      and before creating one, look for an existing task (search by the GitHub URL or title, or list the
+      project's tasks) to avoid duplicates. Keep tasks in step: update name, notes, assignee, due date or
+      completed, move between sections, and add comments (stories). Request body fields go inside "data".
+      Asana ids are string gids.
+    operations:
+      searchTasksForWorkspace:
+        tool:
+          name: search_tasks
+          description: |
+            Full-text search for tasks in a workspace (name and notes), optionally narrowed to projects,
+            sections, assignees, or completion. Use it to find the task already tracking a GitHub issue,
+            e.g. text = the issue URL or title. resource_subtype defaults to default_task (ordinary tasks).
+            Requires a premium workspace; otherwise list the project's tasks instead.
+          params_strategy: merge
+          params:
+            opt_pretty: { hidden: true }
+            resource_subtype: { default: default_task }
+      getTasksForProject:
+        tool:
+          name: list_project_tasks
+          description: |
+            List the tasks in a project. Returns gid and name by default; ask for more with opt_fields,
+            e.g. ["name","notes","completed","assignee.name","memberships.section.name","permalink_url"].
+          params_strategy: merge
+          params:
+            opt_pretty: { hidden: true }
+      getTask:
+        tool:
+          name: get_task
+          description: Get one task with its notes, assignee, due date, completion, projects/sections, tags and custom fields.
+          params_strategy: merge
+          params:
+            opt_pretty: { hidden: true }
+            opt_fields: { hidden: true }
+          response: |
+            data.{
+              "gid": gid,
+              "name": name,
+              "notes": notes,
+              "completed": completed,
+              "completed_at": completed_at,
+              "assignee": assignee ? { "gid": assignee.gid, "name": assignee.name },
+              "due_on": due_on,
+              "due_at": due_at,
+              "start_on": start_on,
+              "parent": parent ? { "gid": parent.gid, "name": parent.name },
+              "memberships": [memberships.{ "project": project.name, "project_gid": project.gid, "section": section.name, "section_gid": section.gid }],
+              "tags": [tags.{ "gid": gid, "name": name }],
+              "custom_fields": [custom_fields.{ "gid": gid, "name": name, "value": display_value }],
+              "permalink_url": permalink_url,
+              "modified_at": modified_at
+            }
+      createTask:
+        tool:
+          name: create_task
+          description: |
+            Create a task. Put fields in data: name, notes (include the GitHub issue/PR URL), projects
+            (list of project gids) or workspace, memberships (to place it in a section), assignee (user gid
+            or email), due_on, tags, followers, custom_fields.
+          params_strategy: merge
+          params:
+            opt_pretty: { hidden: true }
+            opt_fields: { hidden: true }
+          response: &task_summary |
+            data.{
+              "gid": gid,
+              "name": name,
+              "notes": notes,
+              "completed": completed,
+              "assignee": assignee ? { "gid": assignee.gid, "name": assignee.name },
+              "due_on": due_on,
+              "memberships": [memberships.{ "project": project.name, "project_gid": project.gid, "section": section.name, "section_gid": section.gid }],
+              "tags": [tags.name],
+              "permalink_url": permalink_url
+            }
+      updateTask:
+        tool:
+          name: update_task
+          description: |
+            Update a task's fields in data: name, notes, completed (true when the GitHub issue closes or the
+            PR merges), assignee, due_on, custom_fields. To move it to another section use add_task_to_section.
+          params_strategy: merge
+          params:
+            opt_pretty: { hidden: true }
+            opt_fields: { hidden: true }
+          response: *task_summary
+      createStoryForTask:
+        tool:
+          name: comment_on_task
+          description: Add a comment to a task. Put the comment in data.text (plain) or data.html_text.
+          params_strategy: merge
+          params:
+            opt_pretty: { hidden: true }
+            opt_fields: { hidden: true }
+          response: |
+            data.{ "gid": gid, "text": text, "created_at": created_at, "created_by": created_by.name }
+      getStoriesForTask:
+        tool:
+          name: list_task_comments
+          description: List a task's stories (comments and activity). Set resource_subtype to comment_added for comments only.
+          params_strategy: merge
+          params:
+            opt_pretty: { hidden: true }
+      addTaskForSection:
+        tool:
+          name: add_task_to_section
+          description: Move a task into a section (column) of a project it belongs to. Put the task gid in data.task.
+          params_strategy: merge
+          params:
+            opt_pretty: { hidden: true }
+      getSectionsForProject:
+        tool:
+          name: list_project_sections
+          description: List the sections (columns) of a project, with their gids.
+          params_strategy: merge
+          params:
+            opt_pretty: { hidden: true }
+      searchProjectsForWorkspace:
+        tool:
+          name: search_projects
+          description: Find projects in a workspace by name (text). Use list projects when search is unavailable.
+          params_strategy: merge
+          params:
+            opt_pretty: { hidden: true }

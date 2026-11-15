@@ -1,0 +1,170 @@
+- id: petstore-t01
+  prompt: >-
+    We just got in a golden retriever puppy named Biscuit. Please add him to the shop's listings as a dog that's available for sale.
+  split: practice
+  in_intent: true
+  expected_calls:
+    - server: petstore
+      method: POST
+      path: /pet
+      body: {name: Biscuit, status: available}
+  solution:
+    - server: petstore
+      operation: add_pet
+      arguments: {name: Biscuit, photoUrls: [], category: {name: Dogs}, status: available}
+
+- id: petstore-t02
+  prompt: >-
+    Our cat Whiskers went home with a new family this morning. Can you mark Whiskers as sold in the shop listings?
+  split: practice
+  in_intent: true
+  expected_calls:
+    - server: petstore
+      method: POST
+      path: /pet/{petId}
+      path_parameters: {petId: '31'}
+      query: {status: sold}
+  solution:
+    - server: petstore
+      operation: update_pet_with_form
+      arguments: {petId: 31, status: sold}
+  responses:
+    - server: petstore
+      method: GET
+      path: /pet/findByStatus
+      body:
+        - {id: 31, name: Whiskers, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: available}
+        - {id: 32, name: Mittens, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: available}
+        - {id: 33, name: Rex, category: {id: 1, name: Dogs}, photoUrls: [], tags: [], status: available}
+
+- id: petstore-t03
+  prompt: >-
+    A customer just phoned to cancel their order, number 5. Please cancel it.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: petstore
+      method: DELETE
+      path: /store/order/{orderId}
+      path_parameters: {orderId: '5'}
+  solution:
+    - server: petstore
+      operation: delete_order
+      arguments: {orderId: 5}
+
+- id: petstore-t04
+  prompt: >-
+    A customer wants to buy Kiwi, the parrot we have up for sale. Place an order for one Kiwi, and mark Kiwi as pending so nobody else tries to buy her.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: petstore
+      method: POST
+      path: /store/order
+      body: {petId: 52, quantity: 1}
+    - server: petstore
+      method: POST
+      path: /pet/{petId}
+      path_parameters: {petId: '52'}
+      query: {status: pending}
+  solution:
+    - server: petstore
+      operation: place_order
+      arguments: {petId: 52, quantity: 1, status: placed}
+    - server: petstore
+      operation: update_pet_with_form
+      arguments: {petId: 52, status: pending}
+  responses:
+    - server: petstore
+      method: GET
+      path: /pet/findByStatus
+      body:
+        - {id: 51, name: Rio, category: {id: 4, name: Birds}, photoUrls: [], tags: [], status: available}
+        - {id: 52, name: Kiwi, category: {id: 4, name: Birds}, photoUrls: [], tags: [], status: available}
+        - {id: 53, name: Goldie, category: {id: 5, name: Fish}, photoUrls: [], tags: [], status: available}
+
+- id: petstore-t05
+  prompt: >-
+    Order 7 has been delivered to the customer. Look up which pet that order was for and mark that pet as sold.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: petstore
+      method: GET
+      path: /store/order/{orderId}
+      path_parameters: {orderId: '7'}
+    - server: petstore
+      method: POST
+      path: /pet/{petId}
+      path_parameters: {petId: '88'}
+      query: {status: sold}
+  solution:
+    - server: petstore
+      operation: get_order_by_id
+      arguments: {orderId: 7}
+    - server: petstore
+      operation: update_pet_with_form
+      arguments: {petId: 88, status: sold}
+  responses:
+    - server: petstore
+      method: GET
+      path: /store/order/7
+      body: {id: 7, petId: 88, quantity: 1, shipDate: '2026-11-12T10:00:00Z', status: approved, complete: false}
+    - server: petstore
+      method: GET
+      path: /store/order/8
+      body: {id: 8, petId: 89, quantity: 1, shipDate: '2026-11-13T10:00:00Z', status: approved, complete: false}
+
+- id: petstore-t06
+  prompt: >-
+    We're no longer selling Nibbles the hamster, he's staying on as the shop mascot. Please take him off our listings entirely.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: petstore
+      method: DELETE
+      path: /pet/{petId}
+      path_parameters: {petId: '61'}
+  solution:
+    - server: petstore
+      operation: delete_pet
+      arguments: {petId: 61}
+  responses:
+    - server: petstore
+      method: GET
+      path: /pet/findByStatus
+      body:
+        - {id: 60, name: Peanut, category: {id: 6, name: Hamsters}, photoUrls: [], tags: [], status: available}
+        - {id: 61, name: Nibbles, category: {id: 6, name: Hamsters}, photoUrls: [], tags: [], status: available}
+        - {id: 62, name: Biscuit, category: {id: 1, name: Dogs}, photoUrls: [], tags: [], status: available}
+
+- id: petstore-t07
+  prompt: >-
+    I've hired a new assistant, Jamie Lee. Please set up an account for her with the username jamielee and the email jamie.lee@example.com.
+  split: final
+  in_intent: false
+  expected_calls:
+    - server: petstore
+      method: POST
+      path: /user
+      body: {username: jamielee, email: jamie.lee@example.com}
+  solution:
+    - server: petstore
+      operation: create_user
+      arguments: {username: jamielee, firstName: Jamie, lastName: Lee, email: jamie.lee@example.com}
+
+- id: petstore-t08
+  prompt: >-
+    Marco changed his phone number. Please update the phone on his account (username mrossi) to 555-0142.
+  split: final
+  in_intent: false
+  expected_calls:
+    - server: petstore
+      method: PUT
+      path: /user/{username}
+      path_parameters: {username: mrossi}
+      body: {phone: 555-0142}
+  solution:
+    - server: petstore
+      operation: update_user
+      arguments: {username: mrossi, phone: 555-0142}

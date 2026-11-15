@@ -1,0 +1,9 @@
+# Intent-agnostic: dynamic exposure for the 612-operation spec, plus general Stripe conventions.
+servers:
+  stripe:
+    exposure:
+      style: dynamic
+    instructions: |
+      Stripe API. Amounts are integers in the currency's smallest unit (e.g. cents).
+      List endpoints return {data, has_more}; page with limit and starting_after=<last id>.
+      /search endpoints take a Stripe search query, e.g. email:'a@b.com' or metadata['key']:'value'.

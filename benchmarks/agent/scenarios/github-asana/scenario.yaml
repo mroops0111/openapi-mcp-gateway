@@ -1,0 +1,5 @@
+# What the user wants these APIs for. The scenario's own config was written from this sentence alone.
+intent: "Turn engineering work on GitHub into tracked tasks in Asana, and keep the two in step."
+servers:
+  github: github
+  asana: asana

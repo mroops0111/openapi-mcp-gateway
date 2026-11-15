@@ -10,7 +10,7 @@ from ..errors import BenchmarkDataError
 from ..spec_pins import SpecPin
 from .metrics import ANSWER_GRADE
 from .scoring import METRIC_NAMES
-from .systems import GatewaySystem, RandomSystem
+from .systems import GatewaySystem, PydanticAIKeywordSystem, RandomSystem
 
 
 MANIFEST_FILE = 'benchmark.yaml'
@@ -61,9 +61,10 @@ class Manifest(pydantic.BaseModel):
 
     version: int = pydantic.Field(ge=1)
     specs: dict[str, SpecPin] = pydantic.Field(min_length=1)
-    systems: dict[str, typing.Annotated[GatewaySystem | RandomSystem, pydantic.Field(discriminator='type')]] = (
-        pydantic.Field(min_length=1)
-    )
+    systems: dict[
+        str,
+        typing.Annotated[GatewaySystem | RandomSystem | PydanticAIKeywordSystem, pydantic.Field(discriminator='type')],
+    ] = pydantic.Field(min_length=1)
     gate: Gate
 
     @pydantic.model_validator(mode='after')

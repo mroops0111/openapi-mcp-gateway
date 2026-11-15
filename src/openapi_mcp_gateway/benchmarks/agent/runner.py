@@ -1,6 +1,5 @@
 import dataclasses
 import logging
-import os
 import re
 import typing
 
@@ -17,9 +16,6 @@ from .harness import TRANSIENT_ERRORS, RunOutcome, ScenarioRun
 
 
 logger = logging.getLogger(__name__)
-
-# Pydantic AI prints a banner on its first agent, which would land in the middle of a benchmark's output.
-os.environ.setdefault('PYDANTIC_AI_NO_BANNER', '1')
 
 # How often a run that hit a rate limit or an unavailable provider is tried again before it counts as errored.
 TRANSIENT_ATTEMPTS = 4

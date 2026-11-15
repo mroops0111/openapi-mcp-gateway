@@ -1,0 +1,112 @@
+# Intent-scoped policy plus dynamic exposure: GitHub issues/PRs/comments/labels, Asana projects/sections/users/tasks/comments.
+servers:
+  github:
+    exposure:
+      style: dynamic
+    policy:
+      allow:
+        # issues: find, read, create, update
+        - "issues/list"
+        - "issues/list-for-org"
+        - "issues/list-for-authenticated-user"
+        - "issues/list-for-repo"
+        - "issues/get"
+        - "issues/create"
+        - "issues/update"
+        - "issues/list-events"
+        - "issues/list-events-for-timeline"
+        - "issues/list-sub-issues"
+        - "issues/get-parent"
+        # issue comments
+        - "issues/list-comments"
+        - "issues/list-comments-for-repo"
+        - "issues/get-comment"
+        - "issues/create-comment"
+        - "issues/update-comment"
+        # labels, assignees, milestones
+        - "issues/list-labels-on-issue"
+        - "issues/add-labels"
+        - "issues/set-labels"
+        - "issues/remove-label"
+        - "issues/list-labels-for-repo"
+        - "issues/get-label"
+        - "issues/create-label"
+        - "issues/list-assignees"
+        - "issues/add-assignees"
+        - "issues/remove-assignees"
+        - "issues/list-milestones"
+        - "issues/get-milestone"
+        # pull requests
+        - "pulls/list"
+        - "pulls/get"
+        - "pulls/update"
+        - "pulls/check-if-merged"
+        - "pulls/list-files"
+        - "pulls/list-commits"
+        - "pulls/list-reviews"
+        - "pulls/list-requested-reviewers"
+        - "pulls/list-review-comments"
+        - "pulls/list-review-comments-for-repo"
+        - "pulls/get-review-comment"
+        # finding things
+        - "search/issues-and-pull-requests"
+        - "search/repos"
+        - "repos/get"
+        - "repos/list-for-org"
+        - "repos/list-for-user"
+        - "repos/list-for-authenticated-user"
+        - "users/get-authenticated"
+        - "users/get-by-username"
+  asana:
+    exposure:
+      style: dynamic
+    policy:
+      allow:
+        # workspaces, teams, projects
+        - "getWorkspaces"
+        - "getWorkspace"
+        - "getTeamsForWorkspace"
+        - "getProjects"
+        - "getProject"
+        - "getProjectsForWorkspace"
+        - "getProjectsForTeam"
+        - "searchProjectsForWorkspace"
+        - "getCustomFieldSettingsForProject"
+        - "typeaheadForWorkspace"
+        # sections
+        - "getSectionsForProject"
+        - "getSection"
+        - "createSectionForProject"
+        - "addTaskForSection"
+        # users
+        - "getUsers"
+        - "getUser"
+        - "getUsersForWorkspace"
+        - "getUserForWorkspace"
+        # tasks
+        - "getTasks"
+        - "getTask"
+        - "createTask"
+        - "updateTask"
+        - "getTasksForProject"
+        - "getTasksForSection"
+        - "searchTasksForWorkspace"
+        - "getSubtasksForTask"
+        - "createSubtaskForTask"
+        - "getProjectsForTask"
+        - "addProjectForTask"
+        - "removeProjectForTask"
+        - "addFollowersForTask"
+        - "removeFollowerForTask"
+        # tags (mirror GitHub labels)
+        - "getTags"
+        - "getTagsForWorkspace"
+        - "getTagsForTask"
+        - "createTagForWorkspace"
+        - "addTagForTask"
+        - "removeTagForTask"
+        # comments (stories)
+        - "getStoriesForTask"
+        - "createStoryForTask"
+        - "getStory"
+        - "updateStory"

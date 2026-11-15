@@ -1,0 +1,164 @@
+- id: github-t01
+  prompt: >-
+    Open a new issue in acme/web titled "Checkout page times out on slow connections" and label it bug.
+  split: practice
+  in_intent: true
+  expected_calls:
+    - server: github
+      method: POST
+      path: /repos/{owner}/{repo}/issues
+      path_parameters: {owner: acme, repo: web}
+      body: {title: Checkout page times out on slow connections, labels: [bug]}
+  solution:
+    - server: github
+      operation: issues_create
+      arguments: {owner: acme, repo: web, title: Checkout page times out on slow connections, labels: [bug]}
+
+- id: github-t02
+  prompt: >-
+    Can you ask alice-chen to review the "Add rate limiting to API client" pull request in acme/api?
+  split: practice
+  in_intent: true
+  expected_calls:
+    - server: github
+      method: POST
+      path: /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers
+      path_parameters: {owner: acme, repo: api, pull_number: '87'}
+      body: {reviewers: [alice-chen]}
+  solution:
+    - server: github
+      operation: pulls_request_reviewers
+      arguments: {owner: acme, repo: api, pull_number: 87, reviewers: [alice-chen]}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/api/pulls
+      body:
+        - {number: 86, title: Add retry logic to API client, state: open}
+        - {number: 87, title: Add rate limiting to API client, state: open}
+        - {number: 88, title: Update README badges, state: open}
+
+- id: github-t03
+  prompt: >-
+    The issue "Dark mode toggle resets on reload" in acme/web was fixed by the settings refactor. Close it as completed.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: github
+      method: PATCH
+      path: /repos/{owner}/{repo}/issues/{issue_number}
+      path_parameters: {owner: acme, repo: web, issue_number: '214'}
+      body: {state: closed}
+  solution:
+    - server: github
+      operation: issues_update
+      arguments: {owner: acme, repo: web, issue_number: 214, state: closed, state_reason: completed}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues
+      body:
+        - {number: 213, title: Dark mode colors too dim on charts, state: open}
+        - {number: 214, title: Dark mode toggle resets on reload, state: open}
+        - {number: 215, title: Footer links broken on mobile, state: open}
+
+- id: github-t04
+  prompt: >-
+    I've looked over the "Migrate push notifications to FCM v1" pull request in acme/mobile and it's good to go. Approve it with a short note saying "LGTM, thanks!".
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: github
+      method: POST
+      path: /repos/{owner}/{repo}/pulls/{pull_number}/reviews
+      path_parameters: {owner: acme, repo: mobile, pull_number: '142'}
+      body: {event: APPROVE}
+  solution:
+    - server: github
+      operation: pulls_create_review
+      arguments: {owner: acme, repo: mobile, pull_number: 142, event: APPROVE, body: "LGTM, thanks!"}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/mobile/pulls
+      body:
+        - {number: 141, title: Migrate analytics to Firebase v10, state: open}
+        - {number: 142, title: Migrate push notifications to FCM v1, state: open}
+
+- id: github-t05
+  prompt: >-
+    Leave a comment on the "Search returns stale results after reindex" issue in acme/api asking the reporter which version they're running.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: github
+      method: POST
+      path: /repos/{owner}/{repo}/issues/{issue_number}/comments
+      path_parameters: {owner: acme, repo: api, issue_number: '305'}
+  solution:
+    - server: github
+      operation: issues_create_comment
+      arguments: {owner: acme, repo: api, issue_number: 305, body: "Thanks for the report! Which version are you running?"}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/api/issues
+      body:
+        - {number: 304, title: Search is slow for long queries, state: open}
+        - {number: 305, title: Search returns stale results after reindex, state: open}
+        - {number: 306, title: Reindex job fails on empty index, state: open}
+
+- id: github-t06
+  prompt: >-
+    Squash-merge the "Bump lodash to 4.17.21" pull request in acme/web.
+  split: final
+  in_intent: true
+  expected_calls:
+    - server: github
+      method: PUT
+      path: /repos/{owner}/{repo}/pulls/{pull_number}/merge
+      path_parameters: {owner: acme, repo: web, pull_number: '530'}
+      body: {merge_method: squash}
+  solution:
+    - server: github
+      operation: pulls_merge
+      arguments: {owner: acme, repo: web, pull_number: 530, merge_method: squash}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/web/pulls
+      body:
+        - {number: 529, title: Bump axios to 1.7.4, state: open}
+        - {number: 530, title: Bump lodash to 4.17.21, state: open}
+
+- id: github-t07
+  prompt: >-
+    Publish a release v2.3.0 for acme/web from main, named "v2.3.0".
+  split: final
+  in_intent: false
+  expected_calls:
+    - server: github
+      method: POST
+      path: /repos/{owner}/{repo}/releases
+      path_parameters: {owner: acme, repo: web}
+      body: {tag_name: v2.3.0}
+  solution:
+    - server: github
+      operation: repos_create_release
+      arguments: {owner: acme, repo: web, tag_name: v2.3.0, target_commitish: main, name: v2.3.0}
+
+- id: github-t08
+  prompt: >-
+    Turn on automatic deletion of head branches after merge for acme/api.
+  split: final
+  in_intent: false
+  expected_calls:
+    - server: github
+      method: PATCH
+      path: /repos/{owner}/{repo}
+      path_parameters: {owner: acme, repo: api}
+      body: {delete_branch_on_merge: true}
+  solution:
+    - server: github
+      operation: repos_update
+      arguments: {owner: acme, repo: api, delete_branch_on_merge: true}

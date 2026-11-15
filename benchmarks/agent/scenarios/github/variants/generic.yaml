@@ -1,0 +1,5 @@
+# Generic: dynamic exposure for the 1,281-operation GitHub spec, no intent-specific policy.
+servers:
+  github:
+    exposure:
+      style: dynamic

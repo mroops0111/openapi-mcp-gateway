@@ -1,0 +1,4 @@
+# What the user wants these APIs for. The scenario's own config was written from this sentence alone.
+intent: "Keep a team's notes in Notion organized: find pages, add content to them, and update database entries."
+servers:
+  notion: notion
