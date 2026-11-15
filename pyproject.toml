@@ -21,15 +21,15 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastapi>=0.162.0",
+    "fastapi>=0.162.5",
     "uvicorn[standard]>=0.54.0",
     "mcp>=2.0.0",
-    "pydantic>=2.14.2",
+    "pydantic>=2.14.3",
     "pydantic-settings>=2.16.2",
     "httpx>=0.28.1",
     "pyyaml>=6.0.3",
     "inflection>=0.5.1",
-    "click>=8.4.0",
+    "click>=8.5.1",
     "jsonschema>=4.26.0",
     "jsonata-python>=0.7.0",
     "snowballstemmer>=3.1.1",
@@ -44,7 +44,7 @@ dev = [
     "fakeredis>=2.35.0",
     "httpx>=0.28.1",
     "basedpyright>=1.39.0",
-    "ruff>=0.17.3",
+    "ruff>=0.17.4",
     "pyjwt[crypto]>=2.15.1",
 ]
 
