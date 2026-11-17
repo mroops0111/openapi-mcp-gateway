@@ -25,8 +25,8 @@ from ...scopes import BrokeredAccessToken, McpScopePolicy
 from ...stores.base import TokenStore
 from ..resolver import AuthorizationCodeAuthResolver
 from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
-from .clients import ClientDirectory, DynamicClientRegistry, PreRegisteredClientDirectory
-from .consent import PENDING_AUTHORIZATION_TTL, ConsentRegistry, PendingAuthorization
+from .clients import ClientDirectory, DynamicClientRegistry, PreRegisteredClientDirectory, registered_scopes
+from .consent import PENDING_AUTHORIZATION_TTL, ApprovedScopes, ConsentRegistry, PendingAuthorization
 from .consent_page import ConsentPrompt, DescribedScope
 
 
@@ -216,8 +216,14 @@ class AuthorizationCodeProvider:
         )
 
     async def consent_prompt(self, pending: PendingAuthorization, mcp_scope_policy: McpScopePolicy) -> ConsentPrompt:
-        """What the consent page shows for ``pending``, its MCP access read from ``mcp_scope_policy``."""
+        """What the consent page shows for ``pending``, its MCP access read from ``mcp_scope_policy``.
+
+        On a step-up, the scopes beyond what the browser approved before are marked new.
+        Nothing is marked on a first approval, where every scope would be.
+        """
         client = await self.clients.get(pending.client_id)
+        approved = await self._consents.approved(pending.bound_browser_id, pending.client_id)
+        new = approved.new_in(pending.scopes, self.upstream.scopes) if approved else ApprovedScopes()
         return ConsentPrompt(
             server_name=self._prefix,
             upstream_host=urllib.parse.urlsplit(self.upstream.authorization_url).netloc,
@@ -225,10 +231,11 @@ class AuthorizationCodeProvider:
             client_name=client.client_name if client else None,
             redirect_uri=pending.redirect_uri,
             upstream_scopes=[
-                DescribedScope(scope, self.upstream.scope_descriptions.get(scope)) for scope in self.upstream.scopes
+                DescribedScope(scope, self.upstream.scope_descriptions.get(scope), scope in new.upstream_scopes)
+                for scope in self.upstream.scopes
             ],
             mcp_scopes=[
-                DescribedScope(scope, mcp_scope_policy.defined_mcp_scopes[scope])
+                DescribedScope(scope, mcp_scope_policy.defined_mcp_scopes[scope], scope in new.mcp_scopes)
                 for scope in pending.scopes
                 if scope in mcp_scope_policy.defined_mcp_scopes
             ],
@@ -316,7 +323,7 @@ class AuthorizationCodeProvider:
         api_refresh_token = await self.store.get_mapping('mcp_auth_code', authorization_code.code, 'api_refresh_token')
 
         return await self._issue_mcp_token(
-            client_id=client_id,
+            client=client,
             scopes=authorization_code.scopes,
             upstream_scopes=self._recorded_upstream_scopes(data),
             api_access_token=api_access_token,
@@ -379,7 +386,7 @@ class AuthorizationCodeProvider:
             await self._store_api_token(client_id, api_access_token, refreshed.expires_in)
 
         new_token = await self._issue_mcp_token(
-            client_id=client_id,
+            client=client,
             scopes=scopes or data.get('scopes', []),
             upstream_scopes=upstream_scopes,
             api_access_token=api_access_token,
@@ -611,13 +618,19 @@ class AuthorizationCodeProvider:
 
     async def _issue_mcp_token(
         self,
-        client_id: str,
+        client: OAuthClientInformationFull,
         scopes: list[str],
         upstream_scopes: list[str],
         api_access_token: str,
         api_refresh_token: str | None,
     ) -> OAuthToken:
-        """Mint MCP access and refresh tokens and map them to the upstream API tokens, recording the upstream grant."""
+        """Mint MCP access and refresh tokens and map them to the upstream API tokens, recording the upstream grant.
+
+        Every scope ``client`` may be granted is recorded as well, which is what the token can step up to.
+        A client registered without any scope is taken to be limited to the ones it was granted.
+        """
+        client_id = self._require_client_id(client)
+        grantable_mcp_scopes = registered_scopes(client) or list(scopes)
         mcp_access = f'mcp_{secrets.token_hex(32)}'
         mcp_refresh = f'mcp_refresh_{secrets.token_hex(32)}'
         now = int(time.time())
@@ -630,6 +643,7 @@ class AuthorizationCodeProvider:
                 'client_id': client_id,
                 'scopes': scopes,
                 'upstream_scopes': upstream_scopes,
+                'grantable_mcp_scopes': grantable_mcp_scopes,
                 'expires_at': now + self.issued_tokens.access_token_ttl,
                 **self._binding(),
             },
@@ -644,6 +658,7 @@ class AuthorizationCodeProvider:
                 'client_id': client_id,
                 'scopes': scopes,
                 'upstream_scopes': upstream_scopes,
+                'grantable_mcp_scopes': grantable_mcp_scopes,
                 'expires_at': now + self.issued_tokens.refresh_token_ttl,
                 **self._binding(),
             },

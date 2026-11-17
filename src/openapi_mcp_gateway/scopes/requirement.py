@@ -19,6 +19,16 @@ class ScopeRequirement(abc.ABC):
     def refusal(self) -> str:
         """Why a token that does not meet this requirement is refused, as shown to the caller."""
 
+    def challenge_within(self, grantable: collections.abc.Set[str] | None) -> tuple[str, ...]:
+        """The part of ``challenge`` a client that may be granted ``grantable`` can step up for.
+
+        ``None`` means what the client may be granted is unknown, so the whole challenge stands.
+        The scopes are taken to be needed together, so the challenge stands only when all of them are grantable.
+        """
+        if grantable is None or set(self.challenge) <= grantable:
+            return self.challenge
+        return ()
+
 
 class AnyScopeRequirement(ScopeRequirement):
     """Met by a token carrying any one of ``scopes``.
@@ -41,6 +51,12 @@ class AnyScopeRequirement(ScopeRequirement):
     @property
     def refusal(self) -> str:
         return f'This operation needs one of these scopes: {", ".join(self._scopes)}.'
+
+    def challenge_within(self, grantable: collections.abc.Set[str] | None) -> tuple[str, ...]:
+        """Each of ``scopes`` the client may be granted, since any one of them is enough."""
+        if grantable is None:
+            return self._scopes
+        return tuple(scope for scope in self._scopes if scope in grantable)
 
 
 class AnyScopeSetRequirement(ScopeRequirement):

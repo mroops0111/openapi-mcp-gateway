@@ -1,3 +1,4 @@
+import collections.abc
 import logging
 
 import pytest
@@ -6,15 +7,18 @@ from openapi_mcp_gateway.exposure import DynamicOperationTarget
 from openapi_mcp_gateway.openapi import OperationInfo
 from openapi_mcp_gateway.scopes import (
     AnyScopeRequirement,
+    BrokeredAccessToken,
     ConfiguredMcpScopePolicy,
     NameHeaderTarget,
     ScopeRegistry,
+    ScopeRequirement,
     TagMethodDerivation,
     TokenGrant,
     UnreachableRequirement,
     UnrestrictedMcpScopePolicy,
     UnrestrictedRequirement,
     build_mcp_scope_policy,
+    grant_of,
 )
 from openapi_mcp_gateway.settings import OperationScopesConfig
 from tests.operations import PETSTORE_OPERATIONS, operation
@@ -55,6 +59,27 @@ class TestScopeRequirements:
         assert requirement.is_met({'anything'}) is met
         assert requirement.is_met(set()) is met
         assert requirement.challenge == ()
+
+    @pytest.mark.parametrize(
+        ('grantable', 'challenged'),
+        [({'issues:triage', 'other'}, ('issues:triage',)), ({'other'}, ()), (None, ('issues:triage', 'issues:write'))],
+    )
+    def test_any_scope_challenges_with_each_grantable_alternative(self, grantable, challenged):
+        """Any one alternative is enough, so each the client may be granted stands on its own."""
+        requirement = AnyScopeRequirement(['issues:write', 'issues:triage'])
+        assert requirement.challenge_within(grantable) == challenged
+
+    @pytest.mark.parametrize(
+        ('grantable', 'challenged'),
+        [
+            ({'pets:read', 'pets:write'}, ('pets:read', 'pets:write')),
+            ({'pets:read'}, ()),
+            (None, ('pets:read', 'pets:write')),
+        ],
+    )
+    def test_a_challenge_stands_only_when_every_scope_is_grantable_by_default(self, grantable, challenged):
+        """A requirement that does not say otherwise needs its scopes together, so a part would not help."""
+        assert _EveryScopeRequirement().challenge_within(grantable) == challenged
 
 
 class TestTagMethodDerivation:
@@ -172,27 +197,54 @@ class TestUnrestrictedMcpScopePolicy:
         assert policy.opens_unscoped_operations is True
 
 
+class TestTokenGrant:
+    """What a token holds, read from the token on the request."""
+
+    def test_a_token_minted_before_recording_grantable_scopes_leaves_them_unknown(self):
+        """Its challenge stays whole, so the client can still step up, while lists show only what it holds."""
+        token = BrokeredAccessToken(token='mcp_access', client_id='stepper', scopes=['pets:read'])
+        grant = grant_of(token)
+        assert grant.grantable_mcp_scopes is None
+        assert grant.reachable_mcp_scopes == {'pets:read'}
+
+    def test_a_recorded_token_reaches_what_its_client_may_be_granted(self):
+        token = BrokeredAccessToken(
+            token='mcp_access',
+            client_id='stepper',
+            scopes=['pets:read'],
+            grantable_mcp_scopes=['pets:read', 'pets:write'],
+        )
+        assert grant_of(token).reachable_mcp_scopes == {'pets:read', 'pets:write'}
+
+
 class TestScopeRegistry:
     """Requirements looked up by the name a tool or operation is exposed as, or the URI a resource is read at."""
 
     def test_a_registered_name_carries_its_requirement(self):
         scope_registry = ScopeRegistry(_configured_policy(auto='tags'))
         scope_registry.register('delete_pet', _operation_named('deletePet'))
-        assert scope_registry.permits('delete_pet', _mcp_grant({'pets:delete'}))
-        assert not scope_registry.permits('delete_pet', _mcp_grant({'pets:write'}))
+        assert scope_registry.refusal('delete_pet', _mcp_grant({'pets:delete'})) is None
+        assert scope_registry.refusal('delete_pet', _mcp_grant({'pets:write'})) is not None
 
     def test_an_unregistered_name_requires_nothing(self):
         """A dynamic meta-tool is never registered, since the operations behind it are what scopes guard."""
         scope_registry = ScopeRegistry(_configured_policy(auto='tags'))
-        assert scope_registry.permits('search_operations', _mcp_grant(set()))
+        assert scope_registry.refusal('search_operations', _mcp_grant(set())) is None
 
     @pytest.mark.parametrize('uri', ['petstore://pets/{petId}', 'petstore://pets/7'])
     def test_a_resource_template_covers_every_uri_it_expands_to(self, uri):
         """The template is what a listing names and the concrete URI what a read names, and both require the same."""
         scope_registry = ScopeRegistry(_configured_policy(auto='tags'))
         scope_registry.register_resource('petstore://pets/{petId}', _operation_named('getPetById'))
-        assert scope_registry.permits(uri, _mcp_grant({'pets:read'}))
-        assert not scope_registry.permits(uri, _mcp_grant({'pets:write'}))
+        assert scope_registry.refusal(uri, _mcp_grant({'pets:read'})) is None
+        assert scope_registry.refusal(uri, _mcp_grant({'pets:write'})) is not None
+
+    @pytest.mark.parametrize(('grantable', 'listed'), [({'pets:read', 'pets:delete'}, True), ({'pets:read'}, False)])
+    def test_lists_show_what_the_client_may_step_up_for(self, grantable, listed):
+        """A tool hidden until the token holds its scope could never be called, so the step-up would never start."""
+        scope_registry = ScopeRegistry(_configured_policy(auto='tags'))
+        scope_registry.register('delete_pet', _operation_named('deletePet'))
+        assert scope_registry.lists('delete_pet', _mcp_grant({'pets:read'}, grantable)) is listed
 
 
 class TestRequestTargets:
@@ -216,6 +268,21 @@ class TestRequestTargets:
         assert DynamicOperationTarget().resolve(headers) == expected
 
 
+class _EveryScopeRequirement(ScopeRequirement):
+    """A requirement for ``pets:read`` and ``pets:write`` together, whose challenge the base class narrows."""
+
+    def is_met(self, granted: collections.abc.Set[str]) -> bool:
+        return {'pets:read', 'pets:write'} <= granted
+
+    @property
+    def challenge(self) -> tuple[str, ...]:
+        return ('pets:read', 'pets:write')
+
+    @property
+    def refusal(self) -> str:
+        return 'This operation needs both pets:read and pets:write.'
+
+
 def _configured_policy(**config: object) -> ConfiguredMcpScopePolicy:
     """A policy over the petstore operations, configured as ``auth.operation_scopes`` would be."""
     return ConfiguredMcpScopePolicy(OperationScopesConfig.model_validate(config), PETSTORE_OPERATIONS, 'petstore')
@@ -226,6 +293,9 @@ def _operation_named(operation_id: str) -> OperationInfo:
     return next(candidate for candidate in PETSTORE_OPERATIONS if candidate.operation_id == operation_id)
 
 
-def _mcp_grant(mcp_scopes: set[str]) -> TokenGrant:
-    """A grant carrying ``mcp_scopes`` and nothing from the upstream."""
-    return TokenGrant(frozenset(mcp_scopes), frozenset())
+def _mcp_grant(mcp_scopes: set[str], grantable: set[str] | None = None) -> TokenGrant:
+    """A grant carrying ``mcp_scopes`` and nothing from the upstream, whose client may be granted ``grantable``.
+
+    The client may be granted only ``mcp_scopes`` when ``grantable`` is ``None``.
+    """
+    return TokenGrant(frozenset(mcp_scopes), frozenset(), frozenset(mcp_scopes if grantable is None else grantable))

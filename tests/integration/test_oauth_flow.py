@@ -171,12 +171,28 @@ class TestAuthorize:
 class TestGrantedScopes:
     """The scopes a token carries, whatever the client asked for."""
 
-    @pytest.mark.parametrize(('requested', 'granted'), [(None, 'a b'), (['a'], 'a b'), (['c'], 'a b c')])
+    @pytest.mark.parametrize(
+        ('requested', 'granted'), [(None, 'api mcp'), (['api'], 'api mcp'), (['issues:read'], 'api mcp issues:read')]
+    )
     async def test_endpoint_scopes_are_always_granted(self, make_provider, mcp_client_info, requested, granted):
         """A token without them would be refused by every request, since each must hold them all."""
-        provider = make_provider(issued_tokens=IssuedTokenPolicy(scopes=['a', 'b']))
+        provider = make_provider(issued_tokens=IssuedTokenPolicy(scopes=['api', 'mcp']))
         token = await sign_in(provider, mcp_client_info, scopes=requested)
         assert token.scope == granted
+
+    @pytest.mark.parametrize(
+        ('registered', 'grantable'),
+        [('api issues:read issues:write', ['api', 'issues:read', 'issues:write']), (None, ['api'])],
+    )
+    async def test_a_token_records_every_scope_its_client_may_hold(self, provider, registered, grantable):
+        """What the token can step up to. A client registered without a scope is held to what it was granted."""
+        client = OAuthClientInformationFull(
+            client_id='mcp-client-123', redirect_uris=[AnyHttpUrl(CLIENT_REDIRECT_URI)], scope=registered
+        )
+        token = await sign_in(provider, client)
+        access_token = await provider.load_access_token(token.access_token)
+        assert isinstance(access_token, BrokeredAccessToken)
+        assert access_token.grantable_mcp_scopes == grantable
 
 
 class TestUpstreamGrant:

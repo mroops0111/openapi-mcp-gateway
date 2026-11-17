@@ -161,7 +161,8 @@ class TestScopeRegistryWithUpstreamScopes:
             SpecSecurityUpstreamScopePolicy(SCHEMES, {'admin': ['read:pets', 'write:pets']}),
         )
         scope_registry.register('delete_pet', DELETE_PET)
-        refusal = scope_registry.refusal('delete_pet', TokenGrant(frozenset(mcp_scopes), frozenset(upstream_scopes)))
+        grant = TokenGrant(frozenset(mcp_scopes), frozenset(upstream_scopes), frozenset(mcp_scopes))
+        refusal = scope_registry.refusal('delete_pet', grant)
         assert refusal == refused_for
 
     def test_the_lists_are_cached_per_token_once_the_grant_is_enforced(self):

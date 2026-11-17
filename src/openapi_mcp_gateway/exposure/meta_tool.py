@@ -184,9 +184,12 @@ class MetaToolGenerator:
             return await operation.callable_(**arguments, ctx=ctx)
 
     def _visibility(self) -> typing.Callable[[str], bool]:
-        """Whether the token on the current request may see each operation, by name."""
+        """Whether each operation, by name, shows to the current token.
+
+        Operations the token can step up for show as well.
+        """
         grant = current_grant()
-        return lambda name: self.scope_registry.permits(name, grant)
+        return lambda name: self.scope_registry.lists(name, grant)
 
 
 @dataclasses.dataclass(frozen=True)

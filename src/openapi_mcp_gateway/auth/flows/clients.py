@@ -4,9 +4,10 @@ import ipaddress
 import logging
 import typing
 
+import pydantic
 from mcp.server.auth.provider import RegistrationError
 from mcp.server.auth.settings import ClientRegistrationOptions
-from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull
+from mcp.shared.auth import InvalidRedirectUriError, InvalidScopeError, OAuthClientInformationFull
 from pydantic import AnyUrl
 
 from ...settings import ClientConfig
@@ -99,14 +100,16 @@ class DynamicClientRegistry(ClientDirectory):
 
 
 class PreRegisteredClient(OAuthClientInformationFull):
-    """A client declared under ``auth.clients``, which is granted scopes rather than refused them.
+    """A client declared under ``auth.clients``, granted what it asks for within ``scope``, its maximum.
 
-    Asking for a scope outside its set is not an error.
-    RFC 6749 §3.3 lets the server grant less than asked, so the client receives what it asked for within its set,
-    or its whole set when that leaves nothing.
+    Asking for nothing grants ``default_scopes``.
+    Asking for scopes partly outside its set grants the part within, as RFC 6749 §3.3 lets the server grant less.
+    Asking only for scopes outside it is ``invalid_scope``, since granting something else instead would be silent.
     Without registered redirect URIs, any loopback redirect is accepted on any port and path,
     since OAuth 2.1 requires that of loopback redirects and a CLI client picks its port at run time.
     """
+
+    default_scopes: list[str] = pydantic.Field(default_factory=list)
 
     @classmethod
     def from_config(
@@ -129,13 +132,25 @@ class PreRegisteredClient(OAuthClientInformationFull):
             token_endpoint_auth_method='client_secret_basic' if secret else 'none',
             redirect_uris=client.redirect_uris,
             scope=' '.join(dict.fromkeys([*mcp_endpoint_scopes, *client.scopes])),
+            default_scopes=list(dict.fromkeys([*mcp_endpoint_scopes, *client.granted_by_default])),
         )
 
     def validate_scope(self, requested_scope: str | None) -> list[str]:
-        granted = self.scope.split() if self.scope else []
         requested = requested_scope.split() if requested_scope else []
-        within = [scope for scope in dict.fromkeys(requested) if scope in granted]
-        return within or granted
+        if not requested:
+            return list(self.default_scopes)
+        allowed = registered_scopes(self)
+        within = [scope for scope in dict.fromkeys(requested) if scope in allowed]
+        if not within:
+            logger.warning(
+                'Client "%s" asked for scopes %s, none of which auth.clients.%s.scopes allows (%s).',
+                self.client_id,
+                requested,
+                self.client_id,
+                allowed,
+            )
+            raise InvalidScopeError(f'None of the requested scopes is allowed for this client: {" ".join(requested)}')
+        return within
 
     def validate_redirect_uri(self, redirect_uri: AnyUrl | None) -> AnyUrl:
         try:
@@ -175,6 +190,11 @@ class PreRegisteredClientDirectory(ClientDirectory):
 
     def requires_consent(self, client_id: str) -> bool:
         return client_id not in self._exempt_from_consent
+
+
+def registered_scopes(client: OAuthClientInformationFull) -> list[str]:
+    """Every scope ``client`` is registered with, the most it may be granted, or none when it names none."""
+    return client.scope.split() if client.scope else []
 
 
 def _is_loopback(uri: AnyUrl) -> bool:

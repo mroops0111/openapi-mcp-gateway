@@ -142,9 +142,12 @@ class ClientConfig(pydantic.BaseModel):
     Without ``client_secret`` it is a public client, held to PKCE alone.
     Without ``redirect_uris`` any loopback redirect is accepted, on any port and path, as OAuth 2.1 requires,
     which is what a CLI client listening on a local port needs.
-    ``scopes`` are every scope the client is granted, and each must be one ``auth.operation_scopes`` defines.
+    ``scopes`` are every scope the client may be granted, and each must be one ``auth.operation_scopes`` defines.
+    ``default_scopes`` are what a client asking for no scope receives, a subset of ``scopes``.
+    Left out, they are all of ``scopes``, and otherwise the client steps up for the rest.
     ``consent`` shows the gateway's consent page before the upstream sign-in.
-    Turning it off trusts the client on the operator's word, so the user is never asked which client they are signing in to.
+    Turning it off trusts the client on the operator's word.
+    The user is then never asked which client they are signing in to.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid')
@@ -152,6 +155,7 @@ class ClientConfig(pydantic.BaseModel):
     client_secret: str | None = None
     redirect_uris: list[pydantic.AnyUrl] | None = pydantic.Field(default=None, min_length=1)
     scopes: list[str] = pydantic.Field(default_factory=list)
+    default_scopes: list[str] | None = None
     consent: bool = True
 
     @pydantic.field_validator('scopes')
@@ -159,6 +163,22 @@ class ClientConfig(pydantic.BaseModel):
     def _validate_scope_names(cls, scopes: list[str]) -> list[str]:
         _refuse_invalid_scope_tokens(scopes, 'auth.clients.<client>.scopes')
         return scopes
+
+    @pydantic.model_validator(mode='after')
+    def _refuse_defaults_beyond_scopes(self) -> typing.Self:
+        """Refuse a default the client could never be granted, since ``scopes`` is its maximum."""
+        beyond = sorted(set(self.default_scopes or ()) - set(self.scopes))
+        if beyond:
+            raise ValueError(
+                f'auth.clients.<client>.default_scopes names {beyond!r}, which are not in its scopes. '
+                'Add them to scopes, or remove them from default_scopes.'
+            )
+        return self
+
+    @property
+    def granted_by_default(self) -> list[str]:
+        """What the client receives when it asks for no scope."""
+        return self.scopes if self.default_scopes is None else self.default_scopes
 
     def resolve_client_secret(self) -> str | None:
         """Client secret after env-var substitution."""

@@ -89,8 +89,8 @@ class TestScopeDescriptions:
 
     def test_both_kinds_of_scope_are_described(self, scoped_browser):
         page = _open_consent(scoped_browser, scope='pets:read').text
-        assert 'Read pets<code>pets:read</code>' in page
-        assert 'Read pets<code>read:pets</code>' in page
+        assert 'Read pets<code class="aside">pets:read</code>' in page
+        assert 'Read pets<code class="aside">read:pets</code>' in page
 
 
 class TestConsentDecision:
@@ -106,6 +106,15 @@ class TestConsentDecision:
         response = _open_consent(browser)
         assert response.status_code == 302
         assert response.headers['location'].startswith(f'{AUTHORIZE_URL}?')
+
+    def test_only_the_scopes_a_step_up_adds_are_marked_new(self, scoped_browser):
+        """A first approval marks nothing, since every scope on it would be new."""
+        first = _open_consent(scoped_browser, scope='pets:read')
+        assert 'class="new"' not in first.text
+        _decide(scoped_browser, first, 'approve')
+        step_up = _open_consent(scoped_browser, scope='pets:read pets:write').text
+        assert 'pets:read</code></span>' in step_up
+        assert 'pets:write</code><span class="new">New</span>' in step_up
 
     def test_a_client_asking_for_more_scopes_is_asked_about_again(self, scoped_browser):
         """An approval covers only the scopes the page showed."""

@@ -52,7 +52,9 @@ ul { list-style: none; margin: 0 0 22px; padding: 0; display: grid; gap: 10px; }
 li { display: flex; gap: 10px; align-items: baseline; overflow-wrap: anywhere; }
 li::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--teal);
   transform: translateY(-2px); }
-li span code { font-size: 12px; color: var(--muted); margin-left: 6px; }
+li code.aside { font-size: 12px; color: var(--muted); margin-left: 6px; }
+.new { margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: var(--chip); color: var(--teal);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em; white-space: nowrap; }
 details { font-size: 13px; color: var(--muted); padding-top: 14px; border-top: 1px dashed var(--line); }
 summary { cursor: pointer; }
 details p { margin: 8px 0 0; overflow-wrap: anywhere; }
@@ -71,6 +73,9 @@ _LOGO = (
     'stroke-linecap="round" stroke-linejoin="round"/></svg>'
 )
 
+# The mark beside a scope a step-up adds.
+_NEW_MARK = '<span class="new">New</span>'
+
 # The mark beside the warning to check who started the sign-in.
 _HINT_ICON = (
     '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">'
@@ -80,10 +85,14 @@ _HINT_ICON = (
 
 
 class DescribedScope(typing.NamedTuple):
-    """A scope as the consent page lists it, led by what it allows when anything says so."""
+    """A scope as the consent page lists it, led by what it allows when anything says so.
+
+    ``new`` marks a scope a step-up adds to what the browser approved before.
+    """
 
     name: str
     description: str | None
+    new: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -179,10 +188,12 @@ def _mcp_scope_list(prompt: ConsentPrompt, server: str) -> str:
 
 
 def _scope_items(scopes: collections.abc.Sequence[DescribedScope]) -> str:
-    """``scopes`` as list items, each led by its description with its name beside it, or by its name alone."""
-    return ''.join(
-        f'<li><span>{html.escape(scope.description)}<code>{html.escape(scope.name)}</code></span></li>'
-        if scope.description
-        else f'<li><code>{html.escape(scope.name)}</code></li>'
-        for scope in scopes
-    )
+    """``scopes`` as list items, a scope a step-up adds carrying a "New" mark."""
+    return ''.join(f'<li><span>{_scope_label(scope)}{_NEW_MARK if scope.new else ""}</span></li>' for scope in scopes)
+
+
+def _scope_label(scope: DescribedScope) -> str:
+    """The scope's description with its name beside it, or its name alone."""
+    if not scope.description:
+        return f'<code>{html.escape(scope.name)}</code>'
+    return f'{html.escape(scope.description)}<code class="aside">{html.escape(scope.name)}</code>'
