@@ -2,7 +2,7 @@ import logging
 
 import pytest
 from mcp.server.auth.provider import RegistrationError
-from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull
+from mcp.shared.auth import InvalidRedirectUriError, InvalidScopeError, OAuthClientInformationFull
 from pydantic import AnyUrl
 
 from openapi_mcp_gateway.auth.flows import DynamicClientRegistry, PreRegisteredClientDirectory
@@ -29,16 +29,30 @@ class TestScopeGrant:
     @pytest.mark.parametrize(
         ('requested', 'granted'),
         [
-            (None, ['issues:read', 'issues:write']),
+            (None, ['issues:read']),
             ('issues:write', ['issues:write']),
             ('issues:write issues:delete', ['issues:write']),
-            ('issues:delete', ['issues:read', 'issues:write']),
         ],
     )
     async def test_requested_scopes_are_narrowed_to_the_client_set(self, requested, granted):
-        """Nothing asked, or nothing within reach, grants the whole set, as RFC 6749 §3.3 allows."""
-        client = await _pre_registered(scopes=['issues:read', 'issues:write'])
+        """Nothing asked grants the defaults, and a request is narrowed to the set, as RFC 6749 §3.3 allows."""
+        client = await _pre_registered(scopes=['issues:read', 'issues:write'], default_scopes=['issues:read'])
         assert client.validate_scope(requested) == granted
+
+    async def test_without_default_scopes_the_whole_set_is_the_default(self):
+        client = await _pre_registered(scopes=['issues:read', 'issues:write'])
+        assert client.validate_scope(None) == ['issues:read', 'issues:write']
+
+    async def test_a_request_with_nothing_in_reach_is_refused(self, caplog):
+        """Granting something other than what was asked would be silent, so ``invalid_scope`` says so instead."""
+        client = await _pre_registered(scopes=['issues:read'])
+        with caplog.at_level(logging.WARNING), pytest.raises(InvalidScopeError):
+            client.validate_scope('issues:delete')
+        assert "asked for scopes ['issues:delete']" in caplog.text
+
+    def test_defaults_beyond_the_set_are_refused(self):
+        with pytest.raises(ValueError, match=r"default_scopes names \['issues:write'\]"):
+            ClientConfig(scopes=['issues:read'], default_scopes=['issues:write'])
 
     async def test_endpoint_scopes_are_granted_beside_the_client_set(self):
         """Without ``auth.operation_scopes`` every token carries the endpoint scopes, as a registered client's would."""

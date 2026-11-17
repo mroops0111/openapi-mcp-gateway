@@ -39,10 +39,14 @@ class TestConsentPage:
         assert 'Allow client-1 to use petstore?' in page
 
     def test_a_hostile_scope_description_is_escaped(self):
-        assert '&lt;b&gt;Read&lt;/b&gt; pets<code>pets:read</code>' in _page_text(HOSTILE_PROMPT)
+        assert '&lt;b&gt;Read&lt;/b&gt; pets<code class="aside">pets:read</code>' in _page_text(HOSTILE_PROMPT)
+
+    def test_a_scope_a_step_up_adds_is_marked_new(self):
+        prompt = dataclasses.replace(HOSTILE_PROMPT, mcp_scopes=[DescribedScope('pets:write', 'Write pets', new=True)])
+        assert 'Write pets<code class="aside">pets:write</code><span class="new">New</span>' in _page_text(prompt)
 
     def test_a_scope_without_a_description_is_shown_by_its_name(self):
-        assert '<li><code>read</code></li>' in _page_text(HOSTILE_PROMPT)
+        assert '<li><span><code>read</code></span></li>' in _page_text(HOSTILE_PROMPT)
 
     @pytest.mark.parametrize('mcp_scopes', [[], HOSTILE_PROMPT.mcp_scopes])
     def test_tools_open_to_every_client_are_named(self, mcp_scopes):

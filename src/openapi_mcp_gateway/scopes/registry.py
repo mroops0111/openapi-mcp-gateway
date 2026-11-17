@@ -58,9 +58,17 @@ class ScopeRegistry:
             return requirements.upstream.refusal
         return None
 
-    def permits(self, name: str, grant: TokenGrant) -> bool:
-        """Whether a token with ``grant`` may list and use ``name``."""
-        return self.refusal(name, grant) is None
+    def lists(self, name: str, grant: TokenGrant) -> bool:
+        """Whether ``name`` shows in the lists and searches a token with ``grant`` is answered with.
+
+        The MCP scopes are checked against every scope the client may be granted, not the token's,
+        so a tool the client can step up for stays in sight, and calling it starts the step-up.
+        The upstream grant is checked as it stands, since stepping up cannot change it.
+        """
+        requirements = self._requirements_of(name)
+        return requirements.mcp.is_met(grant.grantable_mcp_scopes) and requirements.upstream.is_met(
+            self.upstream_policy.held_scopes(grant.upstream_scopes)
+        )
 
     def _requirements_of(self, name: str) -> '_NameRequirements':
         if name in self._requirements:

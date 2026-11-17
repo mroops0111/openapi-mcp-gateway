@@ -178,6 +178,17 @@ class TestGrantedScopes:
         token = await sign_in(provider, mcp_client_info, scopes=requested)
         assert token.scope == granted
 
+    @pytest.mark.parametrize(('registered', 'grantable'), [('a b c', ['a', 'b', 'c']), (None, ['api'])])
+    async def test_a_token_records_every_scope_its_client_may_hold(self, provider, registered, grantable):
+        """What the token can step up to. A client registered without a scope is held to what it was granted."""
+        client = OAuthClientInformationFull(
+            client_id='mcp-client-123', redirect_uris=[AnyHttpUrl(CLIENT_REDIRECT_URI)], scope=registered
+        )
+        token = await sign_in(provider, client)
+        access_token = await provider.load_access_token(token.access_token)
+        assert isinstance(access_token, BrokeredAccessToken)
+        assert access_token.grantable_mcp_scopes == grantable
+
 
 class TestUpstreamGrant:
     """Each token records the scopes the upstream granted the user behind it."""

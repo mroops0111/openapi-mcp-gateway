@@ -10,6 +10,7 @@ import httpx2
 import pytest
 from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.auth import InvalidScopeError
 from mcp.types import CallToolResult, TextContent
 from starlette.testclient import TestClient
 
@@ -27,13 +28,16 @@ MODERN = '2026-07-28'
 LEGACY = 'legacy'
 
 # The pre-registered clients every scoped server declares, by what each may do to pets.
+# ``stepper`` starts with ``pets:write`` and may step up for the rest.
 READER = 'reader'
 DELETER = 'deleter'
 WRITER = 'writer'
+STEPPER = 'stepper'
 CLIENTS = {
     READER: {'scopes': ['pets:read']},
     DELETER: {'scopes': ['pets:read', 'pets:delete']},
     WRITER: {'scopes': ['pets:write']},
+    STEPPER: {'scopes': ['pets:read', 'pets:write', 'pets:delete'], 'default_scopes': ['pets:write']},
 }
 
 # The tools a token holding only ``pets:read`` sees on the petstore fixture.
@@ -124,6 +128,11 @@ class TestToolFiltering:
         async with _connect(gateway, 'janitor', MODERN) as session:
             assert await _tool_names(session) == ['delete_pet']
 
+    async def test_a_client_lists_what_it_may_step_up_for(self, gateway):
+        """A tool hidden until the token holds its scope would never be called, so the step-up would never start."""
+        async with _connect(gateway, STEPPER, MODERN) as session:
+            assert 'delete_pet' in await _tool_names(session)
+
     async def test_the_list_is_cached_per_token(self, gateway):
         async with _connect(gateway, READER, MODERN) as session:
             listed = await session.client.list_tools()
@@ -135,11 +144,20 @@ class TestScopeRejection:
 
     async def test_a_modern_client_is_challenged_over_http(self, gateway):
         """The ``403`` names the missing scope, so the client can step up for it."""
-        async with _connect(gateway, READER, MODERN) as session:
+        async with _connect(gateway, STEPPER, MODERN) as session:
             with pytest.raises(MCPError):
                 await session.client.call_tool('delete_pet', {'petId': '1'})
         assert session.refusal.status_code == 403
         assert session.refusal.headers['www-authenticate'] == DELETE_CHALLENGE
+
+    async def test_a_client_that_may_never_hold_the_scope_is_challenged_for_none(self, gateway):
+        """Naming a scope the client cannot be granted would only send it through a consent page in vain."""
+        async with _connect(gateway, READER, MODERN) as session:
+            with pytest.raises(MCPError):
+                await session.client.call_tool('delete_pet', {'petId': '1'})
+        challenge = session.refusal.headers['www-authenticate']
+        assert 'scope=' not in challenge.replace('insufficient_scope', '')
+        assert 'This client may not be granted any scope this operation needs.' in challenge
 
     async def test_a_legacy_client_receives_a_tool_error(self, gateway, upstream_requests):
         """A client older than 2026-07-28 sends no routing headers, so the refusal arrives inside the result."""
@@ -158,7 +176,7 @@ class TestScopeRejection:
 
 
 class TestDynamicExposure:
-    """The meta-tools show and call only the operations the token's scopes open."""
+    """The meta-tools show the operations the client may hold scopes for, and call only those the token's scopes open."""
 
     @pytest.fixture
     def gateway(self, make_gateway) -> Gateway:
@@ -173,9 +191,16 @@ class TestDynamicExposure:
         assert listing['tags'] == [{'name': 'pets', 'operations': 2}]
         assert hidden.is_error
 
+    async def test_search_and_get_show_what_the_client_may_step_up_for(self, gateway):
+        async with _connect(gateway, STEPPER, MODERN) as session:
+            searched = await session.client.call_tool('search_operations', {})
+            described = await session.client.call_tool('get_operation', {'name': 'delete_pet'})
+        assert 'delete_pet' in [operation['name'] for operation in json.loads(_text(searched))['operations']]
+        assert not described.is_error
+
     async def test_a_modern_client_is_challenged_for_the_operation_it_calls(self, gateway):
         """``Mcp-Param-Operation`` names the operation, so the challenge needs no look at the body."""
-        async with _connect(gateway, READER, MODERN) as session:
+        async with _connect(gateway, STEPPER, MODERN) as session:
             with pytest.raises(MCPError):
                 await session.client.call_tool('call_operation', {'name': 'delete_pet', 'arguments': {'petId': '1'}})
         assert session.refusal.status_code == 403
@@ -213,7 +238,7 @@ class TestPromotedResources:
 
     async def test_a_modern_client_is_challenged_over_http(self, gateway, upstream_requests):
         """``Mcp-Name`` carries the URI, which the template it expands from decides."""
-        async with _connect(gateway, WRITER, MODERN) as session:
+        async with _connect(gateway, STEPPER, MODERN) as session:
             with pytest.raises(MCPError):
                 await session.client.read_resource(PET_RESOURCE)
         assert session.refusal.status_code == 403
@@ -237,12 +262,22 @@ class TestAuthorizationServer:
     """With pre-registered clients the gateway grants each its own scopes and advertises none up front."""
 
     @pytest.mark.parametrize(
-        ('requested', 'granted'),
-        [(None, 'pets:read pets:delete'), ('pets:delete', 'pets:delete'), ('pets:write', 'pets:read pets:delete')],
+        ('client_id', 'requested', 'granted'),
+        [
+            (DELETER, None, 'pets:read pets:delete'),
+            (DELETER, 'pets:delete pets:write', 'pets:delete'),
+            (STEPPER, None, 'pets:write'),
+            (STEPPER, 'pets:write pets:delete', 'pets:write pets:delete'),
+        ],
     )
-    async def test_the_token_response_states_the_granted_scope(self, gateway, requested, granted):
-        token = await _sign_in(gateway, DELETER, requested)
+    async def test_the_token_response_states_the_granted_scope(self, gateway, client_id, requested, granted):
+        """Asking for nothing grants the client's defaults, and a request is narrowed to what the client may hold."""
+        token = await _sign_in(gateway, client_id, requested)
         assert token.scope == granted
+
+    async def test_a_request_for_nothing_the_client_may_hold_is_refused(self, gateway):
+        with pytest.raises(InvalidScopeError):
+            await _sign_in(gateway, DELETER, 'pets:write')
 
     def test_discovery_advertises_no_scopes_and_no_registration(self, gateway):
         """Discovery happens before the client is known, so no single scope set would be right."""
@@ -315,7 +350,7 @@ class TestUpstreamGrant:
 
     async def test_missing_mcp_scopes_are_challenged_first(self, make_enforcing_gateway):
         """A client can step up for the MCP scopes and not for the upstream grant, so it hears about them first."""
-        async with _connect(make_enforcing_gateway(), READER, MODERN, 'read:pets') as session:
+        async with _connect(make_enforcing_gateway(), STEPPER, MODERN, 'read:pets') as session:
             with pytest.raises(MCPError):
                 await session.client.call_tool('delete_pet', {'petId': '1'})
         assert session.refusal.headers['www-authenticate'] == DELETE_CHALLENGE

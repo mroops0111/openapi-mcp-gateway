@@ -12,9 +12,13 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .grant import current_grant
+from .grant import current_grant, grant_of
 from .registry import ScopeRegistry
 from .requirement import ScopeRequirement
+
+
+# Why a request is refused when no scope that would satisfy it is one its client may be granted.
+_UNREACHABLE_FOR_CLIENT = 'This client may not be granted any scope this operation needs.'
 
 
 class RequestTarget(abc.ABC):
@@ -66,10 +70,13 @@ class ScopeChallengeMiddleware:
         if unmet is None:
             await self.app(scope, receive, send)
             return
+        grantable = grant_of(scope['user'].access_token).grantable_mcp_scopes
+        challenged = tuple(name for name in unmet.challenge if name in grantable)
+        refusal = unmet.refusal if challenged else _UNREACHABLE_FOR_CLIENT
         response = JSONResponse(
             status_code=403,
-            content={'error': 'insufficient_scope', 'error_description': unmet.refusal},
-            headers={'WWW-Authenticate': self._challenge(unmet)},
+            content={'error': 'insufficient_scope', 'error_description': refusal},
+            headers={'WWW-Authenticate': self._challenge(challenged, refusal)},
         )
         await response(scope, receive, send)
 
@@ -91,20 +98,24 @@ class ScopeChallengeMiddleware:
         requirement = self._scope_registry.mcp_requirement(name)
         return None if requirement.is_met(frozenset(user.scopes)) else requirement
 
-    def _challenge(self, requirement: ScopeRequirement) -> str:
-        """The RFC 6750 ``WWW-Authenticate`` value, naming every scope that would satisfy the request at once."""
+    def _challenge(self, challenged: tuple[str, ...], refusal: str) -> str:
+        """The RFC 6750 ``WWW-Authenticate`` value, naming every scope the client may be granted that would satisfy the request.
+
+        It names none when the client may be granted none of them, so the client does not step up in vain.
+        """
         parameters = {
             'error': 'insufficient_scope',
-            'scope': ' '.join(requirement.challenge),
+            'scope': ' '.join(challenged),
             'resource_metadata': self._resource_metadata_url,
-            'error_description': requirement.refusal,
+            'error_description': refusal,
         }
         return 'Bearer ' + ', '.join(f'{key}="{value}"' for key, value in parameters.items() if value)
 
 
 class ScopeFilterMiddleware:
-    """SDK middleware hiding the tools and resources a token may not use, and refusing requests for them.
+    """SDK middleware hiding the tools and resources a token's client can never use, and refusing calls the token may not make.
 
+    A tool the client can step up for stays listed, since hiding it would keep the step-up from ever starting.
     A refused tool call is a tool error and a refused resource read a protocol error,
     which a client cannot step up from.
     It is the only refusal of a token whose upstream grant falls short, since stepping up cannot fix that.
@@ -130,7 +141,7 @@ class ScopeFilterMiddleware:
                 listing.items_key: [
                     item
                     for item in result[listing.items_key]
-                    if self._scope_registry.permits(item[listing.name_key], grant)
+                    if self._scope_registry.lists(item[listing.name_key], grant)
                 ],
             }
         return result

@@ -72,7 +72,7 @@ class ConsentRegistry:
         upstream_scopes: collections.abc.Iterable[str],
     ) -> bool:
         """Whether the browser already approved the client for every one of these scopes."""
-        approved = await self._approved(browser_id, client_id)
+        approved = await self.approved(browser_id, client_id)
         return approved is not None and approved.covers(mcp_scopes, upstream_scopes)
 
     async def approve(
@@ -83,14 +83,15 @@ class ConsentRegistry:
         upstream_scopes: collections.abc.Iterable[str],
     ) -> None:
         """Add these scopes to what the browser approved for the client, restarting the approval's lifetime."""
-        approved = await self._approved(browser_id, client_id) or ApprovedScopes()
+        approved = await self.approved(browser_id, client_id) or ApprovedScopes()
         merged = ApprovedScopes(
             mcp_scopes=sorted({*approved.mcp_scopes, *mcp_scopes}),
             upstream_scopes=sorted({*approved.upstream_scopes, *upstream_scopes}),
         )
         await self._store.set('mcp_consent', self._key(browser_id, client_id), merged.model_dump(), ttl=CONSENT_TTL)
 
-    async def _approved(self, browser_id: str, client_id: str) -> 'ApprovedScopes | None':
+    async def approved(self, browser_id: str, client_id: str) -> 'ApprovedScopes | None':
+        """What the browser approved for the client so far, or ``None`` when it never did."""
         data = await self._store.get('mcp_consent', self._key(browser_id, client_id))
         return ApprovedScopes.model_validate(data) if data else None
 
