@@ -69,10 +69,17 @@ class TestScopeRequirements:
         requirement = AnyScopeRequirement(['issues:write', 'issues:triage'])
         assert requirement.challenge_within(grantable) == challenged
 
-    @pytest.mark.parametrize(('grantable', 'challenged'), [({'a', 'b'}, ('a', 'b')), ({'a'}, ()), (None, ('a', 'b'))])
+    @pytest.mark.parametrize(
+        ('grantable', 'challenged'),
+        [
+            ({'pets:read', 'pets:write'}, ('pets:read', 'pets:write')),
+            ({'pets:read'}, ()),
+            (None, ('pets:read', 'pets:write')),
+        ],
+    )
     def test_a_challenge_stands_only_when_every_scope_is_grantable_by_default(self, grantable, challenged):
         """A requirement that does not say otherwise needs its scopes together, so a part would not help."""
-        assert _BothScopes().challenge_within(grantable) == challenged
+        assert _EveryScopeRequirement().challenge_within(grantable) == challenged
 
 
 class TestTagMethodDerivation:
@@ -195,14 +202,17 @@ class TestTokenGrant:
 
     def test_a_token_minted_before_recording_grantable_scopes_leaves_them_unknown(self):
         """Its challenge stays whole, so the client can still step up, while lists show only what it holds."""
-        token = BrokeredAccessToken(token='t', client_id='c', scopes=['pets:read'])
+        token = BrokeredAccessToken(token='mcp_access', client_id='stepper', scopes=['pets:read'])
         grant = grant_of(token)
         assert grant.grantable_mcp_scopes is None
         assert grant.reachable_mcp_scopes == {'pets:read'}
 
     def test_a_recorded_token_reaches_what_its_client_may_be_granted(self):
         token = BrokeredAccessToken(
-            token='t', client_id='c', scopes=['pets:read'], grantable_mcp_scopes=['pets:read', 'pets:write']
+            token='mcp_access',
+            client_id='stepper',
+            scopes=['pets:read'],
+            grantable_mcp_scopes=['pets:read', 'pets:write'],
         )
         assert grant_of(token).reachable_mcp_scopes == {'pets:read', 'pets:write'}
 
@@ -258,19 +268,19 @@ class TestRequestTargets:
         assert DynamicOperationTarget().resolve(headers) == expected
 
 
-class _BothScopes(ScopeRequirement):
-    """A requirement for ``a`` and ``b`` together, relying on the base class to narrow its challenge."""
+class _EveryScopeRequirement(ScopeRequirement):
+    """A requirement for ``pets:read`` and ``pets:write`` together, whose challenge the base class narrows."""
 
     def is_met(self, granted: collections.abc.Set[str]) -> bool:
-        return {'a', 'b'} <= granted
+        return {'pets:read', 'pets:write'} <= granted
 
     @property
     def challenge(self) -> tuple[str, ...]:
-        return ('a', 'b')
+        return ('pets:read', 'pets:write')
 
     @property
     def refusal(self) -> str:
-        return 'This operation needs a and b.'
+        return 'This operation needs both pets:read and pets:write.'
 
 
 def _configured_policy(**config: object) -> ConfiguredMcpScopePolicy:
