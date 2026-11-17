@@ -171,10 +171,12 @@ class TestAuthorize:
 class TestGrantedScopes:
     """The scopes a token carries, whatever the client asked for."""
 
-    @pytest.mark.parametrize(('requested', 'granted'), [(None, 'a b'), (['a'], 'a b'), (['c'], 'a b c')])
+    @pytest.mark.parametrize(
+        ('requested', 'granted'), [(None, 'api mcp'), (['api'], 'api mcp'), (['issues:read'], 'api mcp issues:read')]
+    )
     async def test_endpoint_scopes_are_always_granted(self, make_provider, mcp_client_info, requested, granted):
         """A token without them would be refused by every request, since each must hold them all."""
-        provider = make_provider(issued_tokens=IssuedTokenPolicy(scopes=['a', 'b']))
+        provider = make_provider(issued_tokens=IssuedTokenPolicy(scopes=['api', 'mcp']))
         token = await sign_in(provider, mcp_client_info, scopes=requested)
         assert token.scope == granted
 
