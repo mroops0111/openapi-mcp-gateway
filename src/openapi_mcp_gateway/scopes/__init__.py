@@ -1,6 +1,6 @@
 from .derivation import SCOPE_DERIVATIONS, DerivedScope, NoDerivation, ScopeDerivation, TagMethodDerivation
 from .enforcement import NameHeaderTarget, RequestTarget, ScopeChallengeMiddleware, ScopeFilterMiddleware
-from .grant import BrokeredAccessToken, TokenGrant, current_grant
+from .grant import BrokeredAccessToken, TokenGrant, current_grant, grant_of
 from .policy import (
     ConfiguredMcpScopePolicy,
     McpScopePolicy,
@@ -52,4 +52,5 @@ __all__ = [
     'build_mcp_scope_policy',
     'build_upstream_scope_policy',
     'current_grant',
+    'grant_of',
 ]

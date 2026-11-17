@@ -8,7 +8,8 @@ from mcp.server.auth.provider import AccessToken
 class BrokeredAccessToken(AccessToken):
     """An MCP access token the gateway minted, carrying the scopes the upstream granted the user behind it.
 
-    ``grantable_mcp_scopes`` is every MCP scope its client may be granted, or ``None`` on a token minted before it was recorded.
+    ``grantable_mcp_scopes`` is every MCP scope its client may be granted.
+    It is ``None`` on a token minted before it was recorded.
     """
 
     upstream_scopes: list[str] = pydantic.Field(default_factory=list)
@@ -16,13 +17,21 @@ class BrokeredAccessToken(AccessToken):
 
 
 class TokenGrant(typing.NamedTuple):
-    """The scopes an MCP token carries, the scopes the upstream granted the user behind it,
-    and every MCP scope its client may be granted, which is what it can step up to.
+    """What an MCP token holds and what it can step up to.
+
+    ``mcp_scopes`` are the scopes it carries, and ``upstream_scopes`` what the upstream granted the user behind it.
+    ``grantable_mcp_scopes`` are every MCP scope its client may be granted, which is what it can step up to.
+    They are ``None`` on a token minted before they were recorded.
     """
 
     mcp_scopes: frozenset[str]
     upstream_scopes: frozenset[str]
-    grantable_mcp_scopes: frozenset[str]
+    grantable_mcp_scopes: frozenset[str] | None
+
+    @property
+    def reachable_mcp_scopes(self) -> frozenset[str]:
+        """The MCP scopes the token holds or can step up to, which are only those it holds when that is unknown."""
+        return self.mcp_scopes if self.grantable_mcp_scopes is None else self.grantable_mcp_scopes
 
 
 def current_grant() -> TokenGrant:
@@ -37,8 +46,7 @@ def grant_of(access_token: AccessToken | None) -> TokenGrant:
     mcp_scopes = frozenset(access_token.scopes)
     if not isinstance(access_token, BrokeredAccessToken):
         return TokenGrant(mcp_scopes, frozenset(), mcp_scopes)
-    # A token minted before the client's scopes were recorded can step up to nothing it does not already hold.
     grantable = access_token.grantable_mcp_scopes
     return TokenGrant(
-        mcp_scopes, frozenset(access_token.upstream_scopes), mcp_scopes if grantable is None else frozenset(grantable)
+        mcp_scopes, frozenset(access_token.upstream_scopes), None if grantable is None else frozenset(grantable)
     )

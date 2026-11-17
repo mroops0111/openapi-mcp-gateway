@@ -188,10 +188,7 @@ def _mcp_scope_list(prompt: ConsentPrompt, server: str) -> str:
 
 
 def _scope_items(scopes: collections.abc.Sequence[DescribedScope]) -> str:
-    """``scopes`` as list items, each led by its description with its name beside it, or by its name alone.
-
-    A scope a step-up adds carries a "New" mark.
-    """
+    """``scopes`` as list items, a scope a step-up adds carrying a "New" mark."""
     return ''.join(f'<li><span>{_scope_label(scope)}{_NEW_MARK if scope.new else ""}</span></li>' for scope in scopes)
 
 

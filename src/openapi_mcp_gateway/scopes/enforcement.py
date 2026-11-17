@@ -70,9 +70,8 @@ class ScopeChallengeMiddleware:
         if unmet is None:
             await self.app(scope, receive, send)
             return
-        grantable = grant_of(scope['user'].access_token).grantable_mcp_scopes
-        challenged = tuple(name for name in unmet.challenge if name in grantable)
-        refusal = unmet.refusal if challenged else _UNREACHABLE_FOR_CLIENT
+        challenged = unmet.challenge_within(grant_of(scope['user'].access_token).grantable_mcp_scopes)
+        refusal = _UNREACHABLE_FOR_CLIENT if unmet.challenge and not challenged else unmet.refusal
         response = JSONResponse(
             status_code=403,
             content={'error': 'insufficient_scope', 'error_description': refusal},
@@ -99,8 +98,9 @@ class ScopeChallengeMiddleware:
         return None if requirement.is_met(frozenset(user.scopes)) else requirement
 
     def _challenge(self, challenged: tuple[str, ...], refusal: str) -> str:
-        """The RFC 6750 ``WWW-Authenticate`` value, naming every scope the client may be granted that would satisfy the request.
+        """The RFC 6750 ``WWW-Authenticate`` value for a token short of scopes.
 
+        It names every scope the client may be granted that would satisfy the request.
         It names none when the client may be granted none of them, so the client does not step up in vain.
         """
         parameters = {
@@ -113,13 +113,16 @@ class ScopeChallengeMiddleware:
 
 
 class ScopeFilterMiddleware:
-    """SDK middleware hiding the tools and resources a token's client can never use, and refusing calls the token may not make.
+    """SDK middleware hiding what a token's client can never use, and refusing what the token may not do.
+
+    It hides tools and resources and refuses tool calls and resource reads.
 
     A tool the client can step up for stays listed, since hiding it would keep the step-up from ever starting.
     A refused tool call is a tool error and a refused resource read a protocol error,
     which a client cannot step up from.
     It is the only refusal of a token whose upstream grant falls short, since stepping up cannot fix that.
-    For MCP scopes, it is the deprecated path for clients older than 2026-07-28, which ``ScopeChallengeMiddleware`` cannot read.
+    For MCP scopes, it is the deprecated path for clients older than 2026-07-28.
+    Those clients cannot read what ``ScopeChallengeMiddleware`` sends.
     """
 
     def __init__(self, scope_registry: ScopeRegistry) -> None:

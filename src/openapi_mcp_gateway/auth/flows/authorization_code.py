@@ -1,4 +1,3 @@
-import collections.abc
 import dataclasses
 import logging
 import secrets
@@ -26,8 +25,8 @@ from ...scopes import BrokeredAccessToken, McpScopePolicy
 from ...stores.base import TokenStore
 from ..resolver import AuthorizationCodeAuthResolver
 from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
-from .clients import ClientDirectory, DynamicClientRegistry, PreRegisteredClientDirectory
-from .consent import PENDING_AUTHORIZATION_TTL, ConsentRegistry, PendingAuthorization
+from .clients import ClientDirectory, DynamicClientRegistry, PreRegisteredClientDirectory, registered_scopes
+from .consent import PENDING_AUTHORIZATION_TTL, ApprovedScopes, ConsentRegistry, PendingAuthorization
 from .consent_page import ConsentPrompt, DescribedScope
 
 
@@ -224,8 +223,7 @@ class AuthorizationCodeProvider:
         """
         client = await self.clients.get(pending.client_id)
         approved = await self._consents.approved(pending.bound_browser_id, pending.client_id)
-        mcp_new = _beyond(pending.scopes, approved.mcp_scopes if approved else None)
-        upstream_new = _beyond(self.upstream.scopes, approved.upstream_scopes if approved else None)
+        new = approved.new_in(pending.scopes, self.upstream.scopes) if approved else ApprovedScopes()
         return ConsentPrompt(
             server_name=self._prefix,
             upstream_host=urllib.parse.urlsplit(self.upstream.authorization_url).netloc,
@@ -233,11 +231,11 @@ class AuthorizationCodeProvider:
             client_name=client.client_name if client else None,
             redirect_uri=pending.redirect_uri,
             upstream_scopes=[
-                DescribedScope(scope, self.upstream.scope_descriptions.get(scope), scope in upstream_new)
+                DescribedScope(scope, self.upstream.scope_descriptions.get(scope), scope in new.upstream_scopes)
                 for scope in self.upstream.scopes
             ],
             mcp_scopes=[
-                DescribedScope(scope, mcp_scope_policy.defined_mcp_scopes[scope], scope in mcp_new)
+                DescribedScope(scope, mcp_scope_policy.defined_mcp_scopes[scope], scope in new.mcp_scopes)
                 for scope in pending.scopes
                 if scope in mcp_scope_policy.defined_mcp_scopes
             ],
@@ -632,7 +630,7 @@ class AuthorizationCodeProvider:
         A client registered without any scope is taken to be limited to the ones it was granted.
         """
         client_id = self._require_client_id(client)
-        grantable_mcp_scopes = client.scope.split() if client.scope else list(scopes)
+        grantable_mcp_scopes = registered_scopes(client) or list(scopes)
         mcp_access = f'mcp_{secrets.token_hex(32)}'
         mcp_refresh = f'mcp_refresh_{secrets.token_hex(32)}'
         now = int(time.time())
@@ -859,8 +857,3 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             entry.name,
         )
         return DynamicClientRegistry(flow_context.store, issuer)
-
-
-def _beyond(scopes: collections.abc.Iterable[str], approved: collections.abc.Iterable[str] | None) -> frozenset[str]:
-    """The ``scopes`` outside ``approved``, or none when nothing was approved before."""
-    return frozenset() if approved is None else frozenset(scopes) - frozenset(approved)

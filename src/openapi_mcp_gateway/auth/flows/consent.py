@@ -108,6 +108,15 @@ class ApprovedScopes(pydantic.BaseModel):
     def covers(self, mcp_scopes: collections.abc.Iterable[str], upstream_scopes: collections.abc.Iterable[str]) -> bool:
         return set(mcp_scopes) <= set(self.mcp_scopes) and set(upstream_scopes) <= set(self.upstream_scopes)
 
+    def new_in(
+        self, mcp_scopes: collections.abc.Iterable[str], upstream_scopes: collections.abc.Iterable[str]
+    ) -> 'ApprovedScopes':
+        """The scopes of each side this approval does not yet cover."""
+        return ApprovedScopes(
+            mcp_scopes=[scope for scope in mcp_scopes if scope not in self.mcp_scopes],
+            upstream_scopes=[scope for scope in upstream_scopes if scope not in self.upstream_scopes],
+        )
+
 
 class BrowserCookie:
     """The cookie that tells one browser from another, holding a random id and nothing else.

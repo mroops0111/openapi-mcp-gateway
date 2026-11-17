@@ -1,3 +1,4 @@
+import collections.abc
 import logging
 
 import pytest
@@ -6,15 +7,18 @@ from openapi_mcp_gateway.exposure import DynamicOperationTarget
 from openapi_mcp_gateway.openapi import OperationInfo
 from openapi_mcp_gateway.scopes import (
     AnyScopeRequirement,
+    BrokeredAccessToken,
     ConfiguredMcpScopePolicy,
     NameHeaderTarget,
     ScopeRegistry,
+    ScopeRequirement,
     TagMethodDerivation,
     TokenGrant,
     UnreachableRequirement,
     UnrestrictedMcpScopePolicy,
     UnrestrictedRequirement,
     build_mcp_scope_policy,
+    grant_of,
 )
 from openapi_mcp_gateway.settings import OperationScopesConfig
 from tests.operations import PETSTORE_OPERATIONS, operation
@@ -55,6 +59,20 @@ class TestScopeRequirements:
         assert requirement.is_met({'anything'}) is met
         assert requirement.is_met(set()) is met
         assert requirement.challenge == ()
+
+    @pytest.mark.parametrize(
+        ('grantable', 'challenged'),
+        [({'issues:triage', 'other'}, ('issues:triage',)), ({'other'}, ()), (None, ('issues:triage', 'issues:write'))],
+    )
+    def test_any_scope_challenges_with_each_grantable_alternative(self, grantable, challenged):
+        """Any one alternative is enough, so each the client may be granted stands on its own."""
+        requirement = AnyScopeRequirement(['issues:write', 'issues:triage'])
+        assert requirement.challenge_within(grantable) == challenged
+
+    @pytest.mark.parametrize(('grantable', 'challenged'), [({'a', 'b'}, ('a', 'b')), ({'a'}, ()), (None, ('a', 'b'))])
+    def test_a_challenge_stands_only_when_every_scope_is_grantable_by_default(self, grantable, challenged):
+        """A requirement that does not say otherwise needs its scopes together, so a part would not help."""
+        assert _BothScopes().challenge_within(grantable) == challenged
 
 
 class TestTagMethodDerivation:
@@ -172,6 +190,23 @@ class TestUnrestrictedMcpScopePolicy:
         assert policy.opens_unscoped_operations is True
 
 
+class TestTokenGrant:
+    """What a token holds, read from the token on the request."""
+
+    def test_a_token_minted_before_recording_grantable_scopes_leaves_them_unknown(self):
+        """Its challenge stays whole, so the client can still step up, while lists show only what it holds."""
+        token = BrokeredAccessToken(token='t', client_id='c', scopes=['pets:read'])
+        grant = grant_of(token)
+        assert grant.grantable_mcp_scopes is None
+        assert grant.reachable_mcp_scopes == {'pets:read'}
+
+    def test_a_recorded_token_reaches_what_its_client_may_be_granted(self):
+        token = BrokeredAccessToken(
+            token='t', client_id='c', scopes=['pets:read'], grantable_mcp_scopes=['pets:read', 'pets:write']
+        )
+        assert grant_of(token).reachable_mcp_scopes == {'pets:read', 'pets:write'}
+
+
 class TestScopeRegistry:
     """Requirements looked up by the name a tool or operation is exposed as, or the URI a resource is read at."""
 
@@ -221,6 +256,21 @@ class TestRequestTargets:
     def test_dynamic_exposure_reads_the_operation_call_operation_names(self, headers, expected):
         """Only ``call_operation`` reaches a single operation, named in its ``Mcp-Param-Operation`` header."""
         assert DynamicOperationTarget().resolve(headers) == expected
+
+
+class _BothScopes(ScopeRequirement):
+    """A requirement for ``a`` and ``b`` together, relying on the base class to narrow its challenge."""
+
+    def is_met(self, granted: collections.abc.Set[str]) -> bool:
+        return {'a', 'b'} <= granted
+
+    @property
+    def challenge(self) -> tuple[str, ...]:
+        return ('a', 'b')
+
+    @property
+    def refusal(self) -> str:
+        return 'This operation needs a and b.'
 
 
 def _configured_policy(**config: object) -> ConfiguredMcpScopePolicy:

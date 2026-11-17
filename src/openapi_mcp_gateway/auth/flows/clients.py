@@ -139,7 +139,7 @@ class PreRegisteredClient(OAuthClientInformationFull):
         requested = requested_scope.split() if requested_scope else []
         if not requested:
             return list(self.default_scopes)
-        allowed = self.scope.split() if self.scope else []
+        allowed = registered_scopes(self)
         within = [scope for scope in dict.fromkeys(requested) if scope in allowed]
         if not within:
             logger.warning(
@@ -190,6 +190,11 @@ class PreRegisteredClientDirectory(ClientDirectory):
 
     def requires_consent(self, client_id: str) -> bool:
         return client_id not in self._exempt_from_consent
+
+
+def registered_scopes(client: OAuthClientInformationFull) -> list[str]:
+    """Every scope ``client`` is registered with, the most it may be granted, or none when it names none."""
+    return client.scope.split() if client.scope else []
 
 
 def _is_loopback(uri: AnyUrl) -> bool:

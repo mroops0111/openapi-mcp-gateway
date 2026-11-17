@@ -184,7 +184,10 @@ class MetaToolGenerator:
             return await operation.callable_(**arguments, ctx=ctx)
 
     def _visibility(self) -> typing.Callable[[str], bool]:
-        """Whether each operation, by name, shows to the token on the current request, those it can step up for included."""
+        """Whether each operation, by name, shows to the current token.
+
+        Operations the token can step up for show as well.
+        """
         grant = current_grant()
         return lambda name: self.scope_registry.lists(name, grant)
 

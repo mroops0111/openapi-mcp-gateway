@@ -159,6 +159,13 @@ class TestScopeRejection:
         assert 'scope=' not in challenge.replace('insufficient_scope', '')
         assert 'This client may not be granted any scope this operation needs.' in challenge
 
+    async def test_an_operation_no_scope_grants_keeps_its_own_refusal(self, gateway):
+        """The client is not to blame when no scope at all opens the operation."""
+        async with _connect(gateway, STEPPER, MODERN) as session:
+            with pytest.raises(MCPError):
+                await session.client.call_tool('listAdminPets', {})
+        assert 'No scope grants this operation.' in session.refusal.headers['www-authenticate']
+
     async def test_a_legacy_client_receives_a_tool_error(self, gateway, upstream_requests):
         """A client older than 2026-07-28 sends no routing headers, so the refusal arrives inside the result."""
         async with _connect(gateway, READER, LEGACY) as session:
@@ -176,7 +183,7 @@ class TestScopeRejection:
 
 
 class TestDynamicExposure:
-    """The meta-tools show the operations the client may hold scopes for, and call only those the token's scopes open."""
+    """The meta-tools show what the client may hold scopes for, and call only what the token's scopes open."""
 
     @pytest.fixture
     def gateway(self, make_gateway) -> Gateway:
