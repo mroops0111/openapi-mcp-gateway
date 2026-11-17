@@ -1,23 +1,26 @@
 # Benchmarks
 
-Tests check that the gateway does what it specifies. Benchmarks measure whether that helps a model, which has no single right answer and is judged against a baseline. The code lives in the package, under `openapi_mcp_gateway.benchmarks`, and the data lives here, so the same commands run this repository's benchmarks and, later, a user's own.
+Tests check that the gateway does what it specifies. Benchmarks measure whether that helps a model, which has no single right answer and is judged against a baseline. They live in their own package, `openapi-mcp-gateway-benchmarks`, a uv workspace member beside the gateway, so the gateway's wheel and dependencies carry none of them. The code and its tests sit under `src/` and `tests/`, and each benchmark's data sits in a folder named after it.
 
 | Benchmark | Measures | Calls a Model | Runs |
 | --- | --- | --- | --- |
-| [`search/`](search/) | whether `search_operations` ranks the requested operation near the top | no | every PR, in CI |
-| [`agent/`](agent/) | whether a model finishes real tasks through the gateway, compared with one tool per operation | yes | on demand; its data is validated on every PR |
+| [`search_ranking/`](search_ranking/) | whether `search_operations` ranks the requested operation near the top | no | every PR, in CI |
+| [`tool_calling/`](tool_calling/) | whether a model calls the right operations with the right arguments through the gateway, compared with one tool per operation | yes | on demand; its data is validated on every PR |
 
 ## Layout
 
 ```
-src/openapi_mcp_gateway/benchmarks/   code, shipped in the package
+benchmarks/
+  pyproject.toml                      the workspace member, depending on the gateway, Pydantic AI, and Pydantic Evals
+  tests/                              the benchmarks' own tests
+benchmarks/src/openapi_mcp_gateway_benchmarks/
   cli.py                              the commands, one group per benchmark, which parse and print only
   spec_pins.py                        specs pinned by URL and SHA-256, downloaded once into a cache
   gateway_connection.py               a gateway built in-process from a server config, and an MCP client to it
   significance.py                     macro means and the paired bootstrap
   local_server.py                     an ASGI app served on a loopback port, for a model's framework to reach
   errors.py                           the error every benchmark's bad data raises
-  search/
+  search_ranking/
     dataset.py                        the manifest, queries, and judgements, loaded and validated
     annotations.py                    two annotators' judgements merged into one set, and their agreement
     annotation_workflow.py            the stages that prepare each annotator's files and collect what they write
@@ -30,7 +33,7 @@ src/openapi_mcp_gateway/benchmarks/   code, shipped in the package
     markdown.py                       a report as Markdown tables
     baseline.py                       the gated numbers CI compares against
     overlap.py                        how much of its answer's wording a query repeats
-  agent/
+  tool_calling/
     dataset.py                        the manifest, scenarios, tasks, and variants, loaded and validated
     sampling.py                       a fixed example value for any response schema
     replay.py                         the stand-in upstream, answering every operation and recording each request
@@ -42,8 +45,8 @@ src/openapi_mcp_gateway/benchmarks/   code, shipped in the package
     markdown.py                       a report as Markdown tables
     validation.py                     every task passing with its solution, and every variant reaching it
 
-benchmarks/                           data, not shipped
-  search/
+benchmarks/                           data
+  search_ranking/
     benchmark.yaml                    spec pins, systems, and the CI gate
     README.md                         what the data holds, how it was made, and its known biases
     baseline.json                     the gated scores CI compares against
@@ -52,7 +55,7 @@ benchmarks/                           data, not shipped
     annotations/*.txt                 the instructions each annotator is given, as templates
     <spec>/queries.jsonl              queries, in BEIR's format
     <spec>/qrels/{dev,test}.tsv       graded judgements, in BEIR's format, which names them qrels and its splits dev and test
-  agent/
+  tool_calling/
     benchmark.yaml                    spec pins, models, repetitions, and the system prompt
     README.md                         what the data holds, how it was made, and its known biases
     scenarios/<name>/scenario.yaml    the intent and the servers
@@ -66,15 +69,15 @@ Two abstractions carry the extension points. A `Metric` scores one ranking, and 
 
 The gateway system reaches the gateway the way a model does, through MCP, so renames, policy, and paging all count. Its `server` is a fragment of a server config, such as an `exposure` block, so comparing two configurations needs no code.
 
-## Search
+## Search Ranking
 
 ```bash
-uv run python -m openapi_mcp_gateway.benchmarks search run benchmarks/search        # every system, test split
-uv run python -m openapi_mcp_gateway.benchmarks search run benchmarks/search --split dev --system default
-uv run python -m openapi_mcp_gateway.benchmarks search check benchmarks/search      # what CI runs
+uv run openapi-mcp-gateway-benchmarks search-ranking run benchmarks/search_ranking        # every system, test split
+uv run openapi-mcp-gateway-benchmarks search-ranking run benchmarks/search_ranking --split dev --system default
+uv run openapi-mcp-gateway-benchmarks search-ranking check benchmarks/search_ranking      # what CI runs
 ```
 
-`check` first checks the data, that its files agree and that no paraphrase or indirect query repeats its answer's words, and then compares the gated system with the baseline. `search annotations` holds the four stages that make the data anew, which [`search/annotations/README.md`](search/annotations/README.md) walks through.
+`check` first checks the data, that its files agree and that no paraphrase or indirect query repeats its answer's words, and then compares the gated system with the baseline. `search-ranking annotations` holds the four stages that make the data anew, which [`search_ranking/annotations/README.md`](search_ranking/annotations/README.md) walks through.
 
 The first run downloads about 30 MB of pinned specs into `~/.cache/openapi-mcp-gateway`, or the directory `OPENAPI_MCP_GATEWAY_CACHE` names. A run takes a few seconds after that.
 
@@ -93,7 +96,7 @@ Every metric is averaged per spec and then over specs, so GitHub's size does not
 Tune on dev, then run test once. A change that moves the ranking on purpose updates the baseline in the same PR, so the diff shows the new numbers:
 
 ```bash
-uv run python -m openapi_mcp_gateway.benchmarks search check benchmarks/search --update
+uv run openapi-mcp-gateway-benchmarks search-ranking check benchmarks/search_ranking --update
 ```
 
 CI fails when nDCG@10 or Recall@20 of the `default` system falls more than 0.01 below the baseline, over all specs or for any one of them. With 50 test queries a spec, one query changing rank can move a spec's Recall@20 by 0.02, so the gate catches any lost answer.
@@ -117,15 +120,15 @@ Version 1, test split, openapi-mcp-gateway 0.8.0:
 
 A literal request always finds its operation on the first page. A paraphrased or indirect one does so about three times in ten, so synonyms remain search's main weakness, which #166 takes up. The default weights beat equal weights by 0.010 nDCG@10, an interval of -0.008 to +0.027, which this set cannot tell apart from no difference. They beat Pydantic AI's keyword tool search, which counts the query words a tool's name and description share without stemming or weights, by 0.147 nDCG@10, an interval of +0.101 to +0.192.
 
-## Agent
+## Tool Calling
 
 ```bash
-uv run python -m openapi_mcp_gateway.benchmarks agent validate benchmarks/agent   # what CI runs, calling no model
-uv run python -m openapi_mcp_gateway.benchmarks agent run benchmarks/agent --scenario github --model claude-haiku
-uv run python -m openapi_mcp_gateway.benchmarks agent run benchmarks/agent --output report.json
+uv run openapi-mcp-gateway-benchmarks tool-calling validate benchmarks/tool_calling   # what CI runs, calling no model
+uv run openapi-mcp-gateway-benchmarks tool-calling run benchmarks/tool_calling --scenario github --model claude-haiku
+uv run openapi-mcp-gateway-benchmarks tool-calling run benchmarks/tool_calling --output report.json
 ```
 
-`run` needs the `benchmarks` extra and each provider's API key in its usual variable, such as `ANTHROPIC_API_KEY`. It serves each scenario's gateway and a replay upstream on loopback ports, connects a Pydantic AI agent to the gateway over MCP, and runs every final task under every variant and model as many times as the manifest says, through Pydantic Evals.
+`run` needs each provider's API key in its usual variable, such as `ANTHROPIC_API_KEY`. It serves each scenario's gateway and a replay upstream on loopback ports, connects a Pydantic AI agent to the gateway over MCP, and runs every final task under every variant and model as many times as the manifest says, through Pydantic Evals.
 
 ### Measures
 

@@ -4,7 +4,8 @@ import typing
 
 import pydantic
 
-from ...exposure._bm25 import tokenize
+from openapi_mcp_gateway.exposure._bm25 import tokenize
+
 from ..gateway_connection import list_operations
 from .dataset import SPLITS, STYLES, Benchmark, Query, Style
 from .metrics import answers_in

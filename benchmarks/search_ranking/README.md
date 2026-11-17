@@ -1,4 +1,4 @@
-# Search Benchmark
+# Search Ranking Benchmark
 
 320 English requests over four public APIs, each judged for which operations answer it, for measuring how well `search_operations` ranks the operation a request asks for. The data is a first version, built to give the framework something to run, and is expected to be revised or annotated again.
 
@@ -44,7 +44,7 @@ Two annotators judged every query independently. [`annotations/`](annotations/) 
 
 Kappa is computed over the grade of every operation either annotator judged, so it leaves out the operations both left at `0` and runs lower than a kappa over the whole corpus would. The annotators agree on the answer itself almost everywhere, and disagree over which lesser operations count.
 
-[`annotations/README.md`](annotations/README.md) describes how the data is annotated again, and `search annotations build` rebuilds the queries and judgements from the annotations.
+[`annotations/README.md`](annotations/README.md) describes how the data is annotated again, and `search-ranking annotations build` rebuilds the queries and judgements from the annotations.
 
 ## Splits
 

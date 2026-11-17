@@ -49,7 +49,7 @@ class Baseline(pydantic.BaseModel):
         """Each number of ``current`` more than ``tolerance`` below this baseline, described in one line.
 
         A run of another benchmark version, system, or split measures something else, so it fails outright,
-        and the baseline is rewritten with ``search check --update`` in the PR that makes the change.
+        and the baseline is rewritten with ``search-ranking check --update`` in the PR that makes the change.
         """
         identity = ('benchmark_version', 'system', 'split')
         mismatches = [

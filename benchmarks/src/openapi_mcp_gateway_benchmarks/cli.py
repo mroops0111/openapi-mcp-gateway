@@ -10,9 +10,23 @@ import httpx
 
 from .errors import BenchmarkDataError
 from .gateway_connection import ToolCallError
-from .search import annotation_workflow, annotations, dataset, markdown, overlap, report, runner
-from .search.baseline import Baseline
+from .search_ranking import (
+    annotation_workflow,
+    annotations,
+    automated_annotation,
+    dataset,
+    markdown,
+    overlap,
+    report,
+    runner,
+)
+from .search_ranking.baseline import Baseline
 from .spec_pins import SpecChecksumError
+from .tool_calling import dataset as tool_calling_dataset
+from .tool_calling import markdown as tool_calling_markdown
+from .tool_calling import report as tool_calling_report
+from .tool_calling import runner as tool_calling_runner
+from .tool_calling import validation as tool_calling_validation
 
 
 BENCHMARK_DIRECTORY = click.Path(exists=True, file_okay=False, path_type=pathlib.Path)
@@ -31,15 +45,15 @@ def main(verbose: bool) -> None:
     # The gateway logs every registration at INFO, which buries a benchmark's own output.
     logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(name)s: %(message)s')
     if verbose:
-        logging.getLogger('openapi_mcp_gateway.benchmarks').setLevel(logging.INFO)
+        logging.getLogger('openapi_mcp_gateway_benchmarks').setLevel(logging.INFO)
 
 
-@main.group()
-def search() -> None:
+@main.group('search-ranking')
+def search_ranking() -> None:
     """How well search_operations ranks the operation a request asks for."""
 
 
-@search.command('run')
+@search_ranking.command('run')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 @click.option('--split', type=click.Choice(dataset.SPLITS), default='test', show_default=True)
 @click.option(
@@ -48,7 +62,7 @@ def search() -> None:
 @click.option(
     '--output', type=click.Path(dir_okay=False, path_type=pathlib.Path), help='Write the full report as JSON.'
 )
-def search_run(
+def search_ranking_run(
     benchmark_directory: pathlib.Path, split: dataset.Split, system_names: tuple[str, ...], output: pathlib.Path | None
 ) -> None:
     """Rank BENCHMARK_DIRECTORY's queries under each system and print the tables."""
@@ -61,10 +75,10 @@ def search_run(
     click.echo(markdown.to_markdown(built_report), nl=False)
 
 
-@search.command('check')
+@search_ranking.command('check')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 @click.option('--update', is_flag=True, help='Write this run as the new baseline instead of comparing against it.')
-def search_check(benchmark_directory: pathlib.Path, update: bool) -> None:
+def search_ranking_check(benchmark_directory: pathlib.Path, update: bool) -> None:
     """Check BENCHMARK_DIRECTORY's data, then fail when the gated system scores below its baseline, as CI runs it.
 
     The data passes when its files agree and no paraphrase or indirect query repeats its answer's words.
@@ -99,28 +113,32 @@ def search_check(benchmark_directory: pathlib.Path, update: bool) -> None:
     click.echo(f'\nWithin {gate.tolerance} of the baseline.')
 
 
-@search.group('annotations')
-def search_annotations() -> None:
+@search_ranking.group('annotations')
+def search_ranking_annotations() -> None:
     """Make the queries and judgements anew, in four stages, for when the data is annotated again.
 
     The two annotators run between the stages, from the files and instructions each stage writes.
     """
 
 
-@search_annotations.command('prepare-authoring')
+@search_ranking_annotations.command('prepare-authoring')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 @click.argument('work_directory', type=WORK_DIRECTORY)
-def search_annotations_prepare_authoring(benchmark_directory: pathlib.Path, work_directory: pathlib.Path) -> None:
+def search_ranking_annotations_prepare_authoring(
+    benchmark_directory: pathlib.Path, work_directory: pathlib.Path
+) -> None:
     """Stage 1 writes each spec's operation list and the query author's instructions into WORK_DIRECTORY."""
     manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
     for path in annotation_workflow.prepare_authoring(manifest, benchmark_directory, work_directory):
         click.echo(f'Wrote {path}')
 
 
-@search_annotations.command('prepare-assessment')
+@search_ranking_annotations.command('prepare-assessment')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 @click.argument('work_directory', type=WORK_DIRECTORY)
-def search_annotations_prepare_assessment(benchmark_directory: pathlib.Path, work_directory: pathlib.Path) -> None:
+def search_ranking_annotations_prepare_assessment(
+    benchmark_directory: pathlib.Path, work_directory: pathlib.Path
+) -> None:
     """Stage 2 writes each spec's queries, without the author's answers, and the independent assessor's instructions."""
     manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
     paths = _without_traceback(
@@ -130,13 +148,13 @@ def search_annotations_prepare_assessment(benchmark_directory: pathlib.Path, wor
         click.echo(f'Wrote {path}')
 
 
-@search_annotations.command('annotate')
+@search_ranking_annotations.command('annotate')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 @click.argument('work_directory', type=WORK_DIRECTORY)
 @click.option('--author-model', required=True, help='The query author, as Pydantic AI names a model.')
 @click.option('--assessor-model', required=True, help='The independent assessor, ideally from another provider.')
 @click.option('--spec', 'spec_names', multiple=True, help='A spec to annotate. Repeat for several; the default is all.')
-def search_annotations_annotate(
+def search_ranking_annotations_annotate(
     benchmark_directory: pathlib.Path,
     work_directory: pathlib.Path,
     author_model: str,
@@ -145,14 +163,8 @@ def search_annotations_annotate(
 ) -> None:
     """Stages 1 and 2 with the annotators run through Pydantic AI, writing what collect reads into WORK_DIRECTORY.
 
-    It runs models, which needs the benchmarks extra and the providers' API keys in their usual variables.
+    It runs models, which need the providers' API keys in their usual variables.
     """
-    try:
-        from .search import automated_annotation
-    except ImportError as error:
-        raise click.ClickException(
-            f'Annotating needs the benchmarks extra, such as uv sync --extra benchmarks ({error})'
-        ) from error
     manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
     runs = _without_traceback(
         lambda: asyncio.run(
@@ -172,10 +184,10 @@ def search_annotations_annotate(
         )
 
 
-@search_annotations.command('collect')
+@search_ranking_annotations.command('collect')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 @click.argument('work_directory', type=WORK_DIRECTORY)
-def search_annotations_collect(benchmark_directory: pathlib.Path, work_directory: pathlib.Path) -> None:
+def search_ranking_annotations_collect(benchmark_directory: pathlib.Path, work_directory: pathlib.Path) -> None:
     """Stage 3 checks both annotators' output and writes it as BENCHMARK_DIRECTORY's annotations."""
     manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
     query_counts = _without_traceback(
@@ -185,9 +197,9 @@ def search_annotations_collect(benchmark_directory: pathlib.Path, work_directory
         click.echo(f'{spec}: {query_count} queries collected')
 
 
-@search_annotations.command('build')
+@search_ranking_annotations.command('build')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
-def search_annotations_build(benchmark_directory: pathlib.Path) -> None:
+def search_ranking_annotations_build(benchmark_directory: pathlib.Path) -> None:
     """Stage 4 merges BENCHMARK_DIRECTORY's annotations into its queries and judgements, and reports the agreement.
 
     A query whose annotators share no answer stops the build until an adjudication for it is added.
@@ -205,15 +217,15 @@ def search_annotations_build(benchmark_directory: pathlib.Path) -> None:
         )
 
 
-@main.group()
-def agent() -> None:
+@main.group('tool-calling')
+def tool_calling() -> None:
     """Whether a model finishes real tasks through the gateway, compared with one tool per operation.
 
-    It runs models, which needs the benchmarks extra and the providers' API keys in their usual variables.
+    It runs models, which need the providers' API keys in their usual variables.
     """
 
 
-@agent.command('run')
+@tool_calling.command('run')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 @click.option(
     '--scenario', 'scenario_names', multiple=True, help='A scenario to run. Repeat for several; the default is all.'
@@ -222,26 +234,25 @@ def agent() -> None:
     '--variant', 'variant_names', multiple=True, help='A variant to run. Repeat for several; the default is all.'
 )
 @click.option('--model', 'model_names', multiple=True, help='A model to run. Repeat for several; the default is all.')
-@click.option('--split', type=click.Choice(['practice', 'final']), default='final', show_default=True)
+@click.option('--split', type=click.Choice(tool_calling_dataset.SPLITS), default='final', show_default=True)
 @click.option('--repetitions', type=click.IntRange(min=1), help="Runs per task, in place of the manifest's count.")
 @click.option(
     '--output', type=click.Path(dir_okay=False, path_type=pathlib.Path), help='Write the full report as JSON.'
 )
-def agent_run(
+def tool_calling_run(
     benchmark_directory: pathlib.Path,
     scenario_names: tuple[str, ...],
     variant_names: tuple[str, ...],
     model_names: tuple[str, ...],
-    split: str,
+    split: tool_calling_dataset.Split,
     repetitions: int | None,
     output: pathlib.Path | None,
 ) -> None:
     """Run BENCHMARK_DIRECTORY's tasks under each variant and model, and print the tables."""
-    agent_dataset, agent_markdown, agent_report, agent_runner, _ = _agent_modules()
-    benchmark = _without_traceback(lambda: agent_dataset.load(benchmark_directory))
+    benchmark = _without_traceback(lambda: tool_calling_dataset.load(benchmark_directory))
     records = _without_traceback(
         lambda: asyncio.run(
-            agent_runner.run(
+            tool_calling_runner.run(
                 benchmark,
                 scenario_names=scenario_names,
                 variant_names=variant_names,
@@ -251,40 +262,24 @@ def agent_run(
             )
         )
     )
-    built_report = agent_report.build_report(benchmark, records)
+    built_report = tool_calling_report.build_report(benchmark, records)
     if output is not None:
         output.write_text(built_report.model_dump_json(indent=2) + '\n', encoding='utf-8')
-    click.echo(agent_markdown.to_markdown(built_report), nl=False)
+    click.echo(tool_calling_markdown.to_markdown(built_report), nl=False)
 
 
-@agent.command('validate')
+@tool_calling.command('validate')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
-def agent_validate(benchmark_directory: pathlib.Path) -> None:
+def tool_calling_validate(benchmark_directory: pathlib.Path) -> None:
     """Prove every task of BENCHMARK_DIRECTORY can pass and every variant reaches it, calling no model, for CI."""
-    agent_dataset, _, _, _, agent_validation = _agent_modules()
-    benchmark = _without_traceback(lambda: agent_dataset.load(benchmark_directory))
-    problems = _without_traceback(lambda: asyncio.run(agent_validation.validate(benchmark)))
+    benchmark = _without_traceback(lambda: tool_calling_dataset.load(benchmark_directory))
+    problems = _without_traceback(lambda: asyncio.run(tool_calling_validation.validate(benchmark)))
     task_count = sum(len(scenario.tasks) for scenario in benchmark.scenarios.values())
     if problems:
         for problem in problems:
             click.echo(f'{problem.scenario} {problem.task_id} under {problem.variant}: {problem.problem}', err=True)
         sys.exit(1)
     click.echo(f'All {task_count} tasks pass with their solutions, and every variant reaches its in-intent tasks.')
-
-
-def _agent_modules() -> tuple[typing.Any, ...]:
-    """The agent benchmark's modules, imported only when a command needs them, since they need the benchmarks extra."""
-    try:
-        from .agent import dataset as agent_dataset
-        from .agent import markdown as agent_markdown
-        from .agent import report as agent_report
-        from .agent import runner as agent_runner
-        from .agent import validation as agent_validation
-    except ImportError as error:
-        raise click.ClickException(
-            f'The agent benchmark needs the benchmarks extra, such as uv sync --extra benchmarks ({error})'
-        ) from error
-    return agent_dataset, agent_markdown, agent_report, agent_runner, agent_validation
 
 
 def _without_traceback(step: typing.Callable[[], StepResult]) -> StepResult:

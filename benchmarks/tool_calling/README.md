@@ -1,4 +1,4 @@
-# Agent Benchmark
+# Tool Calling Benchmark
 
 56 tasks over seven scenarios, each run by a model through the gateway under several configs, for measuring whether the gateway's features help a model finish real work compared with one tool per operation. The data is a first version, built to give the harness something to run, and is expected to be revised.
 

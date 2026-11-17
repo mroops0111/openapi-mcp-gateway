@@ -70,7 +70,7 @@ class QueryRecord(pydantic.BaseModel):
 
 
 class Report(pydantic.BaseModel):
-    """Everything one run found, written as JSON by ``search run --output``."""
+    """Everything one run found, written as JSON by ``search-ranking run --output``."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 

@@ -14,29 +14,29 @@ Annotating the data again takes eight steps. Three are done by hand, the two ann
 
 The commands below write their working files into a directory of your choosing, here `work/`, outside the repository.
 
-1. **Prepare authoring.** `search annotations prepare-authoring benchmarks/search work` writes each spec's `operations.tsv`, listing every operation as the gateway serves it, and `query_author_instructions.txt`, rendered from [`query_author.txt`](query_author.txt).
+1. **Prepare authoring.** `search-ranking annotations prepare-authoring benchmarks/search_ranking work` writes each spec's `operations.tsv`, listing every operation as the gateway serves it, and `query_author_instructions.txt`, rendered from [`query_author.txt`](query_author.txt).
 2. **Author the queries.** Give one annotator each spec's instructions, with no access to anything but its operation list. It writes `query_author.jsonl`.
-3. **Prepare assessment.** `search annotations prepare-assessment benchmarks/search work` gives each query its id, by its line in the author's file, and writes `queries.jsonl` without the author's judgements and `independent_assessor_instructions.txt`, rendered from [`independent_assessor.txt`](independent_assessor.txt).
+3. **Prepare assessment.** `search-ranking annotations prepare-assessment benchmarks/search_ranking work` gives each query its id, by its line in the author's file, and writes `queries.jsonl` without the author's judgements and `independent_assessor_instructions.txt`, rendered from [`independent_assessor.txt`](independent_assessor.txt).
 4. **Assess the queries.** Give a second annotator each spec's assessor instructions, with no access to the author's judgements. It writes `independent_assessor.jsonl`.
-5. **Collect.** `search annotations collect benchmarks/search work` checks that both annotators named only operations the spec serves, graded only 1 and 2, and gave every query an answer, then writes `annotations/<spec>.jsonl` here.
-6. **Build.** `search annotations build benchmarks/search` merges the annotations into the queries and judgements, and reports the agreement. It stops at any query whose annotators share no answer.
+5. **Collect.** `search-ranking annotations collect benchmarks/search_ranking work` checks that both annotators named only operations the spec serves, graded only 1 and 2, and gave every query an answer, then writes `annotations/<spec>.jsonl` here.
+6. **Build.** `search-ranking annotations build benchmarks/search_ranking` merges the annotations into the queries and judgements, and reports the agreement. It stops at any query whose annotators share no answer.
 7. **Adjudicate.** For each query the build stopped at, a third look adds an `adjudication` with its judgements and a note, and the build runs again.
-8. **Check.** `search check benchmarks/search --update` refuses any paraphrase or indirect query that repeats its answer's words. Reword each one it names in `annotations/<spec>.jsonl`, build again, and rerun until it passes, which also writes the new baseline.
+8. **Check.** `search-ranking check benchmarks/search_ranking --update` refuses any paraphrase or indirect query that repeats its answer's words. Reword each one it names in `annotations/<spec>.jsonl`, build again, and rerun until it passes, which also writes the new baseline.
 
 New annotations make a new benchmark version. Raise `version` in `benchmark.yaml`, and record in the dataset card which model played each annotator and on what date.
 
 ## Automated Annotation
 
-`search annotations annotate` runs steps 1 to 4 with both annotators run through Pydantic AI, so a fresh annotation is one command followed by steps 5 to 8:
+`search-ranking annotations annotate` runs steps 1 to 4 with both annotators run through Pydantic AI, so a fresh annotation is one command followed by steps 5 to 8:
 
 ```bash
-uv run python -m openapi_mcp_gateway.benchmarks search annotations annotate benchmarks/search work \
+uv run openapi-mcp-gateway-benchmarks search-ranking annotations annotate benchmarks/search_ranking work \
   --author-model anthropic:claude-sonnet-5-5 --assessor-model openai:<model>
 ```
 
 Each annotator gets the same template as a hand-run one, with its operation list in the prompt and a tool that searches the list for a word, never the ranker. It answers in structured output, and is sent back to fix an answer that names an operation the spec does not serve, or that skips a query or a style. Every raw exchange is kept as `<role>.messages.json` beside the answers, and `provenance.json` records each annotator's model, finishing time, Pydantic AI version, and token usage, since a model's output cannot be reproduced.
 
-It needs the `benchmarks` extra and each provider's API key in its usual variable.
+It needs each provider's API key in its usual variable.
 
 ## Annotators
 

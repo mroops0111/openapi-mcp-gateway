@@ -1,14 +1,20 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform != 'win32'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
     "python_full_version < '3.14' and sys_platform == 'win32'",
     "(python_full_version < '3.12' and sys_platform == 'emscripten') or (python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32')",
+]
+
+[manifest]
+members = [
+    "openapi-mcp-gateway",
+    "openapi-mcp-gateway-benchmarks",
 ]
 
 [[package]]
@@ -1135,10 +1141,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-benchmarks = [
-    { name = "pydantic-ai-slim", extra = ["anthropic", "google", "mcp", "openai"] },
-    { name = "pydantic-evals" },
-]
 dev = [
     { name = "basedpyright" },
     { name = "fakeredis" },
@@ -1168,8 +1170,6 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "mcp", specifier = ">=2.0.0" },
     { name = "pydantic", specifier = ">=2.14.2" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "openai", "google", "mcp"], marker = "extra == 'benchmarks'", specifier = ">=2.68.0" },
-    { name = "pydantic-evals", marker = "extra == 'benchmarks'", specifier = ">=2.68.0" },
     { name = "pydantic-settings", specifier = ">=2.16.2" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'dev'", specifier = ">=2.15.1" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'oidc'", specifier = ">=2.15.1" },
@@ -1181,7 +1181,40 @@ requires-dist = [
     { name = "snowballstemmer", specifier = ">=3.1.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
-provides-extras = ["redis", "oidc", "benchmarks", "dev"]
+provides-extras = ["redis", "oidc", "dev"]
+
+[[package]]
+name = "openapi-mcp-gateway-benchmarks"
+version = "0.1.0"
+source = { editable = "benchmarks" }
+dependencies = [
+    { name = "click" },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "openapi-mcp-gateway" },
+    { name = "pydantic" },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "google", "mcp", "openai"] },
+    { name = "pydantic-evals" },
+    { name = "pyyaml" },
+    { name = "starlette" },
+    { name = "tenacity" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click", specifier = ">=8.4.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "mcp", specifier = ">=2.0.0" },
+    { name = "openapi-mcp-gateway", editable = "." },
+    { name = "pydantic", specifier = ">=2.14.2" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "openai", "google", "mcp"], specifier = ">=2.68.0" },
+    { name = "pydantic-evals", specifier = ">=2.68.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "starlette", specifier = ">=1.3.1" },
+    { name = "tenacity", specifier = ">=9.1.4" },
+    { name = "uvicorn", specifier = ">=0.54.0" },
+]
 
 [[package]]
 name = "opentelemetry-api"

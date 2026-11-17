@@ -6,9 +6,9 @@ import pydantic
 from mcp import Client
 from mcp.types import CallToolResult, TextContent
 
-from ..gateway import Gateway
-from ..openapi import load_spec
-from ..settings import GatewayConfig, ServerConfig
+from openapi_mcp_gateway.gateway import Gateway
+from openapi_mcp_gateway.openapi import load_spec
+from openapi_mcp_gateway.settings import GatewayConfig, ServerConfig
 
 
 class ToolCallError(RuntimeError):

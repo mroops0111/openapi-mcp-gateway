@@ -4,7 +4,8 @@ import typing
 
 import pydantic
 
-from ...settings import ServerConfig
+from openapi_mcp_gateway.settings import ServerConfig
+
 from .dataset import Benchmark, DatasetError, JudgedQuery, Manifest, Split, Style
 from .scoring import RANKING_DEPTH, score_all
 from .systems import SpecCorpus, System, served_operations

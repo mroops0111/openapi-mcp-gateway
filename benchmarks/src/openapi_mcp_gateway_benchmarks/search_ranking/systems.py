@@ -7,8 +7,13 @@ import typing
 
 import pydantic
 from mcp import Client
+from pydantic_ai import Agent, Tool, capture_run_messages
+from pydantic_ai.capabilities import ToolSearch
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from ...settings import ServerConfig
+from openapi_mcp_gateway.settings import ServerConfig
+
 from ..gateway_connection import OperationListing, call_tool, connect, list_operations
 
 
@@ -103,7 +108,6 @@ class PydanticAIKeywordSystem(System):
 
     Every operation becomes a deferred Pydantic AI tool with its name and its spec text as the description,
     and a scripted model asks the framework's ``search_tools`` for the query, so the ranking is the framework's own.
-    It needs the benchmarks extra, which is imported only when the system opens.
     """
 
     type: typing.Literal['pydantic-ai-keywords'] = 'pydantic-ai-keywords'
@@ -136,8 +140,6 @@ class PydanticAIKeywordSearch:
     """Ranks by running Pydantic AI's ``search_tools`` once per query, through the framework's public API."""
 
     def __init__(self, listings: typing.Sequence[OperationListing]):
-        from pydantic_ai import Tool
-
         self._tools = [
             Tool(
                 _never_called,
@@ -149,11 +151,6 @@ class PydanticAIKeywordSearch:
         ]
 
     async def rank(self, query: str, depth: int) -> list[str]:
-        from pydantic_ai import Agent, capture_run_messages
-        from pydantic_ai.capabilities import ToolSearch
-        from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-        from pydantic_ai.models.function import AgentInfo, FunctionModel
-
         def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             searched = any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
             if searched:

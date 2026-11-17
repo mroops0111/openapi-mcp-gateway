@@ -4,7 +4,8 @@ import typing
 import pydantic
 import yaml
 
-from ...settings import ServerConfig
+from openapi_mcp_gateway.settings import ServerConfig
+
 from ..errors import BenchmarkDataError
 from ..spec_pins import SpecPin
 from .replay import ResponseOverride
@@ -29,7 +30,7 @@ ModelType = typing.TypeVar('ModelType', bound=pydantic.BaseModel)
 
 
 class DatasetError(BenchmarkDataError):
-    """The agent benchmark's files are inconsistent."""
+    """The tool calling benchmark's files are inconsistent."""
 
 
 class ModelSpec(pydantic.BaseModel):
@@ -164,7 +165,7 @@ class Scenario(pydantic.BaseModel):
 
 
 class Benchmark(pydantic.BaseModel):
-    """An agent benchmark directory, loaded and validated."""
+    """An tool calling benchmark directory, loaded and validated."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
@@ -174,7 +175,7 @@ class Benchmark(pydantic.BaseModel):
 
 
 def load(root: pathlib.Path) -> Benchmark:
-    """Load and validate the agent benchmark in ``root``, raising ``DatasetError`` on any inconsistency.
+    """Load and validate the tool calling benchmark in ``root``, raising ``DatasetError`` on any inconsistency.
 
     Each scenario is a directory of its intent and servers, its tasks, and one file per variant.
     """

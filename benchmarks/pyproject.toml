@@ -1,0 +1,36 @@
+[project]
+name = "openapi-mcp-gateway-benchmarks"
+version = "0.1.0"
+description = "Benchmarks of what openapi-mcp-gateway does for a model: how search_operations ranks, and how models call tools through it."
+requires-python = ">=3.11"
+dependencies = [
+    "openapi-mcp-gateway",
+    "click>=8.4.0",
+    "httpx>=0.28.1",
+    "mcp>=2.0.0",
+    "pydantic>=2.14.2",
+    "pyyaml>=6.0.3",
+    "starlette>=1.3.1",
+    "tenacity>=9.1.4",
+    "uvicorn>=0.54.0",
+    "pydantic-ai-slim[anthropic,openai,google,mcp]>=2.68.0",
+    "pydantic-evals>=2.68.0",
+]
+
+[project.scripts]
+openapi-mcp-gateway-benchmarks = "openapi_mcp_gateway_benchmarks.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openapi_mcp_gateway_benchmarks"]
+
+[tool.uv.sources]
+openapi-mcp-gateway = { workspace = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"

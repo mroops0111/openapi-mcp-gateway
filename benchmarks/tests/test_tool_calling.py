@@ -7,17 +7,17 @@ import httpx
 import pytest
 from click.testing import CliRunner
 
-from openapi_mcp_gateway.benchmarks.agent import dataset, grading, report, runner, validation
-from openapi_mcp_gateway.benchmarks.agent.markdown import to_markdown
-from openapi_mcp_gateway.benchmarks.agent.replay import RecordedRequest, ReplayUpstream, ResponseOverride
-from openapi_mcp_gateway.benchmarks.agent.sampling import SchemaSampler
-from openapi_mcp_gateway.benchmarks.agent.solution import solution_model
-from openapi_mcp_gateway.benchmarks.cli import main
-from openapi_mcp_gateway.benchmarks.local_server import serve
-from openapi_mcp_gateway.benchmarks.spec_pins import sha256_of
-from tests.conftest import FIXTURES_DIR
+from openapi_mcp_gateway_benchmarks.cli import main
+from openapi_mcp_gateway_benchmarks.local_server import serve
+from openapi_mcp_gateway_benchmarks.spec_pins import sha256_of
+from openapi_mcp_gateway_benchmarks.tool_calling import dataset, grading, report, runner, validation
+from openapi_mcp_gateway_benchmarks.tool_calling.markdown import to_markdown
+from openapi_mcp_gateway_benchmarks.tool_calling.replay import RecordedRequest, ReplayUpstream, ResponseOverride
+from openapi_mcp_gateway_benchmarks.tool_calling.sampling import SchemaSampler
+from openapi_mcp_gateway_benchmarks.tool_calling.solution import solution_model
 
 
+FIXTURES_DIR = pathlib.Path(__file__).parent / 'fixtures'
 PETSTORE = FIXTURES_DIR / 'petstore.json'
 
 MANIFEST = """\
@@ -147,7 +147,7 @@ class TestGrading:
 
 
 class TestDataset:
-    """Loading an agent benchmark and refusing an inconsistent one."""
+    """Loading an tool calling benchmark and refusing an inconsistent one."""
 
     def test_loads_scenarios_tasks_and_variants(self, tmp_path):
         benchmark = dataset.load(_petstore_benchmark(tmp_path))
@@ -209,7 +209,7 @@ class TestValidation:
         assert [(problem.task_id, problem.variant) for problem in problems] == [('pets-t01', 'no-admin')]
 
     def test_the_command_reports_success(self, tmp_path):
-        result = CliRunner().invoke(main, ['agent', 'validate', str(_petstore_benchmark(tmp_path))])
+        result = CliRunner().invoke(main, ['tool-calling', 'validate', str(_petstore_benchmark(tmp_path))])
         assert result.exit_code == 0, result.output
         assert 'All 2 tasks pass' in result.output
 
@@ -236,8 +236,8 @@ def _request(method: str, path: str, body: typing.Any = None) -> RecordedRequest
 
 
 def _petstore_benchmark(root: pathlib.Path) -> pathlib.Path:
-    """A one-scenario agent benchmark over the petstore fixture, with three variants and two tasks."""
-    benchmark_directory = root / 'agent'
+    """A one-scenario tool calling benchmark over the petstore fixture, with three variants and two tasks."""
+    benchmark_directory = root / 'tool_calling'
     scenario_directory = benchmark_directory / 'scenarios' / 'pets'
     (scenario_directory / 'variants').mkdir(parents=True)
     shutil.copy(PETSTORE, benchmark_directory / 'petstore.json')

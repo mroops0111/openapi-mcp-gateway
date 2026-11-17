@@ -1,4 +1,4 @@
-# The agent benchmark. See README.md for what it measures and how to run it.
+# The tool calling benchmark. See README.md for what it measures and how to run it.
 # Each spec is pinned to one revision and checked by SHA-256.
 # A change to a pin, a task, a variant, or the system prompt makes a new version.
 version: 1

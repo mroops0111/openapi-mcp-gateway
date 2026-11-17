@@ -9,8 +9,8 @@ from click.testing import CliRunner
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from openapi_mcp_gateway.benchmarks.cli import main
-from openapi_mcp_gateway.benchmarks.search import (
+from openapi_mcp_gateway_benchmarks.cli import main
+from openapi_mcp_gateway_benchmarks.search_ranking import (
     annotation_workflow,
     annotations,
     automated_annotation,
@@ -20,22 +20,26 @@ from openapi_mcp_gateway.benchmarks.search import (
     report,
     runner,
 )
-from openapi_mcp_gateway.benchmarks.search.baseline import Baseline
-from openapi_mcp_gateway.benchmarks.search.metrics import NormalizedDiscountedCumulativeGain, Recall, ReciprocalRank
-from openapi_mcp_gateway.benchmarks.search.systems import (
+from openapi_mcp_gateway_benchmarks.search_ranking.baseline import Baseline
+from openapi_mcp_gateway_benchmarks.search_ranking.metrics import (
+    NormalizedDiscountedCumulativeGain,
+    Recall,
+    ReciprocalRank,
+)
+from openapi_mcp_gateway_benchmarks.search_ranking.systems import (
     GatewaySystem,
     PydanticAIKeywordSystem,
     Retriever,
     SpecCorpus,
     System,
 )
-from openapi_mcp_gateway.benchmarks.significance import macro_mean, paired_bootstrap
-from openapi_mcp_gateway.benchmarks.spec_pins import SpecChecksumError, SpecPin, sha256_of
-from tests.conftest import FIXTURES_DIR
+from openapi_mcp_gateway_benchmarks.significance import macro_mean, paired_bootstrap
+from openapi_mcp_gateway_benchmarks.spec_pins import SpecChecksumError, SpecPin, sha256_of
 
 
+FIXTURES_DIR = pathlib.Path(__file__).parent / 'fixtures'
 PETSTORE = FIXTURES_DIR / 'petstore.json'
-REPOSITORY_ANNOTATIONS = pathlib.Path(__file__).parents[2] / 'benchmarks' / 'search' / 'annotations'
+REPOSITORY_ANNOTATIONS = pathlib.Path(__file__).parents[1] / 'search_ranking' / 'annotations'
 
 MANIFEST = """\
 version: 1
@@ -319,27 +323,27 @@ class TestCli:
     def test_check_passes_against_its_own_baseline_and_fails_below_it(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
         cli = CliRunner()
-        assert cli.invoke(main, ['search', 'check', str(benchmark_directory), '--update']).exit_code == 0
-        assert cli.invoke(main, ['search', 'check', str(benchmark_directory)]).exit_code == 0
+        assert cli.invoke(main, ['search-ranking', 'check', str(benchmark_directory), '--update']).exit_code == 0
+        assert cli.invoke(main, ['search-ranking', 'check', str(benchmark_directory)]).exit_code == 0
 
         baseline_path = benchmark_directory / dataset.BASELINE_FILE
         baseline = json.loads(baseline_path.read_text())
         baseline['macro']['ndcg@10'] = 2.0
         baseline_path.write_text(json.dumps(baseline))
-        failed = cli.invoke(main, ['search', 'check', str(benchmark_directory)])
+        failed = cli.invoke(main, ['search-ranking', 'check', str(benchmark_directory)])
         assert failed.exit_code == 1
         assert 'macro ndcg@10' in failed.output
 
     def test_run_writes_a_report(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
         output = tmp_path / 'report.json'
-        result = CliRunner().invoke(main, ['search', 'run', str(benchmark_directory), '--output', str(output)])
+        result = CliRunner().invoke(main, ['search-ranking', 'run', str(benchmark_directory), '--output', str(output)])
         assert result.exit_code == 0, result.output
         written = report.Report.model_validate_json(output.read_text())
         assert (written.benchmark_version, written.split, written.reference_system) == (1, 'test', 'default')
 
     def test_an_unknown_system_is_a_clean_error(self, tmp_path):
-        arguments = ['search', 'run', str(_petstore_benchmark(tmp_path)), '--system', 'missing']
+        arguments = ['search-ranking', 'run', str(_petstore_benchmark(tmp_path)), '--system', 'missing']
         result = CliRunner().invoke(main, arguments)
         assert result.exit_code == 1
         assert 'Unknown system' in result.output
@@ -347,7 +351,7 @@ class TestCli:
     def test_a_stale_pin_is_a_clean_error(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
         (benchmark_directory / 'petstore.json').write_text('{}')
-        result = CliRunner().invoke(main, ['search', 'run', str(benchmark_directory)])
+        result = CliRunner().invoke(main, ['search-ranking', 'run', str(benchmark_directory)])
         assert result.exit_code == 1
         assert 'SHA-256' in result.output
         assert 'Traceback' not in result.output
@@ -356,7 +360,7 @@ class TestCli:
         benchmark_directory = _petstore_benchmark(tmp_path)
         with (benchmark_directory / 'pets' / 'queries.jsonl').open('a') as file:
             file.write('{not json\n')
-        result = CliRunner().invoke(main, ['search', 'run', str(benchmark_directory)])
+        result = CliRunner().invoke(main, ['search-ranking', 'run', str(benchmark_directory)])
         assert result.exit_code == 1
         assert 'queries.jsonl:4' in result.output
 
@@ -365,7 +369,7 @@ class TestCli:
         benchmark_directory = _petstore_benchmark(tmp_path)
         queries = benchmark_directory / 'pets' / 'queries.jsonl'
         queries.write_text(queries.read_text().replace('"literal"}}\n{"_id": "p2"', '"paraphrase"}}\n{"_id": "p2"'))
-        result = CliRunner().invoke(main, ['search', 'check', str(benchmark_directory), '--update'])
+        result = CliRunner().invoke(main, ['search-ranking', 'check', str(benchmark_directory), '--update'])
         assert result.exit_code == 1
         assert 'p1 (paraphrase' in result.output
         assert not (benchmark_directory / dataset.BASELINE_FILE).exists()
@@ -381,7 +385,7 @@ class TestAnnotationWorkflow:
         cli = CliRunner()
 
         stage = cli.invoke(
-            main, ['search', 'annotations', 'prepare-authoring', str(benchmark_directory), str(work_directory)]
+            main, ['search-ranking', 'annotations', 'prepare-authoring', str(benchmark_directory), str(work_directory)]
         )
         assert stage.exit_code == 0, stage.output
         operations = (work_directory / 'pets' / annotation_workflow.OPERATIONS_FILE).read_text()
@@ -399,7 +403,7 @@ class TestAnnotationWorkflow:
             ],
         )
         stage = cli.invoke(
-            main, ['search', 'annotations', 'prepare-assessment', str(benchmark_directory), str(work_directory)]
+            main, ['search-ranking', 'annotations', 'prepare-assessment', str(benchmark_directory), str(work_directory)]
         )
         assert stage.exit_code == 0, stage.output
         assessor_queries = (work_directory / 'pets' / annotation_workflow.ASSESSOR_QUERIES_FILE).read_text()
@@ -414,9 +418,11 @@ class TestAnnotationWorkflow:
                 {'id': 'pets-q003', 'relevant': {'delete_pet': 2}},
             ],
         )
-        stage = cli.invoke(main, ['search', 'annotations', 'collect', str(benchmark_directory), str(work_directory)])
+        stage = cli.invoke(
+            main, ['search-ranking', 'annotations', 'collect', str(benchmark_directory), str(work_directory)]
+        )
         assert stage.exit_code == 0, stage.output
-        stage = cli.invoke(main, ['search', 'annotations', 'build', str(benchmark_directory)])
+        stage = cli.invoke(main, ['search-ranking', 'annotations', 'build', str(benchmark_directory)])
         assert stage.exit_code == 0, stage.output
         assert 'pets: 3 queries, shared answer on 3' in stage.output
 
@@ -444,7 +450,13 @@ class TestAnnotationWorkflow:
     def test_a_stage_run_out_of_order_says_which_comes_first(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
         _copy_annotation_templates(benchmark_directory)
-        arguments = ['search', 'annotations', 'prepare-assessment', str(benchmark_directory), str(tmp_path / 'work')]
+        arguments = [
+            'search-ranking',
+            'annotations',
+            'prepare-assessment',
+            str(benchmark_directory),
+            str(tmp_path / 'work'),
+        ]
         result = CliRunner().invoke(main, arguments)
         assert result.exit_code == 1
         assert 'stage before this one' in result.output
@@ -477,7 +489,7 @@ class TestAnnotationWorkflow:
         with pytest.raises(dataset.DatasetError, match='pets-q002'):
             annotations.build_spec_dataset(benchmark_directory, 'pets')
         queries_before = (benchmark_directory / 'pets' / dataset.QUERIES_FILE).read_text()
-        result = CliRunner().invoke(main, ['search', 'annotations', 'build', str(benchmark_directory)])
+        result = CliRunner().invoke(main, ['search-ranking', 'annotations', 'build', str(benchmark_directory)])
         assert result.exit_code == 1
         assert (benchmark_directory / 'pets' / dataset.QUERIES_FILE).read_text() == queries_before
 

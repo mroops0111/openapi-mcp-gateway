@@ -9,7 +9,7 @@ def to_markdown(report: AgentReport) -> str:
     One table holds every scenario, variant, and model, and a second compares each variant with the baseline.
     """
     sections = [
-        f'Agent benchmark v{report.benchmark_version}, openapi-mcp-gateway {report.gateway_version}, '
+        f'Tool calling benchmark v{report.benchmark_version}, openapi-mcp-gateway {report.gateway_version}, '
         f'Pydantic AI {report.pydantic_ai_version}. '
         + ', '.join(f'`{name}` is {model}' for name, model in report.models.items())
         + '.',

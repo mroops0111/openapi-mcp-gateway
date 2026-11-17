@@ -16,9 +16,10 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, Tool
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 
-from ...gateway import Gateway
-from ...openapi import load_spec
-from ...settings import GatewayConfig, ServerConfig
+from openapi_mcp_gateway.gateway import Gateway
+from openapi_mcp_gateway.openapi import load_spec
+from openapi_mcp_gateway.settings import GatewayConfig, ServerConfig
+
 from ..local_server import serve
 from .dataset import Benchmark, ModelSpec, Scenario, Task
 from .grading import Grade, grade

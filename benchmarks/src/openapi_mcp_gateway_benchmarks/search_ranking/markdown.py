@@ -10,7 +10,7 @@ def to_markdown(report: Report) -> str:
     The tables show every system's means over specs, the reference system by spec and by style, and the comparisons.
     """
     sections = [
-        f'Search benchmark v{report.benchmark_version}, {report.split} split, '
+        f'Search ranking benchmark v{report.benchmark_version}, {report.split} split, '
         f'openapi-mcp-gateway {report.gateway_version}. Means over specs.',
         _table(
             ['System', *METRIC_NAMES],

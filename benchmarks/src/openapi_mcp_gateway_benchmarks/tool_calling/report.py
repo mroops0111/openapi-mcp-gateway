@@ -60,7 +60,7 @@ class Comparison(pydantic.BaseModel):
 
 
 class AgentReport(pydantic.BaseModel):
-    """Everything one agent benchmark run found, written as JSON by ``agent run --output``."""
+    """Everything one tool calling benchmark run found, written as JSON by ``tool-calling run --output``."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 

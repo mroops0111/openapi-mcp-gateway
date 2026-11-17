@@ -28,7 +28,7 @@ GRADES = (1, ANSWER_GRADE)
 
 
 class DatasetError(BenchmarkDataError):
-    """The search benchmark's files are inconsistent."""
+    """The search ranking benchmark's files are inconsistent."""
 
 
 class Gate(pydantic.BaseModel):
