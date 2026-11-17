@@ -32,6 +32,10 @@ models:
   claude-sonnet:
     model: anthropic:claude-sonnet-5-5
     settings: {anthropic_cache_tool_definitions: true, anthropic_cache_instructions: true}
+  gpt-luna:
+    model: openai:gpt-6-luna
+  gemini-hydrogen:
+    model: google:gemini-4-hydrogen
 
 scenarios: [petstore, notion, asana, discord, github, stripe, github-asana]
 
