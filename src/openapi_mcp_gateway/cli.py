@@ -62,25 +62,25 @@ _INSTRUCTIONS_PREVIEW_LENGTH = 60
     help='Bind port (default: 8000; overridable in --config).',
 )
 @click.option(
-    '--auth-type',
+    '--auth-upstream-type',
     type=click.Choice(['none', 'bearer', 'api_key', 'oauth2']),
     default=None,
     help='Authentication type for the upstream API.',
 )
 @click.option(
-    '--auth-token',
+    '--auth-upstream-token',
     type=str,
     default=None,
     help='Static token or ${ENV_VAR} reference (for bearer / api_key auth).',
 )
 @click.option(
-    '--auth-client-id',
+    '--auth-upstream-client-id',
     type=str,
     default=None,
     help='OAuth2 client ID or ${ENV_VAR} reference.',
 )
 @click.option(
-    '--auth-client-secret',
+    '--auth-upstream-client-secret',
     type=str,
     default=None,
     help='OAuth2 client secret or ${ENV_VAR} reference.',
@@ -91,10 +91,12 @@ _INSTRUCTIONS_PREVIEW_LENGTH = 60
     default=None,
     help='Comma-separated scopes to request from the upstream authorization server.',
 )
-@click.option('--auth-authorization-url', type=str, default=None, help='OAuth2 authorization URL (if not in spec).')
-@click.option('--auth-token-url', type=str, default=None, help='OAuth2 token URL (if not in spec).')
 @click.option(
-    '--auth-flow',
+    '--auth-upstream-authorization-url', type=str, default=None, help='OAuth2 authorization URL (if not in spec).'
+)
+@click.option('--auth-upstream-token-url', type=str, default=None, help='OAuth2 token URL (if not in spec).')
+@click.option(
+    '--auth-upstream-flow',
     type=click.Choice(['authorization_code', 'client_credentials']),
     default=None,
     help='OAuth2 flow when the spec declares more than one (defaults to authorization_code).',
@@ -141,14 +143,14 @@ def main(
     transport: typing.Literal['sse', 'streamable-http', 'stdio'] | None,
     host: str | None,
     port: int | None,
-    auth_type: typing.Literal['none', 'bearer', 'api_key', 'oauth2'] | None,
-    auth_token: str | None,
-    auth_client_id: str | None,
-    auth_client_secret: str | None,
+    auth_upstream_type: typing.Literal['none', 'bearer', 'api_key', 'oauth2'] | None,
+    auth_upstream_token: str | None,
+    auth_upstream_client_id: str | None,
+    auth_upstream_client_secret: str | None,
     auth_upstream_scopes: str | None,
-    auth_authorization_url: str | None,
-    auth_token_url: str | None,
-    auth_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
+    auth_upstream_authorization_url: str | None,
+    auth_upstream_token_url: str | None,
+    auth_upstream_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
     log_level: str | None,
     log_format: str | None,
     log_file: str | None,
@@ -163,19 +165,19 @@ def main(
 
     \b
     Single spec with bearer token (via env var):
-        openapi-mcp-gateway --spec api.json --auth-type bearer --auth-token '${MY_API_TOKEN}'
+        openapi-mcp-gateway --spec api.json --auth-upstream-type bearer --auth-upstream-token '${MY_API_TOKEN}'
 
     \b
     Single spec with OAuth2 (URLs detected from spec):
-        openapi-mcp-gateway --spec api.json --auth-type oauth2 \\
-            --auth-client-id '${CLIENT_ID}' --auth-client-secret '${CLIENT_SECRET}'
+        openapi-mcp-gateway --spec api.json --auth-upstream-type oauth2 \\
+            --auth-upstream-client-id '${CLIENT_ID}' --auth-upstream-client-secret '${CLIENT_SECRET}'
 
     \b
     Single spec with OAuth2 (URLs provided explicitly):
-        openapi-mcp-gateway --spec api.json --auth-type oauth2 \\
-            --auth-client-id '${CLIENT_ID}' --auth-client-secret '${CLIENT_SECRET}' \\
-            --auth-authorization-url https://example.com/oauth/authorize \\
-            --auth-token-url https://example.com/oauth/token
+        openapi-mcp-gateway --spec api.json --auth-upstream-type oauth2 \\
+            --auth-upstream-client-id '${CLIENT_ID}' --auth-upstream-client-secret '${CLIENT_SECRET}' \\
+            --auth-upstream-authorization-url https://example.com/oauth/authorize \\
+            --auth-upstream-token-url https://example.com/oauth/token
 
     \b
     Multiple servers via config:
@@ -203,14 +205,14 @@ def main(
         source_layer = yaml_layer(config_path)
     else:
         auth = _build_auth_config(
-            auth_type=auth_type,
-            auth_token=auth_token,
-            auth_client_id=auth_client_id,
-            auth_client_secret=auth_client_secret,
+            auth_upstream_type=auth_upstream_type,
+            auth_upstream_token=auth_upstream_token,
+            auth_upstream_client_id=auth_upstream_client_id,
+            auth_upstream_client_secret=auth_upstream_client_secret,
             auth_upstream_scopes=auth_upstream_scopes,
-            auth_authorization_url=auth_authorization_url,
-            auth_token_url=auth_token_url,
-            auth_flow=auth_flow,
+            auth_upstream_authorization_url=auth_upstream_authorization_url,
+            auth_upstream_token_url=auth_upstream_token_url,
+            auth_upstream_flow=auth_upstream_flow,
         )
         source_layer = single_spec_layer(spec=typing.cast(str, spec), name=name, base_url=base_url, auth=auth)
 
@@ -255,39 +257,41 @@ def main(
 
 
 def _build_auth_config(
-    auth_type: typing.Literal['none', 'bearer', 'api_key', 'oauth2'] | None,
-    auth_token: str | None,
-    auth_client_id: str | None,
-    auth_client_secret: str | None,
+    auth_upstream_type: typing.Literal['none', 'bearer', 'api_key', 'oauth2'] | None,
+    auth_upstream_token: str | None,
+    auth_upstream_client_id: str | None,
+    auth_upstream_client_secret: str | None,
     auth_upstream_scopes: str | None,
-    auth_authorization_url: str | None,
-    auth_token_url: str | None,
-    auth_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
+    auth_upstream_authorization_url: str | None,
+    auth_upstream_token_url: str | None,
+    auth_upstream_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
 ) -> AuthConfig:
     """Construct ``AuthConfig`` from the auth-related CLI flags."""
     has_auth_flags = any(
         [
-            auth_type,
-            auth_token,
-            auth_client_id,
-            auth_client_secret,
+            auth_upstream_type,
+            auth_upstream_token,
+            auth_upstream_client_id,
+            auth_upstream_client_secret,
             auth_upstream_scopes,
-            auth_authorization_url,
-            auth_token_url,
-            auth_flow,
+            auth_upstream_authorization_url,
+            auth_upstream_token_url,
+            auth_upstream_flow,
         ]
     )
 
     if not has_auth_flags:
         return AuthConfig()
 
-    if not auth_type:
-        if auth_client_id or auth_flow:
-            auth_type = 'oauth2'
-        elif auth_token:
-            auth_type = 'bearer'
+    if not auth_upstream_type:
+        if auth_upstream_client_id or auth_upstream_flow:
+            auth_upstream_type = 'oauth2'
+        elif auth_upstream_token:
+            auth_upstream_type = 'bearer'
         else:
-            raise click.UsageError('Cannot infer --auth-type from the provided flags. Specify --auth-type explicitly.')
+            raise click.UsageError(
+                'Cannot infer --auth-upstream-type from the provided flags. Specify --auth-upstream-type explicitly.'
+            )
 
     scopes = [scope.strip() for scope in auth_upstream_scopes.split(',')] if auth_upstream_scopes else []
 
@@ -297,19 +301,19 @@ def _build_auth_config(
     upstream: dict[str, typing.Any] = {
         key: value
         for key, value in {
-            'client_id': auth_client_id,
-            'client_secret': auth_client_secret,
-            'authorization_url': auth_authorization_url,
-            'token_url': auth_token_url,
+            'client_id': auth_upstream_client_id,
+            'client_secret': auth_upstream_client_secret,
+            'authorization_url': auth_upstream_authorization_url,
+            'token_url': auth_upstream_token_url,
             'scopes': scopes or None,
         }.items()
         if value is not None
     }
-    upstream['type'] = auth_type
-    if auth_token is not None:
-        upstream['token'] = auth_token
-    if auth_flow is not None:
-        upstream['flow'] = auth_flow
+    upstream['type'] = auth_upstream_type
+    if auth_upstream_token is not None:
+        upstream['token'] = auth_upstream_token
+    if auth_upstream_flow is not None:
+        upstream['flow'] = auth_upstream_flow
     return AuthConfig.model_validate({'upstream': upstream})
 
 

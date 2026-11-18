@@ -63,8 +63,8 @@ export GITHUB_TOKEN="ghp_..."
 uv run openapi-mcp-gateway \
     --spec https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json \
     --name github \
-    --auth-type bearer \
-    --auth-token '${GITHUB_TOKEN}'
+    --auth-upstream-type bearer \
+    --auth-upstream-token '${GITHUB_TOKEN}'
 ```
 
 <details>
@@ -94,13 +94,13 @@ export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
 uv run openapi-mcp-gateway \
     --spec https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml \
     --name asana \
-    --auth-type oauth2 \
-    --auth-client-id '${ASANA_CLIENT_ID}' \
-    --auth-client-secret '${ASANA_CLIENT_SECRET}' \
+    --auth-upstream-type oauth2 \
+    --auth-upstream-client-id '${ASANA_CLIENT_ID}' \
+    --auth-upstream-client-secret '${ASANA_CLIENT_SECRET}' \
     --auth-upstream-scopes "openid,email,profile,users:read,workspaces:read"
 ```
 
-For the service-token flow, add `--auth-flow client_credentials`. Those two are what the CLI reaches. `token_exchange` needs an issuer and an audience, so it is configured per server under `auth:` in YAML, described in [Authorization](#authorization).
+For the service-token flow, add `--auth-upstream-flow client_credentials`. Those two are what the CLI reaches. `token_exchange` needs an issuer and an audience, so it is configured per server under `auth:` in YAML, described in [Authorization](#authorization).
 
 ### 4. Multiple APIs at Once
 

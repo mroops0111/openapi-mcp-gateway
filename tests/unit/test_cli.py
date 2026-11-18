@@ -128,75 +128,75 @@ class TestAuthInference:
     def test_no_flags_returns_default(self):
         """No auth flags at all yields a default ``AuthConfig`` (type='none')."""
         auth = cli._build_auth_config(
-            auth_type=None,
-            auth_token=None,
-            auth_client_id=None,
-            auth_client_secret=None,
+            auth_upstream_type=None,
+            auth_upstream_token=None,
+            auth_upstream_client_id=None,
+            auth_upstream_client_secret=None,
             auth_upstream_scopes=None,
-            auth_authorization_url=None,
-            auth_token_url=None,
-            auth_flow=None,
+            auth_upstream_authorization_url=None,
+            auth_upstream_token_url=None,
+            auth_upstream_flow=None,
         )
         assert auth.upstream.type == 'none'
         assert auth.upstream.token is None
         assert auth.upstream.client_id is None
 
     def test_token_only_infers_bearer(self):
-        """A bare ``--auth-token`` is enough to infer ``bearer``."""
+        """A bare ``--auth-upstream-token`` is enough to infer ``bearer``."""
         auth = cli._build_auth_config(
-            auth_type=None,
-            auth_token='my-token',
-            auth_client_id=None,
-            auth_client_secret=None,
+            auth_upstream_type=None,
+            auth_upstream_token='my-token',
+            auth_upstream_client_id=None,
+            auth_upstream_client_secret=None,
             auth_upstream_scopes=None,
-            auth_authorization_url=None,
-            auth_token_url=None,
-            auth_flow=None,
+            auth_upstream_authorization_url=None,
+            auth_upstream_token_url=None,
+            auth_upstream_flow=None,
         )
         assert auth.upstream.type == 'bearer'
         assert auth.upstream.token == 'my-token'
 
     def test_client_id_infers_oauth2(self):
-        """A bare ``--auth-client-id`` (no type) infers ``oauth2`` even when token is also set."""
+        """A bare ``--auth-upstream-client-id`` (no type) infers ``oauth2`` even when token is also set."""
         auth = cli._build_auth_config(
-            auth_type=None,
-            auth_token=None,
-            auth_client_id='cid',
-            auth_client_secret='sec',
+            auth_upstream_type=None,
+            auth_upstream_token=None,
+            auth_upstream_client_id='cid',
+            auth_upstream_client_secret='sec',
             auth_upstream_scopes=None,
-            auth_authorization_url=None,
-            auth_token_url=None,
-            auth_flow=None,
+            auth_upstream_authorization_url=None,
+            auth_upstream_token_url=None,
+            auth_upstream_flow=None,
         )
         assert auth.upstream.type == 'oauth2'
         assert auth.upstream.client_id == 'cid'
         assert auth.upstream.client_secret == 'sec'
 
     def test_explicit_type_wins(self):
-        """An explicit ``--auth-type`` takes precedence over inference."""
+        """An explicit ``--auth-upstream-type`` takes precedence over inference."""
         auth = cli._build_auth_config(
-            auth_type='api_key',
-            auth_token='key123',
-            auth_client_id=None,
-            auth_client_secret=None,
+            auth_upstream_type='api_key',
+            auth_upstream_token='key123',
+            auth_upstream_client_id=None,
+            auth_upstream_client_secret=None,
             auth_upstream_scopes=None,
-            auth_authorization_url=None,
-            auth_token_url=None,
-            auth_flow=None,
+            auth_upstream_authorization_url=None,
+            auth_upstream_token_url=None,
+            auth_upstream_flow=None,
         )
         assert auth.upstream.type == 'api_key'
 
     def test_scopes_split_on_commas(self):
         """``--auth-scopes`` is split on commas and each entry stripped."""
         auth = cli._build_auth_config(
-            auth_type='oauth2',
-            auth_token=None,
-            auth_client_id='cid',
-            auth_client_secret='sec',
+            auth_upstream_type='oauth2',
+            auth_upstream_token=None,
+            auth_upstream_client_id='cid',
+            auth_upstream_client_secret='sec',
             auth_upstream_scopes='read , write,admin',
-            auth_authorization_url=None,
-            auth_token_url=None,
-            auth_flow=None,
+            auth_upstream_authorization_url=None,
+            auth_upstream_token_url=None,
+            auth_upstream_flow=None,
         )
         assert auth.upstream.scopes == ['read', 'write', 'admin']
 
@@ -204,27 +204,27 @@ class TestAuthInference:
         """Auth flags with no token, no client_id and no explicit type are unrecoverable."""
         with pytest.raises(click.UsageError):
             cli._build_auth_config(
-                auth_type=None,
-                auth_token=None,
-                auth_client_id=None,
-                auth_client_secret=None,
+                auth_upstream_type=None,
+                auth_upstream_token=None,
+                auth_upstream_client_id=None,
+                auth_upstream_client_secret=None,
                 auth_upstream_scopes='read',
-                auth_authorization_url=None,
-                auth_token_url=None,
-                auth_flow=None,
+                auth_upstream_authorization_url=None,
+                auth_upstream_token_url=None,
+                auth_upstream_flow=None,
             )
 
     def test_oauth_urls_carried_through(self):
         """Explicit authorization/token URLs are forwarded onto the resulting ``AuthConfig``."""
         auth = cli._build_auth_config(
-            auth_type='oauth2',
-            auth_token=None,
-            auth_client_id='cid',
-            auth_client_secret='sec',
+            auth_upstream_type='oauth2',
+            auth_upstream_token=None,
+            auth_upstream_client_id='cid',
+            auth_upstream_client_secret='sec',
             auth_upstream_scopes=None,
-            auth_authorization_url=AUTHORIZE_URL,
-            auth_token_url=TOKEN_URL,
-            auth_flow=None,
+            auth_upstream_authorization_url=AUTHORIZE_URL,
+            auth_upstream_token_url=TOKEN_URL,
+            auth_upstream_flow=None,
         )
         assert auth.upstream.authorization_url == AUTHORIZE_URL
         assert auth.upstream.token_url == TOKEN_URL
