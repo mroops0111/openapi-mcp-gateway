@@ -19,7 +19,7 @@ from mcp.types import RequestParamsMeta, TextContent
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.app import _transport_security
-from openapi_mcp_gateway.auth.mcp.jwks import McpIssuerMetadata
+from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
 from openapi_mcp_gateway.auth.upstream import token_source as token_source_module
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import (
@@ -34,7 +34,7 @@ from openapi_mcp_gateway.settings import (
     ServerConfig,
     UpstreamAuthConfig,
 )
-from openapi_mcp_gateway.upstream_client import UpstreamHttpClient, UpstreamSharedHttpClient
+from openapi_mcp_gateway.upstream_http import UpstreamHttpClient, UpstreamSharedHttpClient
 from tests.constants import (
     API_URL,
     ATTACKER_HOST,
@@ -849,7 +849,7 @@ def _tool(gateway: Gateway, name: str):
 
 def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = None) -> TestClient:
     """Test client over a petstore server that validates tokens from ``ISSUER``, an issuer it does not own."""
-    metadata = McpIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
+    metadata = McpExternalIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
     config = GatewayConfig(
         url=GATEWAY_URL,
         servers=[
@@ -871,8 +871,10 @@ def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = N
         ],
     )
     with (
-        patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_issuer_metadata', return_value=metadata),
-        patch('openapi_mcp_gateway.auth.mcp.jwks._build_jwk_client', return_value=jwk_client or MagicMock()),
+        patch(
+            'openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata', return_value=metadata
+        ),
+        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client', return_value=jwk_client or MagicMock()),
     ):
         gateway = Gateway.from_config(config)
         return TestClient(gateway._build_app(transport='streamable-http'))

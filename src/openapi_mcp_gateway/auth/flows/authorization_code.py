@@ -12,6 +12,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from ...stores.base import TokenStore
+from ..assembly import AuthRoutes, OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
 from ..mcp.authorization_code import (
     McpAuthorizationCodeContinuation,
     McpAuthorizationCodeRoutes,
@@ -23,7 +24,6 @@ from ..mcp.consent import PENDING_AUTHORIZATION_TTL, BrowserCookie, PendingAutho
 from ..mcp.consent_page import redirect_without_cache, render_error_page
 from ..mcp.record_origin import McpRecordOrigin
 from ..mcp.token_issuer import MCP_DEFAULT_SCOPE, McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
-from ..setup import AuthRoutes, OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamTokenSource

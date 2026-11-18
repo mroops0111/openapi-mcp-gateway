@@ -9,7 +9,7 @@ import pytest_asyncio
 
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from openapi_mcp_gateway.stores.redis import RedisTokenStore
-from openapi_mcp_gateway.upstream_client import UpstreamHttpClient
+from openapi_mcp_gateway.upstream_http import UpstreamHttpClient
 
 
 _HttpHandler = typing.Callable[[httpx.Request], httpx.Response]

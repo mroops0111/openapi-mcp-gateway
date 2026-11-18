@@ -1,21 +1,25 @@
 import typing
-from unittest.mock import MagicMock
 
 import pydantic
 import pytest
 
-from openapi_mcp_gateway.auth.setup import AuthTypeContext, ServerAuthSetup
-from openapi_mcp_gateway.auth.types import AUTH_TYPE_HANDLERS, build_auth
+from openapi_mcp_gateway.auth.assembly import AuthTypeContext
+from openapi_mcp_gateway.auth.factory import AUTH_TYPE_HANDLERS, build_auth
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
     UpstreamStaticAuthResolver,
 )
+from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy
-from openapi_mcp_gateway.settings import AuthConfig, ServerConfig, UpstreamAuthConfig
+from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, ServerConfig, UpstreamAuthConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.constants import API_URL, GATEWAY_URL
+from tests.flows import (
+    build_spec,
+    server_entry,
+)
 
 
 def _context(auth: AuthConfig) -> AuthTypeContext:
@@ -118,15 +122,17 @@ class TestDispatch:
             build_auth(context)
 
 
-class TestServerAuthSetup:
-    """The setup every handler returns refuses a shape the MCP SDK cannot serve."""
+class TestPassthroughAuthType:
+    """``passthrough`` is an auth type, since the gateway runs no OAuth exchange in that mode."""
 
-    def test_a_provider_and_a_verifier_are_exclusive(self):
-        """Issuing tokens and validating someone else's are alternatives rather than layers."""
-        with pytest.raises(ValueError, match='not both'):
-            ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver(), provider=MagicMock(), verifier=MagicMock())
+    def test_resolves_without_consulting_a_flow(self):
+        """It never reaches the flow factory, so no spec or flow value is involved."""
+        gateway = Gateway.from_config(GatewayConfig())
+        entry = server_entry(AuthConfig(upstream=UpstreamAuthConfig(type='passthrough')))
 
-    def test_mcp_auth_follows_the_provider_or_verifier(self):
-        """A setup without either leaves the MCP endpoint open."""
-        assert not ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver()).has_mcp_auth()
-        assert ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver(), verifier=MagicMock()).has_mcp_auth()
+        setup = gateway._resolve_auth(entry, build_spec(), McpUnrestrictedScopePolicy())
+
+        assert isinstance(setup.resolver, UpstreamPassthroughAuthResolver)
+        assert setup.provider is None
+        assert setup.verifier is None
+        assert setup.settings is None

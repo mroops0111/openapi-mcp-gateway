@@ -3,7 +3,7 @@ import asyncio
 import httpx
 import pytest
 
-from openapi_mcp_gateway.upstream_client import UpstreamBinaryBody, UpstreamHttpClient, UpstreamSharedHttpClient
+from openapi_mcp_gateway.upstream_http import UpstreamBinaryBody, UpstreamHttpClient, UpstreamSharedHttpClient
 
 
 def _client_with_handler(handler):

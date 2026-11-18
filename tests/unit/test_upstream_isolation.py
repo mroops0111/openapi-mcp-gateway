@@ -11,7 +11,7 @@ from mcp.server.mcpserver import Context
 from openapi_mcp_gateway.auth.upstream.resolver import UpstreamAuthResolver
 from openapi_mcp_gateway.exposure import ToolGenerator, UpstreamConnection
 from openapi_mcp_gateway.openapi import OperationInfo, ParameterInfo
-from openapi_mcp_gateway.upstream_client import UpstreamHttpClient
+from openapi_mcp_gateway.upstream_http import UpstreamHttpClient
 from tests.constants import API_URL
 
 

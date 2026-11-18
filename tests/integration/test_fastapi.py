@@ -9,7 +9,7 @@ from mcp.server.mcpserver import Context
 from openapi_mcp_gateway import Gateway, mcp_tool
 from openapi_mcp_gateway.auth.upstream import token_source as token_source_module
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
-from openapi_mcp_gateway.upstream_client import UpstreamSharedHttpClient
+from openapi_mcp_gateway.upstream_http import UpstreamSharedHttpClient
 from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
 

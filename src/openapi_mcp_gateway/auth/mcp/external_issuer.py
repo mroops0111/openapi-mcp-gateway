@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # OpenID Connect Discovery 1.0 §4, then RFC 8414 §3.
 # Both are tried because an OpenID provider serves the former and a plain OAuth server the latter,
 # and a deployment should not have to tell the gateway which kind it runs.
-MCP_ISSUER_METADATA_PATHS = ('/.well-known/openid-configuration', '/.well-known/oauth-authorization-server')
+MCP_EXTERNAL_ISSUER_METADATA_PATHS = ('/.well-known/openid-configuration', '/.well-known/oauth-authorization-server')
 
 # Verification is restricted to the family of the key the issuer published,
 # rather than to whatever the token's own header asks for.
@@ -34,7 +34,7 @@ _ALGORITHMS_BY_KEY_TYPE = {
 }
 
 
-class McpIssuerConfigurationError(Exception):
+class McpExternalIssuerConfigurationError(Exception):
     """Raised when discovery cannot produce a usable JWKS or token endpoint."""
 
 
@@ -48,7 +48,7 @@ class McpTokenVerificationError(Exception):
 
 
 @dataclasses.dataclass(frozen=True)
-class McpIssuerMetadata:
+class McpExternalIssuerMetadata:
     """The subset of an authorization server's metadata the gateway acts on."""
 
     issuer: str
@@ -56,7 +56,7 @@ class McpIssuerMetadata:
     token_endpoint: str | None = None
 
 
-def fetch_mcp_issuer_metadata(issuer: str, timeout: float = 10.0) -> McpIssuerMetadata:
+def fetch_mcp_external_issuer_metadata(issuer: str, timeout: float = 10.0) -> McpExternalIssuerMetadata:
     """Return the issuer's JWKS and token endpoints, trying OpenID Connect then RFC 8414.
 
     The ``issuer`` claim in the document must equal the issuer asked for.
@@ -66,7 +66,7 @@ def fetch_mcp_issuer_metadata(issuer: str, timeout: float = 10.0) -> McpIssuerMe
     expected = issuer.rstrip('/')
     errors: list[str] = []
 
-    for path in MCP_ISSUER_METADATA_PATHS:
+    for path in MCP_EXTERNAL_ISSUER_METADATA_PATHS:
         url = f'{expected}{path}'
         try:
             response = httpx.get(url, timeout=timeout, follow_redirects=True)
@@ -86,7 +86,7 @@ def fetch_mcp_issuer_metadata(issuer: str, timeout: float = 10.0) -> McpIssuerMe
 
         declared = str(payload.get('issuer', '')).rstrip('/')
         if declared != expected:
-            raise McpIssuerConfigurationError(
+            raise McpExternalIssuerConfigurationError(
                 f'Issuer metadata at {url} declares issuer "{declared}", expected "{expected}". '
                 'Refusing to trust it, since the document does not belong to the configured issuer.'
             )
@@ -103,18 +103,18 @@ def fetch_mcp_issuer_metadata(issuer: str, timeout: float = 10.0) -> McpIssuerMe
             jwks_uri,
             token_endpoint,
         )
-        return McpIssuerMetadata(
+        return McpExternalIssuerMetadata(
             issuer=expected,
             jwks_uri=jwks_uri,
             token_endpoint=token_endpoint if isinstance(token_endpoint, str) else None,
         )
 
-    raise McpIssuerConfigurationError(
+    raise McpExternalIssuerConfigurationError(
         f'Could not discover metadata for issuer "{issuer}". Tried:\n  ' + '\n  '.join(errors)
     )
 
 
-class McpJwksTokenVerifier:
+class McpExternalIssuerTokenVerifier:
     """Verify inbound bearer tokens as JWTs signed by an external issuer.
 
     Implements the MCP SDK's ``TokenVerifier`` protocol.
@@ -210,7 +210,7 @@ def _build_jwk_client(jwks_uri: str) -> typing.Any:
     try:
         from jwt import PyJWKClient
     except ImportError as exc:  # pragma: no cover - only reachable without the extra installed
-        raise McpIssuerConfigurationError(
+        raise McpExternalIssuerConfigurationError(
             'auth.upstream.flow "token_exchange" needs the "oidc" extra for JWT signature verification. '
             'Install it with: pip install "openapi-mcp-gateway[oidc]" '
             '(or uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway).'

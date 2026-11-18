@@ -15,8 +15,8 @@ from mcp.server.caching import CacheableMethod, CacheHint
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from .app import _ServerBundle, build_app, mount_mcp_apps, register_auth_routes, serve_lifespan
-from .auth.setup import AuthTypeContext, ServerAuthSetup
-from .auth.types import build_auth
+from .auth.assembly import AuthTypeContext, ServerAuthSetup
+from .auth.factory import build_auth
 from .auth.upstream.oauth_flow import detect_unsupported_upstream_oauth_flows, detect_upstream_oauth_flows
 from .auth.upstream.resolver import (
     UpstreamAuthResolver,

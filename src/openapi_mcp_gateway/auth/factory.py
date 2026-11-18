@@ -1,7 +1,7 @@
 import typing
 
+from .assembly import AuthTypeContext, AuthTypeHandler, ServerAuthSetup
 from .flows import build_oauth_flow
-from .setup import AuthTypeContext, AuthTypeHandler, ServerAuthSetup
 from .upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,

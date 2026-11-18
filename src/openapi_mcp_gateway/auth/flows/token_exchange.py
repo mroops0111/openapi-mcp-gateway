@@ -5,8 +5,8 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings
 from mcp.shared.auth import ProtectedResourceMetadata
 
-from ..mcp.jwks import McpJwksTokenVerifier, fetch_mcp_issuer_metadata
-from ..setup import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
+from ..assembly import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
+from ..mcp.external_issuer import McpExternalIssuerTokenVerifier, fetch_mcp_external_issuer_metadata
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_exchange import UpstreamTokenExchangeClient
 from ..upstream.token_source import UpstreamTokenSource
@@ -79,7 +79,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
                 'and authorization servers require a confidential client for that grant.'
             )
 
-        metadata = fetch_mcp_issuer_metadata(issuer)
+        metadata = fetch_mcp_external_issuer_metadata(issuer)
         if not metadata.token_endpoint:
             raise ValueError(
                 f'Server "{entry.name}": issuer "{issuer}" publishes no token_endpoint, '
@@ -95,7 +95,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
         # Demanding the upstream scopes of the caller would lock out every client that did not match,
         # since the deployment picks what to request from the issuer but not what a caller registered with.
         mcp_endpoint_scopes = list(entry.auth.mcp.required_scopes)
-        verifier = McpJwksTokenVerifier(
+        verifier = McpExternalIssuerTokenVerifier(
             issuer=metadata.issuer,
             audience=canonical_uri,
             jwks_uri=metadata.jwks_uri,

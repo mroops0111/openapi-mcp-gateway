@@ -12,7 +12,7 @@ ALLOWED_AUTH_IMPORTS = {
     'auth.routes': set(),
     'auth.upstream': {'auth.upstream'},
     'auth.mcp': {'auth.mcp', 'auth.routes'},
-    'auth.setup': {'auth.routes', 'auth.upstream'},
+    'auth.assembly': {'auth.routes', 'auth.upstream'},
 }
 
 _PACKAGE_ROOT = pathlib.Path(openapi_mcp_gateway.__file__).parent

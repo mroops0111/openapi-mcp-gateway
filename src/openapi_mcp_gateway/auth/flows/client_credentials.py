@@ -1,6 +1,6 @@
 import logging
 
-from ..setup import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
+from ..assembly import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamClientCredentialsTokenSource
 

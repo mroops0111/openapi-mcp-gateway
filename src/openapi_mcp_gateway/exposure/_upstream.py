@@ -10,7 +10,7 @@ from mcp.types import CallToolResult, ContentBlock, TextContent
 
 from ..auth.upstream.resolver import UpstreamAuthResolver, UpstreamNoCredentialAuthResolver
 from ..openapi import OperationInfo, ParameterInfo
-from ..upstream_client import UpstreamBinaryBody, UpstreamSharedHttpClient
+from ..upstream_http import UpstreamBinaryBody, UpstreamSharedHttpClient
 from ._content import binary_content
 from ._media import MediaPromoter
 from ._shared import _get_override, _sanitize_name, _split_by_location
