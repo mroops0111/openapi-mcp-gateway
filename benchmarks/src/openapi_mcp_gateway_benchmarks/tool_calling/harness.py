@@ -116,7 +116,7 @@ class ScenarioRun:
         return f'{server}_' if len(self.scenario.servers) > 1 else ''
 
     def _toolset(self, server: str, url: str) -> typing.Any:
-        toolset = MCPToolset(url, id=server)
+        toolset = MCPToolset(url, id=server, max_retries=self.benchmark.manifest.tool_retries)
         prefix = self.tool_prefix(server)
         return toolset.prefixed(prefix.removesuffix('_')) if prefix else toolset
 
@@ -135,8 +135,16 @@ class ScenarioRun:
                 failure = f'{type(error).__name__}: {error}'
         requests = list(self.replay.requests)
         return RunOutcome(
-            grade=grade(task.expected_calls, requests), requests=requests, failure=failure, **_costs(messages)
+            grade=grade(task.expected_calls, task.forbidden_calls, requests, self.read_only_operations()),
+            requests=requests,
+            failure=failure,
+            **_costs(messages),
         )
+
+    def read_only_operations(self) -> dict[str, list[str]]:
+        """The manifest's read-only operations for each server of the scenario, by the server's name."""
+        listed = self.benchmark.manifest.read_only_operations
+        return {server: listed.get(spec, []) for server, spec in self.scenario.servers.items()}
 
 
 def _costs(messages: typing.Sequence[ModelMessage]) -> dict[str, int]:

@@ -25,6 +25,7 @@ def to_markdown(report: AgentReport) -> str:
                 'Input Tokens',
                 'Tool Calls',
                 'Tool Errors',
+                'Extra Writes',
             ],
             [
                 [
@@ -37,6 +38,7 @@ def to_markdown(report: AgentReport) -> str:
                     f'{cell.mean_input_tokens:,.0f}',
                     f'{cell.mean_tool_calls:.1f}',
                     f'{cell.mean_tool_errors:.1f}',
+                    f'{cell.mean_extra_writes:.1f}',
                 ]
                 for cell in report.cells
             ],
@@ -88,6 +90,8 @@ def _measure(measure: str, value: float, *, signed: bool = False) -> str:
     sign = '+' if signed else ''
     if measure == 'success_rate':
         return f'{value * 100:{sign}.0f}%'
+    if measure == 'extra_writes':
+        return f'{value:{sign}.2f}'
     return f'{value:{sign},.0f}'
 
 

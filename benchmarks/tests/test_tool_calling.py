@@ -168,20 +168,35 @@ class TestGrading:
             _request('GET', '/repos/acme/web/issues'),
             _request('PATCH', '/repos/acme/web/issues/412', body={'state': 'closed', 'title': 'x'}),
         ]
-        assert grading.grade(expected, requests).passed
+        assert grading.grade(expected, [], requests, {}).passed
 
-    def test_a_wrong_value_or_an_extra_write_fails(self):
+    def test_a_wrong_value_fails_and_an_extra_write_is_only_counted(self):
         expected = [_expected('PATCH', '/repos/{owner}/{repo}/issues/{number}', {'number': '412'})]
-        assert not grading.grade(expected, [_request('PATCH', '/repos/acme/web/issues/413')]).passed
-        extra = grading.grade(
-            expected, [_request('PATCH', '/repos/acme/web/issues/412'), _request('DELETE', '/repos/acme/web')]
-        )
-        assert extra.unexpected_writes == ['DELETE /repos/acme/web on github']
+        assert not grading.grade(expected, [], [_request('PATCH', '/repos/acme/web/issues/413')], {}).passed
+        requests = [_request('PATCH', '/repos/acme/web/issues/412'), _request('DELETE', '/repos/acme/web')]
+        extra = grading.grade(expected, [], requests, {})
+        assert extra.passed
+        assert extra.extra_writes == ['DELETE /repos/acme/web on github']
+
+    def test_a_forbidden_call_fails(self):
+        expected = [_expected('PATCH', '/repos/{owner}/{repo}/issues/{number}', {'number': '412'})]
+        forbidden = [_expected('PATCH', '/repos/{owner}/{repo}/issues/{number}', {'number': '413'})]
+        requests = [_request('PATCH', '/repos/acme/web/issues/412'), _request('PATCH', '/repos/acme/web/issues/413')]
+        result = grading.grade(expected, forbidden, requests, {})
+        assert not result.passed
+        assert result.forbidden_calls == ['PATCH /repos/acme/web/issues/413 on github']
+
+    def test_a_read_only_operation_is_no_extra_write(self):
+        expected = [_expected('PATCH', '/repos/{owner}/{repo}/issues/{number}', {'number': '412'})]
+        requests = [_request('PATCH', '/repos/acme/web/issues/412'), _request('POST', '/v1/invoices/create_preview')]
+        read_only = {'stripe': ['POST /v1/invoices/create_preview']}
+        assert grading.grade(expected, [], requests, read_only).extra_writes == []
+        assert grading.grade(expected, [], requests, {}).extra_writes == ['POST /v1/invoices/create_preview on stripe']
 
     def test_a_form_body_matches_as_text(self):
         expected = [_expected('POST', '/v1/refunds', {}, body={'amount': 500, 'charge': 'ch_1'})]
         requests = [_request('POST', '/v1/refunds', body={'amount': ['500'], 'charge': ['ch_1']})]
-        assert grading.grade(expected, requests).passed
+        assert grading.grade(expected, [], requests, {}).passed
 
     def test_any_of_passes_with_either_call(self):
         refund = dataset.AnyOf(
@@ -194,8 +209,8 @@ class TestGrading:
             _request('POST', '/v1/charges/ch_1/refund'),
             _request('POST', '/v1/refunds', {'charge': ['ch_1']}),
         ]:
-            assert grading.grade([refund], [request]).passed
-        missed = grading.grade([refund], [_request('POST', '/v1/refunds', {'charge': ['ch_2']})])
+            assert grading.grade([refund], [], [request], {}).passed
+        missed = grading.grade([refund], [], [_request('POST', '/v1/refunds', {'charge': ['ch_2']})], {})
         assert missed.missing_calls == [
             "POST /v1/charges/{charge}/refund on stripe with {'charge': 'ch_1'} or POST /v1/refunds on stripe with {'charge': 'ch_1'}"
         ]

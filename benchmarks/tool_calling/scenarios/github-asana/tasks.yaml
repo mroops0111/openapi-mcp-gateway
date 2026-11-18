@@ -95,6 +95,15 @@
       path: /tasks/{task_gid}
       path_parameters: {task_gid: '1203000000000203'}
       body: {data: {completed: true}}
+  # The request says to leave the task whose issue is still open alone, and to delete none.
+  forbidden_calls:
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1203000000000202'}
+    - server: asana
+      method: DELETE
+      path: /tasks/{task_gid}
   solution:
     - server: github
       operation: issues_get

@@ -52,8 +52,11 @@ async def _validate_solutions(scenario_run: ScenarioRun) -> list[ValidationProbl
                     )
                 )
             if not outcome.grade.passed:
-                detail = '; '.join(outcome.grade.missing_calls + outcome.grade.unexpected_writes)
+                detail = '; '.join(outcome.grade.missing_calls + outcome.grade.forbidden_calls)
                 problems.append(_problem(scenario, task.id, BASELINE_VARIANT, f'the solution does not pass: {detail}'))
+            elif outcome.grade.extra_writes:
+                detail = '; '.join(outcome.grade.extra_writes)
+                problems.append(_problem(scenario, task.id, BASELINE_VARIANT, f'the solution writes more: {detail}'))
     return problems
 
 

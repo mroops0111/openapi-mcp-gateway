@@ -37,7 +37,7 @@ benchmarks/src/openapi_mcp_gateway_benchmarks/
     dataset.py                        the manifest, scenarios, tasks, and variants, loaded and validated
     sampling.py                       a fixed example value for any response schema
     replay.py                         the stand-in upstream, answering every operation and recording each request
-    grading.py                        whether a run's requests make the expected calls and write nothing else
+    grading.py                        whether a run's requests make the expected calls and none it forbids
     harness.py                        a scenario's gateway and replay on loopback ports, and one Pydantic AI run
     solution.py                       a scripted model that makes a task's solution calls
     runner.py                         every task under every variant and model, as Pydantic Evals datasets
@@ -133,14 +133,15 @@ uv run openapi-mcp-gateway-benchmarks tool-calling run benchmarks/tool_calling -
 
 ### Measures
 
-Each scenario, variant, and model reports five measures.
+Each scenario, variant, and model reports six measures.
 
-- **Success Rate**: the share of runs that made the expected calls and wrote nothing else, with its spread across repetitions.
+- **Success Rate**: the share of runs that made the expected calls and none the task forbids, with its spread across repetitions.
 - **Input and output tokens per task**, as the provider reports them.
 - **Tool calls per task**, every call the model made, searches and failures included.
 - **Tool errors per task**, calls the gateway or the upstream refused, such as arguments that do not fit the schema.
+- **Extra writes per task**, writes no expected call accounts for, which change more upstream than the user asked.
 
-Each variant is compared with the baseline per model on success rate and input tokens, by a paired bootstrap over tasks stratified by scenario. A run that fails for reasons outside the model and the variant, such as a rate limit that outlasts its retries, is counted as errored and left out of the means.
+Each variant is compared with the baseline per model on success rate, input tokens, and extra writes, by a paired bootstrap over tasks stratified by scenario. A run that fails for reasons outside the model and the variant, such as a rate limit that outlasts its retries, is counted as errored and left out of the means.
 
 ### Cost
 

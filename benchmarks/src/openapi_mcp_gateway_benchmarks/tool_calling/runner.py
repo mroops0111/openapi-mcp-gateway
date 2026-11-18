@@ -45,7 +45,8 @@ class RunRecord(pydantic.BaseModel):
     errored: bool
     failure: str | None
     missing_calls: list[str]
-    unexpected_writes: list[str]
+    forbidden_calls: list[str]
+    extra_writes: list[str]
     input_tokens: int
     output_tokens: int
     model_requests: int
@@ -55,7 +56,7 @@ class RunRecord(pydantic.BaseModel):
 
 @dataclasses.dataclass
 class ExpectedCallsMade(Evaluator[Task, RunOutcome]):
-    """Passes a run whose upstream requests make every expected call and write nothing else."""
+    """Passes a run whose upstream requests make every expected call and none the task forbids."""
 
     def evaluate(self, ctx: EvaluatorContext[Task, RunOutcome]) -> bool:
         return ctx.output.grade.passed
@@ -151,7 +152,8 @@ def _records(
                 errored=False,
                 failure=outcome.failure,
                 missing_calls=outcome.grade.missing_calls,
-                unexpected_writes=outcome.grade.unexpected_writes,
+                forbidden_calls=outcome.grade.forbidden_calls,
+                extra_writes=outcome.grade.extra_writes,
                 input_tokens=outcome.input_tokens,
                 output_tokens=outcome.output_tokens,
                 model_requests=outcome.model_requests,
@@ -172,7 +174,8 @@ def _records(
                 errored=True,
                 failure=failure.error_message,
                 missing_calls=[],
-                unexpected_writes=[],
+                forbidden_calls=[],
+                extra_writes=[],
                 input_tokens=0,
                 output_tokens=0,
                 model_requests=0,

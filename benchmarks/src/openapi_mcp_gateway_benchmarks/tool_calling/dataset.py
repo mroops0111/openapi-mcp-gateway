@@ -24,6 +24,9 @@ BASELINE_VARIANT = 'baseline'
 # Stand-ins for the fields the harness fills in, so a variant's server fragment can be checked on its own.
 PLACEHOLDER_SERVER_FIELDS = {'name': 'placeholder', 'spec': 'placeholder.json', 'base_url': 'http://placeholder'}
 
+# How a manifest names an operation, by method and path template, such as ``POST /v1/databases/{id}/query``.
+OPERATION_PATTERN = r'^[A-Z]+ /\S*$'
+
 Split = typing.Literal['practice', 'final']
 SPLITS: tuple[Split, ...] = typing.get_args(Split)
 
@@ -69,8 +72,22 @@ class Manifest(pydantic.BaseModel):
     repetitions: int = pydantic.Field(default=3, ge=1)
     # The most model requests one task may make before it counts as failed.
     request_limit: int = pydantic.Field(default=20, ge=1)
+    # How often a model may retry one tool after the gateway refuses its arguments, before the run fails.
+    tool_retries: int = pydantic.Field(default=3, ge=0)
     system_prompt: str
     config_generator: ConfigGenerator
+    # Each spec's operations that only read though their method writes, such as a query sent as a POST.
+    # The grader counts a request to one as a read, so it never shows up as an extra write.
+    read_only_operations: dict[
+        str, list[typing.Annotated[str, pydantic.StringConstraints(pattern=OPERATION_PATTERN)]]
+    ] = pydantic.Field(default_factory=dict)
+
+    @pydantic.model_validator(mode='after')
+    def _validate_read_only_operations(self) -> typing.Self:
+        unknown = sorted(set(self.read_only_operations) - set(self.specs))
+        if unknown:
+            raise ValueError(f'read_only_operations names specs {unknown} the manifest does not pin')
+        return self
 
 
 class ExpectedCall(pydantic.BaseModel):
@@ -133,6 +150,8 @@ class Task(pydantic.BaseModel):
     prompt: str = pydantic.Field(min_length=1)
     split: Split
     expected_calls: list[ExpectedCall | AnyOf] = pydantic.Field(min_length=1)
+    # Requests that fail the task when made, for what the request says to leave alone.
+    forbidden_calls: list[ExpectedCall] = pydantic.Field(default_factory=list)
     solution: list[SolutionCall] = pydantic.Field(min_length=1)
     responses: list[ResponseOverride] = pydantic.Field(default_factory=list)
 
@@ -185,6 +204,7 @@ class Scenario(pydantic.BaseModel):
             raise ValueError(f'{self.name} repeats task ids {duplicates}')
         for task in self.tasks:
             named = {call.server for step in task.expected_calls for call in step.alternatives}
+            named |= {call.server for call in task.forbidden_calls}
             named |= {call.server for call in task.solution}
             named |= {response.server for response in task.responses}
             unknown = sorted(named - set(self.servers))

@@ -41,6 +41,8 @@ scenarios: [petstore, notion, asana, discord, github, stripe, github-asana]
 
 repetitions: 3
 request_limit: 20
+# A model may fix a tool call the gateway refused this many times, rather than failing the run at its first slip.
+tool_retries: 3
 
 system_prompt: >-
   You act for a user through the tools of their APIs. Carry out the user's request by calling the tools.
@@ -59,3 +61,15 @@ config_generator:
   variants:
     generated: ""
     shaped: Also shape the operations, so that each tool is easy for a model to call correctly.
+
+# Operations that only read though their method writes, which the grader never counts as an extra write.
+read_only_operations:
+  notion:
+    - POST /v1/databases/{id}/query
+  github:
+    - POST /markdown
+    - POST /markdown/raw
+    - POST /orgs/{org}/attestations/bulk-list
+    - POST /users/{username}/attestations/bulk-list
+  stripe:
+    - POST /v1/invoices/create_preview

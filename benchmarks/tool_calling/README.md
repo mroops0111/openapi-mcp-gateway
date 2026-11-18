@@ -24,13 +24,18 @@ Each scenario has 6 tasks in `tasks.yaml`, 42 in all, 2 for practice and 4 for t
 
 Every task is one the intent's own words name, such as cancelling an order for "handle customers' orders". A request the intent leaves out would only fail wherever a config follows the intent, which the config itself already shows.
 
-Every task carries three things:
+Every task carries three things, and some a fourth:
 
-- **Expected Calls**: the requests the upstream must receive, by method, path template, and the values the user's request decides.
+- **Expected Calls**: the requests the upstream must receive, by method, path template, and the values the user's request decides. A step that the API does by more than one endpoint lists them under `any_of`, and any one counts.
 - **A Solution**: the calls an ideal model would make, with arguments as each tool's schema wants them.
 - **Responses**: what the upstream answers for the requests a task needs particular data from, with a decoy beside the answer.
+- **Forbidden Calls**: requests that fail the task, only where the request says what to leave alone.
 
-A run passes when every expected call reaches the upstream and nothing else writes there. Reads are free, so exploring costs tokens but not the task.
+A run passes when every expected call reaches the upstream and no forbidden call does.
+
+Any other write is counted as an extra write without failing the run. A harmless one, such as setting a field after creating a record, says little about whether the task got done, while the count still shows a variant whose model changes more than asked. Some operations only read though their method writes, such as Notion's database query, a `POST`. The manifest lists them under `read_only_operations`, and the grader counts them as reads.
+
+A model may fix a tool call the gateway refused up to `tool_retries` times, three by default, before the run fails.
 
 ## Variants
 

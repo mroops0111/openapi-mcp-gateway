@@ -103,6 +103,19 @@
       method: DELETE
       path: /channels/{channel_id}/messages/{message_id}
       path_parameters: {channel_id: '400000000000000051', message_id: '500000000000000062'}
+  # The request says to leave every other message alone.
+  forbidden_calls:
+    - server: discord
+      method: DELETE
+      path: /channels/{channel_id}/messages/{message_id}
+      path_parameters: {message_id: '500000000000000061'}
+    - server: discord
+      method: DELETE
+      path: /channels/{channel_id}/messages/{message_id}
+      path_parameters: {message_id: '500000000000000063'}
+    - server: discord
+      method: POST
+      path: /channels/{channel_id}/messages/bulk-delete
   solution:
     - server: discord
       operation: delete_message

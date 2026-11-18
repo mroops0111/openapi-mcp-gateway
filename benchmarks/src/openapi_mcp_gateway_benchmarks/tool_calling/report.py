@@ -20,6 +20,7 @@ RoundedValue = typing.Annotated[float, pydantic.AfterValidator(lambda value: rou
 COMPARED_MEASURES: dict[str, typing.Callable[[RunRecord], float]] = {
     'success_rate': lambda record: float(record.passed),
     'input_tokens': lambda record: float(record.input_tokens),
+    'extra_writes': lambda record: float(len(record.extra_writes)),
 }
 
 
@@ -41,6 +42,8 @@ class CellSummary(pydantic.BaseModel):
     mean_output_tokens: RoundedValue
     mean_tool_calls: RoundedValue
     mean_tool_errors: RoundedValue
+    # Writes no expected call accounts for, which do not fail a run but change more upstream than asked.
+    mean_extra_writes: RoundedValue
 
 
 class Comparison(pydantic.BaseModel):
@@ -116,6 +119,7 @@ def _cell_summary(key: tuple[str, str, str], records: typing.Sequence[RunRecord]
         mean_output_tokens=_mean(record.output_tokens for record in scored),
         mean_tool_calls=_mean(record.tool_calls for record in scored),
         mean_tool_errors=_mean(record.tool_errors for record in scored),
+        mean_extra_writes=_mean(len(record.extra_writes) for record in scored),
     )
 
 
