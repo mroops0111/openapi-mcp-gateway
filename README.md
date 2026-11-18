@@ -276,7 +276,7 @@ And because the issuer is the authorization server for this endpoint, MCP client
 <details>
 <summary><b>Several Agents behind One Credential</b></summary>
 
-An upstream reached with one shared credential sees every caller as the same identity, so only the gateway can tell agents apart. Declare each agent under `auth.mcp.clients` with its own secret and scopes, and the gateway issues each one an MCP token through the OAuth `client_credentials` grant:
+A shared upstream credential sees every agent as one identity. Declare each agent under `auth.mcp.clients`, and the gateway issues it an MCP token through `client_credentials`:
 
 ```yaml
 servers:
@@ -306,14 +306,7 @@ servers:
             scopes: [issues:read, issues:write]
 ```
 
-An agent posts its `client_id` and `client_secret` to `{url}{mount_path}/token`, by HTTP Basic or in the form body, and calls the MCP endpoint with the token it receives. Every call still reaches the upstream with `${GITHUB_TOKEN}`, while the tool list and each call are limited to the operations the agent's scopes open.
-
-- **Scopes**: a request naming no `scope` is granted every scope the client may hold. A request naming some is narrowed to them, so an agent can start narrow and step up within its own scopes when a call is refused with `insufficient_scope`.
-- **Refresh**: no refresh token is issued, since the agent can always ask again.
-- **Discovery**: the authorization server metadata offers only `client_credentials`, and `server/discover` advertises the `io.modelcontextprotocol/oauth-client-credentials` extension.
-- **Sign-In Settings**: no user signs in here, so the gateway refuses to start when a client sets `redirect_uris`, `default_scopes` or `consent`, or when `auth.mcp.refresh_token_ttl` is set.
-
-This suits agent frameworks and the MCP SDK's `ClientCredentialsOAuthProvider`. Claude Code supports only the browser sign-in for MCP servers, so it cannot obtain a token this way.
+Each agent posts its own `client_id` and `client_secret` to `{url}{mount_path}/token` and sees only the operations its scopes open, while every call still reaches GitHub with `${GITHUB_TOKEN}`. This suits agent frameworks and the MCP SDK's `ClientCredentialsOAuthProvider`, since Claude Code supports only the browser sign-in.
 
 </details>
 
@@ -321,8 +314,6 @@ This suits agent frameworks and the MCP SDK's `ClientCredentialsOAuthProvider`. 
 <summary><b>Token Lifetimes</b></summary>
 
 Under `authorization_code` the gateway's own access token lives 1 hour and its refresh token 24 hours. Each refresh issues a fresh refresh token, so the refresh TTL is the practical re-authorization cadence. A client refreshing within it never signs in again, while one idle past it must re-authorize. Tune both with `auth.mcp.access_token_ttl` and `auth.mcp.refresh_token_ttl`.
-
-For agents under `auth.mcp.clients` on a shared credential, the access token lives `auth.mcp.access_token_ttl` and no refresh token exists.
 
 `token_exchange` mints nothing, so neither applies. Lifetimes are the issuer's to set.
 
@@ -379,8 +370,8 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `auth.upstream.issuer` | string |  | For `authorization_code`. The upstream authorization server's issuer identifier, exactly as its metadata publishes it. Enables the [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207) `iss` check on its authorization responses |
 | `auth.mcp.issuer` | string |  | Required for `token_exchange`. The authorization server that mints tokens for this MCP endpoint |
 | `auth.mcp.required_scopes` | list |  | What every token for this endpoint must carry. Under `token_exchange` an inbound token must already hold them. Under `authorization_code` the gateway grants them on every token it mints, `api` when unset. Advertised as `scopes_supported`, so a client doing dynamic registration knows what to ask for |
-| `auth.mcp.clients` | map |  | Pre-registered MCP clients by `client_id`. On a shared credential each needs a `client_secret` and lists the `scopes` it may hold, and the gateway issues it tokens through `client_credentials` |
-| `auth.mcp.operation_scopes` | map |  | The scopes that open each operation, derived from the spec's tags with `auto: tags` or declared under `manual`, each with a `description` and the `operations` it opens. Each client's `scopes` must come from here |
+| `auth.mcp.clients` | map |  | Pre-registered MCP clients by `client_id`, each with the `scopes` it may hold |
+| `auth.mcp.operation_scopes` | map |  | The scopes that open each operation, from spec tags (`auto: tags`) or listed under `manual` |
 | `auth.mcp.access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints, under `authorization_code` or for agents under `auth.mcp.clients` |
 | `auth.mcp.refresh_token_ttl` | int | `86400` | Lifetime in seconds of the MCP refresh token. This is the practical re-authorization cadence, since each refresh slides the window forward |
 | `policy.allow` | list |  | Only expose matching operations |
