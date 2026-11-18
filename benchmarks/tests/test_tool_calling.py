@@ -69,7 +69,7 @@ servers:
   - name: pets
     spec: pets.json
     base_url: https://upstream.invalid
-    auth: {type: none}
+    auth: {upstream: {type: none}}
     policy: {allow: ['*Pet*']}
 """
 

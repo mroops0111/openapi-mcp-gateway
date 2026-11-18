@@ -123,7 +123,12 @@ def _prepare_workspace(benchmark: Benchmark, scenario: Scenario, workspace: path
         shutil.copyfile(cached, spec_paths[server])
     starter = {
         'servers': [
-            {'name': server, 'spec': path.name, 'base_url': PLACEHOLDER_BASE_URL, 'auth': {'type': 'none'}}
+            {
+                'name': server,
+                'spec': path.name,
+                'base_url': PLACEHOLDER_BASE_URL,
+                'auth': {'upstream': {'type': 'none'}},
+            }
             for server, path in spec_paths.items()
         ]
     }
