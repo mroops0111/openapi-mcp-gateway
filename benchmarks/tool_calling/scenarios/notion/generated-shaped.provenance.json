@@ -1,6 +1,6 @@
 {
   "scenario": "notion",
-  "variant": "shaped",
+  "variant": "generated-shaped",
   "model": "anthropic:claude-sonnet-5-5",
   "skill": "generate-config",
   "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",

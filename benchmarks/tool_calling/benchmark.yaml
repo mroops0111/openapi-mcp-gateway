@@ -57,10 +57,10 @@ config_generator:
   skill_library: ../../plugin/skills
   skill: generate-config
   # generated asks with the intent alone.
-  # shaped adds that the user wants the tools shaped, so it measures what shaping brings when a user asks for it.
+  # generated-shaped adds that the user wants the tools shaped, measuring what shaping brings when asked for.
   variants:
     generated: ""
-    shaped: Also shape the operations, so that each tool is easy for a model to call correctly.
+    generated-shaped: Also shape the operations, so that each tool is easy for a model to call correctly.
 
 # Operations that only read though their method writes, which the grader never counts as an extra write.
 read_only_operations:
