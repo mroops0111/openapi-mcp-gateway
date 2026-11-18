@@ -20,7 +20,7 @@ _POOL_LIMITS = httpx.Limits(max_connections=None, max_keepalive_connections=20)
 
 
 @dataclasses.dataclass(frozen=True)
-class BinaryBody:
+class UpstreamBinaryBody:
     """A non-text upstream body, kept as bytes so a file, image or PDF reaches the client intact."""
 
     content: bytes
@@ -28,7 +28,7 @@ class BinaryBody:
     url: str
 
 
-class APIClient:
+class UpstreamHttpClient:
     """Thin async HTTP wrapper around ``httpx.AsyncClient`` for upstream calls.
 
     A cookie the upstream sets is never stored, so nothing one call receives is sent on another,
@@ -80,11 +80,11 @@ class APIClient:
         params: dict[str, typing.Any] | None = None,
         data: dict[str, typing.Any] | None = None,
         headers: dict[str, str] | None = None,
-    ) -> dict[str, typing.Any] | BinaryBody:
+    ) -> dict[str, typing.Any] | UpstreamBinaryBody:
         """Send ``method`` to ``path`` and return the decoded body.
 
         Returns decoded JSON for ``application/json`` responses, ``{'status': code}`` for empty 204 responses,
-        ``{'data': text}`` for any other body that is text, or a ``BinaryBody`` for one that is not.
+        ``{'data': text}`` for any other body that is text, or a ``UpstreamBinaryBody`` for one that is not.
         Raises ``httpx.HTTPStatusError`` on HTTP error status codes.
         """
         request_kwargs: dict[str, typing.Any] = {}
@@ -124,8 +124,8 @@ class APIClient:
         return self._decode_non_json_body(response)
 
     @staticmethod
-    def _decode_non_json_body(response: httpx.Response) -> dict[str, typing.Any] | BinaryBody:
-        """Return a non-JSON body as ``{'data': text}`` when it is text, and as a ``BinaryBody`` otherwise.
+    def _decode_non_json_body(response: httpx.Response) -> dict[str, typing.Any] | UpstreamBinaryBody:
+        """Return a non-JSON body as ``{'data': text}`` when it is text, and as a ``UpstreamBinaryBody`` otherwise.
 
         The body decides, not a list of media types.
         A declared ``charset`` makes it text, since only text has one.
@@ -137,13 +137,16 @@ class APIClient:
             return {'data': response.content.decode('utf-8')}
         except UnicodeDecodeError:
             media_type = response.headers.get('content-type', '').partition(';')[0].strip().lower()
-            return BinaryBody(response.content, media_type or _FALLBACK_BINARY_MEDIA_TYPE, str(response.request.url))
+            return UpstreamBinaryBody(
+                response.content, media_type or _FALLBACK_BINARY_MEDIA_TYPE, str(response.request.url)
+            )
 
 
-class SharedAPIClient:
-    """One ``APIClient`` for one upstream server, reused by every call to it so connections are kept alive.
+class UpstreamSharedHttpClient:
+    """One ``UpstreamHttpClient`` for one upstream server, reused by every call to it so connections are kept alive.
 
-    It holds no per-call state: callers send every header on the request, and ``APIClient`` stores no cookie.
+    It holds no per-call state.
+    Callers send every header on the request, and ``UpstreamHttpClient`` stores no cookie.
     A client belongs to the event loop that first used it, since its connections do,
     so a call on another loop gets a fresh client.
     """
@@ -152,15 +155,15 @@ class SharedAPIClient:
         self._base_url = base_url
         self._timeout = timeout
         self._transport = transport
-        self._client: APIClient | None = None
+        self._client: UpstreamHttpClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    def get(self) -> APIClient:
+    def get(self) -> UpstreamHttpClient:
         """Return the client for the running event loop, opening it on first use."""
         loop = _running_loop()
         if self._client is None or self._loop is not loop:
             # A client left on a finished loop cannot be closed from this one, so it is dropped with its loop.
-            self._client = APIClient(base_url=self._base_url, timeout=self._timeout, transport=self._transport)
+            self._client = UpstreamHttpClient(base_url=self._base_url, timeout=self._timeout, transport=self._transport)
             self._loop = loop
         return self._client
 

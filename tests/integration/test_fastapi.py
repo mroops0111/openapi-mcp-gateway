@@ -8,8 +8,8 @@ from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway import Gateway, mcp_tool
 from openapi_mcp_gateway.auth.upstream import token_source as token_source_module
-from openapi_mcp_gateway.client import SharedAPIClient
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
+from openapi_mcp_gateway.upstream_client import UpstreamSharedHttpClient
 from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
 
@@ -34,7 +34,9 @@ class _StubContext:
 def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Awaitable[None]]]:
     """The shutdown hooks an auth flow registered, leaving out the one closing each server's upstream client."""
     return [
-        hook for hook in gateway._shutdown_hooks if not isinstance(getattr(hook, '__self__', None), SharedAPIClient)
+        hook
+        for hook in gateway._shutdown_hooks
+        if not isinstance(getattr(hook, '__self__', None), UpstreamSharedHttpClient)
     ]
 
 

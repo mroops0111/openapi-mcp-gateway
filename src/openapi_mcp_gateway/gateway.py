@@ -23,7 +23,7 @@ from .auth.upstream.resolver import (
     UpstreamCompositeAuthResolver,
     UpstreamPassthroughAuthResolver,
 )
-from .exposure import DynamicOperationTarget, MetaToolGenerator, ResourceGenerator, ToolGenerator, UpstreamBinding
+from .exposure import DynamicOperationTarget, MetaToolGenerator, ResourceGenerator, ToolGenerator, UpstreamConnection
 from .fastapi import (
     collect_marked_routes,
     filter_marked_operations,
@@ -375,14 +375,14 @@ class Gateway:
         for routes in auth.routes:
             routes.register(mcp)
 
-        binding = UpstreamBinding(
+        connection = UpstreamConnection(
             base_url=base_url,
             auth_resolver=auth_resolver,
             timeout=server_config.timeout,
             transport=transport,
             headers=server_config.resolve_headers(),
         )
-        self._shutdown_hooks.append(binding.client.aclose)
+        self._shutdown_hooks.append(connection.client.aclose)
         exposed_tools: list[ExposedTool] = []
         # A policy pattern that matches no operation at all is almost always a typo,
         # and the result is only ever a shorter list that nobody notices is short.
@@ -419,7 +419,7 @@ class Gateway:
             search = server_config.exposure.search
             exposed_tools = MetaToolGenerator(
                 mcp=mcp,
-                binding=binding,
+                connection=connection,
                 field_weight_overrides=search.field_weights.model_dump(exclude_none=True) if search else None,
                 scope_registry=scope_registry,
             ).register(operations)
@@ -430,10 +430,10 @@ class Gateway:
             )
             if resource_ops:
                 resource_names = ResourceGenerator(
-                    mcp=mcp, binding=binding, server_name=server_config.name, scope_registry=scope_registry
+                    mcp=mcp, connection=connection, server_name=server_config.name, scope_registry=scope_registry
                 ).register(resource_ops)
             if tool_ops:
-                exposed_tools = ToolGenerator(mcp=mcp, binding=binding, scope_registry=scope_registry).register(
+                exposed_tools = ToolGenerator(mcp=mcp, connection=connection, scope_registry=scope_registry).register(
                     tool_ops
                 )
 

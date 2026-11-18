@@ -9,7 +9,7 @@ from mcp.server.mcpserver import Context
 from openapi_mcp_gateway.exposure import (
     ResourceGenerator,
     ToolGenerator,
-    UpstreamBinding,
+    UpstreamConnection,
     build_resource_read_function,
     derive_description,
     derive_name,
@@ -217,7 +217,7 @@ class TestResourceReadFunctionSignature:
             ],
             x_mcp_integration=_expose_resource(),
         )
-        fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
+        fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
         names = list(inspect.signature(fn).parameters)
         assert names == ['petId', 'ctx']
 
@@ -229,7 +229,7 @@ class TestResourceReadFunctionSignature:
             path='/store/inventory',
             x_mcp_integration=_expose_resource(),
         )
-        fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
+        fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
         assert list(inspect.signature(fn).parameters) == []
 
     def test_dashed_path_param_sanitised(self):
@@ -243,7 +243,7 @@ class TestResourceReadFunctionSignature:
             ],
             x_mcp_integration=_expose_resource(),
         )
-        fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
+        fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
         assert 'enterprise_team' in inspect.signature(fn).parameters
 
 
@@ -255,7 +255,7 @@ class TestResourceGeneration:
         return (
             ResourceGenerator(
                 mcp=mcp,
-                binding=UpstreamBinding(base_url=API_URL),
+                connection=UpstreamConnection(base_url=API_URL),
                 server_name='petstore',
             ),
             mcp,
@@ -320,7 +320,7 @@ class TestResourceRead:
             parameters=[ParameterInfo(name='petId', location='path', required=True, schema={'type': 'string'})],
             x_mcp_integration=_expose_resource(),
         )
-        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
+        read_fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
         text = await read_fn(petId='123', ctx=_stub_context())
         assert captured['path'] == '/pets/123'
         assert '"id": 123' in text
@@ -341,7 +341,7 @@ class TestResourceRead:
             path='/store/inventory',
             x_mcp_integration=_expose_resource(),
         )
-        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
+        read_fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
         text = await read_fn()
         assert captured['path'] == '/store/inventory'
         assert '"available": 7' in text
@@ -357,7 +357,7 @@ class TestResourceRead:
             path='/logo',
             x_mcp_integration=_expose_resource(),
         )
-        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
+        read_fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
         assert await read_fn() == body
 
     async def test_dashed_path_param_substituted_with_original_name(self, mock_upstream):
@@ -379,7 +379,7 @@ class TestResourceRead:
             ],
             x_mcp_integration=_expose_resource(),
         )
-        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
+        read_fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
         await read_fn(enterprise_team='acme', ctx=_stub_context())
         assert captured['path'] == '/teams/acme'
 
@@ -398,7 +398,7 @@ class TestResourceRead:
             parameters=[ParameterInfo(name='petId', location='path', required=True, schema={'type': 'string'})],
             x_mcp_integration=_expose_resource(),
         )
-        read_fn = build_resource_read_function(operation, UpstreamBinding(base_url=API_URL))
+        read_fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
         with pytest.raises(RuntimeError, match='404'):
             await read_fn(petId='nope', ctx=_stub_context())
 
@@ -618,7 +618,7 @@ class TestDualExposureRegistration:
     async def test_op_appears_as_tool_and_resource(self):
         """``ToolGenerator`` and ``ResourceGenerator`` cooperate on the same MCPServer instance."""
         mcp = MCPServer('test')
-        binding = UpstreamBinding(base_url=API_URL)
+        connection = UpstreamConnection(base_url=API_URL)
         op = OperationInfo(
             operation_id='getPet',
             method='get',
@@ -627,8 +627,8 @@ class TestDualExposureRegistration:
             x_mcp_integration=_expose_tool_and_resource(),
         )
         resources, tools = _partition_operations([op], 'petstore', promote_resources=True)
-        ResourceGenerator(mcp=mcp, binding=binding, server_name='petstore').register(resources)
-        ToolGenerator(mcp=mcp, binding=binding).register(tools)
+        ResourceGenerator(mcp=mcp, connection=connection, server_name='petstore').register(resources)
+        ToolGenerator(mcp=mcp, connection=connection).register(tools)
 
         tool_names = {t.name for t in mcp._tool_manager.list_tools()}
         assert 'get_pet' in tool_names

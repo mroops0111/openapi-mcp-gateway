@@ -16,7 +16,7 @@ from ..scopes import McpUnrestrictedScopePolicy, RequestTarget, ScopeRegistry, c
 from ._bm25 import BM25FIndex
 from ._shaping import shape_operation
 from ._shared import _get_override, build_input_schema, derive_description, derive_name
-from ._upstream import UpstreamBinding, _build_success_result
+from ._upstream import UpstreamConnection, _build_success_result
 from .tool import build_tool_function
 
 
@@ -86,12 +86,12 @@ class MetaToolGenerator:
     def __init__(
         self,
         mcp: MCPServer,
-        binding: UpstreamBinding,
+        connection: UpstreamConnection,
         field_weight_overrides: typing.Mapping[str, float] | None = None,
         scope_registry: ScopeRegistry | None = None,
     ):
         self.mcp = mcp
-        self.binding = binding
+        self.connection = connection
         self.scope_registry = scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy())
         # Overrides replace the default weight of the fields they name and leave the rest as they are.
         self.field_weights = {**DEFAULT_FIELD_WEIGHTS, **(field_weight_overrides or {})}
@@ -119,7 +119,7 @@ class MetaToolGenerator:
                     tags=shaped_operation.tags,
                     input_schema=input_schema,
                     callable_=build_tool_function(
-                        shaped_operation, self.binding, input_schema=input_schema, attach_signature=False
+                        shaped_operation, self.connection, input_schema=input_schema, attach_signature=False
                     ),
                 )
             )

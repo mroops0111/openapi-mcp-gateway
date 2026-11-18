@@ -7,9 +7,9 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from openapi_mcp_gateway.client import APIClient
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from openapi_mcp_gateway.stores.redis import RedisTokenStore
+from openapi_mcp_gateway.upstream_client import UpstreamHttpClient
 
 
 _HttpHandler = typing.Callable[[httpx.Request], httpx.Response]
@@ -58,22 +58,22 @@ async def redis_store():
 
 @pytest.fixture
 def mock_upstream(monkeypatch):
-    """Route every ``APIClient`` upstream request through ``httpx.MockTransport``.
+    """Route every ``UpstreamHttpClient`` upstream request through ``httpx.MockTransport``.
 
     Returns a one-shot installer ``mock_upstream(handler)``.
-    Subsequent ``APIClient(...)`` constructions in this test will dispatch HTTP traffic to ``handler``,
+    Subsequent ``UpstreamHttpClient(...)`` constructions in this test will dispatch HTTP traffic to ``handler``,
     instead of the real network.
     """
 
     def install(handler: _HttpHandler) -> None:
-        original_init = APIClient.__init__
+        original_init = UpstreamHttpClient.__init__
 
         def patched_init(self, base_url, headers=None, timeout=90, transport=None):
             del transport  # MockTransport always wins so an in-process ASGI is overridden in tests.
             # Only the transport is swapped, so the client keeps the cookie policy and limits it has in production.
             original_init(self, base_url, headers=headers, timeout=timeout, transport=httpx.MockTransport(handler))
 
-        monkeypatch.setattr(APIClient, '__init__', patched_init)
+        monkeypatch.setattr(UpstreamHttpClient, '__init__', patched_init)
 
     return install
 

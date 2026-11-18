@@ -9,9 +9,9 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway.auth.upstream.resolver import UpstreamAuthResolver
-from openapi_mcp_gateway.client import APIClient
-from openapi_mcp_gateway.exposure import ToolGenerator, UpstreamBinding
+from openapi_mcp_gateway.exposure import ToolGenerator, UpstreamConnection
 from openapi_mcp_gateway.openapi import OperationInfo, ParameterInfo
+from openapi_mcp_gateway.upstream_client import UpstreamHttpClient
 from tests.constants import API_URL
 
 
@@ -46,14 +46,14 @@ class TestConcurrentCallsShareNothingButConnections:
         The caller is read off the query string, which travels apart from every header under test.
         A second round runs after the first has been answered, so a cookie the first round was set could leak into it.
         """
-        constructed: list[APIClient] = []
-        original_init = APIClient.__init__
+        constructed: list[UpstreamHttpClient] = []
+        original_init = UpstreamHttpClient.__init__
 
         def counting_init(self, *args, **kwargs):
             constructed.append(self)
             original_init(self, *args, **kwargs)
 
-        monkeypatch.setattr(APIClient, '__init__', counting_init)
+        monkeypatch.setattr(UpstreamHttpClient, '__init__', counting_init)
         caplog.set_level(logging.INFO, logger='httpx')
         received: list[httpx.Request] = []
 
@@ -65,7 +65,7 @@ class TestConcurrentCallsShareNothingButConnections:
             return httpx.Response(200, json={}, headers={'set-cookie': f'session={caller}; Path=/'})
 
         mcp = MCPServer('test')
-        binding = UpstreamBinding(
+        connection = UpstreamConnection(
             base_url=API_URL,
             auth_resolver=_CallerAuthResolver(),
             transport=httpx.MockTransport(handler),
@@ -80,7 +80,7 @@ class TestConcurrentCallsShareNothingButConnections:
                 ParameterInfo(name='X-Request-Id', location='header', required=True, schema={'type': 'string'}),
             ],
         )
-        ToolGenerator(mcp=mcp, binding=binding).register([operation])
+        ToolGenerator(mcp=mcp, connection=connection).register([operation])
 
         async with Client(mcp, raise_exceptions=True) as client:
             for _round in range(2):
@@ -108,4 +108,4 @@ class TestConcurrentCallsShareNothingButConnections:
         )
         assert logged_callers == dict.fromkeys(range(_CALLERS), 2)
         assert len(constructed) == 1
-        await binding.client.aclose()
+        await connection.client.aclose()

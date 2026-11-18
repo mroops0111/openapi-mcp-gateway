@@ -3,7 +3,7 @@ from ._shared import (
     derive_description,
     derive_name,
 )
-from ._upstream import UpstreamBinding
+from ._upstream import UpstreamConnection
 from .meta_tool import DynamicOperationTarget, MetaToolGenerator
 from .resource import (
     ResourceGenerator,
@@ -24,7 +24,7 @@ __all__ = [
     'MetaToolGenerator',
     'ResourceGenerator',
     'ToolGenerator',
-    'UpstreamBinding',
+    'UpstreamConnection',
     'build_input_schema',
     'build_resource_read_function',
     'build_tool_function',

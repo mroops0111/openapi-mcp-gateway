@@ -20,7 +20,7 @@ from ._shared import (
     derive_description,
     derive_name,
 )
-from ._upstream import UpstreamBinding, _build_upstream_closure
+from ._upstream import UpstreamConnection, _build_upstream_closure
 
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def merge_tool_annotations(
 
 def build_tool_function(
     operation: OperationInfo,
-    binding: UpstreamBinding,
+    connection: UpstreamConnection,
     *,
     input_schema: dict[str, typing.Any] | None = None,
     attach_signature: bool = True,
@@ -89,7 +89,7 @@ def build_tool_function(
     """
     if input_schema is None:
         input_schema = build_input_schema(operation)
-    upstream_callable = _build_upstream_closure(operation, binding, input_schema=input_schema)
+    upstream_callable = _build_upstream_closure(operation, connection, input_schema=input_schema)
     if not attach_signature:
         return upstream_callable
     signature, annotations = _build_tool_signature(operation)
@@ -105,9 +105,9 @@ class ToolGenerator:
     which is the name a ``tools/call`` and its ``Mcp-Name`` header carry.
     """
 
-    def __init__(self, mcp: MCPServer, binding: UpstreamBinding, scope_registry: ScopeRegistry | None = None):
+    def __init__(self, mcp: MCPServer, connection: UpstreamConnection, scope_registry: ScopeRegistry | None = None):
         self.mcp = mcp
-        self.binding = binding
+        self.connection = connection
         self.scope_registry = scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy())
 
     def register(self, operations: list[OperationInfo]) -> list[ExposedTool]:
@@ -120,7 +120,7 @@ class ToolGenerator:
             # The input schema is the tool's contract, built once and both advertised and enforced.
             input_schema = build_input_schema(shaped_operation)
             tool_override = _get_override(shaped_operation, 'tool')
-            tool_function = build_tool_function(shaped_operation, self.binding, input_schema=input_schema)
+            tool_function = build_tool_function(shaped_operation, self.connection, input_schema=input_schema)
             name = derive_name(shaped_operation, tool_override.name if tool_override else None)
             description = derive_description(shaped_operation, tool_override.description if tool_override else None)
             title = derive_tool_title(shaped_operation)

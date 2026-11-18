@@ -19,7 +19,7 @@ from ._shared import (
     derive_description,
     derive_name,
 )
-from ._upstream import UpstreamBinding, _build_upstream_closure
+from ._upstream import UpstreamConnection, _build_upstream_closure
 
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,7 @@ def _build_resource_signature(
     return inspect.Signature(signature_parameters), annotations
 
 
-def build_resource_read_function(operation: OperationInfo, binding: UpstreamBinding) -> typing.Callable:
+def build_resource_read_function(operation: OperationInfo, connection: UpstreamConnection) -> typing.Callable:
     """Build the async read function for ``operation`` exposed as an MCP resource.
 
     Reuses the upstream closure from the tool path, so auth, path substitution, and error handling stay identical.
@@ -118,7 +118,7 @@ def build_resource_read_function(operation: OperationInfo, binding: UpstreamBind
     Optional query / header / body parameters are dropped from the resource surface in both cases.
     Callers cannot pass them, and the upstream sees defaults.
     """
-    upstream_callable = _build_upstream_closure(operation, binding)
+    upstream_callable = _build_upstream_closure(operation, connection)
     path_parameters, _, _, _ = _split_by_location(operation.parameters)
     null_context = typing.cast(Context, _NullContext())
 
@@ -161,10 +161,14 @@ class ResourceGenerator:
     """
 
     def __init__(
-        self, mcp: MCPServer, binding: UpstreamBinding, server_name: str, scope_registry: ScopeRegistry | None = None
+        self,
+        mcp: MCPServer,
+        connection: UpstreamConnection,
+        server_name: str,
+        scope_registry: ScopeRegistry | None = None,
     ):
         self.mcp = mcp
-        self.binding = binding
+        self.connection = connection
         self.server_name = server_name
         self.scope_registry = scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy())
 
@@ -174,7 +178,7 @@ class ResourceGenerator:
         for operation in operations:
             override = _get_override(operation, 'resource')
             uri = derive_resource_uri(self.server_name, operation)
-            read_function = build_resource_read_function(operation, self.binding)
+            read_function = build_resource_read_function(operation, self.connection)
             name = derive_name(operation, override.name if override else None)
             self.mcp.resource(
                 uri,

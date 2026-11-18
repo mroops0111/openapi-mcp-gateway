@@ -14,7 +14,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import TextContent
 
 from openapi_mcp_gateway import Gateway
-from openapi_mcp_gateway.exposure import MetaToolGenerator, ToolGenerator, UpstreamBinding, build_input_schema
+from openapi_mcp_gateway.exposure import MetaToolGenerator, ToolGenerator, UpstreamConnection, build_input_schema
 from openapi_mcp_gateway.exposure._shaping import shape_operation
 from openapi_mcp_gateway.exposure.tool import _build_tool_signature
 from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ParamOverride, ToolOverride, parse_spec
@@ -280,7 +280,7 @@ def _register(
     operation: OperationInfo | None = None,
 ) -> MCPServer:
     mcp = MCPServer('test')
-    generator_type(mcp=mcp, binding=UpstreamBinding(base_url=API_URL)).register([operation or _operation()])
+    generator_type(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([operation or _operation()])
     return mcp
 
 

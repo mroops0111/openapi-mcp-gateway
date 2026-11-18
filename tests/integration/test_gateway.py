@@ -21,7 +21,6 @@ from starlette.testclient import TestClient
 from openapi_mcp_gateway.app import _transport_security
 from openapi_mcp_gateway.auth.mcp.jwks import McpIssuerMetadata
 from openapi_mcp_gateway.auth.upstream import token_source as token_source_module
-from openapi_mcp_gateway.client import APIClient, SharedAPIClient
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import (
     AuthConfig,
@@ -35,6 +34,7 @@ from openapi_mcp_gateway.settings import (
     ServerConfig,
     UpstreamAuthConfig,
 )
+from openapi_mcp_gateway.upstream_client import UpstreamHttpClient, UpstreamSharedHttpClient
 from tests.constants import (
     API_URL,
     ATTACKER_HOST,
@@ -550,14 +550,14 @@ class TestUpstreamClientLifecycle:
 
     async def test_calls_reuse_one_client_closed_at_shutdown(self, gateway, upstream_requests, monkeypatch):
         """Two calls go through one client, and running the shutdown hooks closes it."""
-        constructed: list[APIClient] = []
-        original_init = APIClient.__init__
+        constructed: list[UpstreamHttpClient] = []
+        original_init = UpstreamHttpClient.__init__
 
         def recording_init(self, *args, **kwargs):
             constructed.append(self)
             original_init(self, *args, **kwargs)
 
-        monkeypatch.setattr(APIClient, '__init__', recording_init)
+        monkeypatch.setattr(UpstreamHttpClient, '__init__', recording_init)
 
         async with Client(gateway._servers[0].mcp, raise_exceptions=True) as client:
             await client.call_tool('list_pets', {})
@@ -831,7 +831,9 @@ class _StubContext:
 def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Awaitable[None]]]:
     """The shutdown hooks an auth flow registered, leaving out the one closing each server's upstream client."""
     return [
-        hook for hook in gateway._shutdown_hooks if not isinstance(getattr(hook, '__self__', None), SharedAPIClient)
+        hook
+        for hook in gateway._shutdown_hooks
+        if not isinstance(getattr(hook, '__self__', None), UpstreamSharedHttpClient)
     ]
 
 

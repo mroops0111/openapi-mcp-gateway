@@ -9,8 +9,8 @@ from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, ContentBlock, TextContent
 
 from ..auth.upstream.resolver import UpstreamAuthResolver, UpstreamNoCredentialAuthResolver
-from ..client import BinaryBody, SharedAPIClient
 from ..openapi import OperationInfo, ParameterInfo
+from ..upstream_client import UpstreamBinaryBody, UpstreamSharedHttpClient
 from ._content import binary_content
 from ._media import MediaPromoter
 from ._shared import _get_override, _sanitize_name, _split_by_location
@@ -24,8 +24,12 @@ _TRACE_CONTEXT_META_KEYS = ('traceparent', 'tracestate', 'baggage')
 
 
 @dataclasses.dataclass(frozen=True)
-class UpstreamBinding:
-    """Per-server HTTP and auth context shared by every exposure strategy."""
+class UpstreamConnection:
+    """How one server reaches its upstream API, shared by every exposure strategy.
+
+    It holds where the API is, how each call authenticates, the static headers every call sends,
+    and the one HTTP client every call goes through.
+    """
 
     base_url: str
     auth_resolver: UpstreamAuthResolver = dataclasses.field(default_factory=UpstreamNoCredentialAuthResolver)
@@ -34,10 +38,10 @@ class UpstreamBinding:
     # Static per-server headers, sent on every call beneath the auth and per-call headers.
     headers: dict[str, str] = dataclasses.field(default_factory=dict)
     # The one HTTP client every call to this server goes through, built from the fields above.
-    client: SharedAPIClient = dataclasses.field(init=False, repr=False, compare=False)
+    client: UpstreamSharedHttpClient = dataclasses.field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, 'client', SharedAPIClient(self.base_url, self.timeout, self.transport))
+        object.__setattr__(self, 'client', UpstreamSharedHttpClient(self.base_url, self.timeout, self.transport))
 
 
 def _build_success_result(payload: typing.Any, media_contents: typing.Sequence[ContentBlock] = ()) -> CallToolResult:
@@ -56,7 +60,7 @@ def _build_success_result(payload: typing.Any, media_contents: typing.Sequence[C
     )
 
 
-def _build_binary_result(body: BinaryBody) -> CallToolResult:
+def _build_binary_result(body: UpstreamBinaryBody) -> CallToolResult:
     """Wrap a binary upstream body as the one content block its media type calls for."""
     return CallToolResult(content=[binary_content(body.content, body.media_type, body.url)], is_error=False)
 
@@ -242,7 +246,7 @@ def _trace_context_headers(context: Context) -> dict[str, str]:
 
 def _build_upstream_closure(
     operation: OperationInfo,
-    binding: UpstreamBinding,
+    connection: UpstreamConnection,
     *,
     input_schema: dict[str, typing.Any] | None = None,
 ) -> typing.Callable[..., typing.Awaitable[CallToolResult]]:
@@ -302,7 +306,7 @@ def _build_upstream_closure(
 
         await context.report_progress(0, 1, f'Sending request to {method.upper()} {path} ...')
 
-        auth_headers = await binding.auth_resolver.resolve(context)
+        auth_headers = await connection.auth_resolver.resolve(context)
 
         if request_transform is not None:
             arguments = _to_jsonable({name: value for name, value in kwargs.items() if value is not None})
@@ -328,7 +332,7 @@ def _build_upstream_closure(
             body_arguments = _to_jsonable(_kwargs_to_upstream_arguments(kwargs, body_parameters_by_name))
 
         request_headers: dict[str, str] = {
-            **binding.headers,
+            **connection.headers,
             **_trace_context_headers(context),
             **auth_headers,
             **header_arguments,
@@ -336,7 +340,7 @@ def _build_upstream_closure(
 
         # The client is shared by every call to this server, so every header, auth included, rides on the request.
         try:
-            result = await binding.client.get().request(
+            result = await connection.client.get().request(
                 method,
                 resolved_path,
                 params=query_arguments or None,
@@ -353,10 +357,10 @@ def _build_upstream_closure(
         await context.report_progress(1, 1, 'Request completed')
 
         # A response transform reshapes JSON, so it has nothing to apply to in a binary body.
-        if isinstance(result, BinaryBody):
+        if isinstance(result, UpstreamBinaryBody):
             return _build_binary_result(result)
         # Media paths name fields of the upstream response, so they are promoted before a transform reshapes it.
-        result, media_contents = media_promoter.promote(result, f'{binding.base_url.rstrip("/")}{resolved_path}')
+        result, media_contents = media_promoter.promote(result, f'{connection.base_url.rstrip("/")}{resolved_path}')
         if response_transform is not None:
             try:
                 result = apply_transform(response_transform, result)
