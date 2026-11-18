@@ -9,6 +9,7 @@ from mcp.server.auth.provider import construct_redirect_uri
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 from ...scopes import McpAccessToken
+from ...settings import McpAuthConfig
 from ...stores.base import TokenStore
 from .client import get_mcp_registered_scopes
 from .consent import PendingAuthorization
@@ -34,6 +35,16 @@ class McpTokenPolicy:
     scopes: list[str] = dataclasses.field(default_factory=lambda: [MCP_DEFAULT_SCOPE])
     access_token_ttl: int = 3600
     refresh_token_ttl: int = 86400
+
+    @classmethod
+    def from_config(cls, config: McpAuthConfig) -> typing.Self:
+        """The policy ``auth.mcp`` describes.
+
+        Every token carries ``required_scopes``, or ``MCP_DEFAULT_SCOPE`` so the OAuth machinery has one to name.
+        With ``operation_scopes`` there are none, since each operation names its own scopes instead.
+        """
+        scopes = [] if config.operation_scopes is not None else list(config.required_scopes) or [MCP_DEFAULT_SCOPE]
+        return cls(scopes=scopes, access_token_ttl=config.access_token_ttl, refresh_token_ttl=config.refresh_token_ttl)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -130,55 +141,57 @@ class McpTokenIssuer:
     async def issue_tokens(
         self, client: OAuthClientInformationFull, scopes: list[str], attachment: McpTokenAttachment
     ) -> OAuthToken:
-        """Mint MCP access and refresh tokens for ``client``, carrying ``attachment``.
-
-        Every scope ``client`` may be granted is recorded as well, which is what the token can step up to.
-        A client registered without any scope is taken to be limited to the ones it was granted.
-        """
-        client_id = require_client_id(client)
-        access_token = f'mcp_{secrets.token_hex(32)}'
+        """Mint an MCP access token and a refresh token paired with it for ``client``, carrying ``attachment``."""
+        token = await self.issue_access_token(client, scopes, attachment)
         refresh_token = f'mcp_refresh_{secrets.token_hex(32)}'
-        now = int(time.time())
-        record = {
-            'client_id': client_id,
-            'scopes': scopes,
-            'mcp_grantable_scopes': get_mcp_registered_scopes(client) or list(scopes),
-            **self._build_record_fields(attachment),
-        }
-        access_ttl = self.policy.access_token_ttl
-        if attachment.links_expire_at is not None:
-            access_ttl = max(1, min(access_ttl, attachment.links_expire_at - now))
         refresh_ttl = self.policy.refresh_token_ttl
-
-        await self.store.set(
-            'mcp_access_token',
-            access_token,
-            {'token': access_token, **record, 'expires_at': now + access_ttl},
-            ttl=access_ttl,
-        )
         await self.store.set(
             'mcp_refresh_token',
             refresh_token,
-            {'token': refresh_token, **record, 'expires_at': now + refresh_ttl},
+            {
+                'token': refresh_token,
+                **self._build_token_record(client, scopes, attachment),
+                'expires_at': int(time.time()) + refresh_ttl,
+            },
             ttl=refresh_ttl,
         )
-        await self._store_links('mcp_access_token', access_token, attachment, access_ttl)
         await self._store_links('mcp_refresh_token', refresh_token, attachment, refresh_ttl)
         # Pair access and refresh in both directions for revoke lookup.
         await self.store.set_mapping(
-            'mcp_access_token', access_token, 'mcp_refresh_token', refresh_token, ttl=access_ttl
+            'mcp_access_token', token.access_token, 'mcp_refresh_token', refresh_token, ttl=token.expires_in
         )
         await self.store.set_mapping(
-            'mcp_refresh_token', refresh_token, 'mcp_access_token', access_token, ttl=refresh_ttl
+            'mcp_refresh_token', refresh_token, 'mcp_access_token', token.access_token, ttl=refresh_ttl
         )
+        return token.model_copy(update={'refresh_token': refresh_token})
 
-        # The granted scope is always stated, since RFC 6749 §5.1 requires it whenever it differs from the request.
-        return OAuthToken(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_in=access_ttl,
-            scope=' '.join(scopes) or None,
+    async def issue_access_token(
+        self, client: OAuthClientInformationFull, scopes: list[str], attachment: McpTokenAttachment
+    ) -> OAuthToken:
+        """Mint an MCP access token for ``client``, carrying ``attachment``, with no refresh token.
+
+        Every scope ``client`` may be granted is recorded as well, which is what the token can step up to.
+        A client registered without any scope is taken to be limited to the ones it was granted.
+        The token never outlives what ``attachment`` links.
+        """
+        access_token = f'mcp_{secrets.token_hex(32)}'
+        now = int(time.time())
+        access_ttl = self.policy.access_token_ttl
+        if attachment.links_expire_at is not None:
+            access_ttl = max(1, min(access_ttl, attachment.links_expire_at - now))
+        await self.store.set(
+            'mcp_access_token',
+            access_token,
+            {
+                'token': access_token,
+                **self._build_token_record(client, scopes, attachment),
+                'expires_at': now + access_ttl,
+            },
+            ttl=access_ttl,
         )
+        await self._store_links('mcp_access_token', access_token, attachment, access_ttl)
+        # The granted scope is always stated, since RFC 6749 §5.1 requires it whenever it differs from the request.
+        return OAuthToken(access_token=access_token, expires_in=access_ttl, scope=' '.join(scopes) or None)
 
     async def load_access_token(self, token: str) -> McpAccessToken | None:
         """The MCP access token stored under ``token``, or ``None`` when it is unknown here or expired."""
@@ -241,6 +254,17 @@ class McpTokenIssuer:
         """Delete the mappings from the record under ``key`` to the credentials it links."""
         for link in data.get('links', []):
             await self.store.delete_mapping(namespace, key, link)
+
+    def _build_token_record(
+        self, client: OAuthClientInformationFull, scopes: list[str], attachment: McpTokenAttachment
+    ) -> dict[str, typing.Any]:
+        """The fields an access or refresh token record carries besides its own value and expiry."""
+        return {
+            'client_id': require_client_id(client),
+            'scopes': scopes,
+            'mcp_grantable_scopes': get_mcp_registered_scopes(client) or list(scopes),
+            **self._build_record_fields(attachment),
+        }
 
     def _build_record_fields(self, attachment: McpTokenAttachment) -> dict[str, typing.Any]:
         """The record fields every code and token carries besides its own."""

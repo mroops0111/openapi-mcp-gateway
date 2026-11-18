@@ -20,7 +20,11 @@ SCOPE_TOKEN = re.compile(r'[\x21\x23-\x5B\x5D-\x7E]+')
 
 
 # What an applicability error names for a setting only the gateway's own token minting reads.
-_MINTING_FLOW = 'auth.upstream.flow authorization_code, the only flow where the gateway mints tokens'
+_MINTING_FLOW = 'auth.upstream.flow authorization_code, the only flow where users sign in to the gateway'
+_ISSUING_SETUP = (
+    'auth.upstream.flow authorization_code, or one shared upstream credential '
+    '(type none, bearer or api_key, or flow client_credentials), where the gateway issues MCP tokens'
+)
 
 # Keys that left the top of ``auth``, and where each lives now.
 # A config written for the old layout is refused with the new place named, rather than with a bare unknown key.
@@ -199,6 +203,16 @@ class ClientConfig(pydantic.BaseModel):
             )
         return self
 
+    def find_settings_without_sign_in(self) -> list[tuple[str, str]]:
+        """The fields this client sets, or lacks, that only make sense when a user signs in, each with why."""
+        problems = []
+        if not self.client_secret:
+            problems.append(('client_secret', 'is required, since it is the only proof of who the agent is'))
+        for field in ('redirect_uris', 'default_scopes', 'consent'):
+            if field in self.model_fields_set:
+                problems.append((field, 'has no effect, since no user signs in'))
+        return problems
+
     @property
     def granted_by_default(self) -> list[str]:
         """What the client receives when it asks for no scope."""
@@ -213,9 +227,10 @@ class McpAuthConfig(pydantic.BaseModel):
     """Who may call this MCP endpoint, the inbound half of ``auth``.
 
     ``issuer`` serves ``token_exchange``, where another authorization server mints the tokens.
-    ``required_scopes`` is what every token must carry, checked by that server's tokens under ``token_exchange``
-    and granted on every token the gateway mints under ``authorization_code``.
-    The rest serve ``authorization_code`` only.
+    ``required_scopes`` is what every token must carry, checked on that server's tokens under ``token_exchange``
+    and granted on every token the gateway mints.
+    The rest serve the gateway's own tokens, which users sign in for under ``authorization_code``,
+    and which agents obtain with their own credentials in front of one shared upstream credential.
     """
 
     model_config = pydantic.ConfigDict(coerce_numbers_to_str=True, extra='forbid')
@@ -262,6 +277,28 @@ class McpAuthConfig(pydantic.BaseModel):
     def resolve_issuer(self) -> str | None:
         """External authorization server issuer after env-var substitution."""
         return _resolve_env_var(self.issuer)
+
+    def refuse_client_settings_without_sign_in(self, server_name: str | None = None) -> None:
+        """Refuse what only a user signing in reads, for a server where agents obtain tokens as themselves.
+
+        Each client needs a secret, since it is its only proof of identity.
+        A redirect, default scopes, the consent page and refresh tokens all belong to a sign-in that never happens.
+        A request with no scope is granted all of ``scopes``, so ``default_scopes`` would have nothing to narrow.
+        """
+        where = f'Server "{server_name}": ' if server_name else ''
+        problems = [
+            f'auth.mcp.clients.{client_id}.{field} {reason}'
+            for client_id, client in self.clients.items()
+            for field, reason in client.find_settings_without_sign_in()
+        ]
+        if 'refresh_token_ttl' in self.model_fields_set:
+            problems.append('auth.mcp.refresh_token_ttl has no effect, since no refresh token is issued')
+        if problems:
+            raise ValueError(
+                f'{where}agents here obtain tokens with their own credentials, and no user signs in. '
+                + '. '.join(problems)
+                + '.'
+            )
 
 
 class AuthConfig(pydantic.BaseModel):
@@ -310,6 +347,11 @@ class AuthConfig(pydantic.BaseModel):
         # ``authorization_code`` is, so an unset flow leaves its fields plausible.
         flow_unresolved = oauth and upstream.flow is None
         mints_tokens = upstream.flow == 'authorization_code' or flow_unresolved
+        # One credential every caller shares upstream, where only the gateway's own tokens can tell agents apart.
+        shared_credential = upstream.type in ('none', 'bearer', 'api_key') or (
+            oauth and upstream.flow in ('client_credentials', None)
+        )
+        issues_to_agents = shared_credential and bool(self.mcp.clients)
 
         upstream_applicable: dict[str, tuple[bool, str]] = {
             'token': (upstream.type in ('bearer', 'api_key'), 'auth.upstream.type bearer or api_key'),
@@ -339,15 +381,18 @@ class AuthConfig(pydantic.BaseModel):
             {
                 'issuer': (upstream.flow == 'token_exchange', 'auth.upstream.flow token_exchange'),
                 'required_scopes': (
-                    upstream.flow in ('authorization_code', 'token_exchange') or flow_unresolved,
-                    'auth.upstream.flow authorization_code or token_exchange, the flows that verify an inbound token',
+                    upstream.flow in ('authorization_code', 'token_exchange') or flow_unresolved or issues_to_agents,
+                    'auth.upstream.flow token_exchange or a setup where the gateway issues MCP tokens',
                 ),
-                'access_token_ttl': (mints_tokens, _MINTING_FLOW),
+                'access_token_ttl': (mints_tokens or issues_to_agents, _ISSUING_SETUP),
                 'refresh_token_ttl': (mints_tokens, _MINTING_FLOW),
-                'operation_scopes': (mints_tokens, _MINTING_FLOW),
-                'clients': (mints_tokens, _MINTING_FLOW),
+                'operation_scopes': (mints_tokens or shared_credential, _ISSUING_SETUP),
+                'clients': (mints_tokens or shared_credential, _ISSUING_SETUP),
             },
         )
+        # An unresolved flow may still turn out to be authorization_code, so its clients are checked once it resolves.
+        if issues_to_agents and not flow_unresolved:
+            self.mcp.refuse_client_settings_without_sign_in()
         return self
 
     @staticmethod

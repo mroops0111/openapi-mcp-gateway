@@ -7,13 +7,12 @@ from mcp.server import MCPServer
 from mcp.server.auth.handlers.metadata import MetadataHandler, ProtectedResourceMetadataHandler
 from mcp.server.auth.provider import OAuthAuthorizationServerProvider
 from mcp.server.auth.routes import (
-    build_metadata,
     build_resource_metadata_url,
     cors_middleware,
     create_auth_routes,
     create_protected_resource_routes,
 )
-from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
@@ -54,8 +53,8 @@ class _ServerBundle(typing.NamedTuple):
     scope_registry: ScopeRegistry
     tool_call_target: RequestTarget
     auth_settings: AuthSettings | None = None
-    # Whether the provider names itself in ``iss`` on its authorization responses.
-    provider_sends_iss: bool = False
+    # The RFC 8414 document, set wherever the gateway is this server's authorization server.
+    authorization_server_metadata: OAuthMetadata | None = None
     token_verifier: typing.Any | None = None
     protected_resource: ProtectedResourceMetadata | None = None
 
@@ -209,35 +208,34 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
     ``mount`` adds these alongside the MCP sub-apps for a working OAuth flow.
     Register before mounting, so the explicit OAuth paths win over each catch-all ``mount_path``.
     """
-    # Per-server OAuth endpoints and RFC 9728 protected-resource routes.
-    # Only a bundle whose flow made the gateway the authorization server gets the former.
+    # Per-server OAuth endpoints and RFC 9728 protected-resource routes,
+    # only for a bundle whose flow made the gateway the authorization server.
     # For a delegating server,
     # advertising /authorize and /token would point clients at endpoints this app does not serve.
     for bundle in servers:
-        if not bundle.auth_provider or not bundle.auth_settings:
+        if bundle.authorization_server_metadata is None:
             continue
-
-        oauth_routes = create_auth_routes(
-            provider=bundle.auth_provider,
-            issuer_url=bundle.auth_settings.issuer_url,
-            service_documentation_url=bundle.auth_settings.service_documentation_url,
-            client_registration_options=bundle.auth_settings.client_registration_options,
-            revocation_options=bundle.auth_settings.revocation_options,
+        mount = bundle.mount_path.rstrip('/')
+        app.router.add_route(
+            path=f'{mount}/.well-known/oauth-authorization-server',
+            endpoint=_metadata_endpoint(bundle.authorization_server_metadata),
+            methods=['GET', 'OPTIONS'],
         )
-        for route in oauth_routes:
-            prefixed_path = f'{bundle.mount_path.rstrip("/")}{route.path}'
-            endpoint: typing.Callable[..., typing.Any] = route.endpoint
-            if route.path == '/.well-known/oauth-authorization-server':
-                # The SDK's document omits what this provider adds to the protocol, so serve the gateway's own.
-                endpoint = cors_middleware(
-                    MetadataHandler(_authorization_server_metadata(bundle)).handle, ['GET', 'OPTIONS']
-                )
-            app.router.add_route(
-                path=prefixed_path,
-                endpoint=endpoint,
-                methods=route.methods,
-                name=route.name,
+        if bundle.auth_provider is not None and bundle.auth_settings is not None:
+            # The SDK serves the provider's OAuth endpoints, and its metadata route is replaced by the one above.
+            oauth_routes = create_auth_routes(
+                provider=bundle.auth_provider,
+                issuer_url=bundle.auth_settings.issuer_url,
+                service_documentation_url=bundle.auth_settings.service_documentation_url,
+                client_registration_options=bundle.auth_settings.client_registration_options,
+                revocation_options=bundle.auth_settings.revocation_options,
             )
+            for route in oauth_routes:
+                if route.path == '/.well-known/oauth-authorization-server':
+                    continue
+                app.router.add_route(
+                    path=f'{mount}{route.path}', endpoint=route.endpoint, methods=route.methods, name=route.name
+                )
 
         advertised = _protected_resource(bundle)
         pr_routes = create_protected_resource_routes(
@@ -267,7 +265,7 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                 status_code=404,
                 content={'error': f'Server not found: {server_name}'},
             )
-        if not bundle.auth_provider:
+        if bundle.authorization_server_metadata is None:
             # This server delegates to an external issuer, so the gateway has no metadata to publish.
             # The protected-resource document names that issuer, and the client discovers it there.
             return JSONResponse(
@@ -277,7 +275,7 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                     'Read its protected resource metadata for the issuer that is.'
                 },
             )
-        handler = MetadataHandler(_authorization_server_metadata(bundle))
+        handler = MetadataHandler(bundle.authorization_server_metadata)
         return await handler.handle(request)
 
     @app.get('/.well-known/oauth-protected-resource/{server_name}')
@@ -352,25 +350,9 @@ def _register_health_route(app: FastAPI, servers: list[_ServerBundle]) -> None:
         }
 
 
-def _authorization_server_metadata(bundle: _ServerBundle) -> OAuthMetadata:
-    """Return the RFC 8414 document for a server where the gateway is the authorization server.
-
-    The SDK builds the document, and the gateway adds what its provider does beyond the SDK.
-    A provider that sends ``iss`` on its authorization responses must announce it,
-    as RFC 9207 §2.3 requires with ``authorization_response_iss_parameter_supported``.
-    That flag is what lets a client refuse a response that arrives without one.
-
-    Callers reach this only for a bundle carrying ``auth_settings``.
-    """
-    assert bundle.auth_settings is not None  # noqa: S101
-    metadata = build_metadata(
-        issuer_url=bundle.auth_settings.issuer_url,
-        service_documentation_url=bundle.auth_settings.service_documentation_url,
-        client_registration_options=bundle.auth_settings.client_registration_options or ClientRegistrationOptions(),
-        revocation_options=bundle.auth_settings.revocation_options or RevocationOptions(),
-    )
-    metadata.authorization_response_iss_parameter_supported = bundle.provider_sends_iss or None
-    return metadata
+def _metadata_endpoint(metadata: OAuthMetadata) -> typing.Callable[..., typing.Any]:
+    """The route serving ``metadata`` as an RFC 8414 document, open to cross-origin reads."""
+    return cors_middleware(MetadataHandler(metadata).handle, ['GET', 'OPTIONS'])
 
 
 def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:

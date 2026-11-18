@@ -14,13 +14,11 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from mcp import Client, StdioServerParameters
 from mcp.client.sse import sse_client
-from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context
 from mcp.types import RequestParamsMeta, TextContent
-from pydantic import AnyHttpUrl
 from starlette.testclient import TestClient
 
-from openapi_mcp_gateway.app import _authorization_server_metadata, _ServerBundle, _transport_security
+from openapi_mcp_gateway.app import _transport_security
 from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
 from openapi_mcp_gateway.auth.upstream import token_source as token_source_module
 from openapi_mcp_gateway.gateway import Gateway
@@ -44,7 +42,6 @@ from tests.constants import (
     AUTHORIZE_URL,
     BROWSER_ORIGIN,
     GATEWAY_HOST,
-    GATEWAY_ISSUER,
     GATEWAY_URL,
     ISSUER,
     JWKS_URL,
@@ -215,21 +212,6 @@ class TestWellKnownOAuth:
         response = oauth_client.get(path)
         assert response.status_code == 200
         assert response.json()['authorization_response_iss_parameter_supported'] is True
-
-    def test_a_provider_that_sends_no_iss_does_not_promise_it(self):
-        """The metadata states what the setup declares, rather than assuming every provider sends ``iss``."""
-        bundle = _ServerBundle(
-            name='petstore',
-            mount_path='/petstore',
-            mcp=MagicMock(),
-            spec=MagicMock(),
-            auth_provider=MagicMock(),
-            scope_registry=MagicMock(),
-            tool_call_target=MagicMock(),
-            auth_settings=AuthSettings(issuer_url=AnyHttpUrl(GATEWAY_ISSUER), resource_server_url=None),
-        )
-
-        assert _authorization_server_metadata(bundle).authorization_response_iss_parameter_supported is None
 
     def test_authorization_server_with_mcp(self, oauth_client):
         """Suffixing ``/mcp`` on the metadata path is also served."""

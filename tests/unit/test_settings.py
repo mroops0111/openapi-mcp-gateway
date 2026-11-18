@@ -487,10 +487,7 @@ class TestSettingsThatCannotTakeEffect:
                 'clients',
             ),
             (
-                {
-                    'upstream': {'type': 'oauth2', 'flow': 'client_credentials'},
-                    'mcp': {'operation_scopes': {}, 'clients': {'agent': {}}},
-                },
+                {'upstream': {'type': 'passthrough'}, 'mcp': {'operation_scopes': {}, 'clients': {'agent': {}}}},
                 'operation_scopes',
             ),
         ],
@@ -519,6 +516,18 @@ class TestSettingsThatCannotTakeEffect:
             },
             {'upstream': {'type': 'oauth2'}, 'mcp': {'clients': {'agent': {}}}},
             {'upstream': {'type': 'none'}},
+            {
+                'upstream': {'type': 'bearer', 'token': 't'},
+                'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'access_token_ttl': 600},
+            },
+            {
+                'upstream': {'type': 'oauth2', 'flow': 'client_credentials'},
+                'mcp': {
+                    'operation_scopes': {'auto': 'tags'},
+                    'clients': {'agent': {'client_secret': 's', 'scopes': ['pets:read']}},
+                },
+            },
+            {'upstream': {'type': 'none'}, 'mcp': {'clients': {'agent': {'client_secret': 's'}}}},
         ],
     )
     def test_applicable_settings_are_accepted(self, payload):
@@ -534,6 +543,44 @@ class TestSettingsThatCannotTakeEffect:
 
         with pytest.raises(pydantic.ValidationError, match=r'issuer.*no effect'):
             AuthConfig.model_validate({'upstream': {'type': 'oauth2'}, 'mcp': {'issuer': 'https://kc'}})
+
+
+class TestClientCredentialsSettings:
+    """Agents in front of one shared upstream credential obtain tokens as themselves, so no user ever signs in."""
+
+    @pytest.mark.parametrize(
+        ('client', 'refusal'),
+        [
+            ({}, r'agent\.client_secret is required'),
+            ({'client_secret': 's', 'redirect_uris': ['http://localhost/cb']}, r'agent\.redirect_uris has no effect'),
+            ({'client_secret': 's', 'default_scopes': []}, r'agent\.default_scopes has no effect'),
+            ({'client_secret': 's', 'consent': False}, r'agent\.consent has no effect'),
+        ],
+    )
+    def test_sign_in_settings_are_refused(self, client, refusal):
+        with pytest.raises(pydantic.ValidationError, match=refusal):
+            AuthConfig.model_validate(
+                {'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': {'agent': client}}}
+            )
+
+    def test_a_refresh_token_ttl_is_refused(self):
+        """No refresh token is issued, since the agent can always ask for a new token."""
+        with pytest.raises(pydantic.ValidationError, match=r'refresh_token_ttl'):
+            AuthConfig.model_validate(
+                {
+                    'upstream': {'type': 'none'},
+                    'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'refresh_token_ttl': 600},
+                }
+            )
+
+    def test_an_unresolved_flow_defers_the_check(self):
+        """``authorization_code`` may still be resolved from the spec, where a public client is fine."""
+        assert AuthConfig.model_validate({'upstream': {'type': 'oauth2'}, 'mcp': {'clients': {'agent': {}}}})
+
+    @pytest.mark.parametrize('upstream', [{'type': 'passthrough'}, {'type': 'oauth2', 'flow': 'token_exchange'}])
+    def test_clients_are_refused_where_the_gateway_issues_no_token(self, upstream):
+        with pytest.raises(pydantic.ValidationError, match=r'auth\.mcp\.clients needs'):
+            AuthConfig.model_validate({'upstream': upstream, 'mcp': {'clients': {'agent': {'client_secret': 's'}}}})
 
 
 class TestScopeSettings:

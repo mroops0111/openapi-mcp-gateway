@@ -4,7 +4,8 @@ import typing
 
 from mcp.server.auth.provider import OAuthAuthorizationServerProvider, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
-from mcp.shared.auth import ProtectedResourceMetadata
+from mcp.server.extension import Extension
+from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
 from ..openapi import OpenAPISpec
 from ..scopes import McpScopePolicy
@@ -46,8 +47,9 @@ class ServerAuthSetup:
     ``routes`` are mounted on the server as they are, so the gateway never needs to know which flow asked for them.
     ``mcp_tokens_carry_upstream_grant`` says each MCP token records what the upstream granted the user behind it,
     which checking an operation's upstream scopes needs.
-    ``provider_sends_iss`` says the provider names itself in ``iss`` on its authorization responses,
-    which RFC 9207 has its metadata announce.
+    ``authorization_server_metadata`` is the RFC 8414 document of the gateway's own authorization server,
+    set wherever the gateway issues this endpoint's tokens, whether through ``provider`` or its own routes.
+    ``extensions`` are the MCP extensions the server advertises, such as how a client may obtain a token.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
@@ -58,7 +60,8 @@ class ServerAuthSetup:
     protected_resource: ProtectedResourceMetadata | None = None
     routes: list[AuthRoutes] = dataclasses.field(default_factory=list)
     mcp_tokens_carry_upstream_grant: bool = False
-    provider_sends_iss: bool = False
+    authorization_server_metadata: OAuthMetadata | None = None
+    extensions: list[Extension] = dataclasses.field(default_factory=list)
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
     # The flow that was resolved, which is not always the one the config named.
     # Set by the factory, so that every handler stays unaware of it.

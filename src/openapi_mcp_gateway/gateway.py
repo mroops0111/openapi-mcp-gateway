@@ -10,7 +10,6 @@ import uvicorn
 from fastapi import FastAPI
 from mcp.server import MCPServer
 from mcp.server.auth.provider import OAuthAuthorizationServerProvider
-from mcp.server.auth.settings import AuthSettings
 from mcp.server.caching import CacheableMethod, CacheHint
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
@@ -369,9 +368,7 @@ class Gateway:
             mcp_scope_policy,
             _upstream_scope_policy(server_config, auth, spec_security, operations, mcp_scope_policy),
         )
-        mcp = self._build_mcp_server(
-            server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions, scope_registry
-        )
+        mcp = self._build_mcp_server(server_config.name, auth, server_config.instructions, scope_registry)
         for routes in auth.routes:
             routes.register(mcp)
 
@@ -445,13 +442,13 @@ class Gateway:
                 spec=spec,
                 auth_provider=auth.provider,
                 auth_settings=auth.settings,
-                provider_sends_iss=auth.provider_sends_iss,
+                authorization_server_metadata=auth.authorization_server_metadata,
                 token_verifier=auth.verifier,
                 protected_resource=auth.protected_resource,
                 scope_registry=scope_registry,
                 tool_call_target=tool_call_target,
                 base_url=base_url,
-                auth_summary=_auth_summary(server_config.auth),
+                auth_summary=_auth_summary(server_config.auth, auth),
                 auth_type=server_config.auth.upstream.type,
                 auth_api_key_header=(
                     server_config.auth.upstream.api_key_header
@@ -473,7 +470,7 @@ class Gateway:
             base_url,
             len(exposed_tools),
             len(resource_names),
-            _auth_summary(server_config.auth),
+            _auth_summary(server_config.auth, auth),
             type(auth_resolver).__name__,
         )
 
@@ -502,13 +499,11 @@ class Gateway:
     @staticmethod
     def _build_mcp_server(
         name: str,
-        auth_provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None,
-        auth_settings: AuthSettings | None,
-        token_verifier: typing.Any | None,
+        auth: ServerAuthSetup,
         instructions: str | None,
         scope_registry: ScopeRegistry,
     ) -> MCPServer:
-        """Build the MCP server, wiring whichever of provider or verifier the flow produced.
+        """Build the MCP server, wiring whichever of provider or verifier ``auth`` holds, and its extensions.
 
         The SDK rejects a server given both,
         since issuing tokens and validating someone else's are alternatives rather than layers.
@@ -516,7 +511,7 @@ class Gateway:
         """
 
         @contextlib.asynccontextmanager
-        async def lifespan(_app: MCPServer, _auth_provider=auth_provider):
+        async def lifespan(_app: MCPServer, _auth_provider=auth.provider):
             try:
                 yield _AppContext(auth_provider=_auth_provider)
             finally:
@@ -524,9 +519,10 @@ class Gateway:
 
         return MCPServer(
             f'{name} (via OpenAPI MCP Gateway)',
-            auth_server_provider=auth_provider,
-            token_verifier=token_verifier,
-            auth=auth_settings,
+            auth_server_provider=auth.provider,
+            token_verifier=auth.verifier,
+            auth=auth.settings,
+            extensions=auth.extensions,
             instructions=instructions,
             lifespan=lifespan,
             cache_hints=_cache_hints(scope_registry),
@@ -805,10 +801,18 @@ def _refuse_undefined_mcp_scopes(server_config: ServerConfig, mcp_scope_policy: 
         )
 
 
-def _auth_summary(auth: AuthConfig) -> str:
-    """A short human label for a server's auth, naming the header for api_key and the OAuth flow."""
+def _auth_summary(auth: AuthConfig, setup: ServerAuthSetup) -> str:
+    """A short human label for a server's auth.
+
+    It names the header for api_key, the OAuth flow, and agents obtaining their own MCP tokens.
+    """
     if auth.upstream.type == 'api_key':
-        return f'api_key (header {auth.upstream.api_key_header})'
-    if auth.upstream.type == 'oauth2' and auth.upstream.flow:
-        return f'oauth2 ({auth.upstream.flow})'
-    return auth.upstream.type
+        summary = f'api_key (header {auth.upstream.api_key_header})'
+    elif auth.upstream.type == 'oauth2' and auth.upstream.flow:
+        summary = f'oauth2 ({auth.upstream.flow})'
+    else:
+        summary = auth.upstream.type
+    metadata = setup.authorization_server_metadata
+    if setup.provider is None and metadata is not None and metadata.grant_types_supported == ['client_credentials']:
+        summary += ', agents obtain MCP tokens by client_credentials'
+    return summary

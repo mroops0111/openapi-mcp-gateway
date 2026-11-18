@@ -2,6 +2,7 @@ import typing
 
 from .assembly import AuthTypeContext, AuthTypeHandler, ServerAuthSetup
 from .flows import build_oauth_flow
+from .mcp_authority import attach_mcp_token_authority
 from .upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
@@ -97,7 +98,10 @@ AUTH_TYPE_HANDLERS: dict[str, type[AuthTypeHandler]] = {
 
 
 def build_auth(context: AuthTypeContext) -> ServerAuthSetup:
-    """Assemble the auth components for one server, dispatching on ``auth.upstream.type``."""
+    """Assemble the auth components for one server, dispatching on ``auth.upstream.type``.
+
+    An upstream strategy that leaves the MCP half open gets one from ``MCP_TOKEN_AUTHORITIES``.
+    """
     auth_type = context.entry.auth.upstream.type
     handler_class = AUTH_TYPE_HANDLERS.get(auth_type)
     if handler_class is None:
@@ -105,4 +109,4 @@ def build_auth(context: AuthTypeContext) -> ServerAuthSetup:
             f'Server "{context.entry.name}": unsupported auth type "{auth_type}". '
             f'Supported types: {sorted(AUTH_TYPE_HANDLERS)}'
         )
-    return handler_class().build(context)
+    return attach_mcp_token_authority(handler_class().build(context), context)
