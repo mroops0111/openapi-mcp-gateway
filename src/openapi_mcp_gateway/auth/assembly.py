@@ -46,6 +46,8 @@ class ServerAuthSetup:
     ``routes`` are mounted on the server as they are, so the gateway never needs to know which flow asked for them.
     ``mcp_tokens_carry_upstream_grant`` says each MCP token records what the upstream granted the user behind it,
     which checking an operation's upstream scopes needs.
+    ``provider_sends_iss`` says the provider names itself in ``iss`` on its authorization responses,
+    which RFC 9207 has its metadata announce.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
@@ -56,6 +58,7 @@ class ServerAuthSetup:
     protected_resource: ProtectedResourceMetadata | None = None
     routes: list[AuthRoutes] = dataclasses.field(default_factory=list)
     mcp_tokens_carry_upstream_grant: bool = False
+    provider_sends_iss: bool = False
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
     # The flow that was resolved, which is not always the one the config named.
     # Set by the factory, so that every handler stays unaware of it.

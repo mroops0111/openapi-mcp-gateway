@@ -445,6 +445,7 @@ class Gateway:
                 spec=spec,
                 auth_provider=auth.provider,
                 auth_settings=auth.settings,
+                provider_sends_iss=auth.provider_sends_iss,
                 token_verifier=auth.verifier,
                 protected_resource=auth.protected_resource,
                 scope_registry=scope_registry,

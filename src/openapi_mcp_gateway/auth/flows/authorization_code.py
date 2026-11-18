@@ -328,6 +328,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             provider=server,
             settings=settings,
             mcp_tokens_carry_upstream_grant=True,
+            provider_sends_iss=True,
             routes=[
                 McpAuthorizationCodeRoutes(server, flow_context.mcp_scope_policy, cookie),
                 AuthorizationCodeCallbackRoutes(bridge, cookie),
@@ -349,7 +350,7 @@ def build_authorization_code_server(
     """
     tokens = McpTokenIssuer(
         store=store,
-        origin=McpRecordOrigin(issuer=issuer, upstream_authorization_server=upstream.authorization_server),
+        origin=McpRecordOrigin(issuer=issuer, next_sign_in_server=upstream.authorization_server),
         policy=policy,
     )
     bridge = AuthorizationCodeBridge(tokens, upstream, store)

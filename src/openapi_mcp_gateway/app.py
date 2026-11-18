@@ -54,6 +54,8 @@ class _ServerBundle(typing.NamedTuple):
     scope_registry: ScopeRegistry
     tool_call_target: RequestTarget
     auth_settings: AuthSettings | None = None
+    # Whether the provider names itself in ``iss`` on its authorization responses.
+    provider_sends_iss: bool = False
     token_verifier: typing.Any | None = None
     protected_resource: ProtectedResourceMetadata | None = None
 
@@ -354,8 +356,8 @@ def _authorization_server_metadata(bundle: _ServerBundle) -> OAuthMetadata:
     """Return the RFC 8414 document for a server where the gateway is the authorization server.
 
     The SDK builds the document, and the gateway adds what its provider does beyond the SDK.
-    The gateway's authorization server sends ``iss`` on its authorization responses,
-    so RFC 9207 §2.3 requires ``authorization_response_iss_parameter_supported``.
+    A provider that sends ``iss`` on its authorization responses must announce it,
+    as RFC 9207 §2.3 requires with ``authorization_response_iss_parameter_supported``.
     That flag is what lets a client refuse a response that arrives without one.
 
     Callers reach this only for a bundle carrying ``auth_settings``.
@@ -367,7 +369,7 @@ def _authorization_server_metadata(bundle: _ServerBundle) -> OAuthMetadata:
         client_registration_options=bundle.auth_settings.client_registration_options or ClientRegistrationOptions(),
         revocation_options=bundle.auth_settings.revocation_options or RevocationOptions(),
     )
-    metadata.authorization_response_iss_parameter_supported = True
+    metadata.authorization_response_iss_parameter_supported = bundle.provider_sends_iss or None
     return metadata
 
 
