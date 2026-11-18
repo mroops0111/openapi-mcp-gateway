@@ -4,6 +4,7 @@ import secrets
 import time
 import typing
 
+import pydantic
 from mcp.server.auth.provider import construct_redirect_uri
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
@@ -60,6 +61,8 @@ class McpTokenIssuer:
         self.store = store
         self.origin = origin
         self.policy = policy
+        # Compared on every authenticated request, so serialized once.
+        self._origin_fields = origin.model_dump()
 
     @property
     def issuer(self) -> str:
@@ -67,7 +70,7 @@ class McpTokenIssuer:
 
     def is_from_here(self, data: dict[str, typing.Any] | None) -> typing.TypeGuard[dict[str, typing.Any]]:
         """Whether a stored record was written by this server against its current upstream."""
-        return bool(data) and data.get('origin') == self.origin.model_dump()
+        return bool(data) and data.get('origin') == self._origin_fields
 
     async def complete_authorization(self, pending: PendingAuthorization, attachment: McpTokenAttachment) -> str:
         """Mint the MCP authorization code that ends ``pending``, and return the redirect carrying it to the client.
@@ -93,6 +96,19 @@ class McpTokenIssuer:
         )
         await self._store_links('mcp_auth_code', code, attachment, MCP_AUTHORIZATION_CODE_TTL)
         return construct_redirect_uri(pending.redirect_uri, code=code, state=pending.client_state, iss=self.issuer)
+
+    async def load_pending(self, namespace: str, key: str) -> PendingAuthorization | None:
+        """The sign-in stored under ``key`` in ``namespace`` by this server, or ``None`` for none or another's.
+
+        A record of an older shape, such as one from before sign-ins were tied to a browser, counts as none.
+        """
+        data = await self.store.get(namespace, key)
+        if not self.is_from_here(data):
+            return None
+        try:
+            return PendingAuthorization.model_validate(data)
+        except pydantic.ValidationError:
+            return None
 
     async def load_attachment(self, namespace: str, key: str, data: dict[str, typing.Any]) -> McpTokenAttachment | None:
         """What the code or token stored under ``key`` carries, or ``None`` once a credential it links to is gone."""
@@ -192,7 +208,7 @@ class McpTokenIssuer:
         return {
             'upstream_scopes': list(attachment.upstream_scopes),
             'links': sorted(attachment.links),
-            'origin': self.origin.model_dump(),
+            'origin': self._origin_fields,
         }
 
     async def _store_links(self, namespace: str, key: str, attachment: McpTokenAttachment, ttl: int) -> None:

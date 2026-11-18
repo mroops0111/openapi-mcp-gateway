@@ -331,7 +331,7 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `auth.upstream.resource`, `auth.upstream.audience` | string |  | Names the API the upstream token is for, when the API and its authorization server are different parties. `resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter, `audience` is the spelling Auth0 uses. Only what you set is sent |
 | `auth.upstream.issuer` | string |  | For `authorization_code`. The upstream authorization server's issuer identifier, exactly as its metadata publishes it. Enables the [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207) `iss` check on its authorization responses |
 | `auth.mcp.issuer` | string |  | Required for `token_exchange`. The authorization server that mints tokens for this MCP endpoint |
-| `auth.mcp.required_scopes` | list |  | For `token_exchange`, what an inbound token must already carry. Advertised as `scopes_supported`, so a client doing dynamic registration knows what to ask for |
+| `auth.mcp.required_scopes` | list |  | What every token for this endpoint must carry. Under `token_exchange` an inbound token must already hold them. Under `authorization_code` the gateway grants them on every token it mints, `api` when unset. Advertised as `scopes_supported`, so a client doing dynamic registration knows what to ask for |
 | `auth.mcp.access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints for `authorization_code` |
 | `auth.mcp.refresh_token_ttl` | int | `86400` | Lifetime in seconds of the MCP refresh token. This is the practical re-authorization cadence, since each refresh slides the window forward |
 | `policy.allow` | list |  | Only expose matching operations |

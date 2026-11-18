@@ -1,3 +1,4 @@
+import time
 import typing
 import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -34,6 +35,7 @@ from tests.oauth import (
     complete_upstream,
     deliver_callback,
     query_value,
+    request_id_in,
     sign_in,
     state_in,
     upstream_token_response,
@@ -273,6 +275,55 @@ class TestFullOAuthLifecycle:
         assert new_token.refresh_token is not None
         assert await provider.load_access_token(new_token.access_token) is None
         assert await provider.load_refresh_token(mcp_client_info, new_token.refresh_token) is None
+
+
+class TestAuthorizationCodeReuse:
+    """An MCP authorization code is good for one exchange, as OAuth 2.1 requires."""
+
+    async def test_a_redeemed_code_cannot_be_exchanged_again(self, provider, mcp_client_info):
+        """A second exchange would mint a second token family that revoking the first leaves working."""
+        redirect = await complete_upstream(provider, await begin_upstream(provider, mcp_client_info))
+        auth_code = await provider.load_authorization_code(mcp_client_info, code_in(redirect))
+        assert auth_code is not None
+        await provider.exchange_authorization_code(mcp_client_info, auth_code)
+
+        assert await provider.load_authorization_code(mcp_client_info, auth_code.code) is None
+        with pytest.raises(TokenError):
+            await provider.exchange_authorization_code(mcp_client_info, auth_code)
+
+
+class TestUpstreamTokenLifetime:
+    """``expires_in`` is read leniently, since some upstreams send it as a string or leave it null."""
+
+    @pytest.mark.parametrize(('stated', 'lifetime'), [('3599', 3599), (None, 3600), (1800.0, 1800)])
+    async def test_an_irregular_expires_in_still_finishes_the_sign_in(
+        self, provider, mcp_client_info, memory_store, stated, lifetime
+    ):
+        response = upstream_token_response()
+        response.json.return_value['expires_in'] = stated
+        upstream_url = await begin_upstream(provider, mcp_client_info)
+        with patch('httpx.AsyncClient.post', AsyncMock(return_value=response)):
+            redirect = await deliver_callback(provider, upstream_url)
+
+        assert code_in(redirect)
+        record = await memory_store.get('upstream_access_token', 'upstream-access-token')
+        assert record is not None
+        assert record['expires_at'] - lifetime <= time.time()
+
+
+class TestConsentHandOver:
+    """The sign-in survives a failure in the step after consent, so the consent page can retry it."""
+
+    async def test_a_failed_hand_over_keeps_the_sign_in(self, provider, mcp_client_info):
+        consent_url = await authorize(provider, mcp_client_info)
+        pending = await provider.claim_authorization(request_id_in(consent_url), BROWSER_ID)
+        assert pending is not None
+
+        failing = AsyncMock(side_effect=RuntimeError('store unavailable'))
+        with patch.object(bridge_of(provider), 'continue_after_consent', failing), pytest.raises(RuntimeError):
+            await provider.continue_after_consent(pending)
+
+        assert await provider.load_shown_authorization(pending.request_id, BROWSER_ID) is not None
 
 
 class TestConfigurableTokenTtl:

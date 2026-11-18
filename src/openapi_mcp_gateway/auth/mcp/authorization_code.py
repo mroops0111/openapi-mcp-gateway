@@ -213,9 +213,13 @@ class McpAuthorizationCodeServer:
         )
 
     async def continue_after_consent(self, pending: PendingAuthorization) -> str:
-        """Hand ``pending`` on past the consent page, and return where the browser goes next."""
+        """Hand ``pending`` on past the consent page, and return where the browser goes next.
+
+        The continuation records the sign-in first, so a failure there leaves the consent page able to retry it.
+        """
+        next_url = await self.continuation.continue_after_consent(pending)
         await self.tokens.store.delete('mcp_auth_request', pending.request_id)
-        return await self.continuation.continue_after_consent(pending)
+        return next_url
 
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
@@ -240,6 +244,8 @@ class McpAuthorizationCodeServer:
         if attachment is None:
             logger.warning('OAuth code exchange rejected: reason=link_lost client_id=%s', client_id)
             raise TokenError(error='invalid_grant', error_description='A credential this code stands for is gone')
+        # A code is good for one exchange, as OAuth 2.1 requires.
+        await self.tokens.store.delete('mcp_auth_code', authorization_code.code)
         return await self.tokens.issue_tokens(client, authorization_code.scopes, attachment)
 
     async def load_access_token(self, token: str) -> McpAccessToken | None:
@@ -323,8 +329,7 @@ class McpAuthorizationCodeServer:
 
     async def _load_pending(self, request_id: str) -> PendingAuthorization | None:
         """The sign-in waiting at this server's consent page under ``request_id``."""
-        data = await self.tokens.store.get('mcp_auth_request', request_id)
-        return PendingAuthorization.model_validate(data) if self.tokens.is_from_here(data) else None
+        return await self.tokens.load_pending('mcp_auth_request', request_id)
 
     @staticmethod
     def _opened_by(pending: PendingAuthorization | None, browser_id: str) -> PendingAuthorization | None:
@@ -339,14 +344,17 @@ class McpAuthorizationCodeRoutes(AuthRoutes):
     """The consent page a browser visits during an ``authorization_code`` sign-in, under each server's path.
 
     ``CONSENT_PATH`` shows the page and takes its decision.
-    Each step reads the browser cookie, which ties the whole sign-in to the browser that approved it.
+    Each step reads ``cookie``, which ties the whole sign-in to the browser that approved it,
+    so the step after consent must read the same one.
     ``mcp_scope_policy`` tells the page what each MCP scope allows, and which tools need none.
     """
 
-    def __init__(self, server: McpAuthorizationCodeServer, mcp_scope_policy: McpScopePolicy) -> None:
+    def __init__(
+        self, server: McpAuthorizationCodeServer, mcp_scope_policy: McpScopePolicy, cookie: BrowserCookie
+    ) -> None:
         self._server = server
         self._mcp_scope_policy = mcp_scope_policy
-        self._cookie = BrowserCookie(secure=server.issuer.startswith('https://'))
+        self._cookie = cookie
 
     def register(self, mcp: MCPServer) -> None:
         mcp.custom_route(CONSENT_PATH, methods=['GET'])(self.show_consent)

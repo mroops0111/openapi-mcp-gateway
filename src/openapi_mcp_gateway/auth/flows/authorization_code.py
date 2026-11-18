@@ -1,7 +1,6 @@
 import logging
 import secrets
 import time
-import typing
 
 import pydantic
 from mcp.server import MCPServer
@@ -12,7 +11,6 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import Response
 
-from ...stores.base import TokenStore
 from ..mcp.authorization_code import (
     McpAuthorizationCodeContinuation,
     McpAuthorizationCodeRoutes,
@@ -176,8 +174,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         A sign-in recorded against another upstream is refused outright,
         since its code would otherwise be redeemed at a token endpoint that never issued it.
         """
-        data = await self.tokens.store.get('upstream_auth_state', state)
-        pending = _parse_pending(data) if self.tokens.is_from_here(data) else None
+        pending = await self.tokens.load_pending('upstream_auth_state', state)
         if pending is None:
             logger.warning('OAuth callback rejected: reason=invalid_state')
             raise HTTPException(400, 'This sign-in has expired or was already finished')
@@ -202,9 +199,9 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
     The browser cookie ties the callback to the browser that approved the consent page.
     """
 
-    def __init__(self, bridge: AuthorizationCodeBridge) -> None:
+    def __init__(self, bridge: AuthorizationCodeBridge, cookie: BrowserCookie) -> None:
         self._bridge = bridge
-        self._cookie = BrowserCookie(secure=bridge.tokens.issuer.startswith('https://'))
+        self._cookie = cookie
 
     def register(self, mcp: MCPServer) -> None:
         mcp.custom_route(CALLBACK_PATH, methods=['GET'])(self.finish_upstream)
@@ -292,8 +289,10 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             ),
         )
         bridge = AuthorizationCodeBridge(tokens, upstream)
-        clients = _build_client_directory(flow_context, mcp_endpoint_scopes, flow_context.store, issuer)
+        clients = _build_client_directory(flow_context, mcp_endpoint_scopes, issuer)
         server = McpAuthorizationCodeServer(tokens, clients, bridge, server_name=entry.name)
+        # One cookie for both pages, since the callback must read what the consent page set.
+        cookie = BrowserCookie(secure=issuer.startswith('https://'))
         settings = AuthSettings(
             issuer_url=server_url,
             resource_server_url=server_url,
@@ -316,14 +315,14 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             provider=server,
             settings=settings,
             routes=[
-                McpAuthorizationCodeRoutes(server, flow_context.mcp_scope_policy),
-                AuthorizationCodeCallbackRoutes(bridge),
+                McpAuthorizationCodeRoutes(server, flow_context.mcp_scope_policy, cookie),
+                AuthorizationCodeCallbackRoutes(bridge, cookie),
             ],
         )
 
 
 def _build_client_directory(
-    flow_context: OAuthFlowContext, mcp_endpoint_scopes: list[str], store: TokenStore, issuer: str
+    flow_context: OAuthFlowContext, mcp_endpoint_scopes: list[str], issuer: str
 ) -> McpClientDirectory:
     """The clients ``auth.mcp.clients`` declares, or Dynamic Client Registration when it declares none."""
     entry = flow_context.entry
@@ -334,7 +333,7 @@ def _build_client_directory(
         'Declare the clients allowed to sign in under auth.mcp.clients instead.',
         entry.name,
     )
-    return McpDynamicClientRegistry(store, issuer)
+    return McpDynamicClientRegistry(flow_context.store, issuer)
 
 
 def _build_upstream_links(access_token: str, refresh_token: str | None) -> dict[str, str]:
@@ -343,11 +342,3 @@ def _build_upstream_links(access_token: str, refresh_token: str | None) -> dict[
     if refresh_token:
         links[UPSTREAM_REFRESH_TOKEN] = refresh_token
     return links
-
-
-def _parse_pending(data: dict[str, typing.Any]) -> PendingAuthorization | None:
-    """``data`` as a sign-in, or ``None`` for a record from before sign-ins were tied to a browser."""
-    try:
-        return PendingAuthorization.model_validate(data)
-    except pydantic.ValidationError:
-        return None

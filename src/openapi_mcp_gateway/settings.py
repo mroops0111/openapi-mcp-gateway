@@ -212,13 +212,15 @@ class ClientConfig(pydantic.BaseModel):
 class McpAuthConfig(pydantic.BaseModel):
     """Who may call this MCP endpoint, the inbound half of ``auth``.
 
-    ``issuer`` and ``required_scopes`` serve ``token_exchange``, where another authorization server mints the tokens.
-    The rest serve ``authorization_code``, where the gateway mints them.
+    ``issuer`` serves ``token_exchange``, where another authorization server mints the tokens.
+    ``required_scopes`` is what every token must carry, checked by that server's tokens under ``token_exchange``
+    and granted on every token the gateway mints under ``authorization_code``.
+    The rest serve ``authorization_code`` only.
     """
 
     model_config = pydantic.ConfigDict(coerce_numbers_to_str=True, extra='forbid')
 
-    # The authorization server that mints tokens for this MCP endpoint, and what one of its tokens must already carry.
+    # The external authorization server that mints tokens for this MCP endpoint, and what every token must carry.
     issuer: str | None = None
     required_scopes: list[str] = pydantic.Field(default_factory=list)
 
