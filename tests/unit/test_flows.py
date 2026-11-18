@@ -10,12 +10,16 @@ from openapi_mcp_gateway.auth.flows import (
     build_oauth_flow,
 )
 from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeBridge
-from openapi_mcp_gateway.auth.flows.factory import resolve_oauth_flow
+from openapi_mcp_gateway.auth.flows.factory import resolve_upstream_oauth_flow
 from openapi_mcp_gateway.auth.flows.token_exchange import TokenExchangeBridge
 from openapi_mcp_gateway.auth.mcp.jwks import McpIssuerMetadata, McpJwksTokenVerifier
-from openapi_mcp_gateway.auth.setup import AuthTypeContext
+from openapi_mcp_gateway.auth.setup import AuthTypeContext, ServerAuthSetup
 from openapi_mcp_gateway.auth.upstream.client_credentials import UpstreamClientCredentialsFlowHandler
-from openapi_mcp_gateway.auth.upstream.resolver import UpstreamPassthroughAuthResolver, UpstreamTokenSourceAuthResolver
+from openapi_mcp_gateway.auth.upstream.resolver import (
+    UpstreamNoCredentialAuthResolver,
+    UpstreamPassthroughAuthResolver,
+    UpstreamTokenSourceAuthResolver,
+)
 from openapi_mcp_gateway.auth.upstream.token_source import UpstreamClientCredentialsTokenSource
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import OpenAPISpec
@@ -110,18 +114,18 @@ def _entry(auth: AuthConfig, name: str = 'srv') -> ServerConfig:
 
 
 class TestResolveOAuthFlow:
-    """``resolve_oauth_flow`` selects between spec-declared and config-supplied flows."""
+    """``resolve_upstream_oauth_flow`` selects between spec-declared and config-supplied flows."""
 
     def test_picks_authorization_code_by_default(self):
         """When the spec declares both flows, authorization_code wins."""
         entry = _entry(AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec')))
-        flow = resolve_oauth_flow(entry, _spec_with_both_flows())
+        flow = resolve_upstream_oauth_flow(entry, _spec_with_both_flows())
         assert flow.flow_type == 'authorization_code'
 
     def test_picks_client_credentials_when_only_one_declared(self):
         """If the spec only declares clientCredentials, it is selected without an override."""
         entry = _entry(AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec')))
-        flow = resolve_oauth_flow(entry, _spec_with_client_credentials())
+        flow = resolve_upstream_oauth_flow(entry, _spec_with_client_credentials())
         assert flow.flow_type == 'client_credentials'
 
     def test_explicit_flow_wins_over_default(self):
@@ -133,7 +137,7 @@ class TestResolveOAuthFlow:
                 )
             ),
         )
-        flow = resolve_oauth_flow(entry, _spec_with_both_flows())
+        flow = resolve_upstream_oauth_flow(entry, _spec_with_both_flows())
         assert flow.flow_type == 'client_credentials'
 
     def test_explicit_flow_unknown_in_spec_raises(self):
@@ -146,7 +150,7 @@ class TestResolveOAuthFlow:
             ),
         )
         with pytest.raises(ValueError, match='spec does not declare'):
-            resolve_oauth_flow(entry, _spec_with_authorization_code())
+            resolve_upstream_oauth_flow(entry, _spec_with_authorization_code())
 
     def test_synthesises_from_config_when_spec_has_none(self):
         """With no declared flows and an explicit token_url, client_credentials is synthesised by default."""
@@ -155,7 +159,7 @@ class TestResolveOAuthFlow:
                 upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec', token_url=TOKEN_URL)
             ),
         )
-        flow = resolve_oauth_flow(entry, _build_spec())
+        flow = resolve_upstream_oauth_flow(entry, _build_spec())
         assert flow.flow_type == 'client_credentials'
         assert flow.token_url == TOKEN_URL
 
@@ -172,14 +176,14 @@ class TestResolveOAuthFlow:
                 )
             ),
         )
-        flow = resolve_oauth_flow(entry, _build_spec())
+        flow = resolve_upstream_oauth_flow(entry, _build_spec())
         assert flow.flow_type == 'authorization_code'
 
     def test_no_spec_no_token_url_raises(self):
         """OAuth2 with neither spec flow nor token_url is rejected with a clear error."""
         entry = _entry(AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec')))
         with pytest.raises(ValueError, match='no OAuth2 flow'):
-            resolve_oauth_flow(entry, _build_spec())
+            resolve_upstream_oauth_flow(entry, _build_spec())
 
     def test_config_urls_override_spec_urls(self):
         """Explicit ``auth.upstream.token_url`` overrides the spec-declared value."""
@@ -190,7 +194,7 @@ class TestResolveOAuthFlow:
                 )
             ),
         )
-        flow = resolve_oauth_flow(entry, _spec_with_authorization_code())
+        flow = resolve_upstream_oauth_flow(entry, _spec_with_authorization_code())
         assert flow.token_url == 'https://other.example.com/token'
 
 
@@ -304,14 +308,14 @@ class TestClientCredentialsFlowHandler:
         )
         spec = _spec_with_client_credentials()
         handler = UpstreamClientCredentialsFlowHandler()
-        flow = resolve_oauth_flow(entry, spec)
+        flow = resolve_upstream_oauth_flow(entry, spec)
 
         setup = handler.build(
             OAuthFlowContext(
                 mcp_scope_policy=McpUnrestrictedScopePolicy(),
                 entry=entry,
                 spec=spec,
-                oauth_flow=flow,
+                upstream_oauth_flow=flow,
                 store=MemoryTokenStore(),
                 gateway_url='http://localhost:8000',
                 mount_path='/srv',
@@ -338,14 +342,14 @@ class TestAuthorizationCodeFlowHandler:
         )
         spec = _spec_with_authorization_code()
         handler = AuthorizationCodeFlowHandler()
-        flow = resolve_oauth_flow(entry, spec)
+        flow = resolve_upstream_oauth_flow(entry, spec)
 
         setup = handler.build(
             OAuthFlowContext(
                 mcp_scope_policy=McpUnrestrictedScopePolicy(),
                 entry=entry,
                 spec=spec,
-                oauth_flow=flow,
+                upstream_oauth_flow=flow,
                 store=MemoryTokenStore(),
                 gateway_url='http://localhost:8000/',
                 mount_path='/srv',
@@ -378,7 +382,7 @@ class TestUpstreamAudienceWiring:
                 mcp_scope_policy=McpUnrestrictedScopePolicy(),
                 entry=entry,
                 spec=spec,
-                oauth_flow=resolve_oauth_flow(entry, spec),
+                upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
                 store=MemoryTokenStore(),
                 gateway_url='http://localhost:8000',
                 mount_path='/srv',
@@ -400,7 +404,7 @@ class TestUpstreamAudienceWiring:
                 mcp_scope_policy=McpUnrestrictedScopePolicy(),
                 entry=entry,
                 spec=spec,
-                oauth_flow=resolve_oauth_flow(entry, spec),
+                upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
                 store=MemoryTokenStore(),
                 gateway_url='http://localhost:8000',
                 mount_path='/srv',
@@ -427,7 +431,7 @@ class TestUpstreamAudienceWiring:
                 mcp_scope_policy=McpUnrestrictedScopePolicy(),
                 entry=entry,
                 spec=spec,
-                oauth_flow=resolve_oauth_flow(entry, spec),
+                upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
                 store=MemoryTokenStore(),
                 gateway_url='http://localhost:8000',
                 mount_path='/srv',
@@ -476,7 +480,6 @@ def _build_token_exchange(entry: ServerConfig):
                 mcp_scope_policy=McpUnrestrictedScopePolicy(),
                 entry=entry,
                 spec=_build_spec(),
-                oauth_flow=resolve_oauth_flow(entry, _build_spec()),
                 store=MemoryTokenStore(),
                 gateway_url='http://localhost:8000',
                 mount_path='/srv',
@@ -557,14 +560,20 @@ class TestTokenExchangeFlowHandler:
         with pytest.raises(ValueError, match='requires client_id and client_secret'):
             _build_token_exchange(_token_exchange_entry(client_secret=None))
 
-    def test_short_circuits_before_reading_the_spec(self):
-        """``securitySchemes`` cannot declare this flow, so the detector is never consulted.
+    def test_resolves_no_upstream_flow_from_the_spec(self):
+        """``securitySchemes`` cannot declare this flow, so the spec's flows are never consulted.
 
-        Consulting it would raise a misleading "flow not declared" error on every spec.
+        Consulting them would raise a misleading "flow not declared" error on every spec.
         """
         entry = _token_exchange_entry()
+        setup = ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver())
+        handler_build = patch.object(TokenExchangeFlowHandler, 'build', autospec=True, return_value=setup)
 
-        assert resolve_oauth_flow(entry, _spec_with_authorization_code()).flow_type == 'token_exchange'
+        with handler_build as build:
+            build_oauth_flow(_auth_context(entry, _spec_with_authorization_code()))
+
+        flow_context = build.call_args.args[1]
+        assert flow_context.upstream_oauth_flow is None
 
 
 class TestAuthorizationCodeScopes:
@@ -579,7 +588,7 @@ class TestAuthorizationCodeScopes:
                 mcp_scope_policy=McpUnrestrictedScopePolicy(),
                 entry=entry,
                 spec=spec,
-                oauth_flow=resolve_oauth_flow(entry, spec),
+                upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
                 store=MemoryTokenStore(),
                 gateway_url='http://localhost:8000',
                 mount_path='/srv',

@@ -9,8 +9,9 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 from ...scopes import McpAccessToken
 from ...stores.base import TokenStore
-from .client import mcp_registered_scopes
+from .client import get_mcp_registered_scopes
 from .consent import PendingAuthorization
+from .record_origin import McpRecordOrigin
 
 
 # The scope the gateway issues and demands when it is the authorization server.
@@ -50,35 +51,23 @@ class McpTokenAttachment:
 class McpTokenIssuer:
     """Mints, stores and reads back the MCP authorization codes and tokens of one server.
 
-    ``issuer`` is the gateway's own issuer identifier for this server, the one its metadata publishes.
-    Every record is stored with ``binding``,
-    because one store serves every server in the gateway and outlives configuration changes.
-    Without it a token minted for one server would unlock the upstream credential of the next,
-    which is the cross-server credential reuse the MCP spec forbids.
-    A record that carries another binding, or none at all, is treated as absent,
+    ``origin.issuer`` is the gateway's own issuer identifier for this server, the one its metadata publishes.
+    Every record is stored with ``origin``, and one read elsewhere is treated as absent,
     so the client re-registers or re-authorizes rather than failing outright.
     """
 
-    def __init__(
-        self,
-        store: TokenStore,
-        issuer: str,
-        policy: McpTokenPolicy,
-        binding: collections.abc.Mapping[str, str],
-    ) -> None:
+    def __init__(self, store: TokenStore, origin: McpRecordOrigin, policy: McpTokenPolicy) -> None:
         self.store = store
-        self.issuer = issuer
+        self.origin = origin
         self.policy = policy
-        self._binding = dict(binding)
 
     @property
-    def binding(self) -> dict[str, str]:
-        """The values that tie a record to this server, such as its issuer and the upstream it signs in to."""
-        return dict(self._binding)
+    def issuer(self) -> str:
+        return self.origin.issuer
 
-    def is_bound_here(self, data: dict[str, typing.Any] | None) -> typing.TypeGuard[dict[str, typing.Any]]:
-        """Whether a stored record was written for this server under its current binding."""
-        return bool(data) and data.get('binding') == self._binding
+    def is_from_here(self, data: dict[str, typing.Any] | None) -> typing.TypeGuard[dict[str, typing.Any]]:
+        """Whether a stored record was written by this server against its current upstream."""
+        return bool(data) and data.get('origin') == self.origin.model_dump()
 
     async def complete_authorization(self, pending: PendingAuthorization, attachment: McpTokenAttachment) -> str:
         """Mint the MCP authorization code that ends ``pending``, and return the redirect carrying it to the client.
@@ -98,11 +87,11 @@ class McpTokenIssuer:
                 'expires_at': time.time() + MCP_AUTHORIZATION_CODE_TTL,
                 'scopes': pending.scopes,
                 'code_challenge': pending.code_challenge,
-                **self._attachment_fields(attachment),
+                **self._build_record_fields(attachment),
             },
             ttl=MCP_AUTHORIZATION_CODE_TTL,
         )
-        await self._link('mcp_auth_code', code, attachment, MCP_AUTHORIZATION_CODE_TTL)
+        await self._store_links('mcp_auth_code', code, attachment, MCP_AUTHORIZATION_CODE_TTL)
         return construct_redirect_uri(pending.redirect_uri, code=code, state=pending.client_state, iss=self.issuer)
 
     async def load_attachment(self, namespace: str, key: str, data: dict[str, typing.Any]) -> McpTokenAttachment | None:
@@ -130,8 +119,8 @@ class McpTokenIssuer:
         record = {
             'client_id': client_id,
             'scopes': scopes,
-            'mcp_grantable_scopes': mcp_registered_scopes(client) or list(scopes),
-            **self._attachment_fields(attachment),
+            'mcp_grantable_scopes': get_mcp_registered_scopes(client) or list(scopes),
+            **self._build_record_fields(attachment),
         }
         access_ttl = self.policy.access_token_ttl
         refresh_ttl = self.policy.refresh_token_ttl
@@ -148,8 +137,8 @@ class McpTokenIssuer:
             {'token': refresh_token, **record, 'expires_at': now + refresh_ttl},
             ttl=refresh_ttl,
         )
-        await self._link('mcp_access_token', access_token, attachment, access_ttl)
-        await self._link('mcp_refresh_token', refresh_token, attachment, refresh_ttl)
+        await self._store_links('mcp_access_token', access_token, attachment, access_ttl)
+        await self._store_links('mcp_refresh_token', refresh_token, attachment, refresh_ttl)
         # Pair access and refresh in both directions for revoke lookup.
         await self.store.set_mapping(
             'mcp_access_token', access_token, 'mcp_refresh_token', refresh_token, ttl=access_ttl
@@ -169,7 +158,7 @@ class McpTokenIssuer:
     async def load_access_token(self, token: str) -> McpAccessToken | None:
         """The MCP access token stored under ``token``, or ``None`` when it is unknown here or expired."""
         data = await self.store.get('mcp_access_token', token)
-        if not self.is_bound_here(data):
+        if not self.is_from_here(data):
             return None
         return McpAccessToken(
             token=data['token'],
@@ -180,7 +169,7 @@ class McpTokenIssuer:
             mcp_grantable_scopes=data.get('mcp_grantable_scopes'),
         )
 
-    async def read_access_token_link(self, token: str, link: str) -> str | None:
+    async def load_access_token_link(self, token: str, link: str) -> str | None:
         """The credential the MCP access token ``token`` links to under ``link``, or ``None`` for none."""
         return await self.store.get_mapping('mcp_access_token', token, link)
 
@@ -198,15 +187,15 @@ class McpTokenIssuer:
             await self.store.delete('mcp_access_token', paired)
         await self.store.delete('mcp_refresh_token', token)
 
-    def _attachment_fields(self, attachment: McpTokenAttachment) -> dict[str, typing.Any]:
+    def _build_record_fields(self, attachment: McpTokenAttachment) -> dict[str, typing.Any]:
         """The record fields every code and token carries besides its own."""
         return {
             'upstream_scopes': list(attachment.upstream_scopes),
             'links': sorted(attachment.links),
-            'binding': self._binding,
+            'origin': self.origin.model_dump(),
         }
 
-    async def _link(self, namespace: str, key: str, attachment: McpTokenAttachment, ttl: int) -> None:
+    async def _store_links(self, namespace: str, key: str, attachment: McpTokenAttachment, ttl: int) -> None:
         """Map the record under ``key`` to each credential ``attachment`` links, for as long as the record lives."""
         for link, value in attachment.links.items():
             await self.store.set_mapping(namespace, key, link, value, ttl=ttl)

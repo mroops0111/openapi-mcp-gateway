@@ -4,7 +4,7 @@ import pytest
 from starlette.requests import Request
 
 from openapi_mcp_gateway.auth.mcp.consent import BrowserCookie
-from openapi_mcp_gateway.auth.mcp.consent_page import ConsentPrompt, DescribedScope, consent_page
+from openapi_mcp_gateway.auth.mcp.consent_page import ConsentPrompt, DescribedScope, render_consent_page
 from tests.oauth import BROWSER_ID, PLAIN_COOKIE, SECURE_COOKIE
 
 
@@ -63,6 +63,14 @@ class TestConsentPage:
         page = _page_text(dataclasses.replace(HOSTILE_PROMPT, upstream_scopes=[]))
         assert 'will be asked for' not in page
 
+    def test_a_sign_in_that_ends_at_approval_names_no_next_host(self):
+        """With no sign-in after consent, the page does not promise one."""
+        page = _page_text(dataclasses.replace(HOSTILE_PROMPT, upstream_host=None, upstream_scopes=[]))
+        assert 'You sign in at' not in page
+        assert 'Then client-1 can use petstore on your behalf.' in _page_text(
+            dataclasses.replace(HOSTILE_PROMPT, client_name=None, upstream_host=None, upstream_scopes=[])
+        )
+
 
 class TestBrowserCookie:
     """The browser cookie is read back only in the form the gateway issues it."""
@@ -83,7 +91,7 @@ class TestBrowserCookie:
 
 def _page_text(prompt: ConsentPrompt) -> str:
     """The HTML the consent page for ``prompt`` serves."""
-    return bytes(consent_page(prompt).body).decode()
+    return bytes(render_consent_page(prompt).body).decode()
 
 
 def _request(cookie: str) -> Request:

@@ -17,11 +17,12 @@ from ..mcp.authorization_code import (
     McpAuthorizationCodeContinuation,
     McpAuthorizationCodeRoutes,
     McpAuthorizationCodeServer,
-    McpOnwardSignIn,
+    McpNextSignIn,
 )
 from ..mcp.client import McpClientDirectory, McpDynamicClientRegistry, McpPreRegisteredClientDirectory
 from ..mcp.consent import PENDING_AUTHORIZATION_TTL, BrowserCookie, PendingAuthorization
-from ..mcp.consent_page import error_page, page_redirect
+from ..mcp.consent_page import redirect_without_cache, render_error_page
+from ..mcp.record_origin import McpRecordOrigin
 from ..mcp.token_issuer import MCP_DEFAULT_SCOPE, McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
 from ..setup import AuthRoutes, ServerAuthSetup
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
@@ -65,14 +66,14 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
 
     # McpAuthorizationCodeContinuation
 
-    def onward_sign_in(self) -> McpOnwardSignIn:
-        return McpOnwardSignIn(
+    def describe_next_sign_in(self) -> McpNextSignIn:
+        return McpNextSignIn(
             host=self.upstream.host,
             scopes=list(self.upstream.scopes),
             scope_descriptions=self.upstream.scope_descriptions,
         )
 
-    async def on_approved(self, pending: PendingAuthorization) -> str:
+    async def continue_after_consent(self, pending: PendingAuthorization) -> str:
         """Send the browser to the upstream, under a fresh ``state`` only the browser behind ``pending`` can finish.
 
         The client's own ``state`` is never sent upstream.
@@ -80,9 +81,9 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         """
         state = secrets.token_urlsafe(32)
         await self.tokens.store.set('upstream_auth_state', state, pending.model_dump(), ttl=PENDING_AUTHORIZATION_TTL)
-        return self.upstream.authorize_url(state)
+        return self.upstream.build_authorize_url(state)
 
-    async def on_refreshed(self, client_id: str, attachment: McpTokenAttachment) -> McpTokenAttachment:
+    async def refresh_attachment(self, client_id: str, attachment: McpTokenAttachment) -> McpTokenAttachment:
         """Refresh the upstream token too when it has expired, keeping the upstream refresh token if none is new."""
         upstream_access_token = attachment.links[UPSTREAM_ACCESS_TOKEN]
         if await self.tokens.store.get(UPSTREAM_ACCESS_TOKEN, upstream_access_token):
@@ -97,8 +98,8 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         refreshed = await self.upstream.refresh(upstream_refresh_token)
         await self._store_upstream_access_token(client_id, refreshed.access_token, refreshed.expires_in)
         return McpTokenAttachment(
-            upstream_scopes=refreshed.granted_scopes(attachment.upstream_scopes),
-            links=_upstream_links(refreshed.access_token, refreshed.refresh_token or upstream_refresh_token),
+            upstream_scopes=refreshed.resolve_granted_scopes(attachment.upstream_scopes),
+            links=_build_upstream_links(refreshed.access_token, refreshed.refresh_token or upstream_refresh_token),
         )
 
     # UpstreamTokenSource
@@ -108,7 +109,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         mcp_access_token = get_access_token()
         if mcp_access_token is None:
             return None
-        return await self.tokens.read_access_token_link(mcp_access_token.token, UPSTREAM_ACCESS_TOKEN)
+        return await self.tokens.load_access_token_link(mcp_access_token.token, UPSTREAM_ACCESS_TOKEN)
 
     # The upstream's redirect back
 
@@ -133,8 +134,8 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         redirect_uri = await self.tokens.complete_authorization(
             pending,
             McpTokenAttachment(
-                upstream_scopes=upstream_token.granted_scopes(self.upstream.scopes),
-                links=_upstream_links(upstream_token.access_token, upstream_token.refresh_token),
+                upstream_scopes=upstream_token.resolve_granted_scopes(self.upstream.scopes),
+                links=_build_upstream_links(upstream_token.access_token, upstream_token.refresh_token),
             ),
         )
         await self.tokens.store.delete('upstream_auth_state', state)
@@ -176,7 +177,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         since its code would otherwise be redeemed at a token endpoint that never issued it.
         """
         data = await self.tokens.store.get('upstream_auth_state', state)
-        pending = _parse_pending(data) if self.tokens.is_bound_here(data) else None
+        pending = _parse_pending(data) if self.tokens.is_from_here(data) else None
         if pending is None:
             logger.warning('OAuth callback rejected: reason=invalid_state')
             raise HTTPException(400, 'This sign-in has expired or was already finished')
@@ -224,10 +225,10 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
             elif state and (code := query.get('code')):
                 redirect_uri = await self._bridge.handle_upstream_callback(code, state, browser_id, query.get('iss'))
             else:
-                return error_page(_INCOMPLETE_CALLBACK, 400)
+                return render_error_page(_INCOMPLETE_CALLBACK, 400)
         except HTTPException as exc:
-            return error_page(exc.detail, exc.status_code)
-        return page_redirect(redirect_uri, 302)
+            return render_error_page(exc.detail, exc.status_code)
+        return redirect_without_cache(redirect_uri, 302)
 
 
 class AuthorizationCodeFlowHandler(OAuthFlowHandler):
@@ -239,7 +240,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
 
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry
-        oauth_flow = flow_context.oauth_flow
+        oauth_flow = flow_context.require_upstream_oauth_flow()
         upstream_config = entry.auth.upstream
         mcp_config = entry.auth.mcp
 
@@ -267,7 +268,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             client_secret=client_secret,
             callback_url=f'{gateway_url}{flow_context.mount_path}{CALLBACK_PATH}',
             scopes=list(upstream_config.scopes),
-            scope_descriptions=oauth_flow.scopes,
+            scope_descriptions=oauth_flow.scope_descriptions,
             audience_params=upstream_config.resolve_audience_params(),
             issuer=upstream_config.resolve_issuer(),
         )
@@ -283,22 +284,21 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         issuer = str(server_url)
         tokens = McpTokenIssuer(
             store=flow_context.store,
-            issuer=issuer,
+            origin=McpRecordOrigin(issuer=issuer, upstream_authorization_server=upstream.authorization_server),
             policy=McpTokenPolicy(
                 scopes=mcp_endpoint_scopes,
                 access_token_ttl=mcp_config.access_token_ttl,
                 refresh_token_ttl=mcp_config.refresh_token_ttl,
             ),
-            binding={'issuer': issuer, 'upstream_authorization_server': upstream.authorization_server},
         )
         bridge = AuthorizationCodeBridge(tokens, upstream)
-        clients = _client_directory(flow_context, mcp_endpoint_scopes, flow_context.store, issuer)
+        clients = _build_client_directory(flow_context, mcp_endpoint_scopes, flow_context.store, issuer)
         server = McpAuthorizationCodeServer(tokens, clients, bridge, server_name=entry.name)
         settings = AuthSettings(
             issuer_url=server_url,
             resource_server_url=server_url,
             revocation_options=RevocationOptions(enabled=True),
-            client_registration_options=clients.registration_options(mcp_endpoint_scopes),
+            client_registration_options=clients.build_registration_options(mcp_endpoint_scopes),
             required_scopes=mcp_endpoint_scopes,
         )
 
@@ -322,7 +322,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         )
 
 
-def _client_directory(
+def _build_client_directory(
     flow_context: OAuthFlowContext, mcp_endpoint_scopes: list[str], store: TokenStore, issuer: str
 ) -> McpClientDirectory:
     """The clients ``auth.mcp.clients`` declares, or Dynamic Client Registration when it declares none."""
@@ -337,7 +337,7 @@ def _client_directory(
     return McpDynamicClientRegistry(store, issuer)
 
 
-def _upstream_links(access_token: str, refresh_token: str | None) -> dict[str, str]:
+def _build_upstream_links(access_token: str, refresh_token: str | None) -> dict[str, str]:
     """The links an MCP token carries to the upstream tokens behind it."""
     links = {UPSTREAM_ACCESS_TOKEN: access_token}
     if refresh_token:

@@ -1,4 +1,3 @@
-from .detector import DetectedOAuthFlow, detect_oauth_flows, detect_primary_oauth_flow
 from .flows import (
     OAUTH_FLOW_HANDLERS,
     AuthorizationCodeBridge,
@@ -13,6 +12,7 @@ from .mcp.authorization_code import McpAuthorizationCodeServer
 from .setup import AuthRoutes, AuthTypeContext, AuthTypeHandler, ServerAuthSetup
 from .types import AUTH_TYPE_HANDLERS, build_auth
 from .upstream.client_credentials import UpstreamClientCredentialsFlowHandler
+from .upstream.oauth_flow import UpstreamOAuthFlow, detect_primary_upstream_oauth_flow, detect_upstream_oauth_flows
 from .upstream.resolver import (
     UpstreamAuthResolver,
     UpstreamNoCredentialAuthResolver,
@@ -30,7 +30,6 @@ __all__ = [
     'AuthTypeHandler',
     'AuthorizationCodeBridge',
     'AuthorizationCodeFlowHandler',
-    'DetectedOAuthFlow',
     'McpAuthorizationCodeServer',
     'OAuthFlowContext',
     'OAuthFlowHandler',
@@ -41,11 +40,12 @@ __all__ = [
     'UpstreamClientCredentialsFlowHandler',
     'UpstreamClientCredentialsTokenSource',
     'UpstreamNoCredentialAuthResolver',
+    'UpstreamOAuthFlow',
     'UpstreamStaticAuthResolver',
     'UpstreamTokenSource',
     'UpstreamTokenSourceAuthResolver',
     'build_auth',
     'build_oauth_flow',
-    'detect_oauth_flows',
-    'detect_primary_oauth_flow',
+    'detect_primary_upstream_oauth_flow',
+    'detect_upstream_oauth_flows',
 ]

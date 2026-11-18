@@ -19,7 +19,7 @@ class UpstreamTokenResponse:
     expires_in: int
     scope: str | None
 
-    def granted_scopes(self, previous: list[str]) -> list[str]:
+    def resolve_granted_scopes(self, previous: list[str]) -> list[str]:
         """The scopes the upstream granted, read as RFC 6749 §5.1 states them.
 
         An omitted ``scope`` means the grant did not change, so it is ``previous``,
@@ -70,7 +70,7 @@ class UpstreamAuthorizationCodeClient:
         """Where the user signs in, as a consent page names it."""
         return urllib.parse.urlsplit(self.authorization_url).netloc
 
-    def authorize_url(self, state: str) -> str:
+    def build_authorize_url(self, state: str) -> str:
         """The upstream authorize URL for a sign-in under ``state``."""
         query_params = {
             'client_id': self.client_id,

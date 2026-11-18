@@ -14,10 +14,10 @@ from mcp.server.caching import CacheableMethod, CacheHint
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from .app import _ServerBundle, build_app, mount_mcp_apps, register_auth_routes, serve_lifespan
-from .auth.detector import detect_oauth_flows, detect_unsupported_oauth_flows
 from .auth.mcp.authorization_code import McpAuthorizationCodeServer
 from .auth.setup import AuthTypeContext, ServerAuthSetup
 from .auth.types import build_auth
+from .auth.upstream.oauth_flow import detect_unsupported_upstream_oauth_flows, detect_upstream_oauth_flows
 from .auth.upstream.resolver import (
     UpstreamAuthResolver,
     UpstreamCompositeAuthResolver,
@@ -306,8 +306,8 @@ class Gateway:
         logger.info('Registering FastAPI app as MCP server "%s"', name)
         spec = parse_spec(app.openapi())
 
-        declared = detect_oauth_flows(spec)
-        unsupported = detect_unsupported_oauth_flows(spec)
+        declared = detect_upstream_oauth_flows(spec)
+        unsupported = detect_unsupported_upstream_oauth_flows(spec)
         if unsupported and not declared:
             raise ValueError(
                 f'FastAPI server "{name}" declares only unsupported OAuth2 flows: {unsupported}. '

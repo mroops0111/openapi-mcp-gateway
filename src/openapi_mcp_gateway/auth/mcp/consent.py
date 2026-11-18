@@ -7,6 +7,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from ...stores.base import TokenStore
+from .record_origin import McpRecordOrigin
 
 
 # How long a sign-in may wait, at the consent page or at the upstream, before it has to start again.
@@ -29,7 +30,7 @@ class PendingAuthorization(pydantic.BaseModel):
     then under whatever key the step after consent chooses, such as the ``state`` sent to the upstream.
     ``browser_id`` is the browser that opened the consent page, the only one that may finish the sign-in.
     ``csrf_token`` is what the consent form must send back for its decision to count.
-    ``binding`` ties the sign-in to the server and upstream it was started against, as ``McpTokenIssuer`` does a token.
+    ``origin`` is the server and upstream the sign-in was started against.
     """
 
     request_id: str
@@ -40,7 +41,7 @@ class PendingAuthorization(pydantic.BaseModel):
     scopes: list[str]
     client_state: str | None
     csrf_token: str
-    binding: dict[str, str]
+    origin: McpRecordOrigin
     browser_id: str | None = None
 
     @property
@@ -71,7 +72,7 @@ class ConsentRegistry:
         upstream_scopes: collections.abc.Iterable[str],
     ) -> bool:
         """Whether the browser already approved the client for every one of these scopes."""
-        approved = await self.approved(browser_id, client_id)
+        approved = await self.load_approved_scopes(browser_id, client_id)
         return approved is not None and approved.covers(mcp_scopes, upstream_scopes)
 
     async def approve(
@@ -82,14 +83,14 @@ class ConsentRegistry:
         upstream_scopes: collections.abc.Iterable[str],
     ) -> None:
         """Add these scopes to what the browser approved for the client, restarting the approval's lifetime."""
-        approved = await self.approved(browser_id, client_id) or ApprovedScopes()
+        approved = await self.load_approved_scopes(browser_id, client_id) or ApprovedScopes()
         merged = ApprovedScopes(
             mcp_scopes=sorted({*approved.mcp_scopes, *mcp_scopes}),
             upstream_scopes=sorted({*approved.upstream_scopes, *upstream_scopes}),
         )
         await self._store.set('mcp_consent', self._key(browser_id, client_id), merged.model_dump(), ttl=CONSENT_TTL)
 
-    async def approved(self, browser_id: str, client_id: str) -> 'ApprovedScopes | None':
+    async def load_approved_scopes(self, browser_id: str, client_id: str) -> 'ApprovedScopes | None':
         """What the browser approved for the client so far, or ``None`` when it never did."""
         data = await self._store.get('mcp_consent', self._key(browser_id, client_id))
         return ApprovedScopes.model_validate(data) if data else None
@@ -107,7 +108,7 @@ class ApprovedScopes(pydantic.BaseModel):
     def covers(self, mcp_scopes: collections.abc.Iterable[str], upstream_scopes: collections.abc.Iterable[str]) -> bool:
         return set(mcp_scopes) <= set(self.mcp_scopes) and set(upstream_scopes) <= set(self.upstream_scopes)
 
-    def new_in(
+    def find_new_scopes(
         self, mcp_scopes: collections.abc.Iterable[str], upstream_scopes: collections.abc.Iterable[str]
     ) -> 'ApprovedScopes':
         """The scopes of each side this approval does not yet cover."""

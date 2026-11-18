@@ -20,7 +20,7 @@ class UpstreamClientCredentialsFlowHandler(OAuthFlowHandler):
 
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry
-        oauth_flow = flow_context.oauth_flow
+        oauth_flow = flow_context.require_upstream_oauth_flow()
 
         client_id = entry.auth.upstream.resolve_client_id()
         client_secret = entry.auth.upstream.resolve_client_secret()
@@ -35,7 +35,7 @@ class UpstreamClientCredentialsFlowHandler(OAuthFlowHandler):
                 'Provide auth.upstream.token_url or add it to the spec securitySchemes.'
             )
 
-        scopes = entry.auth.upstream.scopes or list(oauth_flow.scopes.keys())
+        scopes = entry.auth.upstream.scopes or list(oauth_flow.scope_descriptions)
         audience_params = entry.auth.upstream.resolve_audience_params()
         token_source = UpstreamClientCredentialsTokenSource(
             token_url=oauth_flow.token_url,

@@ -530,7 +530,7 @@ class TestClientRegistrationBinding:
         assert await petstore.get_client('mcp-client-123') is not None
         assert await inventory.get_client('mcp-client-123') is None
 
-    async def test_a_registration_stored_before_binding_degrades_to_re_registration(
+    async def test_a_registration_stored_before_issuer_keys_degrades_to_re_registration(
         self, provider, mcp_client_info, memory_store
     ):
         """A legacy record keyed by bare ``client_id`` reads as unknown rather than failing.
@@ -580,8 +580,8 @@ class TestTokenBinding:
         after = make_provider(upstream_issuer=ISSUER, token_url=f'{ISSUER}/oauth/token')
         assert await after.load_access_token(token.access_token) is not None
 
-    async def test_tokens_stored_before_binding_are_refused(self, provider, memory_store):
-        """A legacy record carries no binding, so the client refreshes or signs in again."""
+    async def test_tokens_stored_without_an_origin_are_refused(self, provider, memory_store):
+        """A legacy record carries no origin, so the client refreshes or signs in again."""
         await memory_store.set(
             'mcp_access_token',
             'mcp_legacy',

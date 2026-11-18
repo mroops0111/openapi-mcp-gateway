@@ -46,7 +46,9 @@ class McpClientDirectory(abc.ABC):
         """
         return True
 
-    def registration_options(self, mcp_endpoint_scopes: collections.abc.Sequence[str]) -> ClientRegistrationOptions:
+    def build_registration_options(
+        self, mcp_endpoint_scopes: collections.abc.Sequence[str]
+    ) -> ClientRegistrationOptions:
         """The SDK's registration settings, granting a registered client ``mcp_endpoint_scopes``.
 
         Registration stays off, but the endpoint scopes are still advertised as ``scopes_supported``,
@@ -67,7 +69,7 @@ class McpDynamicClientRegistry(McpClientDirectory):
         self._issuer = issuer
 
     async def get(self, client_id: str) -> OAuthClientInformationFull | None:
-        # A registration stored before issuer binding lives under the bare client_id and is never read here.
+        # A registration stored before issuers keyed them lives under the bare client_id, so it is never read here.
         # The client is then unknown to this server and registers again, which is the migration path.
         data = await self._store.get('mcp_client', self._client_key(client_id))
         return OAuthClientInformationFull(**data) if data else None
@@ -85,7 +87,9 @@ class McpDynamicClientRegistry(McpClientDirectory):
             self._issuer,
         )
 
-    def registration_options(self, mcp_endpoint_scopes: collections.abc.Sequence[str]) -> ClientRegistrationOptions:
+    def build_registration_options(
+        self, mcp_endpoint_scopes: collections.abc.Sequence[str]
+    ) -> ClientRegistrationOptions:
         return ClientRegistrationOptions(
             enabled=True, valid_scopes=list(mcp_endpoint_scopes), default_scopes=list(mcp_endpoint_scopes)
         )
@@ -140,7 +144,7 @@ class McpPreRegisteredClient(OAuthClientInformationFull):
         requested = requested_scope.split() if requested_scope else []
         if not requested:
             return list(self.default_scopes)
-        allowed = mcp_registered_scopes(self)
+        allowed = get_mcp_registered_scopes(self)
         within = [scope for scope in dict.fromkeys(requested) if scope in allowed]
         if not within:
             logger.warning(
@@ -193,7 +197,7 @@ class McpPreRegisteredClientDirectory(McpClientDirectory):
         return client_id not in self._exempt_from_consent
 
 
-def mcp_registered_scopes(client: OAuthClientInformationFull) -> list[str]:
+def get_mcp_registered_scopes(client: OAuthClientInformationFull) -> list[str]:
     """Every scope ``client`` is registered with, the most it may be granted, or none when it names none."""
     return client.scope.split() if client.scope else []
 

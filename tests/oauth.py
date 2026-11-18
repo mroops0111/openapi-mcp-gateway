@@ -10,6 +10,7 @@ from pydantic import AnyHttpUrl
 from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeBridge
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
 from openapi_mcp_gateway.auth.mcp.client import McpClientDirectory, McpDynamicClientRegistry
+from openapi_mcp_gateway.auth.mcp.record_origin import McpRecordOrigin
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenIssuer, McpTokenPolicy
 from openapi_mcp_gateway.auth.upstream.authorization_code import UpstreamAuthorizationCodeClient
 from openapi_mcp_gateway.gateway import Gateway
@@ -46,9 +47,8 @@ def authorization_code_server(
     """
     tokens = McpTokenIssuer(
         store,
-        issuer,
+        McpRecordOrigin(issuer=issuer, upstream_authorization_server=upstream.authorization_server),
         policy or McpTokenPolicy(),
-        {'issuer': issuer, 'upstream_authorization_server': upstream.authorization_server},
     )
     bridge = AuthorizationCodeBridge(tokens, upstream)
     return McpAuthorizationCodeServer(
@@ -137,7 +137,7 @@ async def begin_upstream(
         request_id_in(await authorize(provider, client, state, scopes)), BROWSER_ID
     )
     assert pending is not None
-    return await provider.proceed(pending)
+    return await provider.continue_after_consent(pending)
 
 
 async def complete_upstream(

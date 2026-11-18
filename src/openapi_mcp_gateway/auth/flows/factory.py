@@ -3,9 +3,9 @@ import logging
 
 from ...openapi import OpenAPISpec
 from ...settings import ServerConfig
-from ..detector import DetectedOAuthFlow, detect_oauth_flows
 from ..setup import AuthTypeContext, ServerAuthSetup
 from ..upstream.client_credentials import UpstreamClientCredentialsFlowHandler
+from ..upstream.oauth_flow import UpstreamOAuthFlow, detect_upstream_oauth_flows
 from .authorization_code import AuthorizationCodeFlowHandler
 from .base import OAuthFlowContext, OAuthFlowHandler
 from .token_exchange import TokenExchangeFlowHandler
@@ -32,27 +32,33 @@ def build_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
     4. Apply config-supplied URL overrides on top of the spec-declared values.
     """
     entry = context.entry
-    oauth_flow = resolve_oauth_flow(entry, context.spec)
-    handler_class = OAUTH_FLOW_HANDLERS.get(oauth_flow.flow_type)
+    flow_type: str | None = entry.auth.upstream.flow
+    upstream_oauth_flow = None
+    # No spec can declare token_exchange and it talks to no upstream authorization server,
+    # so there is no upstream flow to resolve, and consulting the spec would only report a misleading missing flow.
+    if flow_type != 'token_exchange':
+        upstream_oauth_flow = resolve_upstream_oauth_flow(entry, context.spec)
+        flow_type = upstream_oauth_flow.flow_type
+    handler_class = OAUTH_FLOW_HANDLERS.get(flow_type or '')
     if handler_class is None:
         raise ValueError(
-            f'Server "{entry.name}": unsupported OAuth flow type "{oauth_flow.flow_type}". '
+            f'Server "{entry.name}": unsupported OAuth flow type "{flow_type}". '
             f'Supported flows: {sorted(OAUTH_FLOW_HANDLERS)}'
         )
 
     flow_context = OAuthFlowContext(
         entry=entry,
         spec=context.spec,
-        oauth_flow=oauth_flow,
         store=context.store,
         gateway_url=context.gateway_url,
         mount_path=entry.mount_path,
         mcp_scope_policy=context.mcp_scope_policy,
+        upstream_oauth_flow=upstream_oauth_flow,
     )
-    return dataclasses.replace(handler_class().build(flow_context), flow_type=oauth_flow.flow_type)
+    return dataclasses.replace(handler_class().build(flow_context), flow_type=flow_type)
 
 
-def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthFlow:
+def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> UpstreamOAuthFlow:
     """Pick the effective OAuth flow for ``entry`` from the spec and config combined.
 
     Honours ``auth.upstream.flow`` as an explicit override,
@@ -67,13 +73,10 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
     so ``auth.upstream.type: passthrough`` is never reached from here and must be asked for by name.
     """
     explicit_flow_type = entry.auth.upstream.flow
-
-    # No spec can declare this one, so the detector has nothing to contribute,
-    # and consulting it would only produce a misleading "flow not declared" error.
     if explicit_flow_type == 'token_exchange':
-        return DetectedOAuthFlow(flow_type='token_exchange')
+        raise ValueError(f'Server "{entry.name}": token_exchange runs no OAuth flow against the upstream.')
 
-    declared_flows = detect_oauth_flows(spec)
+    declared_flows = detect_upstream_oauth_flows(spec)
     selected_flow = _pick_from_declared_flows(declared_flows, explicit_flow_type)
 
     if selected_flow is None:
@@ -114,9 +117,9 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
 
 
 def _pick_from_declared_flows(
-    declared_flows: list[DetectedOAuthFlow],
+    declared_flows: list[UpstreamOAuthFlow],
     explicit_flow_type: str | None,
-) -> DetectedOAuthFlow | None:
+) -> UpstreamOAuthFlow | None:
     """Return the spec-declared flow matching ``explicit_flow_type``, or the preferred default."""
     if not declared_flows:
         return None
@@ -136,8 +139,8 @@ def _pick_from_declared_flows(
     return declared_flows[0]
 
 
-def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None) -> DetectedOAuthFlow:
-    """Build a ``DetectedOAuthFlow`` from explicit config when the spec declares none."""
+def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None) -> UpstreamOAuthFlow:
+    """Build a ``UpstreamOAuthFlow`` from explicit config when the spec declares none."""
     if not entry.auth.upstream.token_url:
         raise ValueError(
             f'Server "{entry.name}": auth type is oauth2 but the spec has no OAuth2 flow and no token_url is provided. '
@@ -154,10 +157,9 @@ def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None)
     if flow_type == 'authorization_code' and not entry.auth.upstream.authorization_url:
         raise ValueError(f'Server "{entry.name}": authorization_code flow requires auth.upstream.authorization_url.')
 
-    scopes_map = dict.fromkeys(entry.auth.upstream.scopes, '')
-    return DetectedOAuthFlow(
+    return UpstreamOAuthFlow(
         flow_type=flow_type,  # type: ignore[arg-type]
         authorization_url=entry.auth.upstream.authorization_url,
         token_url=entry.auth.upstream.token_url,
-        scopes=scopes_map,
+        scope_descriptions=dict.fromkeys(entry.auth.upstream.scopes, ''),
     )

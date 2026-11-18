@@ -149,18 +149,18 @@ class TestRegistration:
 
     async def test_pre_registered_directories_refuse_registration(self):
         directory = McpPreRegisteredClientDirectory({}, ())
-        assert directory.registration_options(['api']).enabled is False
+        assert directory.build_registration_options(['api']).enabled is False
         with pytest.raises(RegistrationError):
             await directory.register(OAuthClientInformationFull(client_id='newcomer'))
 
     @pytest.mark.parametrize(('mcp_endpoint_scopes', 'advertised'), [(['api'], ['api']), ([], None)])
     def test_pre_registered_directories_still_advertise_the_endpoint_scopes(self, mcp_endpoint_scopes, advertised):
         """``scopes_supported`` is read from the registration options, so it would vanish with registration."""
-        options = McpPreRegisteredClientDirectory({}, ()).registration_options(mcp_endpoint_scopes)
+        options = McpPreRegisteredClientDirectory({}, ()).build_registration_options(mcp_endpoint_scopes)
         assert options.valid_scopes == advertised
 
     def test_dynamic_registries_grant_the_endpoint_scopes(self, memory_store):
-        options = McpDynamicClientRegistry(memory_store, GATEWAY_ISSUER).registration_options(['api'])
+        options = McpDynamicClientRegistry(memory_store, GATEWAY_ISSUER).build_registration_options(['api'])
         assert options.enabled is True
         assert options.valid_scopes == options.default_scopes == ['api']
 

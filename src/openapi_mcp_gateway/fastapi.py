@@ -5,7 +5,7 @@ import typing
 import pydantic
 from fastapi import FastAPI
 
-from .auth.detector import DetectedOAuthFlow
+from .auth.upstream.oauth_flow import UpstreamOAuthFlow
 from .openapi import OperationInfo
 from .settings import AuthConfig, UpstreamAuthConfig
 
@@ -139,7 +139,7 @@ def override_with_metadata(operation: OperationInfo, metadata: ToolMetadata) -> 
     return operation.model_copy(update=updates) if updates else operation
 
 
-def infer_auth_from_declared_flows(declared: list[DetectedOAuthFlow]) -> AuthConfig:
+def infer_auth_from_declared_flows(declared: list[UpstreamOAuthFlow]) -> AuthConfig:
     """Default to ``passthrough`` when the FastAPI app declares any supported OAuth flow, ``none`` otherwise.
 
     Passthrough is the correct default here, because the gateway is mounted onto the same app it exposes.

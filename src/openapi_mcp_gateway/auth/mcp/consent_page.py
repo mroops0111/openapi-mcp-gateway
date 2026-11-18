@@ -104,10 +104,11 @@ class ConsentPrompt:
     ``mcp_scopes`` are the scopes the server defines that the client is granted.
     ``opens_unscoped_tools`` says the tools no scope covers are open to every client,
     which on a server without ``auth.mcp.operation_scopes`` is every tool.
+    ``upstream_host`` is where the user signs in next, and ``None`` when approval ends the sign-in.
     """
 
     server_name: str
-    upstream_host: str
+    upstream_host: str | None
     client_id: str
     client_name: str | None
     redirect_uri: str
@@ -117,11 +118,16 @@ class ConsentPrompt:
     csrf_token: str
 
 
-def consent_page(prompt: ConsentPrompt) -> HTMLResponse:
+def render_consent_page(prompt: ConsentPrompt) -> HTMLResponse:
     """The consent page for ``prompt``, posting the user's decision back to the address it was served from."""
     client = html.escape(prompt.client_name or prompt.client_id)
     server = html.escape(prompt.server_name)
-    upstream_host = html.escape(prompt.upstream_host)
+    upstream_host = html.escape(prompt.upstream_host or '')
+    next_step = (
+        f'You sign in at <b>{upstream_host}</b> next, then {client} can use {server} on your behalf.'
+        if prompt.upstream_host
+        else f'Then {client} can use {server} on your behalf.'
+    )
     upstream_scopes = (
         f'<p class="label">{upstream_host} will be asked for</p><ul>{_scope_items(prompt.upstream_scopes)}</ul>'
         if prompt.upstream_scopes
@@ -129,7 +135,7 @@ def consent_page(prompt: ConsentPrompt) -> HTMLResponse:
     )
     content = f"""
 <h1>Allow {client} to use {server}?</h1>
-<p>You sign in at <b>{upstream_host}</b> next, then {client} can use {server} on your behalf.</p>
+<p>{next_step}</p>
 <p class="label">Access is sent to</p>
 <div class="redirect mono">{_redirect_label(prompt.redirect_uri)}</div>
 <p class="hint">{_HINT_ICON}<span>Approve only if you just started this sign-in from {client}.</span></p>
@@ -147,7 +153,7 @@ def consent_page(prompt: ConsentPrompt) -> HTMLResponse:
     return _page('Approve sign-in', content)
 
 
-def error_page(message: str, status_code: int) -> HTMLResponse:
+def render_error_page(message: str, status_code: int) -> HTMLResponse:
     """A page telling the user why a sign-in cannot go on, and that it has to start again from the client."""
     content = f"""
 <h1>Sign-in cannot continue</h1>
@@ -156,7 +162,7 @@ def error_page(message: str, status_code: int) -> HTMLResponse:
     return _page('Sign-in cannot continue', content, status_code)
 
 
-def page_redirect(url: str, status_code: int) -> RedirectResponse:
+def redirect_without_cache(url: str, status_code: int) -> RedirectResponse:
     """A redirect no cache keeps, since each one carries a single-use ``state`` or code."""
     return RedirectResponse(url, status_code=status_code, headers={'Cache-Control': PAGE_HEADERS['Cache-Control']})
 

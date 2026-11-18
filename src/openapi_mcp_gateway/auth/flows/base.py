@@ -5,8 +5,8 @@ from ...openapi import OpenAPISpec
 from ...scopes import McpScopePolicy
 from ...settings import ServerConfig
 from ...stores.base import TokenStore
-from ..detector import DetectedOAuthFlow
 from ..setup import ServerAuthSetup
+from ..upstream.oauth_flow import UpstreamOAuthFlow
 
 
 @dataclasses.dataclass
@@ -14,15 +14,24 @@ class OAuthFlowContext:
     """Inputs every ``OAuthFlowHandler`` needs to assemble its components.
 
     Populated by ``build_oauth_flow`` before it dispatches to a concrete handler.
+    ``upstream_oauth_flow`` is unset for ``token_exchange``, which runs no flow against the upstream.
     """
 
     entry: ServerConfig
     spec: OpenAPISpec
-    oauth_flow: DetectedOAuthFlow
     store: TokenStore
     gateway_url: str
     mount_path: str
     mcp_scope_policy: McpScopePolicy
+    upstream_oauth_flow: UpstreamOAuthFlow | None = None
+
+    def require_upstream_oauth_flow(self) -> UpstreamOAuthFlow:
+        """The upstream OAuth flow, which every flow but ``token_exchange`` runs."""
+        if self.upstream_oauth_flow is None:
+            raise ValueError(
+                f'Server "{self.entry.name}": this flow needs an upstream OAuth flow, and none was resolved.'
+            )
+        return self.upstream_oauth_flow
 
 
 class OAuthFlowHandler(abc.ABC):

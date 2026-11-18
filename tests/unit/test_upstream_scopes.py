@@ -184,7 +184,7 @@ class TestGrantedScopes:
     )
     def test_the_granted_scope_is_parsed_per_rfc_6749(self, scope, granted):
         response = UpstreamTokenResponse(access_token='token', refresh_token=None, expires_in=3600, scope=scope)
-        assert response.granted_scopes(['previous']) == granted
+        assert response.resolve_granted_scopes(['previous']) == granted
 
 
 def _tag_scopes(*operations: OperationInfo) -> McpConfiguredScopePolicy:

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from openapi_mcp_gateway.auth.detector import DetectedOAuthFlow
+from openapi_mcp_gateway.auth.upstream.oauth_flow import UpstreamOAuthFlow
 from openapi_mcp_gateway.fastapi import (
     ToolMetadata,
     collect_marked_routes,
@@ -182,7 +182,7 @@ class TestInferAuthFromDeclaredFlows:
         The in-process integration is the one place where forwarding the caller's token is correct,
         since the gateway and the app it exposes are the same resource server.
         """
-        declared = [DetectedOAuthFlow(flow_type='authorization_code', token_url='https://x/token')]
+        declared = [UpstreamOAuthFlow(flow_type='authorization_code', token_url='https://x/token')]
         config = infer_auth_from_declared_flows(declared)
         assert config.upstream.type == 'passthrough'
         assert config.upstream.flow is None
