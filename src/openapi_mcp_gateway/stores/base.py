@@ -10,7 +10,10 @@ class TokenStore(abc.ABC):
 
     - **MCP Side**: ``mcp_client``, ``mcp_access_token``, ``mcp_refresh_token``, ``mcp_auth_request``,
       ``mcp_auth_code`` and ``mcp_consent``
-    - **Upstream Side**: ``upstream_auth_state`` and ``upstream_access_token``
+    - **Upstream Side**: ``upstream_auth_state``
+
+    A mapping's target namespace may also be a link name with no records of its own,
+    such as ``upstream_access_token`` for the upstream token an MCP token links.
     """
 
     @abc.abstractmethod
