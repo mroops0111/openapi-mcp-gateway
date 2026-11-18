@@ -1,9 +1,8 @@
 import logging
 
-from ..flows.base import OAuthFlowContext, OAuthFlowHandler
-from ..setup import ServerAuthSetup
-from .resolver import UpstreamTokenSourceAuthResolver
-from .token_source import UpstreamClientCredentialsTokenSource
+from ..setup import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
+from ..upstream.resolver import UpstreamTokenSourceAuthResolver
+from ..upstream.token_source import UpstreamClientCredentialsTokenSource
 
 
 logger = logging.getLogger(__name__)

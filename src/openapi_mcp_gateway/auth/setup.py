@@ -2,8 +2,7 @@ import abc
 import dataclasses
 import typing
 
-from mcp.server import MCPServer
-from mcp.server.auth.provider import TokenVerifier
+from mcp.server.auth.provider import OAuthAuthorizationServerProvider, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.shared.auth import ProtectedResourceMetadata
 
@@ -11,11 +10,9 @@ from ..openapi import OpenAPISpec
 from ..scopes import McpScopePolicy
 from ..settings import ServerConfig
 from ..stores.base import TokenStore
+from .routes import AuthRoutes
+from .upstream.oauth_flow import UpstreamOAuthFlow
 from .upstream.resolver import UpstreamAuthResolver
-
-
-if typing.TYPE_CHECKING:
-    from .mcp.authorization_code import McpAuthorizationCodeServer
 
 
 class AuthTypeContext(typing.NamedTuple):
@@ -30,14 +27,6 @@ class AuthTypeContext(typing.NamedTuple):
     store: TokenStore
     gateway_url: str
     mcp_scope_policy: McpScopePolicy
-
-
-class AuthRoutes(abc.ABC):
-    """Browser-facing routes one server's auth needs beside the MCP SDK's own, such as a consent page."""
-
-    @abc.abstractmethod
-    def register(self, mcp: MCPServer) -> None:
-        """Mount the routes on ``mcp``, under the server's own path."""
 
 
 @dataclasses.dataclass
@@ -55,15 +44,18 @@ class ServerAuthSetup:
     Its ``resource`` is always the endpoint's own canonical URI,
     while ``authorization_servers`` names whoever mints tokens for it.
     ``routes`` are mounted on the server as they are, so the gateway never needs to know which flow asked for them.
+    ``mcp_tokens_carry_upstream_grant`` says each MCP token records what the upstream granted the user behind it,
+    which checking an operation's upstream scopes needs.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
     resolver: UpstreamAuthResolver
-    provider: 'McpAuthorizationCodeServer | None' = None
+    provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None = None
     settings: AuthSettings | None = None
     verifier: TokenVerifier | None = None
     protected_resource: ProtectedResourceMetadata | None = None
     routes: list[AuthRoutes] = dataclasses.field(default_factory=list)
+    mcp_tokens_carry_upstream_grant: bool = False
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
     # The flow that was resolved, which is not always the one the config named.
     # Set by the factory, so that every handler stays unaware of it.
@@ -84,3 +76,41 @@ class AuthTypeHandler(abc.ABC):
     @abc.abstractmethod
     def build(self, context: AuthTypeContext) -> ServerAuthSetup:
         """Return the resolver, and for OAuth also the provider or verifier and their settings."""
+
+
+@dataclasses.dataclass
+class OAuthFlowContext:
+    """Inputs every ``OAuthFlowHandler`` needs to assemble its components.
+
+    Populated by ``build_oauth_flow`` before it dispatches to a concrete handler.
+    ``upstream_oauth_flow`` is unset for ``token_exchange``, which runs no flow against the upstream.
+    """
+
+    entry: ServerConfig
+    spec: OpenAPISpec
+    store: TokenStore
+    gateway_url: str
+    mount_path: str
+    mcp_scope_policy: McpScopePolicy
+    upstream_oauth_flow: UpstreamOAuthFlow | None = None
+
+    def require_upstream_oauth_flow(self) -> UpstreamOAuthFlow:
+        """The upstream OAuth flow, which every flow but ``token_exchange`` runs."""
+        if self.upstream_oauth_flow is None:
+            raise ValueError(
+                f'Server "{self.entry.name}": this flow needs an upstream OAuth flow, and none was resolved.'
+            )
+        return self.upstream_oauth_flow
+
+
+class OAuthFlowHandler(abc.ABC):
+    """Strategy that assembles one ``auth.upstream.flow`` at startup.
+
+    A flow whose two directions are independent builds only the upstream half.
+    A flow that binds them builds both halves and the Bridge that joins them.
+    Subclasses register in ``OAUTH_FLOW_HANDLERS``, so the factory can dispatch by ``flow_type``.
+    """
+
+    @abc.abstractmethod
+    def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
+        """Return the upstream resolver and whatever MCP-side pieces and shutdown hook this flow brings."""

@@ -11,11 +11,11 @@ from tests.oauth import BROWSER_ID, PLAIN_COOKIE, SECURE_COOKIE
 # A prompt for a client that registered itself under a name meant to break out of the page.
 HOSTILE_PROMPT = ConsentPrompt(
     server_name='petstore',
-    upstream_host='auth.example.com',
+    next_sign_in_host='auth.example.com',
     client_id='client-1',
     client_name='<script>alert(1)</script>',
     redirect_uri='https://app.example.com/cb?next="><img src=x>',
-    upstream_scopes=[DescribedScope('read', None)],
+    next_sign_in_scopes=[DescribedScope('read', None)],
     mcp_scopes=[DescribedScope('pets:read', '<b>Read</b> pets')],
     opens_unscoped_tools=False,
     csrf_token='token',
@@ -59,16 +59,16 @@ class TestConsentPage:
     def test_a_client_with_nothing_open_to_it_is_told_so(self):
         assert 'No tools on petstore' in _page_text(dataclasses.replace(HOSTILE_PROMPT, mcp_scopes=[]))
 
-    def test_no_upstream_scopes_leaves_their_list_out(self):
-        page = _page_text(dataclasses.replace(HOSTILE_PROMPT, upstream_scopes=[]))
+    def test_no_next_sign_in_scopes_leaves_their_list_out(self):
+        page = _page_text(dataclasses.replace(HOSTILE_PROMPT, next_sign_in_scopes=[]))
         assert 'will be asked for' not in page
 
     def test_a_sign_in_that_ends_at_approval_names_no_next_host(self):
         """With no sign-in after consent, the page does not promise one."""
-        page = _page_text(dataclasses.replace(HOSTILE_PROMPT, upstream_host=None, upstream_scopes=[]))
+        page = _page_text(dataclasses.replace(HOSTILE_PROMPT, next_sign_in_host=None, next_sign_in_scopes=[]))
         assert 'You sign in at' not in page
         assert 'Then client-1 can use petstore on your behalf.' in _page_text(
-            dataclasses.replace(HOSTILE_PROMPT, client_name=None, upstream_host=None, upstream_scopes=[])
+            dataclasses.replace(HOSTILE_PROMPT, client_name=None, next_sign_in_host=None, next_sign_in_scopes=[])
         )
 
 

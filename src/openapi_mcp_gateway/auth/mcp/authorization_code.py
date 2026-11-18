@@ -19,7 +19,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from ...scopes import McpAccessToken, McpScopePolicy
-from ..setup import AuthRoutes
+from ..routes import AuthRoutes
 from .client import McpClientDirectory
 from .consent import PENDING_AUTHORIZATION_TTL, ApprovedScopes, BrowserCookie, ConsentRegistry, PendingAuthorization
 from .consent_page import ConsentPrompt, DescribedScope, redirect_without_cache, render_consent_page, render_error_page
@@ -172,12 +172,12 @@ class McpAuthorizationCodeServer:
         new = approved.find_new_scopes(pending.scopes, next_scopes) if approved else ApprovedScopes()
         return ConsentPrompt(
             server_name=self._server_name,
-            upstream_host=next_sign_in.host if next_sign_in else None,
+            next_sign_in_host=next_sign_in.host if next_sign_in else None,
             client_id=pending.client_id,
             client_name=client.client_name if client else None,
             redirect_uri=pending.redirect_uri,
-            upstream_scopes=[
-                DescribedScope(scope, next_descriptions.get(scope), scope in new.upstream_scopes)
+            next_sign_in_scopes=[
+                DescribedScope(scope, next_descriptions.get(scope), scope in new.next_sign_in_scopes)
                 for scope in next_scopes
             ],
             mcp_scopes=[
@@ -238,8 +238,8 @@ class McpAuthorizationCodeServer:
             raise TokenError(error='invalid_grant', error_description='Invalid authorization code')
 
         # Only the code's own links, written beside the code with the same TTL.
-        # Falling back to the client's most recent upstream token, as this once did,
-        # could hand one user's upstream credential to another user of the same client_id.
+        # Falling back to whatever the client was last linked to, as this once did,
+        # could hand one user's credential to another user of the same client_id.
         attachment = await self.tokens.load_attachment('mcp_auth_code', authorization_code.code, data)
         if attachment is None:
             logger.warning('OAuth code exchange rejected: reason=link_lost client_id=%s', client_id)

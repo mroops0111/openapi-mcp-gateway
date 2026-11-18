@@ -6,11 +6,10 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.shared.auth import ProtectedResourceMetadata
 
 from ..mcp.jwks import McpJwksTokenVerifier, fetch_mcp_issuer_metadata
-from ..setup import ServerAuthSetup
+from ..setup import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_exchange import UpstreamTokenExchangeClient
 from ..upstream.token_source import UpstreamTokenSource
-from .base import OAuthFlowContext, OAuthFlowHandler
 
 
 logger = logging.getLogger(__name__)

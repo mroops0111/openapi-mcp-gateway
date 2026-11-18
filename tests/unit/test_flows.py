@@ -10,11 +10,11 @@ from openapi_mcp_gateway.auth.flows import (
     build_oauth_flow,
 )
 from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeBridge
+from openapi_mcp_gateway.auth.flows.client_credentials import UpstreamClientCredentialsFlowHandler
 from openapi_mcp_gateway.auth.flows.factory import resolve_upstream_oauth_flow
 from openapi_mcp_gateway.auth.flows.token_exchange import TokenExchangeBridge
 from openapi_mcp_gateway.auth.mcp.jwks import McpIssuerMetadata, McpJwksTokenVerifier
 from openapi_mcp_gateway.auth.setup import AuthTypeContext, ServerAuthSetup
-from openapi_mcp_gateway.auth.upstream.client_credentials import UpstreamClientCredentialsFlowHandler
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
@@ -27,7 +27,7 @@ from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy
 from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, McpAuthConfig, ServerConfig, UpstreamAuthConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.constants import API_URL, AUTHORIZE_URL, ISSUER, JWKS_URL, TOKEN_URL
-from tests.oauth import bridge_of
+from tests.oauth import bridge_of, server_of
 
 
 def _build_spec(security_schemes: dict | None = None) -> OpenAPISpec:
@@ -224,8 +224,8 @@ class TestBuildOAuthFlow:
         )
         setup = build_oauth_flow(_auth_context(entry, _spec_with_authorization_code()))
         assert setup.provider is not None
-        assert setup.provider.tokens.policy.access_token_ttl == 3600
-        assert setup.provider.tokens.policy.refresh_token_ttl == 86400
+        assert server_of(setup.provider).tokens.policy.access_token_ttl == 3600
+        assert server_of(setup.provider).tokens.policy.refresh_token_ttl == 86400
 
     def test_authorization_code_honours_configured_token_ttls(self):
         """``auth.mcp.access_token_ttl`` and ``refresh_token_ttl`` reach the provider."""
@@ -237,8 +237,8 @@ class TestBuildOAuthFlow:
         )
         setup = build_oauth_flow(_auth_context(entry, _spec_with_authorization_code()))
         assert setup.provider is not None
-        assert setup.provider.tokens.policy.access_token_ttl == 7200
-        assert setup.provider.tokens.policy.refresh_token_ttl == 604800
+        assert server_of(setup.provider).tokens.policy.access_token_ttl == 7200
+        assert server_of(setup.provider).tokens.policy.refresh_token_ttl == 604800
 
     def test_client_credentials_returns_token_source_resolver(self):
         """client_credentials yields a UpstreamTokenSourceAuthResolver and an on_shutdown hook."""
@@ -362,7 +362,7 @@ class TestAuthorizationCodeFlowHandler:
         assert bridge_of(setup.provider).upstream.token_url == TOKEN_URL
         # The provider's issuer is the string the metadata publishes, which RFC 9207 compares exactly.
         assert setup.settings is not None
-        assert setup.provider.issuer == str(setup.settings.issuer_url) == 'http://localhost:8000/srv'
+        assert server_of(setup.provider).issuer == str(setup.settings.issuer_url) == 'http://localhost:8000/srv'
 
 
 class TestUpstreamAudienceWiring:
@@ -608,7 +608,7 @@ class TestAuthorizationCodeScopes:
         assert registration is not None
         assert registration.valid_scopes == ['reports.read', 'reports.write']
         assert setup.provider is not None
-        assert setup.provider.tokens.policy.scopes == ['reports.read', 'reports.write']
+        assert server_of(setup.provider).tokens.policy.scopes == ['reports.read', 'reports.write']
 
     def test_a_default_scope_stands_in_when_none_is_configured(self):
         """OAuth needs a scope to name even when a deployment has no opinion about them."""

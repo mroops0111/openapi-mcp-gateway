@@ -5,6 +5,7 @@ import typing
 from fastapi import FastAPI
 from mcp.server import MCPServer
 from mcp.server.auth.handlers.metadata import MetadataHandler, ProtectedResourceMetadataHandler
+from mcp.server.auth.provider import OAuthAuthorizationServerProvider
 from mcp.server.auth.routes import (
     build_metadata,
     build_resource_metadata_url,
@@ -22,7 +23,6 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .auth.mcp.authorization_code import McpAuthorizationCodeServer
 from .openapi import ExposedTool, OpenAPISpec
 from .scopes import RequestTarget, ScopeChallengeMiddleware, ScopeRegistry
 from .settings import DNSRebindingProtectionConfig, GatewayConfig
@@ -49,7 +49,7 @@ class _ServerBundle(typing.NamedTuple):
     mount_path: str
     mcp: MCPServer
     spec: OpenAPISpec
-    auth_provider: McpAuthorizationCodeServer | None
+    auth_provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None
     # What each tool or operation requires of a token's scopes, and how a call names the one it reaches.
     scope_registry: ScopeRegistry
     tool_call_target: RequestTarget
@@ -354,7 +354,7 @@ def _authorization_server_metadata(bundle: _ServerBundle) -> OAuthMetadata:
     """Return the RFC 8414 document for a server where the gateway is the authorization server.
 
     The SDK builds the document, and the gateway adds what its provider does beyond the SDK.
-    ``McpAuthorizationCodeServer`` sends ``iss`` on its authorization responses,
+    The gateway's authorization server sends ``iss`` on its authorization responses,
     so RFC 9207 §2.3 requires ``authorization_response_iss_parameter_supported``.
     That flag is what lets a client refuse a response that arrives without one.
 

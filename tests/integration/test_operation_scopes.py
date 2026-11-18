@@ -18,7 +18,7 @@ from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCode
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
-from tests.oauth import authorization_code_gateway, bridge_of, sign_in
+from tests.oauth import authorization_code_gateway, bridge_of, server_of, sign_in
 from tests.serving import serve
 
 
@@ -408,9 +408,7 @@ async def _sign_in(gateway: Gateway, client_id: str, requested: str | None = Non
 
 def _provider(gateway: Gateway) -> McpAuthorizationCodeServer:
     """The authorization server of the gateway's one server."""
-    provider = gateway.describe_servers()[0].auth_provider
-    assert provider is not None
-    return provider
+    return server_of(gateway.describe_servers()[0].auth_provider)
 
 
 @contextlib.asynccontextmanager

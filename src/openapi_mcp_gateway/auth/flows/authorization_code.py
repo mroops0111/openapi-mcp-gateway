@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import Response
 
+from ...stores.base import TokenStore
 from ..mcp.authorization_code import (
     McpAuthorizationCodeContinuation,
     McpAuthorizationCodeRoutes,
@@ -22,11 +23,10 @@ from ..mcp.consent import PENDING_AUTHORIZATION_TTL, BrowserCookie, PendingAutho
 from ..mcp.consent_page import redirect_without_cache, render_error_page
 from ..mcp.record_origin import McpRecordOrigin
 from ..mcp.token_issuer import MCP_DEFAULT_SCOPE, McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
-from ..setup import AuthRoutes, ServerAuthSetup
+from ..setup import AuthRoutes, OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamTokenSource
-from .base import OAuthFlowContext, OAuthFlowHandler
 
 
 logger = logging.getLogger(__name__)
@@ -35,9 +35,15 @@ logger = logging.getLogger(__name__)
 # Where the upstream sends the browser back, under the server's own path.
 CALLBACK_PATH = '/auth/callback'
 
-# Where the upstream credentials behind each MCP token are found, as links ``McpTokenIssuer`` carries.
-UPSTREAM_ACCESS_TOKEN = 'upstream_access_token'  # noqa: S105
-UPSTREAM_REFRESH_TOKEN = 'upstream_refresh_token'  # noqa: S105
+# The names under which each MCP token links the upstream tokens behind it.
+UPSTREAM_ACCESS_TOKEN_LINK = 'upstream_access_token'  # noqa: S105
+UPSTREAM_REFRESH_TOKEN_LINK = 'upstream_refresh_token'  # noqa: S105
+
+# Where a sign-in waits while the browser is at the upstream, keyed by the ``state`` sent there.
+UPSTREAM_AUTH_STATE_NAMESPACE = 'upstream_auth_state'
+
+# How long before the upstream token expires an MCP refresh renews it too, in seconds.
+UPSTREAM_REFRESH_MARGIN = 60
 
 # The upstream authorization errors that mean the same to the MCP client, and so reach it unchanged.
 _UPSTREAM_FORWARDED_ERRORS = frozenset({'access_denied', 'temporarily_unavailable'})
@@ -56,11 +62,13 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
     which is what the MCP authorization spec requires of a server calling an upstream API.
 
     ``tokens`` is the MCP side's issuer rather than its server, so neither holds the other.
+    ``store`` keeps the sign-ins waiting at the upstream, which belong to neither side alone.
     """
 
-    def __init__(self, tokens: McpTokenIssuer, upstream: UpstreamAuthorizationCodeClient) -> None:
+    def __init__(self, tokens: McpTokenIssuer, upstream: UpstreamAuthorizationCodeClient, store: TokenStore) -> None:
         self.tokens = tokens
         self.upstream = upstream
+        self._store = store
 
     # McpAuthorizationCodeContinuation
 
@@ -78,15 +86,18 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         It is kept with the sign-in and handed back to the client at the end, as RFC 6749 requires.
         """
         state = secrets.token_urlsafe(32)
-        await self.tokens.store.set('upstream_auth_state', state, pending.model_dump(), ttl=PENDING_AUTHORIZATION_TTL)
+        await self._store.set(UPSTREAM_AUTH_STATE_NAMESPACE, state, pending.model_dump(), ttl=PENDING_AUTHORIZATION_TTL)
         return self.upstream.build_authorize_url(state)
 
     async def refresh_attachment(self, client_id: str, attachment: McpTokenAttachment) -> McpTokenAttachment:
-        """Refresh the upstream token too when it has expired, keeping the upstream refresh token if none is new."""
-        upstream_access_token = attachment.links[UPSTREAM_ACCESS_TOKEN]
-        if await self.tokens.store.get(UPSTREAM_ACCESS_TOKEN, upstream_access_token):
+        """Refresh the upstream token too when it is about to expire.
+
+        The upstream refresh token is kept when the upstream sends no new one.
+        """
+        expires_at = attachment.links_expire_at
+        if expires_at is None or expires_at - time.time() > UPSTREAM_REFRESH_MARGIN:
             return attachment
-        upstream_refresh_token = attachment.links.get(UPSTREAM_REFRESH_TOKEN)
+        upstream_refresh_token = attachment.links.get(UPSTREAM_REFRESH_TOKEN_LINK)
         if not upstream_refresh_token:
             logger.warning('OAuth refresh rejected: reason=upstream_expired_no_refresh client_id=%s', client_id)
             raise TokenError(
@@ -94,10 +105,10 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
                 error_description='Upstream token expired and no refresh token available; re-authenticate',
             )
         refreshed = await self.upstream.refresh(upstream_refresh_token)
-        await self._store_upstream_access_token(client_id, refreshed.access_token, refreshed.expires_in)
         return McpTokenAttachment(
             upstream_scopes=refreshed.resolve_granted_scopes(attachment.upstream_scopes),
             links=_build_upstream_links(refreshed.access_token, refreshed.refresh_token or upstream_refresh_token),
+            links_expire_at=int(time.time()) + refreshed.expires_in,
         )
 
     # UpstreamTokenSource
@@ -107,7 +118,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         mcp_access_token = get_access_token()
         if mcp_access_token is None:
             return None
-        return await self.tokens.load_access_token_link(mcp_access_token.token, UPSTREAM_ACCESS_TOKEN)
+        return await self.tokens.load_access_token_link(mcp_access_token.token, UPSTREAM_ACCESS_TOKEN_LINK)
 
     # The upstream's redirect back
 
@@ -126,17 +137,15 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         self.upstream.validate_issuer(iss)
 
         upstream_token = await self.upstream.exchange_code(code)
-        await self._store_upstream_access_token(
-            pending.client_id, upstream_token.access_token, upstream_token.expires_in
-        )
         redirect_uri = await self.tokens.complete_authorization(
             pending,
             McpTokenAttachment(
                 upstream_scopes=upstream_token.resolve_granted_scopes(self.upstream.scopes),
                 links=_build_upstream_links(upstream_token.access_token, upstream_token.refresh_token),
+                links_expire_at=int(time.time()) + upstream_token.expires_in,
             ),
         )
-        await self.tokens.store.delete('upstream_auth_state', state)
+        await self._store.delete(UPSTREAM_AUTH_STATE_NAMESPACE, state)
 
         logger.info(
             'Upstream OAuth callback handled: client_id=%s expires_in=%s refresh=%s',
@@ -155,7 +164,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         Any other error concerns the gateway's own request to the upstream, so the client hears ``server_error``.
         """
         pending = await self._pending_upstream(state, browser_id)
-        await self.tokens.store.delete('upstream_auth_state', state)
+        await self._store.delete(UPSTREAM_AUTH_STATE_NAMESPACE, state)
         logger.info('Upstream OAuth refused the sign-in: client_id=%s error=%s', pending.client_id, error)
         forwarded = error if error in _UPSTREAM_FORWARDED_ERRORS else 'server_error'
         return construct_redirect_uri(
@@ -174,7 +183,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         A sign-in recorded against another upstream is refused outright,
         since its code would otherwise be redeemed at a token endpoint that never issued it.
         """
-        pending = await self.tokens.load_pending('upstream_auth_state', state)
+        pending = await self.tokens.load_pending(UPSTREAM_AUTH_STATE_NAMESPACE, state)
         if pending is None:
             logger.warning('OAuth callback rejected: reason=invalid_state')
             raise HTTPException(400, 'This sign-in has expired or was already finished')
@@ -182,15 +191,6 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
             logger.warning('OAuth callback rejected: reason=other_browser client_id=%s', pending.client_id)
             raise HTTPException(400, 'This sign-in was started in another browser')
         return pending
-
-    async def _store_upstream_access_token(self, client_id: str, token: str, expires_in: int) -> None:
-        """Record that the upstream ``token`` is live, for as long as the upstream says it is."""
-        await self.tokens.store.set(
-            UPSTREAM_ACCESS_TOKEN,
-            token,
-            {'token': token, 'client_id': client_id, 'expires_at': int(time.time()) + expires_in},
-            ttl=expires_in,
-        )
 
 
 class AuthorizationCodeCallbackRoutes(AuthRoutes):
@@ -288,7 +288,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
                 refresh_token_ttl=mcp_config.refresh_token_ttl,
             ),
         )
-        bridge = AuthorizationCodeBridge(tokens, upstream)
+        bridge = AuthorizationCodeBridge(tokens, upstream, flow_context.store)
         clients = _build_client_directory(flow_context, mcp_endpoint_scopes, issuer)
         server = McpAuthorizationCodeServer(tokens, clients, bridge, server_name=entry.name)
         # One cookie for both pages, since the callback must read what the consent page set.
@@ -314,6 +314,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             resolver=UpstreamTokenSourceAuthResolver(bridge),
             provider=server,
             settings=settings,
+            mcp_tokens_carry_upstream_grant=True,
             routes=[
                 McpAuthorizationCodeRoutes(server, flow_context.mcp_scope_policy, cookie),
                 AuthorizationCodeCallbackRoutes(bridge, cookie),
@@ -338,7 +339,7 @@ def _build_client_directory(
 
 def _build_upstream_links(access_token: str, refresh_token: str | None) -> dict[str, str]:
     """The links an MCP token carries to the upstream tokens behind it."""
-    links = {UPSTREAM_ACCESS_TOKEN: access_token}
+    links = {UPSTREAM_ACCESS_TOKEN_LINK: access_token}
     if refresh_token:
-        links[UPSTREAM_REFRESH_TOKEN] = refresh_token
+        links[UPSTREAM_REFRESH_TOKEN_LINK] = refresh_token
     return links

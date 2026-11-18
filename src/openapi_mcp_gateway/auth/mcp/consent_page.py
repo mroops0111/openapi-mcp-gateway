@@ -104,15 +104,15 @@ class ConsentPrompt:
     ``mcp_scopes`` are the scopes the server defines that the client is granted.
     ``opens_unscoped_tools`` says the tools no scope covers are open to every client,
     which on a server without ``auth.mcp.operation_scopes`` is every tool.
-    ``upstream_host`` is where the user signs in next, and ``None`` when approval ends the sign-in.
+    ``next_sign_in_host`` is where the user signs in next, and ``None`` when approval ends the sign-in.
     """
 
     server_name: str
-    upstream_host: str | None
+    next_sign_in_host: str | None
     client_id: str
     client_name: str | None
     redirect_uri: str
-    upstream_scopes: collections.abc.Sequence[DescribedScope]
+    next_sign_in_scopes: collections.abc.Sequence[DescribedScope]
     mcp_scopes: collections.abc.Sequence[DescribedScope]
     opens_unscoped_tools: bool
     csrf_token: str
@@ -122,15 +122,15 @@ def render_consent_page(prompt: ConsentPrompt) -> HTMLResponse:
     """The consent page for ``prompt``, posting the user's decision back to the address it was served from."""
     client = html.escape(prompt.client_name or prompt.client_id)
     server = html.escape(prompt.server_name)
-    upstream_host = html.escape(prompt.upstream_host or '')
+    next_sign_in_host = html.escape(prompt.next_sign_in_host or '')
     next_step = (
-        f'You sign in at <b>{upstream_host}</b> next, then {client} can use {server} on your behalf.'
-        if prompt.upstream_host
+        f'You sign in at <b>{next_sign_in_host}</b> next, then {client} can use {server} on your behalf.'
+        if prompt.next_sign_in_host
         else f'Then {client} can use {server} on your behalf.'
     )
-    upstream_scopes = (
-        f'<p class="label">{upstream_host} will be asked for</p><ul>{_scope_items(prompt.upstream_scopes)}</ul>'
-        if prompt.upstream_scopes
+    next_sign_in_scopes = (
+        f'<p class="label">{next_sign_in_host} will be asked for</p><ul>{_scope_items(prompt.next_sign_in_scopes)}</ul>'
+        if prompt.next_sign_in_scopes
         else ''
     )
     content = f"""
@@ -141,7 +141,7 @@ def render_consent_page(prompt: ConsentPrompt) -> HTMLResponse:
 <p class="hint">{_HINT_ICON}<span>Approve only if you just started this sign-in from {client}.</span></p>
 <p class="label">{client} will be able to</p>
 {_mcp_scope_list(prompt, server)}
-{upstream_scopes}
+{next_sign_in_scopes}
 <details><summary>Client details</summary><p>Registered as <code>{html.escape(prompt.client_id)}</code></p></details>
 <form method="post">
   <input type="hidden" name="csrf_token" value="{html.escape(prompt.csrf_token)}">

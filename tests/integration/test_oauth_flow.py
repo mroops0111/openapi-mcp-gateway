@@ -1,4 +1,3 @@
-import time
 import typing
 import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -212,12 +211,11 @@ class TestUpstreamGrant:
         self, provider, mcp_client_info, memory_store, stated, recorded
     ):
         """A refresh that omits ``scope`` leaves the grant as it was."""
-        token = await sign_in(provider, mcp_client_info, upstream_scope='read')
+        # An upstream token about to expire, so the refresh path actually calls the token endpoint.
+        token = await sign_in(provider, mcp_client_info, upstream_scope='read', upstream_expires_in=30)
         assert token.refresh_token is not None
         refresh = await provider.load_refresh_token(mcp_client_info, token.refresh_token)
         assert refresh is not None
-        # Expire the upstream token so the refresh path actually calls the token endpoint.
-        await memory_store.delete('upstream_access_token', 'upstream-access-token')
 
         response = upstream_token_response('rotated-access-token', scope=stated)
         with patch('httpx.AsyncClient.post', AsyncMock(return_value=response)):
@@ -293,22 +291,37 @@ class TestAuthorizationCodeReuse:
 
 
 class TestUpstreamTokenLifetime:
-    """``expires_in`` is read leniently, since some upstreams send it as a string or leave it null."""
+    """An MCP access token never outlives the upstream token behind it, so the client refreshes in time."""
 
-    @pytest.mark.parametrize(('stated', 'lifetime'), [('3599', 3599), (None, 3600), (1800.0, 1800)])
-    async def test_an_irregular_expires_in_still_finishes_the_sign_in(
-        self, provider, mcp_client_info, memory_store, stated, lifetime
+    @pytest.mark.parametrize(('stated', 'lifetime'), [('1799', 1799), (None, 3600), (1800.0, 1800), (86400, 3600)])
+    async def test_the_access_token_lasts_no_longer_than_the_upstream_one(
+        self, provider, mcp_client_info, stated, lifetime
     ):
+        """``expires_in`` is read leniently, since some upstreams send it as a string or leave it null."""
         response = upstream_token_response()
         response.json.return_value['expires_in'] = stated
         upstream_url = await begin_upstream(provider, mcp_client_info)
         with patch('httpx.AsyncClient.post', AsyncMock(return_value=response)):
             redirect = await deliver_callback(provider, upstream_url)
+        auth_code = await provider.load_authorization_code(mcp_client_info, code_in(redirect))
+        assert auth_code is not None
 
-        assert code_in(redirect)
-        record = await memory_store.get('upstream_access_token', 'upstream-access-token')
-        assert record is not None
-        assert record['expires_at'] - lifetime <= time.time()
+        token = await provider.exchange_authorization_code(mcp_client_info, auth_code)
+
+        assert abs(token.expires_in - lifetime) <= 1
+
+    async def test_a_refresh_far_from_upstream_expiry_leaves_the_upstream_alone(self, provider, mcp_client_info):
+        """The upstream token is renewed only once it is about to expire."""
+        token = await sign_in(provider, mcp_client_info)
+        assert token.refresh_token is not None
+        refresh = await provider.load_refresh_token(mcp_client_info, token.refresh_token)
+        assert refresh is not None
+
+        post_mock = AsyncMock()
+        with patch('httpx.AsyncClient.post', post_mock):
+            await provider.exchange_refresh_token(mcp_client_info, refresh, [])
+
+        post_mock.assert_not_awaited()
 
 
 class TestConsentHandOver:
@@ -333,7 +346,7 @@ class TestConfigurableTokenTtl:
         """A provider built with a custom access TTL mints tokens expiring on that cadence."""
         provider = make_provider(issued_tokens=McpTokenPolicy(access_token_ttl=7200, refresh_token_ttl=604800))
 
-        token = await sign_in(provider, mcp_client_info)
+        token = await sign_in(provider, mcp_client_info, upstream_expires_in=86400)
 
         assert token.expires_in == 7200
 
@@ -449,13 +462,11 @@ class TestUpstreamAudienceParams:
         Dropping the audience here would return a token the upstream refuses,
         and that failure would only surface once the first token expired.
         """
-        token = await sign_in(audience_provider, mcp_client_info)
+        # An upstream token about to expire, so the refresh path actually calls the token endpoint.
+        token = await sign_in(audience_provider, mcp_client_info, upstream_expires_in=30)
         assert token.refresh_token is not None
         refresh = await audience_provider.load_refresh_token(mcp_client_info, token.refresh_token)
         assert refresh is not None
-
-        # Expire the upstream token so the refresh path actually calls the token endpoint.
-        await memory_store.delete('upstream_access_token', 'upstream-access-token')
 
         post_mock = AsyncMock(return_value=upstream_token_response('rotated-access-token'))
         with patch('httpx.AsyncClient.post', post_mock):

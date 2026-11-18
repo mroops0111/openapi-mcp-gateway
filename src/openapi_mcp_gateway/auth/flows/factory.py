@@ -3,11 +3,10 @@ import logging
 
 from ...openapi import OpenAPISpec
 from ...settings import ServerConfig
-from ..setup import AuthTypeContext, ServerAuthSetup
-from ..upstream.client_credentials import UpstreamClientCredentialsFlowHandler
+from ..setup import AuthTypeContext, OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
 from ..upstream.oauth_flow import UpstreamOAuthFlow, detect_upstream_oauth_flows
 from .authorization_code import AuthorizationCodeFlowHandler
-from .base import OAuthFlowContext, OAuthFlowHandler
+from .client_credentials import UpstreamClientCredentialsFlowHandler
 from .token_exchange import TokenExchangeFlowHandler
 
 

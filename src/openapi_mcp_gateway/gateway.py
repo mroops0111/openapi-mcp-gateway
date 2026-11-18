@@ -9,12 +9,12 @@ import httpx
 import uvicorn
 from fastapi import FastAPI
 from mcp.server import MCPServer
+from mcp.server.auth.provider import OAuthAuthorizationServerProvider
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.caching import CacheableMethod, CacheHint
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from .app import _ServerBundle, build_app, mount_mcp_apps, register_auth_routes, serve_lifespan
-from .auth.mcp.authorization_code import McpAuthorizationCodeServer
 from .auth.setup import AuthTypeContext, ServerAuthSetup
 from .auth.types import build_auth
 from .auth.upstream.oauth_flow import detect_unsupported_upstream_oauth_flows, detect_upstream_oauth_flows
@@ -501,7 +501,7 @@ class Gateway:
     @staticmethod
     def _build_mcp_server(
         name: str,
-        auth_provider: McpAuthorizationCodeServer | None,
+        auth_provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None,
         auth_settings: AuthSettings | None,
         token_verifier: typing.Any | None,
         instructions: str | None,
@@ -696,7 +696,7 @@ def _upstream_scope_policy(
     Raises ``ValueError`` when ``enforce_scopes`` is on but the flow records no user grant.
     """
     upstream = server_config.auth.upstream
-    if auth.provider is not None:
+    if auth.mcp_tokens_carry_upstream_grant:
         spec_security.warn_on_unrequested_scopes(
             operations,
             upstream.scopes,
@@ -761,7 +761,7 @@ def _partition_operations(
 class _AppContext:
     """Per-server lifespan context injected into MCPServer tool handlers."""
 
-    auth_provider: McpAuthorizationCodeServer | None = None
+    auth_provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None = None
 
 
 def _policy_summary(policy: PolicyConfig) -> str:

@@ -57,7 +57,7 @@ class ConsentRegistry:
 
     The gateway does not know the user before the upstream sign-in, so an approval belongs to the browser.
     It covers only the scopes the page showed, so a client asking for more is asked about again.
-    MCP and upstream scopes are kept apart, since the same name may mean different things on each side.
+    MCP scopes and those of the sign-in after consent are kept apart, since one name may mean different things in each.
     """
 
     def __init__(self, store: TokenStore, issuer: str) -> None:
@@ -69,24 +69,24 @@ class ConsentRegistry:
         browser_id: str,
         client_id: str,
         mcp_scopes: collections.abc.Iterable[str],
-        upstream_scopes: collections.abc.Iterable[str],
+        next_sign_in_scopes: collections.abc.Iterable[str],
     ) -> bool:
         """Whether the browser already approved the client for every one of these scopes."""
         approved = await self.load_approved_scopes(browser_id, client_id)
-        return approved is not None and approved.covers(mcp_scopes, upstream_scopes)
+        return approved is not None and approved.covers(mcp_scopes, next_sign_in_scopes)
 
     async def approve(
         self,
         browser_id: str,
         client_id: str,
         mcp_scopes: collections.abc.Iterable[str],
-        upstream_scopes: collections.abc.Iterable[str],
+        next_sign_in_scopes: collections.abc.Iterable[str],
     ) -> None:
         """Add these scopes to what the browser approved for the client, restarting the approval's lifetime."""
         approved = await self.load_approved_scopes(browser_id, client_id) or ApprovedScopes()
         merged = ApprovedScopes(
             mcp_scopes=sorted({*approved.mcp_scopes, *mcp_scopes}),
-            upstream_scopes=sorted({*approved.upstream_scopes, *upstream_scopes}),
+            next_sign_in_scopes=sorted({*approved.next_sign_in_scopes, *next_sign_in_scopes}),
         )
         await self._store.set('mcp_consent', self._key(browser_id, client_id), merged.model_dump(), ttl=CONSENT_TTL)
 
@@ -100,21 +100,23 @@ class ConsentRegistry:
 
 
 class ApprovedScopes(pydantic.BaseModel):
-    """The scopes a browser approved for one client, on each side of the gateway."""
+    """The scopes a browser approved for one client, of the MCP endpoint and of the sign-in after consent."""
 
     mcp_scopes: list[str] = pydantic.Field(default_factory=list)
-    upstream_scopes: list[str] = pydantic.Field(default_factory=list)
+    next_sign_in_scopes: list[str] = pydantic.Field(default_factory=list)
 
-    def covers(self, mcp_scopes: collections.abc.Iterable[str], upstream_scopes: collections.abc.Iterable[str]) -> bool:
-        return set(mcp_scopes) <= set(self.mcp_scopes) and set(upstream_scopes) <= set(self.upstream_scopes)
+    def covers(
+        self, mcp_scopes: collections.abc.Iterable[str], next_sign_in_scopes: collections.abc.Iterable[str]
+    ) -> bool:
+        return set(mcp_scopes) <= set(self.mcp_scopes) and set(next_sign_in_scopes) <= set(self.next_sign_in_scopes)
 
     def find_new_scopes(
-        self, mcp_scopes: collections.abc.Iterable[str], upstream_scopes: collections.abc.Iterable[str]
+        self, mcp_scopes: collections.abc.Iterable[str], next_sign_in_scopes: collections.abc.Iterable[str]
     ) -> 'ApprovedScopes':
-        """The scopes of each side this approval does not yet cover."""
+        """The scopes of each kind this approval does not yet cover."""
         return ApprovedScopes(
             mcp_scopes=[scope for scope in mcp_scopes if scope not in self.mcp_scopes],
-            upstream_scopes=[scope for scope in upstream_scopes if scope not in self.upstream_scopes],
+            next_sign_in_scopes=[scope for scope in next_sign_in_scopes if scope not in self.next_sign_in_scopes],
         )
 
 

@@ -50,16 +50,23 @@ def authorization_code_server(
         McpRecordOrigin(issuer=issuer, upstream_authorization_server=upstream.authorization_server),
         policy or McpTokenPolicy(),
     )
-    bridge = AuthorizationCodeBridge(tokens, upstream)
+    bridge = AuthorizationCodeBridge(tokens, upstream, store)
     return McpAuthorizationCodeServer(
         tokens, clients or McpDynamicClientRegistry(store, issuer), bridge, server_name=server_name
     )
 
 
-def bridge_of(server: McpAuthorizationCodeServer) -> AuthorizationCodeBridge:
-    """The Bridge that takes ``server``'s sign-ins on to the upstream."""
-    assert isinstance(server.continuation, AuthorizationCodeBridge)
-    return server.continuation
+def server_of(provider: object) -> McpAuthorizationCodeServer:
+    """``provider`` as the gateway's own authorization server, which every ``authorization_code`` setup carries."""
+    assert isinstance(provider, McpAuthorizationCodeServer)
+    return provider
+
+
+def bridge_of(provider: object) -> AuthorizationCodeBridge:
+    """The Bridge that takes the sign-ins of ``provider`` on to the upstream."""
+    continuation = server_of(provider).continuation
+    assert isinstance(continuation, AuthorizationCodeBridge)
+    return continuation
 
 
 def authorization_code_gateway(
@@ -90,8 +97,10 @@ def authorization_code_gateway(
     return Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
 
 
-def upstream_token_response(granted: str = 'upstream-access-token', scope: str | None = None) -> MagicMock:
-    """Mock upstream token endpoint response granting ``granted`` plus a refresh token.
+def upstream_token_response(
+    granted: str = 'upstream-access-token', scope: str | None = None, expires_in: int = 3600
+) -> MagicMock:
+    """Mock upstream token endpoint response granting ``granted`` plus a refresh token, for ``expires_in`` seconds.
 
     ``scope`` is the granted scope it states, which it omits when ``None``.
     """
@@ -100,7 +109,7 @@ def upstream_token_response(granted: str = 'upstream-access-token', scope: str |
     response.json.return_value = {
         'access_token': granted,
         'refresh_token': 'upstream-refresh-token',
-        'expires_in': 3600,
+        'expires_in': expires_in,
         **({'scope': scope} if scope is not None else {}),
     }
     return response
@@ -145,12 +154,14 @@ async def complete_upstream(
     upstream_url: str,
     iss: str | None = None,
     upstream_scope: str | None = None,
+    upstream_expires_in: int = 3600,
 ) -> str:
     """Deliver the upstream's redirect for the sign-in ``upstream_url`` began, returning the redirect to the MCP client.
 
-    The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``.
+    The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``,
+    and grants a token lasting ``upstream_expires_in`` seconds.
     """
-    response = upstream_token_response(scope=upstream_scope)
+    response = upstream_token_response(scope=upstream_scope, expires_in=upstream_expires_in)
     with patch('httpx.AsyncClient.post', AsyncMock(return_value=response)):
         return await deliver_callback(provider, upstream_url, iss)
 
@@ -185,13 +196,18 @@ async def sign_in(
     client: OAuthClientInformationFull,
     scopes: list[str] | None = None,
     upstream_scope: str | None = None,
+    upstream_expires_in: int = 3600,
 ) -> OAuthToken:
     """Run a whole authorization through ``provider`` and return the MCP tokens it issues.
 
-    The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``.
+    The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``,
+    and grants a token lasting ``upstream_expires_in`` seconds.
     """
     redirect = await complete_upstream(
-        provider, await begin_upstream(provider, client, scopes=scopes), upstream_scope=upstream_scope
+        provider,
+        await begin_upstream(provider, client, scopes=scopes),
+        upstream_scope=upstream_scope,
+        upstream_expires_in=upstream_expires_in,
     )
     auth_code = await provider.load_authorization_code(client, code_in(redirect))
     assert auth_code is not None

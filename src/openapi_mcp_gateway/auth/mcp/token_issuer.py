@@ -41,12 +41,15 @@ class McpTokenAttachment:
     """What one sign-in attaches to its MCP tokens, carried from the code to every token refreshed from it.
 
     ``upstream_scopes`` are what the upstream granted the user behind the tokens.
-    ``links`` are the credentials the tokens map to, keyed by the store namespace each is found under.
-    Both stay empty for a token no upstream sign-in stands behind.
+    ``links`` are the credentials the tokens map to, keyed by a name the attaching side chooses.
+    ``links_expire_at`` is when the first of those credentials stops working, as a Unix time.
+    An access token never outlives it, so the client refreshes before its calls start failing.
+    All stay empty for a token no upstream sign-in stands behind.
     """
 
     upstream_scopes: list[str] = dataclasses.field(default_factory=list)
     links: collections.abc.Mapping[str, str] = dataclasses.field(default_factory=dict)
+    links_expire_at: int | None = None
 
 
 class McpTokenIssuer:
@@ -118,7 +121,11 @@ class McpTokenIssuer:
             if not value:
                 return None
             links[link] = value
-        return McpTokenAttachment(upstream_scopes=list(data.get('upstream_scopes', [])), links=links)
+        return McpTokenAttachment(
+            upstream_scopes=list(data.get('upstream_scopes', [])),
+            links=links,
+            links_expire_at=data.get('links_expire_at'),
+        )
 
     async def issue_tokens(
         self, client: OAuthClientInformationFull, scopes: list[str], attachment: McpTokenAttachment
@@ -139,6 +146,8 @@ class McpTokenIssuer:
             **self._build_record_fields(attachment),
         }
         access_ttl = self.policy.access_token_ttl
+        if attachment.links_expire_at is not None:
+            access_ttl = max(1, min(access_ttl, attachment.links_expire_at - now))
         refresh_ttl = self.policy.refresh_token_ttl
 
         await self.store.set(
@@ -208,6 +217,7 @@ class McpTokenIssuer:
         return {
             'upstream_scopes': list(attachment.upstream_scopes),
             'links': sorted(attachment.links),
+            'links_expire_at': attachment.links_expire_at,
             'origin': self._origin_fields,
         }
 
