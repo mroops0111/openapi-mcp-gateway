@@ -1,4 +1,5 @@
-from unittest.mock import AsyncMock, MagicMock
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -76,9 +77,9 @@ class TestUpstreamTokenExchangeClient:
 
     async def test_expired_cache_entry_triggers_a_new_exchange(self):
         """A result past its refresh skew is discarded rather than returned stale."""
-        source = self._source(refresh_skew_seconds=0.0)
+        source = self._source(refresh_skew_seconds=5.0)
         responses = [
-            _build_response(200, {'access_token': 'first', 'expires_in': 0}),
+            _build_response(200, {'access_token': 'first', 'expires_in': 1}),
             _build_response(200, {'access_token': 'second', 'expires_in': 3600}),
         ]
         source._http_client = MagicMock()
@@ -86,6 +87,22 @@ class TestUpstreamTokenExchangeClient:
 
         assert await source.exchange('caller-token') == 'first'
         assert await source.exchange('caller-token') == 'second'
+
+    async def test_an_expired_entry_is_dropped_on_the_next_exchange(self):
+        """Callers whose tokens rotate do not grow the cache without bound."""
+        source = self._source(refresh_skew_seconds=5.0)
+        responses = [
+            _build_response(200, {'access_token': 'first', 'expires_in': 1}),
+            _build_response(200, {'access_token': 'second', 'expires_in': 3600}),
+        ]
+        source._http_client = MagicMock()
+        source._http_client.post = AsyncMock(side_effect=responses)
+
+        await source.exchange('old-caller-token')
+        with patch('time.monotonic', return_value=time.monotonic() + 10):
+            await source.exchange('new-caller-token')
+
+        assert set(source._cache) == {'new-caller-token'}
 
     async def test_failure_explains_the_likely_causes(self):
         """A rejected exchange names what to check, since support varies between authorization servers."""

@@ -31,13 +31,8 @@ def build_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
     4. Apply config-supplied URL overrides on top of the spec-declared values.
     """
     entry = context.entry
-    flow_type: str | None = entry.auth.upstream.flow
-    upstream_oauth_flow = None
-    # No spec can declare token_exchange and it talks to no upstream authorization server,
-    # so there is no upstream flow to resolve, and consulting the spec would only report a misleading missing flow.
-    if flow_type != 'token_exchange':
-        upstream_oauth_flow = resolve_upstream_oauth_flow(entry, context.spec)
-        flow_type = upstream_oauth_flow.flow_type
+    upstream_oauth_flow = resolve_upstream_oauth_flow(entry, context.spec)
+    flow_type = upstream_oauth_flow.flow_type if upstream_oauth_flow else entry.auth.upstream.flow
     handler_class = OAUTH_FLOW_HANDLERS.get(flow_type or '')
     if handler_class is None:
         raise ValueError(
@@ -45,20 +40,12 @@ def build_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
             f'Supported flows: {sorted(OAUTH_FLOW_HANDLERS)}'
         )
 
-    flow_context = OAuthFlowContext(
-        entry=entry,
-        spec=context.spec,
-        store=context.store,
-        gateway_url=context.gateway_url,
-        mount_path=entry.mount_path,
-        mcp_scope_policy=context.mcp_scope_policy,
-        upstream_oauth_flow=upstream_oauth_flow,
-    )
+    flow_context = OAuthFlowContext(context, upstream_oauth_flow)
     return dataclasses.replace(handler_class().build(flow_context), flow_type=flow_type)
 
 
-def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> UpstreamOAuthFlow:
-    """Pick the effective OAuth flow for ``entry`` from the spec and config combined.
+def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> UpstreamOAuthFlow | None:
+    """Pick the effective OAuth flow for ``entry`` from the spec and config, or ``None`` for ``token_exchange``.
 
     Honours ``auth.upstream.flow`` as an explicit override,
     falls back to ``authorization_code`` when the spec declares both,
@@ -72,8 +59,10 @@ def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> Upstr
     so ``auth.upstream.type: passthrough`` is never reached from here and must be asked for by name.
     """
     explicit_flow_type = entry.auth.upstream.flow
+    # No spec can declare token_exchange and it talks to no upstream authorization server,
+    # so there is no upstream flow to resolve, and consulting the spec would only report a misleading missing flow.
     if explicit_flow_type == 'token_exchange':
-        raise ValueError(f'Server "{entry.name}": token_exchange runs no OAuth flow against the upstream.')
+        return None
 
     declared_flows = detect_upstream_oauth_flows(spec)
     selected_flow = _pick_from_declared_flows(declared_flows, explicit_flow_type)

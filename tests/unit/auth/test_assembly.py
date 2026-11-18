@@ -15,8 +15,3 @@ class TestServerAuthSetup:
         """Issuing tokens and validating someone else's are alternatives rather than layers."""
         with pytest.raises(ValueError, match='not both'):
             ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver(), provider=MagicMock(), verifier=MagicMock())
-
-    def test_mcp_auth_follows_the_provider_or_verifier(self):
-        """A setup without either leaves the MCP endpoint open."""
-        assert not ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver()).has_mcp_auth()
-        assert ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver(), verifier=MagicMock()).has_mcp_auth()

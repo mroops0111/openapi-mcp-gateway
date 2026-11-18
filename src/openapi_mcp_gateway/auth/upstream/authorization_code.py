@@ -6,21 +6,22 @@ import urllib.parse
 import httpx
 from starlette.exceptions import HTTPException
 
+from .token_source import parse_expires_in
+
 
 logger = logging.getLogger(__name__)
 
 
-# How long an upstream access token is taken to last when the token response does not say.
-DEFAULT_UPSTREAM_TOKEN_LIFETIME = 3600
-
-
 @dataclasses.dataclass(frozen=True)
 class UpstreamTokenResponse:
-    """What the upstream token endpoint answered, with ``scope`` exactly as sent, or ``None`` when omitted."""
+    """What the upstream token endpoint answered, with ``scope`` exactly as sent, or ``None`` when omitted.
+
+    ``expires_in`` is ``None`` when the upstream states no lifetime, as for a token that never expires.
+    """
 
     access_token: str
     refresh_token: str | None
-    expires_in: int
+    expires_in: int | None
     scope: str | None
 
     def resolve_granted_scopes(self, previous: list[str]) -> list[str]:
@@ -173,17 +174,6 @@ class UpstreamAuthorizationCodeClient:
             return UpstreamTokenResponse(
                 access_token=access_token,
                 refresh_token=data.get('refresh_token'),
-                expires_in=_parse_expires_in(data.get('expires_in')),
+                expires_in=parse_expires_in(data.get('expires_in')),
                 scope=data.get('scope'),
             )
-
-
-def _parse_expires_in(value: typing.Any) -> int:
-    """``expires_in`` as whole seconds, read leniently since some servers send it as a string or leave it null.
-
-    RFC 6749 §5.1 makes it a number and leaves it optional, so a missing value falls back to an hour.
-    """
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return DEFAULT_UPSTREAM_TOKEN_LIFETIME

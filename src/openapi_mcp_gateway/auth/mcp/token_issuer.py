@@ -198,19 +198,49 @@ class McpTokenIssuer:
         """The credential the MCP access token ``token`` links to under ``link``, or ``None`` for none."""
         return await self.store.get_mapping('mcp_access_token', token, link)
 
+    async def redeem_authorization_code(
+        self, client_id: str, code: str
+    ) -> tuple[dict[str, typing.Any], McpTokenAttachment | None] | None:
+        """Take the MCP authorization code ``code`` out of the store, with what it carries.
+
+        The code is removed in the same step it is read, so two exchanges racing for one code never both succeed,
+        as OAuth 2.1 requires of a code.
+        ``None`` when the code is unknown here or belongs to another client.
+        The attachment is ``None`` once a credential the code links is gone.
+        """
+        data = await self.store.pop('mcp_auth_code', code)
+        if not self.is_from_here(data) or data['client_id'] != client_id:
+            return None
+        attachment = await self.load_attachment('mcp_auth_code', code, data)
+        await self._delete_links('mcp_auth_code', code, data)
+        return data, attachment
+
     async def revoke_access_token(self, token: str) -> None:
-        """Delete the MCP access token ``token`` and the refresh token paired with it."""
-        paired = await self.store.get_mapping('mcp_access_token', token, 'mcp_refresh_token')
-        if paired:
-            await self.store.delete('mcp_refresh_token', paired)
-        await self.store.delete('mcp_access_token', token)
+        """Delete the MCP access token ``token`` and the refresh token paired with it, links included."""
+        await self._revoke_pair('mcp_access_token', token, 'mcp_refresh_token')
 
     async def revoke_refresh_token(self, token: str) -> None:
-        """Delete the MCP refresh token ``token`` and the access token paired with it."""
-        paired = await self.store.get_mapping('mcp_refresh_token', token, 'mcp_access_token')
+        """Delete the MCP refresh token ``token`` and the access token paired with it, links included."""
+        await self._revoke_pair('mcp_refresh_token', token, 'mcp_access_token')
+
+    async def _revoke_pair(self, namespace: str, token: str, paired_namespace: str) -> None:
+        """Delete ``token`` and the token paired with it, so no credential either links stays at rest."""
+        paired = await self.store.get_mapping(namespace, token, paired_namespace)
+        await self._delete_token(namespace, token, paired_namespace)
         if paired:
-            await self.store.delete('mcp_access_token', paired)
-        await self.store.delete('mcp_refresh_token', token)
+            await self._delete_token(paired_namespace, paired, namespace)
+
+    async def _delete_token(self, namespace: str, token: str, paired_namespace: str) -> None:
+        """Delete one token record with its links and its mapping to the token paired with it."""
+        data = await self.store.pop(namespace, token)
+        if data:
+            await self._delete_links(namespace, token, data)
+        await self.store.delete_mapping(namespace, token, paired_namespace)
+
+    async def _delete_links(self, namespace: str, key: str, data: dict[str, typing.Any]) -> None:
+        """Delete the mappings from the record under ``key`` to the credentials it links."""
+        for link in data.get('links', []):
+            await self.store.delete_mapping(namespace, key, link)
 
     def _build_record_fields(self, attachment: McpTokenAttachment) -> dict[str, typing.Any]:
         """The record fields every code and token carries besides its own."""

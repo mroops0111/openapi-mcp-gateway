@@ -232,20 +232,18 @@ class McpAuthorizationCodeServer:
     ) -> OAuthToken:
         """Exchange an MCP auth code for MCP access and refresh tokens."""
         client_id = require_client_id(client)
-        data = await self._load_record('mcp_auth_code', authorization_code.code, client)
-        if not data:
+        redeemed = await self.tokens.redeem_authorization_code(client_id, authorization_code.code)
+        if redeemed is None:
             logger.warning('OAuth code exchange rejected: reason=invalid_code client_id=%s', client_id)
             raise TokenError(error='invalid_grant', error_description='Invalid authorization code')
 
         # Only the code's own links, written beside the code with the same TTL.
         # Falling back to whatever the client was last linked to, as this once did,
         # could hand one user's credential to another user of the same client_id.
-        attachment = await self.tokens.load_attachment('mcp_auth_code', authorization_code.code, data)
+        _, attachment = redeemed
         if attachment is None:
             logger.warning('OAuth code exchange rejected: reason=link_lost client_id=%s', client_id)
             raise TokenError(error='invalid_grant', error_description='A credential this code stands for is gone')
-        # A code is good for one exchange, as OAuth 2.1 requires.
-        await self.tokens.store.delete('mcp_auth_code', authorization_code.code)
         return await self.tokens.issue_tokens(client, authorization_code.scopes, attachment)
 
     async def load_access_token(self, token: str) -> McpAccessToken | None:

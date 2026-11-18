@@ -7,11 +7,10 @@ from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
 
-from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeBridge
+from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeBridge, build_authorization_code_server
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
 from openapi_mcp_gateway.auth.mcp.client import McpClientDirectory, McpDynamicClientRegistry
-from openapi_mcp_gateway.auth.mcp.record_origin import McpRecordOrigin
-from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenIssuer, McpTokenPolicy
+from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenPolicy
 from openapi_mcp_gateway.auth.upstream.authorization_code import UpstreamAuthorizationCodeClient
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
@@ -41,19 +40,19 @@ def authorization_code_server(
     clients: McpClientDirectory | None = None,
     server_name: str = 'petstore',
 ) -> McpAuthorizationCodeServer:
-    """The MCP authorization server ``AuthorizationCodeFlowHandler`` assembles, joined to ``upstream`` by its Bridge.
+    """The MCP authorization server ``AuthorizationCodeFlowHandler`` builds, joined to ``upstream`` by its Bridge.
 
     ``clients`` defaults to Dynamic Client Registration into ``store``.
     """
-    tokens = McpTokenIssuer(
+    server, _ = build_authorization_code_server(
         store,
-        McpRecordOrigin(issuer=issuer, upstream_authorization_server=upstream.authorization_server),
+        issuer,
+        upstream,
         policy or McpTokenPolicy(),
+        clients or McpDynamicClientRegistry(store, issuer),
+        server_name,
     )
-    bridge = AuthorizationCodeBridge(tokens, upstream, store)
-    return McpAuthorizationCodeServer(
-        tokens, clients or McpDynamicClientRegistry(store, issuer), bridge, server_name=server_name
-    )
+    return server
 
 
 def server_of(provider: object) -> McpAuthorizationCodeServer:

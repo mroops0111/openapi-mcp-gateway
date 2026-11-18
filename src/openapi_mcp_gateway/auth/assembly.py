@@ -65,10 +65,6 @@ class ServerAuthSetup:
         if self.provider is not None and self.verifier is not None:
             raise ValueError('A server takes either an authorization server provider or a token verifier, not both.')
 
-    def has_mcp_auth(self) -> bool:
-        """Whether a caller of this MCP endpoint must present a token."""
-        return self.provider is not None or self.verifier is not None
-
 
 class AuthTypeHandler(abc.ABC):
     """Strategy that turns one ``auth.upstream.type`` into the components the gateway wires up."""
@@ -80,19 +76,38 @@ class AuthTypeHandler(abc.ABC):
 
 @dataclasses.dataclass
 class OAuthFlowContext:
-    """Inputs every ``OAuthFlowHandler`` needs to assemble its components.
+    """What an ``OAuthFlowHandler`` assembles from, which is what every auth type gets plus the resolved flow.
 
     Populated by ``build_oauth_flow`` before it dispatches to a concrete handler.
     ``upstream_oauth_flow`` is unset for ``token_exchange``, which runs no flow against the upstream.
     """
 
-    entry: ServerConfig
-    spec: OpenAPISpec
-    store: TokenStore
-    gateway_url: str
-    mount_path: str
-    mcp_scope_policy: McpScopePolicy
+    auth_context: AuthTypeContext
     upstream_oauth_flow: UpstreamOAuthFlow | None = None
+
+    @property
+    def entry(self) -> ServerConfig:
+        return self.auth_context.entry
+
+    @property
+    def spec(self) -> OpenAPISpec:
+        return self.auth_context.spec
+
+    @property
+    def store(self) -> TokenStore:
+        return self.auth_context.store
+
+    @property
+    def gateway_url(self) -> str:
+        return self.auth_context.gateway_url
+
+    @property
+    def mcp_scope_policy(self) -> McpScopePolicy:
+        return self.auth_context.mcp_scope_policy
+
+    @property
+    def mount_path(self) -> str:
+        return self.auth_context.entry.mount_path
 
     def require_upstream_oauth_flow(self) -> UpstreamOAuthFlow:
         """The upstream OAuth flow, which every flow but ``token_exchange`` runs."""

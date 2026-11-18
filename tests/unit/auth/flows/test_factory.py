@@ -30,6 +30,7 @@ class TestResolveUpstreamOAuthFlow:
             AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec'))
         )
         flow = resolve_upstream_oauth_flow(entry, spec_with_both_flows())
+        assert flow is not None
         assert flow.flow_type == 'authorization_code'
 
     def test_picks_client_credentials_when_only_one_declared(self):
@@ -38,6 +39,7 @@ class TestResolveUpstreamOAuthFlow:
             AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec'))
         )
         flow = resolve_upstream_oauth_flow(entry, spec_with_client_credentials())
+        assert flow is not None
         assert flow.flow_type == 'client_credentials'
 
     def test_explicit_flow_wins_over_default(self):
@@ -50,6 +52,7 @@ class TestResolveUpstreamOAuthFlow:
             ),
         )
         flow = resolve_upstream_oauth_flow(entry, spec_with_both_flows())
+        assert flow is not None
         assert flow.flow_type == 'client_credentials'
 
     def test_explicit_flow_unknown_in_spec_raises(self):
@@ -72,6 +75,7 @@ class TestResolveUpstreamOAuthFlow:
             ),
         )
         flow = resolve_upstream_oauth_flow(entry, build_spec())
+        assert flow is not None
         assert flow.flow_type == 'client_credentials'
         assert flow.token_url == TOKEN_URL
 
@@ -89,6 +93,7 @@ class TestResolveUpstreamOAuthFlow:
             ),
         )
         flow = resolve_upstream_oauth_flow(entry, build_spec())
+        assert flow is not None
         assert flow.flow_type == 'authorization_code'
 
     def test_no_spec_no_token_url_raises(self):
@@ -109,6 +114,7 @@ class TestResolveUpstreamOAuthFlow:
             ),
         )
         flow = resolve_upstream_oauth_flow(entry, spec_with_authorization_code())
+        assert flow is not None
         assert flow.token_url == 'https://other.example.com/token'
 
 

@@ -46,6 +46,22 @@ class TokenStore(abc.ABC):
     async def get_mapping(self, from_ns: str, from_key: str, to_ns: str) -> typing.Any | None:
         """Return the target key in ``to_ns`` for ``(from_ns, from_key)``, or ``None``."""
 
+    async def pop(self, namespace: str, key: str) -> typing.Any | None:
+        """Delete the entry at ``(namespace, key)`` and return what it held, or ``None`` for none.
+
+        A backend that can read and delete in one step overrides this, so two callers never both receive an entry.
+        """
+        data = await self.get(namespace, key)
+        await self.delete(namespace, key)
+        return data
+
+    async def delete_mapping(self, from_ns: str, from_key: str, to_ns: str) -> None:
+        """Delete the mapping from ``(from_ns, from_key)`` into ``to_ns``.
+
+        A backend that cannot leaves the mapping to expire with the TTL it was set with.
+        """
+        return None
+
     @abc.abstractmethod
     async def close(self) -> None:
         """Release resources such as connections and file handles."""

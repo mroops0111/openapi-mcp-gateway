@@ -1,3 +1,4 @@
+from openapi_mcp_gateway.auth.assembly import AuthTypeContext
 from openapi_mcp_gateway.auth.flows import (
     OAuthFlowContext,
 )
@@ -33,13 +34,14 @@ class TestClientCredentialsFlowHandler:
 
         setup = handler.build(
             OAuthFlowContext(
-                mcp_scope_policy=McpUnrestrictedScopePolicy(),
-                entry=entry,
-                spec=spec,
+                AuthTypeContext(
+                    entry=entry,
+                    spec=spec,
+                    store=MemoryTokenStore(),
+                    gateway_url='http://localhost:8000',
+                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                ),
                 upstream_oauth_flow=flow,
-                store=MemoryTokenStore(),
-                gateway_url='http://localhost:8000',
-                mount_path='/srv',
             )
         )
 
@@ -67,13 +69,14 @@ class TestClientCredentialsAudienceWiring:
 
         setup = UpstreamClientCredentialsFlowHandler().build(
             OAuthFlowContext(
-                mcp_scope_policy=McpUnrestrictedScopePolicy(),
-                entry=entry,
-                spec=spec,
+                AuthTypeContext(
+                    entry=entry,
+                    spec=spec,
+                    store=MemoryTokenStore(),
+                    gateway_url='http://localhost:8000',
+                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
-                store=MemoryTokenStore(),
-                gateway_url='http://localhost:8000',
-                mount_path='/srv',
             )
         )
 

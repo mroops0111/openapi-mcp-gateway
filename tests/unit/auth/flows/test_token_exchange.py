@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from openapi_mcp_gateway.auth.assembly import ServerAuthSetup
+from openapi_mcp_gateway.auth.assembly import AuthTypeContext, ServerAuthSetup
 from openapi_mcp_gateway.auth.flows import (
     OAuthFlowContext,
     TokenExchangeFlowHandler,
@@ -62,12 +62,14 @@ def _build_token_exchange(entry: ServerConfig):
     ):
         return TokenExchangeFlowHandler().build(
             OAuthFlowContext(
-                mcp_scope_policy=McpUnrestrictedScopePolicy(),
-                entry=entry,
-                spec=build_spec(),
-                store=MemoryTokenStore(),
-                gateway_url='http://localhost:8000',
-                mount_path='/srv',
+                AuthTypeContext(
+                    entry=entry,
+                    spec=build_spec(),
+                    store=MemoryTokenStore(),
+                    gateway_url='http://localhost:8000',
+                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                ),
+                upstream_oauth_flow=None,
             )
         )
 

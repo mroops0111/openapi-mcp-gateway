@@ -42,8 +42,6 @@ UPSTREAM_REFRESH_TOKEN_LINK = 'upstream_refresh_token'  # noqa: S105
 # Where a sign-in waits while the browser is at the upstream, keyed by the ``state`` sent there.
 UPSTREAM_AUTH_STATE_NAMESPACE = 'upstream_auth_state'
 
-# How long before the upstream token expires an MCP refresh renews it too, in seconds.
-UPSTREAM_REFRESH_MARGIN = 60
 
 # The upstream authorization errors that mean the same to the MCP client, and so reach it unchanged.
 _UPSTREAM_FORWARDED_ERRORS = frozenset({'access_denied', 'temporarily_unavailable'})
@@ -90,25 +88,39 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         return self.upstream.build_authorize_url(state)
 
     async def refresh_attachment(self, client_id: str, attachment: McpTokenAttachment) -> McpTokenAttachment:
-        """Refresh the upstream token too when it is about to expire.
+        """Renew the upstream token too once less than half an MCP access token's lifetime remains of it.
 
+        Renewing that early means a client that refreshes ahead of expiry gets a token worth using,
+        rather than one capped at the few minutes left, which it would refresh again at once.
+        Until the upstream token is gone, a renewal that cannot happen keeps the current one,
+        and once it is gone the client hears ``invalid_grant`` and signs in again.
         The upstream refresh token is kept when the upstream sends no new one.
         """
         expires_at = attachment.links_expire_at
-        if expires_at is None or expires_at - time.time() > UPSTREAM_REFRESH_MARGIN:
+        if expires_at is None:
+            return attachment
+        remaining = expires_at - time.time()
+        if remaining >= self.tokens.policy.access_token_ttl / 2:
             return attachment
         upstream_refresh_token = attachment.links.get(UPSTREAM_REFRESH_TOKEN_LINK)
-        if not upstream_refresh_token:
-            logger.warning('OAuth refresh rejected: reason=upstream_expired_no_refresh client_id=%s', client_id)
+        try:
+            if not upstream_refresh_token:
+                raise HTTPException(400, 'The upstream issued no refresh token')
+            refreshed = await self.upstream.refresh(upstream_refresh_token)
+        except HTTPException as exc:
+            if remaining > 0:
+                return attachment
+            logger.warning(
+                'OAuth refresh rejected: reason=upstream_expired client_id=%s detail=%s', client_id, exc.detail
+            )
             raise TokenError(
                 error='invalid_grant',
-                error_description='Upstream token expired and no refresh token available; re-authenticate',
-            )
-        refreshed = await self.upstream.refresh(upstream_refresh_token)
+                error_description='The upstream sign-in expired and could not be renewed; sign in again',
+            ) from exc
         return McpTokenAttachment(
             upstream_scopes=refreshed.resolve_granted_scopes(attachment.upstream_scopes),
             links=_build_upstream_links(refreshed.access_token, refreshed.refresh_token or upstream_refresh_token),
-            links_expire_at=int(time.time()) + refreshed.expires_in,
+            links_expire_at=_expiry_of(refreshed.expires_in),
         )
 
     # UpstreamTokenSource
@@ -142,7 +154,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
             McpTokenAttachment(
                 upstream_scopes=upstream_token.resolve_granted_scopes(self.upstream.scopes),
                 links=_build_upstream_links(upstream_token.access_token, upstream_token.refresh_token),
-                links_expire_at=int(time.time()) + upstream_token.expires_in,
+                links_expire_at=_expiry_of(upstream_token.expires_in),
             ),
         )
         await self._store.delete(UPSTREAM_AUTH_STATE_NAMESPACE, state)
@@ -279,18 +291,19 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         # The same string the metadata publishes as ``issuer``,
         # since RFC 9207 compares the two without any normalisation.
         issuer = str(server_url)
-        tokens = McpTokenIssuer(
-            store=flow_context.store,
-            origin=McpRecordOrigin(issuer=issuer, upstream_authorization_server=upstream.authorization_server),
-            policy=McpTokenPolicy(
+        clients = _build_client_directory(flow_context, mcp_endpoint_scopes, issuer)
+        server, bridge = build_authorization_code_server(
+            flow_context.store,
+            issuer,
+            upstream,
+            McpTokenPolicy(
                 scopes=mcp_endpoint_scopes,
                 access_token_ttl=mcp_config.access_token_ttl,
                 refresh_token_ttl=mcp_config.refresh_token_ttl,
             ),
+            clients,
+            entry.name,
         )
-        bridge = AuthorizationCodeBridge(tokens, upstream, flow_context.store)
-        clients = _build_client_directory(flow_context, mcp_endpoint_scopes, issuer)
-        server = McpAuthorizationCodeServer(tokens, clients, bridge, server_name=entry.name)
         # One cookie for both pages, since the callback must read what the consent page set.
         cookie = BrowserCookie(secure=issuer.startswith('https://'))
         settings = AuthSettings(
@@ -322,6 +335,27 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
         )
 
 
+def build_authorization_code_server(
+    store: TokenStore,
+    issuer: str,
+    upstream: UpstreamAuthorizationCodeClient,
+    policy: McpTokenPolicy,
+    clients: McpClientDirectory,
+    server_name: str,
+) -> tuple[McpAuthorizationCodeServer, AuthorizationCodeBridge]:
+    """Build the gateway's MCP authorization server for one server, joined to ``upstream`` by the returned Bridge.
+
+    ``issuer`` is the server's own issuer identifier, and every record is tied to it and to the upstream's server.
+    """
+    tokens = McpTokenIssuer(
+        store=store,
+        origin=McpRecordOrigin(issuer=issuer, upstream_authorization_server=upstream.authorization_server),
+        policy=policy,
+    )
+    bridge = AuthorizationCodeBridge(tokens, upstream, store)
+    return McpAuthorizationCodeServer(tokens, clients, bridge, server_name=server_name), bridge
+
+
 def _build_client_directory(
     flow_context: OAuthFlowContext, mcp_endpoint_scopes: list[str], issuer: str
 ) -> McpClientDirectory:
@@ -335,6 +369,11 @@ def _build_client_directory(
         entry.name,
     )
     return McpDynamicClientRegistry(flow_context.store, issuer)
+
+
+def _expiry_of(expires_in: int | None) -> int | None:
+    """When a token lasting ``expires_in`` seconds from now stops working, or ``None`` for one that never does."""
+    return None if expires_in is None else int(time.time()) + expires_in
 
 
 def _build_upstream_links(access_token: str, refresh_token: str | None) -> dict[str, str]:

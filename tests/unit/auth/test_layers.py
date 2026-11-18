@@ -38,15 +38,42 @@ def _auth_imports() -> dict[str, set[str]]:
         parts = list(path.relative_to(_PACKAGE_ROOT).with_suffix('').parts)
         package = parts[:-1]
         module = '.'.join(parts[:-1] if parts[-1] == '__init__' else parts)
-        targets = set()
-        for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.ImportFrom) and node.level:
-                base = package[: len(package) - (node.level - 1)]
-                target = '.'.join([*base, *([node.module] if node.module else [])])
-                if target.startswith('auth'):
-                    targets.add(target)
+        targets = {
+            target
+            for node in ast.walk(ast.parse(path.read_text()))
+            for target in _imported_modules(node, package)
+            if target.startswith('auth.') or target == 'auth'
+        }
         imports[module] = targets
     return imports
+
+
+def _imported_modules(node: ast.AST, package: list[str]) -> list[str]:
+    """The modules ``node`` imports, as dotted names below the package, whether written relative or absolute.
+
+    ``from . import x`` counts ``x`` as a module, since it may be one.
+    """
+    if isinstance(node, ast.Import):
+        return [_below_package(alias.name) for alias in node.names]
+    if not isinstance(node, ast.ImportFrom):
+        return []
+    if node.level:
+        base = '.'.join(package[: len(package) - (node.level - 1)])
+    else:
+        base = _below_package(node.module or '')
+        if node.module and base == node.module:
+            return []
+    if node.level and node.module:
+        base = f'{base}.{node.module}'
+    if node.module is None:
+        return [f'{base}.{alias.name}' for alias in node.names]
+    return [base]
+
+
+def _below_package(name: str) -> str:
+    """``name`` without the package prefix, or unchanged when it names a module outside the package."""
+    prefix = f'{openapi_mcp_gateway.__name__}.'
+    return name.removeprefix(prefix)
 
 
 def _layer_of(module: str) -> str:

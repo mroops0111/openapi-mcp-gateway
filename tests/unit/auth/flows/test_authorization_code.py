@@ -1,3 +1,4 @@
+from openapi_mcp_gateway.auth.assembly import AuthTypeContext
 from openapi_mcp_gateway.auth.flows import (
     AuthorizationCodeFlowHandler,
     OAuthFlowContext,
@@ -30,13 +31,14 @@ class TestAuthorizationCodeFlowHandler:
 
         setup = handler.build(
             OAuthFlowContext(
-                mcp_scope_policy=McpUnrestrictedScopePolicy(),
-                entry=entry,
-                spec=spec,
+                AuthTypeContext(
+                    entry=entry,
+                    spec=spec,
+                    store=MemoryTokenStore(),
+                    gateway_url='http://localhost:8000/',
+                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                ),
                 upstream_oauth_flow=flow,
-                store=MemoryTokenStore(),
-                gateway_url='http://localhost:8000/',
-                mount_path='/srv',
             )
         )
 
@@ -63,13 +65,14 @@ class TestUpstreamAudienceWiring:
 
         setup = AuthorizationCodeFlowHandler().build(
             OAuthFlowContext(
-                mcp_scope_policy=McpUnrestrictedScopePolicy(),
-                entry=entry,
-                spec=spec,
+                AuthTypeContext(
+                    entry=entry,
+                    spec=spec,
+                    store=MemoryTokenStore(),
+                    gateway_url='http://localhost:8000',
+                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
-                store=MemoryTokenStore(),
-                gateway_url='http://localhost:8000',
-                mount_path='/srv',
             )
         )
 
@@ -85,13 +88,14 @@ class TestUpstreamAudienceWiring:
 
         setup = AuthorizationCodeFlowHandler().build(
             OAuthFlowContext(
-                mcp_scope_policy=McpUnrestrictedScopePolicy(),
-                entry=entry,
-                spec=spec,
+                AuthTypeContext(
+                    entry=entry,
+                    spec=spec,
+                    store=MemoryTokenStore(),
+                    gateway_url='http://localhost:8000',
+                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
-                store=MemoryTokenStore(),
-                gateway_url='http://localhost:8000',
-                mount_path='/srv',
             )
         )
 
@@ -109,13 +113,14 @@ class TestAuthorizationCodeScopes:
         spec = spec_with_authorization_code()
         return AuthorizationCodeFlowHandler().build(
             OAuthFlowContext(
-                mcp_scope_policy=McpUnrestrictedScopePolicy(),
-                entry=entry,
-                spec=spec,
+                AuthTypeContext(
+                    entry=entry,
+                    spec=spec,
+                    store=MemoryTokenStore(),
+                    gateway_url='http://localhost:8000',
+                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
-                store=MemoryTokenStore(),
-                gateway_url='http://localhost:8000',
-                mount_path='/srv',
             )
         )
 

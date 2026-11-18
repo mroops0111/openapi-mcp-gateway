@@ -4,7 +4,7 @@ import time
 
 import httpx
 
-from .token_source import DEFAULT_REFRESH_SKEW_SECONDS, DEFAULT_TOKEN_LIFETIME_SECONDS
+from .token_source import DEFAULT_REFRESH_SKEW_SECONDS, DEFAULT_TOKEN_LIFETIME_SECONDS, parse_expires_in
 
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,8 @@ class UpstreamTokenExchangeClient:
     Results are cached per subject token, since one MCP session makes many tool calls.
     The cache is keyed by the token itself rather than by user,
     so a re-authenticated caller never picks up credentials minted for an older session.
+    Expired entries are dropped on each new exchange, so callers whose tokens rotate do not grow the cache forever.
+    Concurrent first calls with one subject token share one exchange, while calls for other callers do not wait on it.
 
     Support is uneven across authorization servers.
     Keycloak has it generally available, authentik added it in 2026.8,
@@ -51,7 +53,7 @@ class UpstreamTokenExchangeClient:
         self.audience_params = audience_params or {}
         self.refresh_skew_seconds = refresh_skew_seconds
         self._cache: dict[str, tuple[str, float]] = {}
-        self._lock = asyncio.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
         self._http_client: httpx.AsyncClient | None = None
 
     async def exchange(self, subject_token: str) -> str:
@@ -59,17 +61,30 @@ class UpstreamTokenExchangeClient:
         cached = self._cached(subject_token)
         if cached is not None:
             return cached
-        async with self._lock:
-            cached = self._cached(subject_token)
-            if cached is not None:
-                return cached
-            return await self._request_exchange(subject_token)
+        lock = self._locks.setdefault(subject_token, asyncio.Lock())
+        try:
+            async with lock:
+                cached = self._cached(subject_token)
+                if cached is not None:
+                    return cached
+                self._drop_expired()
+                return await self._request_exchange(subject_token)
+        finally:
+            if not lock.locked():
+                self._locks.pop(subject_token, None)
 
     async def aclose(self) -> None:
         if self._http_client is not None:
             await self._http_client.aclose()
             self._http_client = None
         self._cache.clear()
+        self._locks.clear()
+
+    def _drop_expired(self) -> None:
+        """Forget every cached result whose token has expired."""
+        now = time.monotonic()
+        for subject_token in [token for token, (_, expires_at) in self._cache.items() if now >= expires_at]:
+            del self._cache[subject_token]
 
     def _cached(self, subject_token: str) -> str | None:
         entry = self._cache.get(subject_token)
@@ -126,7 +141,7 @@ class UpstreamTokenExchangeClient:
             logger.warning('Token exchange response missing access_token: endpoint=%s', self.token_endpoint)
             raise RuntimeError('Token exchange response missing access_token')
 
-        expires_in = float(payload.get('expires_in', DEFAULT_TOKEN_LIFETIME_SECONDS))
+        expires_in = parse_expires_in(payload.get('expires_in')) or DEFAULT_TOKEN_LIFETIME_SECONDS
         self._cache[subject_token] = (access_token, time.monotonic() + expires_in)
         logger.info(
             'Token exchange succeeded: endpoint=%s expires_in=%s scope=%r',
