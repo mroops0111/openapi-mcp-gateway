@@ -71,7 +71,8 @@ class _ServerBundle(typing.NamedTuple):
     # Prose for the dry-run table only.
     # ``describe`` reports the structured fields above instead,
     # so that a caller never has to read a sentence to find a value.
-    auth_summary: str = 'none'
+    upstream_auth_summary: str = 'none'
+    mcp_auth_summary: str = 'open'
     policy_summary: str = 'no filter'
 
     def describe(self) -> dict[str, typing.Any]:

@@ -455,7 +455,8 @@ class Gateway:
                 scope_registry=scope_registry,
                 tool_call_target=tool_call_target,
                 base_url=base_url,
-                auth_summary=_auth_summary(server_config.auth, auth),
+                upstream_auth_summary=_summarize_upstream_auth(server_config.auth, auth),
+                mcp_auth_summary=auth.mcp_summary,
                 auth_type=server_config.auth.upstream.type,
                 auth_api_key_header=(
                     server_config.auth.upstream.api_key_header
@@ -471,13 +472,15 @@ class Gateway:
             )
         )
         logger.info(
-            'Registered server "%s": mount=%s base_url=%s tools=%d resources=%d auth=%s resolver=%s',
+            'Registered server "%s": mount=%s base_url=%s tools=%d resources=%d '
+            'upstream_auth=%s mcp_auth=%s resolver=%s',
             server_config.name,
             server_config.mount_path,
             base_url,
             len(exposed_tools),
             len(resource_names),
-            _auth_summary(server_config.auth, auth),
+            _format_log_label(_summarize_upstream_auth(server_config.auth, auth)),
+            _format_log_label(auth.mcp_summary),
             type(auth_resolver).__name__,
         )
 
@@ -808,18 +811,18 @@ def _refuse_undefined_mcp_scopes(server_config: ServerConfig, mcp_scope_policy: 
         )
 
 
-def _auth_summary(auth: AuthConfig, setup: ServerAuthSetup) -> str:
-    """A short human label for a server's auth.
+def _summarize_upstream_auth(auth: AuthConfig, setup: ServerAuthSetup) -> str:
+    """A short label of how the upstream is reached, as ``mechanism (detail)`` like ``mcp_summary``.
 
-    It names the header for api_key, the OAuth flow, and agents obtaining their own MCP tokens.
+    It names the header for api_key and the OAuth flow that was resolved, which the config may leave unset.
     """
     if auth.upstream.type == 'api_key':
-        summary = f'api_key (header {auth.upstream.api_key_header})'
-    elif auth.upstream.type == 'oauth2' and auth.upstream.flow:
-        summary = f'oauth2 ({auth.upstream.flow})'
-    else:
-        summary = auth.upstream.type
-    metadata = setup.authorization_server_metadata
-    if setup.provider is None and metadata is not None and metadata.grant_types_supported == ['client_credentials']:
-        summary += ', agents obtain MCP tokens by client_credentials'
-    return summary
+        return f'api_key ({auth.upstream.api_key_header})'
+    if auth.upstream.type == 'oauth2' and setup.flow_type:
+        return f'oauth2 ({setup.flow_type})'
+    return auth.upstream.type
+
+
+def _format_log_label(label: str) -> str:
+    """``label`` as one token, so a ``key=value`` log line stays parseable."""
+    return label.replace(' (', '(')

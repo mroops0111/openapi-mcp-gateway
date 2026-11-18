@@ -41,15 +41,14 @@ class ServerAuthSetup:
     ``verifier`` is set instead when it only checks them, issued elsewhere or through its own ``routes``.
     The MCP SDK rejects a server given both.
     ``settings`` and ``protected_resource`` accompany either one and drive the discovery documents.
-    ``protected_resource`` is the RFC 9728 document this server publishes.
-    Its ``resource`` is always the endpoint's own canonical URI,
-    while ``authorization_servers`` names whoever mints tokens for it.
-    ``routes`` are mounted on the server as they are, so the gateway never needs to know which flow asked for them.
+    ``protected_resource`` is the RFC 9728 document this server publishes, naming whoever mints its tokens.
+    ``routes`` are mounted as they are, so the gateway never knows which flow asked for them.
     ``mcp_tokens_carry_upstream_grant`` says each MCP token records what the upstream granted the user behind it,
     which checking an operation's upstream scopes needs.
     ``authorization_server_metadata`` is the RFC 8414 document of the gateway's own authorization server,
     set wherever the gateway issues this endpoint's tokens, whether through ``provider`` or its own routes.
     ``extensions`` are the MCP extensions the server advertises, such as how a client may obtain a token.
+    ``mcp_summary`` labels who issues this endpoint's tokens, as ``mechanism (detail)``.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
@@ -62,6 +61,7 @@ class ServerAuthSetup:
     mcp_tokens_carry_upstream_grant: bool = False
     authorization_server_metadata: OAuthMetadata | None = None
     extensions: list[Extension] = dataclasses.field(default_factory=list)
+    mcp_summary: str = 'open'
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
     # The flow that was resolved, which is not always the one the config named.
     # Set by the factory, so that every handler stays unaware of it.

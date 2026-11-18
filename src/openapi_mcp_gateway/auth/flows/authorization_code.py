@@ -328,6 +328,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
                 McpAuthorizationCodeRoutes(server, flow_context.mcp_scope_policy, cookie),
                 AuthorizationCodeCallbackRoutes(bridge, cookie),
             ],
+            mcp_summary='gateway (authorization_code)',
         )
 
 

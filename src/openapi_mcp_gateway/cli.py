@@ -361,7 +361,7 @@ def _cli_layer(
 
 def _dry_run_kv(label: str, value: str) -> None:
     """Print one aligned, dim-labelled key/value line in the dry-run summary."""
-    click.echo(f'    {click.style(f"{label:<12}", dim=True)}  {value}')
+    click.echo(f'    {click.style(f"{label:<13}", dim=True)}  {value}')
 
 
 def _shaping_label(tool: ExposedTool) -> str:
@@ -416,7 +416,8 @@ def _echo_dry_run_summary(gateway: Gateway, config: GatewayConfig, output: str =
         click.secho(f'  {server.name}', bold=True)
         _dry_run_kv('mount', server.mount_path)
         _dry_run_kv('base url', server.base_url)
-        _dry_run_kv('auth', server.auth_summary)
+        _dry_run_kv('upstream auth', server.upstream_auth_summary)
+        _dry_run_kv('mcp auth', server.mcp_auth_summary)
         _dry_run_kv('policy', server.policy_summary)
         _dry_run_kv('exposure', server.exposure)
         _dry_run_kv('instructions', _instructions_label(server.instructions))

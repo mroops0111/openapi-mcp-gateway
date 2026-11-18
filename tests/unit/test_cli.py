@@ -1,6 +1,7 @@
 import json
 import logging
 import pathlib
+import re
 import typing
 from unittest import mock
 
@@ -308,8 +309,21 @@ class TestDryRun:
         assert result.exit_code == 0, result.output
         assert 'pets' in result.output
         assert 'mount' in result.output
-        assert 'auth' in result.output
+        assert 'upstream auth' in result.output
+        assert 'mcp auth' in result.output
         assert 'exposure' in result.output
+
+    def test_dry_run_names_who_issues_mcp_tokens(self, tmp_path: pathlib.Path):
+        """Each side reads as ``mechanism (detail)``, the MCP one as the strategy that issues its tokens reports it."""
+        config = tmp_path / 'config.yml'
+        auth = {'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': {'agent': {'client_secret': 's'}}}}
+        config.write_text(yaml.safe_dump({'servers': [{'name': 'pets', 'spec': str(PETSTORE_SPEC), 'auth': auth}]}))
+
+        result, _ = _run('--config', str(config), '--dry-run')
+
+        assert result.exit_code == 0, result.output
+        assert re.search(r'upstream auth\s+bearer\n', click.unstyle(result.output))
+        assert re.search(r'mcp auth\s+gateway \(client_credentials\)\n', click.unstyle(result.output))
 
 
 class TestInstructionsLabel:

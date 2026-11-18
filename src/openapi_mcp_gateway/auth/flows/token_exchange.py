@@ -143,5 +143,6 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
                     'scopes_supported': mcp_endpoint_scopes or None,
                 }
             ),
+            mcp_summary=f'issuer ({metadata.issuer})',
             on_shutdown=bridge.aclose,
         )

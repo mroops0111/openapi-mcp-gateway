@@ -101,6 +101,7 @@ class McpClientCredentialsAuthority(McpTokenAuthority):
             routes=[*setup.routes, McpClientCredentialsRoutes(grant, resource=str(protected_resource.resource))],
             authorization_server_metadata=metadata,
             extensions=[*setup.extensions, McpClientCredentialsExtension()],
+            mcp_summary='gateway (client_credentials)',
         )
 
 
