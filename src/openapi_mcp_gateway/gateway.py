@@ -473,7 +473,7 @@ class Gateway:
         )
         logger.info(
             'Registered server "%s": mount=%s base_url=%s tools=%d resources=%d '
-            'upstream_auth=%s mcp_auth=%s resolver=%s',
+            'upstream_auth=%s mcp_auth=%s',
             server_config.name,
             server_config.mount_path,
             base_url,
@@ -481,7 +481,6 @@ class Gateway:
             len(resource_names),
             _format_log_label(_summarize_upstream_auth(server_config.auth, auth)),
             _format_log_label(auth.mcp_summary),
-            type(auth_resolver).__name__,
         )
 
     def _resolve_auth(
