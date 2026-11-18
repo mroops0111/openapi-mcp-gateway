@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # How many operations a startup log lists before it only counts the rest.
 _LOGGED_OPERATION_LIMIT = 5
 
-# What an operation no MCP scope covers requires, keyed by ``auth.operation_scopes.unscoped``.
+# What an operation no MCP scope covers requires, keyed by ``auth.mcp.operation_scopes.unscoped``.
 _UNSCOPED_REQUIREMENTS: dict[str, ScopeRequirement] = {
     'deny': UnreachableRequirement(),
     'allow': UnrestrictedRequirement(),
@@ -54,7 +54,7 @@ class McpScopePolicy(ScopePolicy):
 
     @property
     @abc.abstractmethod
-    def defined_mcp_scopes(self) -> collections.abc.Mapping[str, str]:
+    def mcp_defined_scopes(self) -> collections.abc.Mapping[str, str]:
         """Every scope the server defines, mapped to the description a person approving it is shown."""
 
     @property
@@ -78,16 +78,16 @@ class UnrestrictedScopePolicy(ScopePolicy):
         return UnrestrictedRequirement()
 
 
-class UnrestrictedMcpScopePolicy(UnrestrictedScopePolicy, McpScopePolicy):
-    """No MCP scopes, so every token may use every operation, as on a server without ``auth.operation_scopes``."""
+class McpUnrestrictedScopePolicy(UnrestrictedScopePolicy, McpScopePolicy):
+    """No MCP scopes, so every token may use every operation, as on a server without ``auth.mcp.operation_scopes``."""
 
     @property
-    def defined_mcp_scopes(self) -> collections.abc.Mapping[str, str]:
+    def mcp_defined_scopes(self) -> collections.abc.Mapping[str, str]:
         return {}
 
 
-class ConfiguredMcpScopePolicy(McpScopePolicy):
-    """The MCP scopes ``auth.operation_scopes`` defines over a server's operations, derived and hand-written alike.
+class McpConfiguredScopePolicy(McpScopePolicy):
+    """The MCP scopes ``auth.mcp.operation_scopes`` defines over a server's operations, derived and hand-written alike.
 
     An operation opens to any scope that covers it, and falls to ``unscoped`` when none does.
     Construction refuses a hand-written scope that reuses a derived name,
@@ -108,13 +108,13 @@ class ConfiguredMcpScopePolicy(McpScopePolicy):
             scope.name: scope.description for operation in operations for scope in self._derivation.derive(operation)
         }
         self._refuse_reused_names(derived)
-        self._defined_mcp_scopes = {**derived, **{name: scope.description for name, scope in config.manual.items()}}
+        self._mcp_defined_scopes = {**derived, **{name: scope.description for name, scope in config.manual.items()}}
         self._warn_on_unmatched_patterns(operations)
         self._log_unscoped(operations)
 
     @property
-    def defined_mcp_scopes(self) -> collections.abc.Mapping[str, str]:
-        return self._defined_mcp_scopes
+    def mcp_defined_scopes(self) -> collections.abc.Mapping[str, str]:
+        return self._mcp_defined_scopes
 
     @property
     def opens_unscoped_operations(self) -> bool:
@@ -142,7 +142,7 @@ class ConfiguredMcpScopePolicy(McpScopePolicy):
         reused = sorted(set(derived) & set(self._config.manual))
         if reused:
             raise ValueError(
-                f'Server "{self._server_name}": auth.operation_scopes.manual reuses names auth.operation_scopes.auto {self._config.auto} '
+                f'Server "{self._server_name}": auth.mcp.operation_scopes.manual reuses names auth.mcp.operation_scopes.auto {self._config.auto} '
                 f'derives ({", ".join(reused)}). Rename the hand-written scopes.'
             )
 
@@ -152,7 +152,7 @@ class ConfiguredMcpScopePolicy(McpScopePolicy):
         stray = unmatched_patterns(list(operations), patterns)
         if stray:
             logger.warning(
-                'Server "%s": %d auth.operation_scopes.manual pattern(s) matched no operation (%s). '
+                'Server "%s": %d auth.mcp.operation_scopes.manual pattern(s) matched no operation (%s). '
                 'Check them against the operationIds in the spec.',
                 self._server_name,
                 len(stray),
@@ -166,7 +166,7 @@ class ConfiguredMcpScopePolicy(McpScopePolicy):
             return
         logger.log(
             logging.WARNING if self._config.unscoped == 'deny' else logging.INFO,
-            'Server "%s": %d operation(s) no scope covers (%s) follow auth.operation_scopes.unscoped %s.',
+            'Server "%s": %d operation(s) no scope covers (%s) follow auth.mcp.operation_scopes.unscoped %s.',
             self._server_name,
             len(unscoped),
             _shorten(unscoped),
@@ -174,11 +174,11 @@ class ConfiguredMcpScopePolicy(McpScopePolicy):
         )
 
 
-class UnrestrictedUpstreamScopePolicy(UnrestrictedScopePolicy, UpstreamScopePolicy):
+class UpstreamUnrestrictedScopePolicy(UnrestrictedScopePolicy, UpstreamScopePolicy):
     """Every operation open whatever the upstream granted, as on a server without ``auth.upstream.enforce_scopes``."""
 
 
-class SpecSecurityUpstreamScopePolicy(UpstreamScopePolicy):
+class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
     """The upstream scopes each operation's OpenAPI ``security`` declares, checked against the gateway's credential.
 
     The gateway holds one upstream credential, an OAuth token,
@@ -300,25 +300,25 @@ def build_mcp_scope_policy(
     operations: collections.abc.Sequence[OperationInfo],
     server_name: str,
 ) -> McpScopePolicy:
-    """Return the MCP scope policy for a server, which restricts nothing unless ``auth.operation_scopes`` is set."""
+    """Return the MCP scope policy for a server, which restricts nothing unless ``auth.mcp.operation_scopes`` is set."""
     if config is None:
-        return UnrestrictedMcpScopePolicy()
-    return ConfiguredMcpScopePolicy(config, operations, server_name)
+        return McpUnrestrictedScopePolicy()
+    return McpConfiguredScopePolicy(config, operations, server_name)
 
 
 def build_upstream_scope_policy(
-    enforce_scopes: bool, spec_security: SpecSecurityUpstreamScopePolicy, server_name: str
+    enforce_scopes: bool, spec_security: UpstreamSpecSecurityScopePolicy, server_name: str
 ) -> UpstreamScopePolicy:
     """Return the upstream scope policy for a server, which restricts nothing unless ``enforce_scopes`` is on."""
     if not enforce_scopes:
-        return UnrestrictedUpstreamScopePolicy()
+        return UpstreamUnrestrictedScopePolicy()
     if not spec_security.oauth_schemes:
         logger.warning(
             'Server "%s": auth.upstream.enforce_scopes is on, but the spec declares no OAuth security scheme, '
             'so no operation is restricted by the upstream grant.',
             server_name,
         )
-        return UnrestrictedUpstreamScopePolicy()
+        return UpstreamUnrestrictedScopePolicy()
     return spec_security
 
 

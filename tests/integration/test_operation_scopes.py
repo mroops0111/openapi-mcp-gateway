@@ -14,11 +14,11 @@ from mcp.shared.auth import InvalidScopeError
 from mcp.types import CallToolResult, TextContent
 from starlette.testclient import TestClient
 
-from openapi_mcp_gateway.auth.flows import AuthorizationCodeProvider
+from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
-from tests.oauth import authorization_code_gateway, sign_in
+from tests.oauth import authorization_code_gateway, bridge_of, sign_in
 from tests.serving import serve
 
 
@@ -364,7 +364,7 @@ class TestUpstreamGrant:
 
     def test_without_requested_scopes_the_gateway_requests_what_the_operations_declare(self, make_enforcing_gateway):
         gateway = make_enforcing_gateway(scopes=[])
-        assert _provider(gateway).upstream.scopes == ['read:pets', 'write:pets']
+        assert bridge_of(_provider(gateway)).upstream.scopes == ['read:pets', 'write:pets']
 
     def test_startup_warns_about_operations_the_requested_scopes_cannot_open(self, make_gateway, secured_spec, caplog):
         """The check runs without ``enforce_scopes`` as well, since the upstream refuses the call anyway."""
@@ -375,11 +375,10 @@ class TestUpstreamGrant:
 
     def test_enforcing_a_flow_without_a_user_grant_is_refused(self, client_credentials_spec_path):
         auth = {
-            'type': 'oauth2',
-            'upstream': {'client_id': 'gateway', 'client_secret': 'secret', 'enforce_scopes': True},
+            'upstream': {'type': 'oauth2', 'client_id': 'gateway', 'client_secret': 'secret', 'enforce_scopes': True}
         }
         server = {'name': 'svc', 'spec': str(client_credentials_spec_path), 'auth': auth}
-        with pytest.raises(ValueError, match=r'enforce_scopes needs auth\.flow authorization_code'):
+        with pytest.raises(ValueError, match=r'enforce_scopes needs auth\.upstream\.flow authorization_code'):
             Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
 
 
@@ -407,7 +406,7 @@ async def _sign_in(gateway: Gateway, client_id: str, requested: str | None = Non
     return await sign_in(provider, client, scopes=client.validate_scope(requested), upstream_scope=upstream_scope)
 
 
-def _provider(gateway: Gateway) -> AuthorizationCodeProvider:
+def _provider(gateway: Gateway) -> McpAuthorizationCodeServer:
     """The authorization server of the gateway's one server."""
     provider = gateway.describe_servers()[0].auth_provider
     assert provider is not None

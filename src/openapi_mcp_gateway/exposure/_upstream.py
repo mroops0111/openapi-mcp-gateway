@@ -8,7 +8,7 @@ from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, ContentBlock, TextContent
 
-from ..auth.resolver import AuthResolver, NullAuthResolver
+from ..auth.upstream.resolver import UpstreamAuthResolver, UpstreamNoCredentialAuthResolver
 from ..client import BinaryBody, SharedAPIClient
 from ..openapi import OperationInfo, ParameterInfo
 from ._content import binary_content
@@ -28,7 +28,7 @@ class UpstreamBinding:
     """Per-server HTTP and auth context shared by every exposure strategy."""
 
     base_url: str
-    auth_resolver: AuthResolver = dataclasses.field(default_factory=NullAuthResolver)
+    auth_resolver: UpstreamAuthResolver = dataclasses.field(default_factory=UpstreamNoCredentialAuthResolver)
     timeout: float = 90
     transport: httpx.AsyncBaseTransport | None = None
     # Static per-server headers, sent on every call beneath the auth and per-call headers.

@@ -7,7 +7,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, TextContent
 
 from ..openapi import OperationInfo, ParameterInfo
-from ..scopes import ScopeRegistry, UnrestrictedMcpScopePolicy
+from ..scopes import McpUnrestrictedScopePolicy, ScopeRegistry
 from ._content import binary_content_data
 from ._shared import (
     _get_override,
@@ -112,7 +112,7 @@ def build_resource_read_function(operation: OperationInfo, binding: UpstreamBind
       Future progress notifications, passthrough auth, and per-call logging all have a real ``ctx`` to work with.
     - **No path parameters**: empty signature.
       MCPServer registers as a **concrete resource**, and a :class:`_NullContext` is supplied internally.
-      ``PassthroughAuthResolver`` will return ``{}`` for these,
+      ``UpstreamPassthroughAuthResolver`` will return ``{}`` for these,
       which is acceptable because no FastAPI-resource integration exists today.
 
     Optional query / header / body parameters are dropped from the resource surface in both cases.
@@ -166,7 +166,7 @@ class ResourceGenerator:
         self.mcp = mcp
         self.binding = binding
         self.server_name = server_name
-        self.scope_registry = scope_registry or ScopeRegistry(UnrestrictedMcpScopePolicy())
+        self.scope_registry = scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy())
 
     def register(self, operations: list[OperationInfo]) -> list[str]:
         """Declare one MCP resource per ``OperationInfo`` in ``operations``, returning the resource names."""

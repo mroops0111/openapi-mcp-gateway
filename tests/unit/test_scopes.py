@@ -7,15 +7,15 @@ from openapi_mcp_gateway.exposure import DynamicOperationTarget
 from openapi_mcp_gateway.openapi import OperationInfo
 from openapi_mcp_gateway.scopes import (
     AnyScopeRequirement,
-    BrokeredAccessToken,
-    ConfiguredMcpScopePolicy,
+    McpAccessToken,
+    McpConfiguredScopePolicy,
+    McpUnrestrictedScopePolicy,
     NameHeaderTarget,
     ScopeRegistry,
     ScopeRequirement,
     TagMethodDerivation,
     TokenGrant,
     UnreachableRequirement,
-    UnrestrictedMcpScopePolicy,
     UnrestrictedRequirement,
     build_mcp_scope_policy,
     grant_of,
@@ -125,7 +125,7 @@ class TestTagMethodDerivation:
 
 
 class TestConfiguredMcpScopePolicy:
-    """``auth.operation_scopes`` resolved against a server's operations."""
+    """``auth.mcp.operation_scopes`` resolved against a server's operations."""
 
     def test_derived_and_manual_scopes_add_up(self):
         """An operation a manual scope also covers opens to either scope."""
@@ -146,7 +146,7 @@ class TestConfiguredMcpScopePolicy:
         policy = _configured_policy(
             auto='tags', manual={'admin': {'description': 'Manage pets', 'operations': ['admin*']}}
         )
-        assert policy.defined_mcp_scopes == {
+        assert policy.mcp_defined_scopes == {
             'pets:read': 'Read pets',
             'pets:write': 'Create and change pets',
             'pets:delete': 'Delete pets',
@@ -184,15 +184,15 @@ class TestConfiguredMcpScopePolicy:
 
 
 class TestUnrestrictedMcpScopePolicy:
-    """A server without ``auth.operation_scopes`` restricts nothing."""
+    """A server without ``auth.mcp.operation_scopes`` restricts nothing."""
 
     def test_every_operation_is_open(self):
         policy = build_mcp_scope_policy(None, PETSTORE_OPERATIONS, 'petstore')
-        assert isinstance(policy, UnrestrictedMcpScopePolicy)
+        assert isinstance(policy, McpUnrestrictedScopePolicy)
         assert all(
             isinstance(policy.requirement_for(candidate), UnrestrictedRequirement) for candidate in PETSTORE_OPERATIONS
         )
-        assert policy.defined_mcp_scopes == {}
+        assert policy.mcp_defined_scopes == {}
         assert policy.list_cache_scope == 'public'
         assert policy.opens_unscoped_operations is True
 
@@ -202,19 +202,19 @@ class TestTokenGrant:
 
     def test_a_token_minted_before_recording_grantable_scopes_leaves_them_unknown(self):
         """Its challenge stays whole, so the client can still step up, while lists show only what it holds."""
-        token = BrokeredAccessToken(token='mcp_access', client_id='stepper', scopes=['pets:read'])
+        token = McpAccessToken(token='mcp_access', client_id='stepper', scopes=['pets:read'])
         grant = grant_of(token)
-        assert grant.grantable_mcp_scopes is None
-        assert grant.reachable_mcp_scopes == {'pets:read'}
+        assert grant.mcp_grantable_scopes is None
+        assert grant.mcp_reachable_scopes == {'pets:read'}
 
     def test_a_recorded_token_reaches_what_its_client_may_be_granted(self):
-        token = BrokeredAccessToken(
+        token = McpAccessToken(
             token='mcp_access',
             client_id='stepper',
             scopes=['pets:read'],
-            grantable_mcp_scopes=['pets:read', 'pets:write'],
+            mcp_grantable_scopes=['pets:read', 'pets:write'],
         )
-        assert grant_of(token).reachable_mcp_scopes == {'pets:read', 'pets:write'}
+        assert grant_of(token).mcp_reachable_scopes == {'pets:read', 'pets:write'}
 
 
 class TestScopeRegistry:
@@ -283,9 +283,9 @@ class _EveryScopeRequirement(ScopeRequirement):
         return 'This operation needs both pets:read and pets:write.'
 
 
-def _configured_policy(**config: object) -> ConfiguredMcpScopePolicy:
-    """A policy over the petstore operations, configured as ``auth.operation_scopes`` would be."""
-    return ConfiguredMcpScopePolicy(OperationScopesConfig.model_validate(config), PETSTORE_OPERATIONS, 'petstore')
+def _configured_policy(**config: object) -> McpConfiguredScopePolicy:
+    """A policy over the petstore operations, configured as ``auth.mcp.operation_scopes`` would be."""
+    return McpConfiguredScopePolicy(OperationScopesConfig.model_validate(config), PETSTORE_OPERATIONS, 'petstore')
 
 
 def _operation_named(operation_id: str) -> OperationInfo:

@@ -8,7 +8,7 @@ from mcp import Client
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 
-from openapi_mcp_gateway.auth.resolver import AuthResolver
+from openapi_mcp_gateway.auth.upstream.resolver import UpstreamAuthResolver
 from openapi_mcp_gateway.client import APIClient
 from openapi_mcp_gateway.exposure import ToolGenerator, UpstreamBinding
 from openapi_mcp_gateway.openapi import OperationInfo, ParameterInfo
@@ -22,7 +22,7 @@ _CALLERS = 40
 _LOGGED_CALLER = re.compile(r'HTTP Request: GET \S+/me\?caller=(\d+)\b')
 
 
-class _CallerAuthResolver(AuthResolver):
+class _CallerAuthResolver(UpstreamAuthResolver):
     """Authenticate each call as the caller its ``_meta`` names, as a per-user OAuth token would."""
 
     async def resolve(self, ctx: Context) -> dict[str, str]:

@@ -12,7 +12,7 @@ from mcp.shared.inbound import MCP_NAME_HEADER, MCP_PARAM_HEADER_PREFIX, X_MCP_H
 from mcp.types import CallToolResult
 
 from ..openapi import ExposedTool, OperationInfo
-from ..scopes import RequestTarget, ScopeRegistry, UnrestrictedMcpScopePolicy, current_grant
+from ..scopes import McpUnrestrictedScopePolicy, RequestTarget, ScopeRegistry, current_grant
 from ._bm25 import BM25FIndex
 from ._shaping import shape_operation
 from ._shared import _get_override, build_input_schema, derive_description, derive_name
@@ -92,7 +92,7 @@ class MetaToolGenerator:
     ):
         self.mcp = mcp
         self.binding = binding
-        self.scope_registry = scope_registry or ScopeRegistry(UnrestrictedMcpScopePolicy())
+        self.scope_registry = scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy())
         # Overrides replace the default weight of the fields they name and leave the rest as they are.
         self.field_weights = {**DEFAULT_FIELD_WEIGHTS, **(field_weight_overrides or {})}
 

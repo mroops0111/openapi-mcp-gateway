@@ -8,12 +8,10 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata
 from pydantic import AnyHttpUrl
 from starlette.exceptions import HTTPException
 
-from openapi_mcp_gateway.auth.flows.authorization_code import (
-    AuthorizationCodeProvider,
-    IssuedTokenPolicy,
-    UpstreamOAuthClient,
-)
-from openapi_mcp_gateway.scopes import BrokeredAccessToken
+from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
+from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenPolicy
+from openapi_mcp_gateway.auth.upstream.authorization_code import UpstreamAuthorizationCodeClient
+from openapi_mcp_gateway.scopes import McpAccessToken
 from tests.constants import (
     API_URL,
     ATTACKER_URL,
@@ -28,8 +26,10 @@ from tests.oauth import (
     BROWSER_ID,
     CLIENT_REDIRECT_URI,
     CLIENT_STATE,
+    authorization_code_server,
     authorize,
     begin_upstream,
+    bridge_of,
     code_in,
     complete_upstream,
     deliver_callback,
@@ -45,7 +45,7 @@ OTHER_GATEWAY_ISSUER = f'{GATEWAY_URL}/inventory'
 
 
 @pytest.fixture
-def make_provider(memory_store) -> typing.Callable[..., AuthorizationCodeProvider]:
+def make_provider(memory_store) -> typing.Callable[..., McpAuthorizationCodeServer]:
     """Build a provider on the shared store, naming ``issuer`` as its own in front of the upstream."""
 
     def make(
@@ -54,11 +54,12 @@ def make_provider(memory_store) -> typing.Callable[..., AuthorizationCodeProvide
         token_url: str = TOKEN_URL,
         scopes: list[str] | None = None,
         audience_params: dict[str, str] | None = None,
-        issued_tokens: IssuedTokenPolicy | None = None,
-    ) -> AuthorizationCodeProvider:
-        return AuthorizationCodeProvider(
-            store=memory_store,
-            upstream=UpstreamOAuthClient(
+        issued_tokens: McpTokenPolicy | None = None,
+    ) -> McpAuthorizationCodeServer:
+        return authorization_code_server(
+            memory_store,
+            issuer,
+            UpstreamAuthorizationCodeClient(
                 authorization_url=AUTHORIZE_URL,
                 token_url=token_url,
                 client_id='gateway-client-id',
@@ -68,9 +69,7 @@ def make_provider(memory_store) -> typing.Callable[..., AuthorizationCodeProvide
                 audience_params=audience_params or {},
                 issuer=upstream_issuer,
             ),
-            issued_tokens=issued_tokens or IssuedTokenPolicy(),
-            issuer=issuer,
-            prefix='petstore',
+            issued_tokens,
         )
 
     return make
@@ -176,7 +175,7 @@ class TestGrantedScopes:
     )
     async def test_endpoint_scopes_are_always_granted(self, make_provider, mcp_client_info, requested, granted):
         """A token without them would be refused by every request, since each must hold them all."""
-        provider = make_provider(issued_tokens=IssuedTokenPolicy(scopes=['api', 'mcp']))
+        provider = make_provider(issued_tokens=McpTokenPolicy(scopes=['api', 'mcp']))
         token = await sign_in(provider, mcp_client_info, scopes=requested)
         assert token.scope == granted
 
@@ -191,8 +190,8 @@ class TestGrantedScopes:
         )
         token = await sign_in(provider, client)
         access_token = await provider.load_access_token(token.access_token)
-        assert isinstance(access_token, BrokeredAccessToken)
-        assert access_token.grantable_mcp_scopes == grantable
+        assert isinstance(access_token, McpAccessToken)
+        assert access_token.mcp_grantable_scopes == grantable
 
 
 class TestUpstreamGrant:
@@ -216,25 +215,13 @@ class TestUpstreamGrant:
         refresh = await provider.load_refresh_token(mcp_client_info, token.refresh_token)
         assert refresh is not None
         # Expire the upstream token so the refresh path actually calls the token endpoint.
-        await memory_store.delete('api_access_token', 'upstream-access-token')
+        await memory_store.delete('upstream_access_token', 'upstream-access-token')
 
         response = upstream_token_response('rotated-access-token', scope=stated)
         with patch('httpx.AsyncClient.post', AsyncMock(return_value=response)):
             rotated = await provider.exchange_refresh_token(mcp_client_info, refresh, [])
 
         assert await _upstream_scopes_of(provider, rotated.access_token) == recorded
-
-    async def test_a_token_stored_without_the_grant_holds_the_requested_scopes(
-        self, provider, mcp_client_info, memory_store
-    ):
-        """A token minted before an upgrade keeps working, read as an omitted ``scope`` is."""
-        token = await sign_in(provider, mcp_client_info, upstream_scope='read')
-        data = await memory_store.get('mcp_access_token', token.access_token)
-        assert data is not None
-        del data['upstream_scopes']
-        await memory_store.set('mcp_access_token', token.access_token, data, ttl=3600)
-
-        assert await _upstream_scopes_of(provider, token.access_token) == ['read', 'write']
 
 
 class TestFullOAuthLifecycle:
@@ -262,7 +249,7 @@ class TestFullOAuthLifecycle:
         assert access is not None
         assert access.client_id == 'mcp-client-123'
 
-        upstream = await memory_store.get_mapping('mcp_access_token', token.access_token, 'api_access_token')
+        upstream = await memory_store.get_mapping('mcp_access_token', token.access_token, 'upstream_access_token')
         assert upstream == 'upstream-access-token'
 
         refresh = await provider.load_refresh_token(mcp_client_info, token.refresh_token)
@@ -274,7 +261,9 @@ class TestFullOAuthLifecycle:
 
         assert await provider.load_access_token(token.access_token) is None
 
-        new_upstream = await memory_store.get_mapping('mcp_access_token', new_token.access_token, 'api_access_token')
+        new_upstream = await memory_store.get_mapping(
+            'mcp_access_token', new_token.access_token, 'upstream_access_token'
+        )
         assert new_upstream == 'upstream-access-token'
 
         new_access = await provider.load_access_token(new_token.access_token)
@@ -291,17 +280,17 @@ class TestConfigurableTokenTtl:
 
     async def test_issued_token_uses_custom_access_ttl(self, make_provider, mcp_client_info):
         """A provider built with a custom access TTL mints tokens expiring on that cadence."""
-        provider = make_provider(issued_tokens=IssuedTokenPolicy(access_token_ttl=7200, refresh_token_ttl=604800))
+        provider = make_provider(issued_tokens=McpTokenPolicy(access_token_ttl=7200, refresh_token_ttl=604800))
 
         token = await sign_in(provider, mcp_client_info)
 
         assert token.expires_in == 7200
 
 
-class TestGetApiAccessToken:
-    """``get_api_access_token`` resolves the upstream token from the active MCP context."""
+class TestBridgeUpstreamToken:
+    """The Bridge resolves the upstream token behind the MCP token of the call being handled."""
 
-    async def test_get_api_access_token(self, provider, memory_store):
+    async def test_the_linked_upstream_token_is_returned(self, provider, memory_store):
         """Given an MCP access token in context, the mapped upstream token is returned."""
         await memory_store.set(
             'mcp_access_token',
@@ -313,7 +302,9 @@ class TestGetApiAccessToken:
                 'expires_at': 9999999999,
             },
         )
-        await memory_store.set_mapping('mcp_access_token', 'mcp_test_token', 'api_access_token', 'api_real_token')
+        await memory_store.set_mapping(
+            'mcp_access_token', 'mcp_test_token', 'upstream_access_token', 'upstream_real_token'
+        )
 
         mock_access_token = MagicMock()
         mock_access_token.token = 'mcp_test_token'
@@ -321,14 +312,14 @@ class TestGetApiAccessToken:
         with patch(
             'openapi_mcp_gateway.auth.flows.authorization_code.get_access_token', return_value=mock_access_token
         ):
-            result = await provider.get_api_access_token()
+            result = await bridge_of(provider).get_token()
 
-        assert result == 'api_real_token'
+        assert result == 'upstream_real_token'
 
-    async def test_get_api_access_token_no_context(self, provider):
+    async def test_no_token_without_an_authenticated_call(self, provider):
         """Without an active MCP token context, the resolver returns ``None``."""
         with patch('openapi_mcp_gateway.auth.flows.authorization_code.get_access_token', return_value=None):
-            result = await provider.get_api_access_token()
+            result = await bridge_of(provider).get_token()
         assert result is None
 
 
@@ -338,7 +329,7 @@ class TestUpstreamCallbackErrors:
     async def test_invalid_state_raises(self, provider):
         """An unknown ``state`` value triggers ``400 Invalid state parameter``."""
         with pytest.raises(HTTPException) as exception_info:
-            await provider.handle_upstream_callback('any-code', 'never-issued-state', BROWSER_ID)
+            await bridge_of(provider).handle_upstream_callback('any-code', 'never-issued-state', BROWSER_ID)
         assert exception_info.value.status_code == 400
         assert 'expired' in exception_info.value.detail
 
@@ -413,7 +404,7 @@ class TestUpstreamAudienceParams:
         assert refresh is not None
 
         # Expire the upstream token so the refresh path actually calls the token endpoint.
-        await memory_store.delete('api_access_token', 'upstream-access-token')
+        await memory_store.delete('upstream_access_token', 'upstream-access-token')
 
         post_mock = AsyncMock(return_value=upstream_token_response('rotated-access-token'))
         with patch('httpx.AsyncClient.post', post_mock):
@@ -609,7 +600,7 @@ class TestTokenBinding:
         record = await memory_store.get('mcp_auth_code', code_in(redirect))
         # The same code under a new key carries no upstream token mapping, as if that mapping had expired.
         await memory_store.set('mcp_auth_code', 'mcp_orphan', {**record, 'code': 'mcp_orphan'})
-        await memory_store.set_mapping('client', 'mcp-client-123', 'api_access_token', 'someone-elses-token')
+        await memory_store.set_mapping('client', 'mcp-client-123', 'upstream_access_token', 'someone-elses-token')
         auth_code = await provider.load_authorization_code(mcp_client_info, 'mcp_orphan')
         assert auth_code is not None
 
@@ -617,8 +608,8 @@ class TestTokenBinding:
             await provider.exchange_authorization_code(mcp_client_info, auth_code)
 
 
-async def _upstream_scopes_of(provider: AuthorizationCodeProvider, mcp_access_token: str) -> list[str]:
+async def _upstream_scopes_of(provider: McpAuthorizationCodeServer, mcp_access_token: str) -> list[str]:
     """The upstream grant the MCP access token ``mcp_access_token`` records."""
     access_token = await provider.load_access_token(mcp_access_token)
-    assert isinstance(access_token, BrokeredAccessToken)
+    assert isinstance(access_token, McpAccessToken)
     return access_token.upstream_scopes

@@ -4,7 +4,7 @@ import html
 import typing
 import urllib.parse
 
-from starlette.responses import HTMLResponse
+from starlette.responses import HTMLResponse, RedirectResponse
 
 
 # The headers every gateway page carries.
@@ -103,7 +103,7 @@ class ConsentPrompt:
     the address the authorization code is sent to, which a client cannot fake.
     ``mcp_scopes`` are the scopes the server defines that the client is granted.
     ``opens_unscoped_tools`` says the tools no scope covers are open to every client,
-    which on a server without ``auth.operation_scopes`` is every tool.
+    which on a server without ``auth.mcp.operation_scopes`` is every tool.
     """
 
     server_name: str
@@ -154,6 +154,11 @@ def error_page(message: str, status_code: int) -> HTMLResponse:
 <p>{html.escape(message)}</p>
 <p>Start the sign-in again from your MCP client.</p>"""
     return _page('Sign-in cannot continue', content, status_code)
+
+
+def page_redirect(url: str, status_code: int) -> RedirectResponse:
+    """A redirect no cache keeps, since each one carries a single-use ``state`` or code."""
+    return RedirectResponse(url, status_code=status_code, headers={'Cache-Control': PAGE_HEADERS['Cache-Control']})
 
 
 def _page(title: str, content: str, status_code: int = 200) -> HTMLResponse:

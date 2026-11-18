@@ -4,7 +4,7 @@ from mcp.shared.uri_template import UriTemplate
 
 from ..openapi import OperationInfo
 from .grant import TokenGrant
-from .policy import McpScopePolicy, UnrestrictedUpstreamScopePolicy, UpstreamScopePolicy
+from .policy import McpScopePolicy, UpstreamScopePolicy, UpstreamUnrestrictedScopePolicy
 from .requirement import ScopeRequirement, UnrestrictedRequirement
 
 
@@ -20,7 +20,7 @@ class ScopeRegistry:
 
     def __init__(self, mcp_policy: McpScopePolicy, upstream_policy: UpstreamScopePolicy | None = None) -> None:
         self.mcp_policy = mcp_policy
-        self.upstream_policy = upstream_policy or UnrestrictedUpstreamScopePolicy()
+        self.upstream_policy = upstream_policy or UpstreamUnrestrictedScopePolicy()
         self._requirements: dict[str, _NameRequirements] = {}
         self._resource_templates: list[tuple[UriTemplate, _NameRequirements]] = []
 
@@ -65,7 +65,7 @@ class ScopeRegistry:
         so a tool the client can step up for stays in sight, and calling it starts the step-up.
         The upstream grant is checked as it stands, since stepping up cannot change it.
         """
-        return self.refusal(name, grant._replace(mcp_scopes=grant.reachable_mcp_scopes)) is None
+        return self.refusal(name, grant._replace(mcp_scopes=grant.mcp_reachable_scopes)) is None
 
     def _requirements_of(self, name: str) -> '_NameRequirements':
         if name in self._requirements:

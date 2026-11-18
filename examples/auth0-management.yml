@@ -32,9 +32,9 @@ servers:
     # The spec's server URL is templated on the tenant, so the real host has to be given here.
     base_url: https://YOUR_TENANT.auth0.com/api/v2
     auth:
-      type: oauth2
-      flow: client_credentials
       upstream:
+        type: oauth2
+        flow: client_credentials
         # The spec declares this as the relative "/oauth/token/", so the tenant host is required here.
         # Auth0's own documentation gives the endpoint without the trailing slash.
         token_url: https://YOUR_TENANT.auth0.com/oauth/token

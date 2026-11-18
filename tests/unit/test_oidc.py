@@ -5,11 +5,11 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from openapi_mcp_gateway.auth.oidc import (
-    JWKSTokenVerifier,
-    OIDCConfigurationError,
-    TokenVerificationError,
-    fetch_issuer_metadata,
+from openapi_mcp_gateway.auth.mcp.jwks import (
+    McpIssuerConfigurationError,
+    McpJwksTokenVerifier,
+    McpTokenVerificationError,
+    fetch_mcp_issuer_metadata,
 )
 from tests.constants import ATTACKER_URL, GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
 
@@ -46,14 +46,14 @@ def _issue(signing_key, **claims) -> str:
     return jwt.encode(payload, signing_key, algorithm='RS256')
 
 
-def _verifier(signing_key, **kwargs) -> JWKSTokenVerifier:
+def _verifier(signing_key, **kwargs) -> McpJwksTokenVerifier:
     """Build a verifier whose JWKS client resolves to ``signing_key``'s public half."""
-    with patch('openapi_mcp_gateway.auth.oidc._build_jwk_client') as build:
+    with patch('openapi_mcp_gateway.auth.mcp.jwks._build_jwk_client') as build:
         jwk = MagicMock()
         jwk.key = signing_key.public_key()
         jwk.key_type = 'RSA'
         build.return_value.get_signing_key_from_jwt.return_value = jwk
-        return JWKSTokenVerifier(
+        return McpJwksTokenVerifier(
             issuer=ISSUER,
             audience=GATEWAY_RESOURCE,
             jwks_uri=JWKS_URL,
@@ -68,7 +68,7 @@ class TestFetchIssuerMetadata:
         """OpenID Connect discovery is tried first, so a provider serving both is read once."""
         payload = {'issuer': ISSUER, 'jwks_uri': JWKS_URL, 'token_endpoint': TOKEN_URL}
         with patch('httpx.get', return_value=_metadata_response(payload)) as get:
-            metadata = fetch_issuer_metadata(ISSUER)
+            metadata = fetch_mcp_issuer_metadata(ISSUER)
 
         assert metadata.jwks_uri == JWKS_URL
         assert metadata.token_endpoint == TOKEN_URL
@@ -79,7 +79,7 @@ class TestFetchIssuerMetadata:
         payload = {'issuer': ISSUER, 'jwks_uri': JWKS_URL, 'token_endpoint': TOKEN_URL}
         responses = [_metadata_response(None, status_code=404), _metadata_response(payload)]
         with patch('httpx.get', side_effect=responses) as get:
-            metadata = fetch_issuer_metadata(ISSUER)
+            metadata = fetch_mcp_issuer_metadata(ISSUER)
 
         assert metadata.jwks_uri == JWKS_URL
         assert get.call_args_list[1].args[0] == f'{ISSUER}/.well-known/oauth-authorization-server'
@@ -92,17 +92,17 @@ class TestFetchIssuerMetadata:
         payload = {'issuer': ATTACKER_URL, 'jwks_uri': f'{ATTACKER_URL}/jwks'}
         with (
             patch('httpx.get', return_value=_metadata_response(payload)),
-            pytest.raises(OIDCConfigurationError, match='declares issuer'),
+            pytest.raises(McpIssuerConfigurationError, match='declares issuer'),
         ):
-            fetch_issuer_metadata(ISSUER)
+            fetch_mcp_issuer_metadata(ISSUER)
 
     def test_reports_every_attempt_when_discovery_fails(self):
         """The error names both URLs tried, so a misconfigured issuer is diagnosable."""
         with (
             patch('httpx.get', return_value=_metadata_response(None, status_code=404)),
-            pytest.raises(OIDCConfigurationError) as excinfo,
+            pytest.raises(McpIssuerConfigurationError) as excinfo,
         ):
-            fetch_issuer_metadata(ISSUER)
+            fetch_mcp_issuer_metadata(ISSUER)
 
         assert '.well-known/openid-configuration' in str(excinfo.value)
         assert '.well-known/oauth-authorization-server' in str(excinfo.value)
@@ -118,7 +118,7 @@ class TestJWKSTokenVerifier:
     async def _assert_rejected(self, verifier, token, reason_matches):
         """A token must both report as unacceptable and carry a diagnosable reason."""
         assert await verifier.verify_token(token) is None
-        with pytest.raises(TokenVerificationError, match=reason_matches):
+        with pytest.raises(McpTokenVerificationError, match=reason_matches):
             verifier._verified_access_token(token)
 
     async def test_accepts_token_for_this_resource(self, signing_key):

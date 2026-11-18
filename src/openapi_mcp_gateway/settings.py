@@ -20,7 +20,22 @@ SCOPE_TOKEN = re.compile(r'[\x21\x23-\x5B\x5D-\x7E]+')
 
 
 # What an applicability error names for a setting only the gateway's own token minting reads.
-_MINTING_FLOW = 'auth.flow authorization_code, the only flow where the gateway mints tokens'
+_MINTING_FLOW = 'auth.upstream.flow authorization_code, the only flow where the gateway mints tokens'
+
+# Keys that left the top of ``auth``, and where each lives now.
+# A config written for the old layout is refused with the new place named, rather than with a bare unknown key.
+_MOVED_AUTH_KEYS = {
+    'type': 'auth.upstream.type',
+    'token': 'auth.upstream.token',
+    'api_key_header': 'auth.upstream.api_key_header',
+    'flow': 'auth.upstream.flow',
+    'issuer': 'auth.mcp.issuer',
+    'required_scopes': 'auth.mcp.required_scopes',
+    'operation_scopes': 'auth.mcp.operation_scopes',
+    'clients': 'auth.mcp.clients',
+    'mcp_access_token_ttl': 'auth.mcp.access_token_ttl',
+    'mcp_refresh_token_ttl': 'auth.mcp.refresh_token_ttl',
+}
 
 
 # The resolver moved to the leaf ``env`` module so exposure/ can reuse it without importing settings.
@@ -29,18 +44,19 @@ _resolve_env_var = resolve_env_var
 
 
 class UpstreamAuthConfig(pydantic.BaseModel):
-    """How the gateway authenticates to the upstream's authorization server.
+    """How the gateway authenticates to the upstream API, the outbound half of ``auth``.
 
-    Present only under ``type: oauth2``.
-    A static credential is a different mechanism rather than the other end of this conversation,
-    so ``token`` and ``api_key_header`` stay on ``AuthConfig`` itself.
-
-    Everything here is outbound, which is what separates it from ``issuer`` and ``required_scopes`` on the parent.
-    That split is the whole reason for the nesting,
-    since the two directions were previously told apart only by a prefix on some of the names.
+    ``type`` says where the credential comes from.
+    ``token`` and ``api_key_header`` serve the static types, and the rest serve ``type: oauth2``.
     """
 
     model_config = pydantic.ConfigDict(coerce_numbers_to_str=True, extra='forbid')
+
+    type: typing.Literal['bearer', 'api_key', 'oauth2', 'passthrough', 'none'] = 'none'
+    token: str | None = None
+    api_key_header: str = 'X-API-Key'
+
+    flow: typing.Literal['authorization_code', 'client_credentials', 'token_exchange'] | None = None
 
     client_id: str | None = None
     client_secret: str | None = None
@@ -74,6 +90,14 @@ class UpstreamAuthConfig(pydantic.BaseModel):
         implied = [scope for scopes in scope_implies.values() for scope in scopes]
         _refuse_invalid_scope_tokens([*scope_implies, *implied], 'auth.upstream.scope_implies')
         return scope_implies
+
+    def resolve_token(self) -> str | None:
+        """Static credential after env-var substitution.
+
+        How it is framed as a header belongs to the auth type handler rather than here,
+        since ``Bearer <token>`` is protocol knowledge rather than configuration.
+        """
+        return _resolve_env_var(self.token)
 
     def resolve_client_id(self) -> str | None:
         """OAuth client id after env-var substitution."""
@@ -132,17 +156,17 @@ class OperationScopesConfig(pydantic.BaseModel):
     @pydantic.field_validator('manual')
     @classmethod
     def _validate_scope_names(cls, manual: dict[str, ManualScopeConfig]) -> dict[str, ManualScopeConfig]:
-        _refuse_invalid_scope_tokens(manual, 'auth.operation_scopes.manual')
+        _refuse_invalid_scope_tokens(manual, 'auth.mcp.operation_scopes.manual')
         return manual
 
 
 class ClientConfig(pydantic.BaseModel):
-    """One pre-registered MCP client, keyed by its ``client_id`` under ``auth.clients``.
+    """One pre-registered MCP client, keyed by its ``client_id`` under ``auth.mcp.clients``.
 
     Without ``client_secret`` it is a public client, held to PKCE alone.
     Without ``redirect_uris`` any loopback redirect is accepted, on any port and path, as OAuth 2.1 requires,
     which is what a CLI client listening on a local port needs.
-    ``scopes`` are every scope the client may be granted, and each must be one ``auth.operation_scopes`` defines.
+    ``scopes`` are every scope the client may be granted, and each must be one ``auth.mcp.operation_scopes`` defines.
     ``default_scopes`` are what a client asking for no scope receives, a subset of ``scopes``.
     Left out, they are all of ``scopes``, and otherwise the client steps up for the rest.
     ``consent`` shows the gateway's consent page before the upstream sign-in.
@@ -161,7 +185,7 @@ class ClientConfig(pydantic.BaseModel):
     @pydantic.field_validator('scopes')
     @classmethod
     def _validate_scope_names(cls, scopes: list[str]) -> list[str]:
-        _refuse_invalid_scope_tokens(scopes, 'auth.clients.<client>.scopes')
+        _refuse_invalid_scope_tokens(scopes, 'auth.mcp.clients.<client>.scopes')
         return scopes
 
     @pydantic.model_validator(mode='after')
@@ -170,7 +194,7 @@ class ClientConfig(pydantic.BaseModel):
         beyond = sorted(set(self.default_scopes or ()) - set(self.scopes))
         if beyond:
             raise ValueError(
-                f'auth.clients.<client>.default_scopes names {beyond!r}, which are not in its scopes. '
+                f'auth.mcp.clients.<client>.default_scopes names {beyond!r}, which are not in its scopes. '
                 'Add them to scopes, or remove them from default_scopes.'
             )
         return self
@@ -185,44 +209,86 @@ class ClientConfig(pydantic.BaseModel):
         return _resolve_env_var(self.client_secret)
 
 
+class McpAuthConfig(pydantic.BaseModel):
+    """Who may call this MCP endpoint, the inbound half of ``auth``.
+
+    ``issuer`` and ``required_scopes`` serve ``token_exchange``, where another authorization server mints the tokens.
+    The rest serve ``authorization_code``, where the gateway mints them.
+    """
+
+    model_config = pydantic.ConfigDict(coerce_numbers_to_str=True, extra='forbid')
+
+    # The authorization server that mints tokens for this MCP endpoint, and what one of its tokens must already carry.
+    issuer: str | None = None
+    required_scopes: list[str] = pydantic.Field(default_factory=list)
+
+    # Which operations each scope opens, and the clients allowed to sign in with the scopes each is granted.
+    operation_scopes: OperationScopesConfig | None = None
+    clients: dict[str, ClientConfig] = pydantic.Field(default_factory=dict)
+
+    # Lifetimes of the MCP tokens the gateway mints, in seconds.
+    # The refresh TTL is the practical idle window, since each refresh issues a fresh refresh token,
+    # so a client refreshing within it slides forward and never re-authorizes.
+    access_token_ttl: int = pydantic.Field(default=3600, gt=0)
+    refresh_token_ttl: int = pydantic.Field(default=86400, gt=0)
+
+    @pydantic.model_validator(mode='after')
+    def _reject_scope_settings_that_cannot_take_effect(self) -> typing.Self:
+        """Refuse operation scopes no client could receive, and endpoint scopes that would stop no one.
+
+        With ``operation_scopes`` set, every token is minted from a pre-registered client's own scopes,
+        so an endpoint-wide ``required_scopes`` checks only what the gateway itself just granted.
+        """
+        if self.operation_scopes is not None and not self.clients:
+            raise ValueError(
+                'auth.mcp.operation_scopes needs auth.mcp.clients, since only a pre-registered client is granted scopes, '
+                'so it would have no effect here.'
+            )
+        if self.operation_scopes is not None and 'required_scopes' in self.model_fields_set:
+            raise ValueError(
+                'auth.mcp.required_scopes cannot be combined with auth.mcp.operation_scopes. '
+                'Every token is minted from a client in auth.mcp.clients, so an endpoint-wide scope would stop no one.'
+            )
+        scoped_clients = sorted(client_id for client_id, client in self.clients.items() if client.scopes)
+        if self.operation_scopes is None and scoped_clients:
+            raise ValueError(
+                f'auth.mcp.clients ({", ".join(scoped_clients)}) grant scopes but auth.mcp.operation_scopes defines none, '
+                'so they would have no effect here.'
+            )
+        return self
+
+    def resolve_issuer(self) -> str | None:
+        """External authorization server issuer after env-var substitution."""
+        return _resolve_env_var(self.issuer)
+
+
 class AuthConfig(pydantic.BaseModel):
-    """Authentication for one server, on both sides of the gateway.
+    """Authentication for one server, split by direction.
 
-    The top level answers who may call this MCP endpoint, and holds any static upstream credential.
-    ``upstream`` answers how the gateway reaches the API, and appears only under ``type: oauth2``.
+    ``upstream`` is how the gateway reaches the API, and ``mcp`` is who may call this MCP endpoint.
+    Each field is in exactly one of the two, so a name such as ``issuer`` means one thing in each.
 
-    ``token``, ``issuer`` and the fields under ``upstream`` accept substitution at resolve time,
+    ``token``, the issuers and the OAuth client fields accept substitution at resolve time,
     in both the ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` forms.
     Numeric OAuth credentials are coerced from int to str,
     so unquoted YAML values still parse on providers that use numeric ``client_id``.
     """
 
-    model_config = pydantic.ConfigDict(coerce_numbers_to_str=True, extra='forbid')
+    model_config = pydantic.ConfigDict(extra='forbid')
 
-    type: typing.Literal['bearer', 'api_key', 'oauth2', 'passthrough', 'none'] = 'none'
-    token: str | None = None
-    api_key_header: str = 'X-API-Key'
-
-    flow: typing.Literal['authorization_code', 'client_credentials', 'token_exchange'] | None = None
-
-    # Inbound, and for ``token_exchange`` only.
-    # The authorization server that mints tokens for this MCP endpoint, and what one of its tokens must already carry.
-    issuer: str | None = None
-    required_scopes: list[str] = pydantic.Field(default_factory=list)
-
-    # Outbound.
     upstream: UpstreamAuthConfig = UpstreamAuthConfig()
+    mcp: McpAuthConfig = McpAuthConfig()
 
-    # Inbound, and for ``authorization_code`` only, where the gateway mints the MCP tokens.
-    # Which operations each scope opens, and the clients allowed to sign in with the scopes each is granted.
-    operation_scopes: OperationScopesConfig | None = None
-    clients: dict[str, ClientConfig] = pydantic.Field(default_factory=dict)
-
-    # Lifetimes of the MCP-side tokens the gateway mints for authorization_code, in seconds.
-    # The refresh TTL is the practical idle window, since each refresh issues a fresh refresh token,
-    # so a client refreshing within it slides forward and never re-authorizes.
-    mcp_access_token_ttl: int = pydantic.Field(default=3600, gt=0)
-    mcp_refresh_token_ttl: int = pydantic.Field(default=86400, gt=0)
+    @pydantic.model_validator(mode='before')
+    @classmethod
+    def _refuse_moved_keys(cls, data: typing.Any) -> typing.Any:
+        """Name the new place of every key a config still writes at the top of ``auth``."""
+        if not isinstance(data, dict):
+            return data
+        moved = [f'auth.{key} is now {_MOVED_AUTH_KEYS[key]}' for key in data if key in _MOVED_AUTH_KEYS]
+        if moved:
+            raise ValueError('. '.join(moved) + '.')
+        return data
 
     @pydantic.model_validator(mode='after')
     def _reject_settings_that_cannot_take_effect(self) -> typing.Self:
@@ -236,84 +302,60 @@ class AuthConfig(pydantic.BaseModel):
 
         Only explicitly-set fields are checked, so defaults never trip this.
         """
-        oauth = self.type == 'oauth2'
+        upstream = self.upstream
+        oauth = upstream.type == 'oauth2'
         # ``token_exchange`` is never inferred from a spec, so an unset flow rules it out.
         # ``authorization_code`` is, so an unset flow leaves its fields plausible.
-        flow_unresolved = oauth and self.flow is None
-        mints_tokens = self.flow == 'authorization_code' or flow_unresolved
+        flow_unresolved = oauth and upstream.flow is None
+        mints_tokens = upstream.flow == 'authorization_code' or flow_unresolved
 
-        applicable: dict[str, tuple[bool, str]] = {
-            'token': (self.type in ('bearer', 'api_key'), 'auth.type bearer or api_key'),
-            'api_key_header': (self.type == 'api_key', 'auth.type api_key'),
-            'flow': (oauth, 'auth.type oauth2'),
-            'issuer': (self.flow == 'token_exchange', 'auth.flow token_exchange'),
-            'required_scopes': (
-                self.flow in ('authorization_code', 'token_exchange') or flow_unresolved,
-                'auth.flow authorization_code or token_exchange, the flows that verify an inbound token',
-            ),
-            'mcp_access_token_ttl': (mints_tokens, _MINTING_FLOW),
-            'mcp_refresh_token_ttl': (mints_tokens, _MINTING_FLOW),
-            'operation_scopes': (mints_tokens, _MINTING_FLOW),
-            'clients': (mints_tokens, _MINTING_FLOW),
+        upstream_applicable: dict[str, tuple[bool, str]] = {
+            'token': (upstream.type in ('bearer', 'api_key'), 'auth.upstream.type bearer or api_key'),
+            'api_key_header': (upstream.type == 'api_key', 'auth.upstream.type api_key'),
+            'flow': (oauth, 'auth.upstream.type oauth2'),
         }
-        for field, (is_applicable, requirement) in applicable.items():
-            if field in self.model_fields_set and not is_applicable:
-                raise ValueError(f'auth.{field} needs {requirement}, so it would have no effect here.')
-
-        if self.upstream.model_fields_set and not oauth:
-            named = ', '.join(sorted(self.upstream.model_fields_set))
-            raise ValueError(f'auth.upstream ({named}) needs auth.type oauth2, so it would have no effect here.')
-        receives_grant = self.flow == 'authorization_code' or flow_unresolved
-        upstream_applicable: dict[str, str] = {
+        oauth_fields = sorted(upstream.model_fields_set - {'type', *upstream_applicable})
+        if oauth_fields and not oauth:
+            named = ', '.join(oauth_fields)
+            raise ValueError(
+                f'auth.upstream ({named}) needs auth.upstream.type oauth2, so it would have no effect here.'
+            )
+        receives_grant_reason = {
             # Only authorization_code receives an authorization response, the one place ``iss`` arrives.
             'issuer': 'the only flow with an authorization response to check',
             # Only authorization_code records each user's upstream grant on the token it mints.
             'enforce_scopes': "the only flow that records each user's upstream grant",
             'scope_implies': "the only flow that records each user's upstream grant",
         }
-        for field, reason in upstream_applicable.items():
-            if field in self.upstream.model_fields_set and not receives_grant:
-                raise ValueError(
-                    f'auth.upstream.{field} needs auth.flow authorization_code, {reason}, so it would have no effect here.'
-                )
+        for field, reason in receives_grant_reason.items():
+            upstream_applicable[field] = (mints_tokens, f'auth.upstream.flow authorization_code, {reason}')
+        self._refuse_inapplicable(upstream, 'auth.upstream', upstream_applicable)
+
+        self._refuse_inapplicable(
+            self.mcp,
+            'auth.mcp',
+            {
+                'issuer': (upstream.flow == 'token_exchange', 'auth.upstream.flow token_exchange'),
+                'required_scopes': (
+                    upstream.flow in ('authorization_code', 'token_exchange') or flow_unresolved,
+                    'auth.upstream.flow authorization_code or token_exchange, the flows that verify an inbound token',
+                ),
+                'access_token_ttl': (mints_tokens, _MINTING_FLOW),
+                'refresh_token_ttl': (mints_tokens, _MINTING_FLOW),
+                'operation_scopes': (mints_tokens, _MINTING_FLOW),
+                'clients': (mints_tokens, _MINTING_FLOW),
+            },
+        )
         return self
 
-    @pydantic.model_validator(mode='after')
-    def _reject_scope_settings_that_cannot_take_effect(self) -> typing.Self:
-        """Refuse operation scopes no client could receive, and endpoint scopes that would stop no one.
-
-        With ``operation_scopes`` set, every token is minted from a pre-registered client's own scopes,
-        so an endpoint-wide ``required_scopes`` checks only what the gateway itself just granted.
-        """
-        if self.operation_scopes is not None and not self.clients:
-            raise ValueError(
-                'auth.operation_scopes needs auth.clients, since only a pre-registered client is granted scopes, '
-                'so it would have no effect here.'
-            )
-        if self.operation_scopes is not None and 'required_scopes' in self.model_fields_set:
-            raise ValueError(
-                'auth.required_scopes cannot be combined with auth.operation_scopes. '
-                'Every token is minted from a client in auth.clients, so an endpoint-wide scope would stop no one.'
-            )
-        scoped_clients = sorted(client_id for client_id, client in self.clients.items() if client.scopes)
-        if self.operation_scopes is None and scoped_clients:
-            raise ValueError(
-                f'auth.clients ({", ".join(scoped_clients)}) grant scopes but auth.operation_scopes defines none, '
-                'so they would have no effect here.'
-            )
-        return self
-
-    def resolve_token(self) -> str | None:
-        """Static credential after env-var substitution.
-
-        How it is framed as a header belongs to the auth type handler rather than here,
-        since ``Bearer <token>`` is protocol knowledge rather than configuration.
-        """
-        return _resolve_env_var(self.token)
-
-    def resolve_issuer(self) -> str | None:
-        """External authorization server issuer after env-var substitution."""
-        return _resolve_env_var(self.issuer)
+    @staticmethod
+    def _refuse_inapplicable(
+        section: pydantic.BaseModel, location: str, applicable: dict[str, tuple[bool, str]]
+    ) -> None:
+        """Refuse a field set in ``section`` that ``applicable`` marks as unread, naming what it needs."""
+        for field, (is_applicable, requirement) in applicable.items():
+            if field in section.model_fields_set and not is_applicable:
+                raise ValueError(f'{location}.{field} needs {requirement}, so it would have no effect here.')
 
 
 class CORSConfig(pydantic.BaseModel):

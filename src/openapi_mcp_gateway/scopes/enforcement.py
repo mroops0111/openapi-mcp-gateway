@@ -70,7 +70,7 @@ class ScopeChallengeMiddleware:
         if unmet is None:
             await self.app(scope, receive, send)
             return
-        challenged = unmet.challenge_within(grant_of(scope['user'].access_token).grantable_mcp_scopes)
+        challenged = unmet.challenge_within(grant_of(scope['user'].access_token).mcp_grantable_scopes)
         refusal = _UNREACHABLE_FOR_CLIENT if unmet.challenge and not challenged else unmet.refusal
         response = JSONResponse(
             status_code=403,

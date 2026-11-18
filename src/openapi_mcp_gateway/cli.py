@@ -294,7 +294,7 @@ def _build_auth_config(
     # Only flags the caller actually gave.
     # AuthConfig reads which fields were set to tell a decision from a default,
     # so passing None for an absent flag would read as a decision.
-    upstream = {
+    upstream: dict[str, typing.Any] = {
         key: value
         for key, value in {
             'client_id': auth_client_id,
@@ -305,14 +305,12 @@ def _build_auth_config(
         }.items()
         if value is not None
     }
-    fields: dict[str, typing.Any] = {'type': auth_type}
+    upstream['type'] = auth_type
     if auth_token is not None:
-        fields['token'] = auth_token
+        upstream['token'] = auth_token
     if auth_flow is not None:
-        fields['flow'] = auth_flow
-    if upstream:
-        fields['upstream'] = upstream
-    return AuthConfig.model_validate(fields)
+        upstream['flow'] = auth_flow
+    return AuthConfig.model_validate({'upstream': upstream})
 
 
 def _cli_layer(

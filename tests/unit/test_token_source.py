@@ -1,10 +1,12 @@
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from openapi_mcp_gateway.auth.token_source import ClientCredentialsTokenSource, TokenExchangeTokenSource
+from openapi_mcp_gateway.auth.flows.token_exchange import TokenExchangeBridge
+from openapi_mcp_gateway.auth.upstream.token_exchange import UpstreamTokenExchangeClient
+from openapi_mcp_gateway.auth.upstream.token_source import UpstreamClientCredentialsTokenSource
 from tests.constants import API_URL, TOKEN_URL
 
 
@@ -18,11 +20,11 @@ def _build_response(status_code: int, payload: dict | None = None, text: str = '
 
 
 class TestClientCredentialsTokenSourceFetch:
-    """Initial fetch and caching behaviour of ``ClientCredentialsTokenSource``."""
+    """Initial fetch and caching behaviour of ``UpstreamClientCredentialsTokenSource``."""
 
     async def test_first_call_posts_client_credentials(self):
         """The first ``get_token`` POSTs ``grant_type=client_credentials`` to ``token_url``."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -45,7 +47,7 @@ class TestClientCredentialsTokenSourceFetch:
 
     async def test_second_call_uses_cached_token(self):
         """A still-fresh token is returned from cache without a second POST."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -62,7 +64,7 @@ class TestClientCredentialsTokenSourceFetch:
 
     async def test_expired_token_triggers_refresh(self):
         """When the cached token is past the refresh skew, a fresh token is fetched."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -87,7 +89,7 @@ class TestClientCredentialsTokenSourceFetch:
 
     async def test_concurrent_callers_share_one_fetch(self):
         """N parallel ``get_token`` calls trigger exactly one upstream fetch."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -114,7 +116,7 @@ class TestClientCredentialsTokenSourceErrors:
 
     async def test_non_200_raises(self):
         """A non-200 token response raises ``RuntimeError`` and does not cache anything."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -127,7 +129,7 @@ class TestClientCredentialsTokenSourceErrors:
 
     async def test_missing_access_token_raises(self):
         """A 200 response without ``access_token`` raises ``RuntimeError``."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -144,7 +146,7 @@ class TestClientCredentialsTokenSourceClose:
 
     async def test_aclose_closes_http_client(self):
         """``aclose`` calls ``aclose`` on the internal ``httpx.AsyncClient`` if present."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -160,7 +162,7 @@ class TestClientCredentialsTokenSourceClose:
 
     async def test_aclose_is_safe_when_unused(self):
         """``aclose`` on a never-used source is a no-op."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -173,7 +175,7 @@ class TestClientCredentialsTokenSourceAudience:
 
     async def test_audience_params_are_posted(self):
         """Configured audience parameters ride along with the client_credentials grant."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -190,7 +192,7 @@ class TestClientCredentialsTokenSourceAudience:
 
     async def test_no_audience_params_leaves_request_unchanged(self):
         """Without configuration the grant carries no audience keys at all."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -206,17 +208,17 @@ class TestClientCredentialsTokenSourceAudience:
         assert 'resource' not in post_mock.await_args.kwargs['data']
 
 
-class TestTokenExchangeTokenSource:
+class TestUpstreamTokenExchangeClient:
     """RFC 8693 exchange of a caller's token for one the upstream API accepts."""
 
-    def _source(self, **kwargs) -> TokenExchangeTokenSource:
+    def _source(self, **kwargs) -> UpstreamTokenExchangeClient:
         defaults = {
             'token_endpoint': TOKEN_URL,
             'client_id': 'gateway',
             'client_secret': 'secret',
             'audience_params': {'audience': API_URL},
         }
-        return TokenExchangeTokenSource(**{**defaults, **kwargs})
+        return UpstreamTokenExchangeClient(**{**defaults, **kwargs})
 
     async def test_posts_rfc_8693_grant(self):
         """The request carries the token-exchange grant, the subject token, and the target audience."""
@@ -286,3 +288,30 @@ class TestTokenExchangeTokenSource:
 
         with pytest.raises(RuntimeError, match='RFC 8693'):
             await source.exchange('caller-token')
+
+
+class TestTokenExchangeBridge:
+    """``TokenExchangeBridge`` exchanges the caller's validated MCP token, and only that one."""
+
+    async def test_the_callers_token_is_exchanged(self):
+        """The token the transport verified is what reaches the issuer's token endpoint."""
+        upstream = MagicMock()
+        upstream.exchange = AsyncMock(return_value='upstream-token')
+        caller = MagicMock()
+        caller.token = 'caller-token'
+
+        with patch('openapi_mcp_gateway.auth.flows.token_exchange.get_access_token', return_value=caller):
+            token = await TokenExchangeBridge(upstream).get_token()
+
+        assert token == 'upstream-token'
+        upstream.exchange.assert_awaited_once_with('caller-token')
+
+    async def test_no_token_without_an_authenticated_caller(self):
+        """Nothing is exchanged, so the upstream refuses the call rather than the gateway serving it anonymously."""
+        upstream = MagicMock()
+        upstream.exchange = AsyncMock()
+
+        with patch('openapi_mcp_gateway.auth.flows.token_exchange.get_access_token', return_value=None):
+            assert await TokenExchangeBridge(upstream).get_token() is None
+
+        upstream.exchange.assert_not_awaited()

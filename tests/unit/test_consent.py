@@ -3,8 +3,8 @@ import dataclasses
 import pytest
 from starlette.requests import Request
 
-from openapi_mcp_gateway.auth.flows.consent import BrowserCookie
-from openapi_mcp_gateway.auth.flows.consent_page import ConsentPrompt, DescribedScope, consent_page
+from openapi_mcp_gateway.auth.mcp.consent import BrowserCookie
+from openapi_mcp_gateway.auth.mcp.consent_page import ConsentPrompt, DescribedScope, consent_page
 from tests.oauth import BROWSER_ID, PLAIN_COOKIE, SECURE_COOKIE
 
 

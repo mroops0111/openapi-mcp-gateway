@@ -137,8 +137,8 @@ class TestAuthInference:
             auth_token_url=None,
             auth_flow=None,
         )
-        assert auth.type == 'none'
-        assert auth.token is None
+        assert auth.upstream.type == 'none'
+        assert auth.upstream.token is None
         assert auth.upstream.client_id is None
 
     def test_token_only_infers_bearer(self):
@@ -153,8 +153,8 @@ class TestAuthInference:
             auth_token_url=None,
             auth_flow=None,
         )
-        assert auth.type == 'bearer'
-        assert auth.token == 'my-token'
+        assert auth.upstream.type == 'bearer'
+        assert auth.upstream.token == 'my-token'
 
     def test_client_id_infers_oauth2(self):
         """A bare ``--auth-client-id`` (no type) infers ``oauth2`` even when token is also set."""
@@ -168,7 +168,7 @@ class TestAuthInference:
             auth_token_url=None,
             auth_flow=None,
         )
-        assert auth.type == 'oauth2'
+        assert auth.upstream.type == 'oauth2'
         assert auth.upstream.client_id == 'cid'
         assert auth.upstream.client_secret == 'sec'
 
@@ -184,7 +184,7 @@ class TestAuthInference:
             auth_token_url=None,
             auth_flow=None,
         )
-        assert auth.type == 'api_key'
+        assert auth.upstream.type == 'api_key'
 
     def test_scopes_split_on_commas(self):
         """``--auth-scopes`` is split on commas and each entry stripped."""
@@ -481,7 +481,7 @@ class TestDryRunJsonOutput:
     def test_the_reported_flow_is_the_one_that_was_resolved(self, tmp_path: pathlib.Path):
         """A config naming no flow still runs one, picked from the spec.
 
-        Echoing `auth.flow` reported null while client_credentials was live,
+        Echoing `auth.upstream.flow` reported null while client_credentials was live,
         which describes the config rather than what the server does.
         """
         config = tmp_path / 'config.yml'
@@ -492,7 +492,7 @@ class TestDryRunJsonOutput:
                         {
                             'name': 'secure',
                             'spec': str(CLIENT_CREDENTIALS_SPEC),
-                            'auth': {'type': 'oauth2', 'upstream': {'client_id': 'cid', 'client_secret': 'sec'}},
+                            'auth': {'upstream': {'type': 'oauth2', 'client_id': 'cid', 'client_secret': 'sec'}},
                         }
                     ]
                 }
@@ -521,9 +521,11 @@ class TestDryRunJsonOutput:
                             'name': 'pets',
                             'spec': str(PETSTORE_SPEC),
                             'auth': {
-                                'type': 'api_key',
-                                'token': 'SUPER-SECRET-VALUE',
-                                'api_key_header': 'X-Company-Key',
+                                'upstream': {
+                                    'type': 'api_key',
+                                    'token': 'SUPER-SECRET-VALUE',
+                                    'api_key_header': 'X-Company-Key',
+                                }
                             },
                         }
                     ]

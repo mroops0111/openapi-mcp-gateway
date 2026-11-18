@@ -7,9 +7,14 @@ from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
 
-from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeProvider
+from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeBridge
+from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
+from openapi_mcp_gateway.auth.mcp.client import McpClientDirectory, McpDynamicClientRegistry
+from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenIssuer, McpTokenPolicy
+from openapi_mcp_gateway.auth.upstream.authorization_code import UpstreamAuthorizationCodeClient
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
+from openapi_mcp_gateway.stores.base import TokenStore
 from tests.constants import GATEWAY_URL
 
 
@@ -27,6 +32,36 @@ SECURE_COOKIE = '__Host-openapi-mcp-gateway-browser'
 PLAIN_COOKIE = 'openapi-mcp-gateway-browser'
 
 
+def authorization_code_server(
+    store: TokenStore,
+    issuer: str,
+    upstream: UpstreamAuthorizationCodeClient,
+    policy: McpTokenPolicy | None = None,
+    clients: McpClientDirectory | None = None,
+    server_name: str = 'petstore',
+) -> McpAuthorizationCodeServer:
+    """The MCP authorization server ``AuthorizationCodeFlowHandler`` assembles, joined to ``upstream`` by its Bridge.
+
+    ``clients`` defaults to Dynamic Client Registration into ``store``.
+    """
+    tokens = McpTokenIssuer(
+        store,
+        issuer,
+        policy or McpTokenPolicy(),
+        {'issuer': issuer, 'upstream_authorization_server': upstream.authorization_server},
+    )
+    bridge = AuthorizationCodeBridge(tokens, upstream)
+    return McpAuthorizationCodeServer(
+        tokens, clients or McpDynamicClientRegistry(store, issuer), bridge, server_name=server_name
+    )
+
+
+def bridge_of(server: McpAuthorizationCodeServer) -> AuthorizationCodeBridge:
+    """The Bridge that takes ``server``'s sign-ins on to the upstream."""
+    assert isinstance(server.continuation, AuthorizationCodeBridge)
+    return server.continuation
+
+
 def authorization_code_gateway(
     spec: pathlib.Path,
     clients: dict[str, typing.Any],
@@ -39,10 +74,17 @@ def authorization_code_gateway(
     ``upstream`` is merged into ``auth.upstream``, which otherwise requests ``read``.
     """
     auth = {
-        'type': 'oauth2',
-        'upstream': {'client_id': 'gateway', 'client_secret': 'secret', 'scopes': ['read'], **(upstream or {})},
-        'clients': clients,
-        **({'operation_scopes': operation_scopes} if operation_scopes is not None else {}),
+        'upstream': {
+            'type': 'oauth2',
+            'client_id': 'gateway',
+            'client_secret': 'secret',
+            'scopes': ['read'],
+            **(upstream or {}),
+        },
+        'mcp': {
+            'clients': clients,
+            **({'operation_scopes': operation_scopes} if operation_scopes is not None else {}),
+        },
     }
     server = {'name': 'petstore', 'spec': str(spec), 'auth': auth, 'exposure': exposure or {}}
     return Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
@@ -65,7 +107,7 @@ def upstream_token_response(granted: str = 'upstream-access-token', scope: str |
 
 
 async def authorize(
-    provider: AuthorizationCodeProvider,
+    provider: McpAuthorizationCodeServer,
     client: OAuthClientInformationFull,
     state: str | None = CLIENT_STATE,
     scopes: list[str] | None = None,
@@ -85,7 +127,7 @@ async def authorize(
 
 
 async def begin_upstream(
-    provider: AuthorizationCodeProvider,
+    provider: McpAuthorizationCodeServer,
     client: OAuthClientInformationFull,
     state: str | None = CLIENT_STATE,
     scopes: list[str] | None = None,
@@ -95,11 +137,11 @@ async def begin_upstream(
         request_id_in(await authorize(provider, client, state, scopes)), BROWSER_ID
     )
     assert pending is not None
-    return await provider.continue_to_upstream(pending)
+    return await provider.proceed(pending)
 
 
 async def complete_upstream(
-    provider: AuthorizationCodeProvider,
+    provider: McpAuthorizationCodeServer,
     upstream_url: str,
     iss: str | None = None,
     upstream_scope: str | None = None,
@@ -113,9 +155,9 @@ async def complete_upstream(
         return await deliver_callback(provider, upstream_url, iss)
 
 
-async def deliver_callback(provider: AuthorizationCodeProvider, upstream_url: str, iss: str | None = None) -> str:
+async def deliver_callback(provider: McpAuthorizationCodeServer, upstream_url: str, iss: str | None = None) -> str:
     """Deliver the upstream's redirect to the browser that began ``upstream_url``, against a token endpoint the caller mocks."""
-    return await provider.handle_upstream_callback('upstream-code', state_in(upstream_url), BROWSER_ID, iss)
+    return await bridge_of(provider).handle_upstream_callback('upstream-code', state_in(upstream_url), BROWSER_ID, iss)
 
 
 def query_value(url: str, name: str) -> str:
@@ -139,7 +181,7 @@ def code_in(redirect: str) -> str:
 
 
 async def sign_in(
-    provider: AuthorizationCodeProvider,
+    provider: McpAuthorizationCodeServer,
     client: OAuthClientInformationFull,
     scopes: list[str] | None = None,
     upstream_scope: str | None = None,

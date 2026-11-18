@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from .auth.detector import DetectedOAuthFlow
 from .openapi import OperationInfo
-from .settings import AuthConfig
+from .settings import AuthConfig, UpstreamAuthConfig
 
 
 logger = logging.getLogger(__name__)
@@ -150,8 +150,8 @@ def infer_auth_from_declared_flows(declared: list[DetectedOAuthFlow]) -> AuthCon
     That path is selected by passing an explicit ``auth=AuthConfig(...)`` with credentials.
     """
     if declared:
-        return AuthConfig(type='passthrough')
-    return AuthConfig(type='none')
+        return AuthConfig(upstream=UpstreamAuthConfig(type='passthrough'))
+    return AuthConfig()
 
 
 def warn_on_mixed_security_schemes(server_name: str, operations: list[OperationInfo]) -> None:

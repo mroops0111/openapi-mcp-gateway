@@ -173,8 +173,8 @@ class TestInferAuthFromDeclaredFlows:
     def test_no_declared_flows_defaults_to_none(self):
         """Apps without any declared OAuth flow do not need authentication wiring."""
         config = infer_auth_from_declared_flows([])
-        assert config.type == 'none'
-        assert config.flow is None
+        assert config.upstream.type == 'none'
+        assert config.upstream.flow is None
 
     def test_declared_flows_default_to_explicit_passthrough(self):
         """Declared flows opt into passthrough explicitly, not via a silent factory fallback.
@@ -184,5 +184,5 @@ class TestInferAuthFromDeclaredFlows:
         """
         declared = [DetectedOAuthFlow(flow_type='authorization_code', token_url='https://x/token')]
         config = infer_auth_from_declared_flows(declared)
-        assert config.type == 'passthrough'
-        assert config.flow is None
+        assert config.upstream.type == 'passthrough'
+        assert config.upstream.flow is None

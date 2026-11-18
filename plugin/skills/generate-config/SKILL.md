@@ -44,7 +44,7 @@ Match features to the user's situation, do not reach for all of them.
 - **A Huge Spec of Hundreds of Operations.** Prefer dynamic exposure, which fronts the spec with a few meta-tools, over listing every operation, so the tool list never floods the model. Still scope it with `policy.allow`.
 - **A Messy API That Makes Poor Tools.** Shape it. Hide the knobs the model should not set, and trim the response.
 - **Multiple Users, or a Provider That Mandates It.** Use `oauth2`, so each user signs in with their own credentials. `authorization_code` is the default and fits nearly every case.
-- **An API Behind an Identity Provider You Run.** Point the OAuth URLs at that provider and set `auth.upstream.audience` to the API, so the provider mints a token the API will accept rather than one for its own default audience. Reach for `flow: token_exchange` only when the provider should also issue for the MCP endpoint itself, which needs RFC 8693 support on its side.
+- **An API Behind an Identity Provider You Run.** Point the OAuth URLs at that provider and set `auth.upstream.audience` to the API, so the provider mints a token the API will accept rather than one for its own default audience. Reach for `auth.upstream.flow: token_exchange` only when the provider should also issue for the MCP endpoint itself, which needs RFC 8693 support on its side.
 
 ## Process
 
@@ -116,24 +116,28 @@ servers:
     instructions: | # optional, server-wide guidance the client places in the model's context
       <when to use this server, and which tool to call first>
     auth:
-      type: bearer # or api_key / oauth2 / passthrough / none
-      token: ${SOME_TOKEN}
-      # oauth2 also takes flow: authorization_code (default) / client_credentials / token_exchange
-      # required_scopes: for token_exchange, what an inbound token must already carry
-      # operation_scopes: for authorization_code, which MCP scopes open which operations
-      #   {auto: tags, unscoped: deny, manual: {<scope>: {description: ..., operations: ["DELETE *"]}}}
-      # clients: the pre-registered clients allowed to sign in, which turns off dynamic registration
-      #   {<client_id>: {scopes: [...], default_scopes: [...], client_secret: ${SOME_SECRET}, redirect_uris: [...], consent: false}}
-      #   scopes is the most a client may hold; default_scopes (a subset, default all) is what it starts with,
-      #   and it steps up for the rest when a tool call is refused
-      #   consent: false skips the gateway's consent page for a client the operator trusts (default true)
-      upstream: # everything the gateway sends to the upstream authorization server
+      upstream: # how the gateway reaches the API
+        type: bearer # or api_key / oauth2 / passthrough / none
+        token: ${SOME_TOKEN}
+        # oauth2 also takes flow: authorization_code (default) / client_credentials / token_exchange
+        # client_id, client_secret, scopes and the rest below are for oauth2 only
         client_id: ${SOME_ID}
         scopes: [...] # with enforce_scopes and none listed, the scopes the operations' security declares
         audience: https://the-api.example.com # when the API and its AS differ
         # enforce_scopes: true, for authorization_code, an operation also needs the upstream scopes
         #   its OpenAPI security declares, checked against what the upstream granted the user
         # scope_implies: {repo: [public_repo]}, an upstream scope covering narrower ones
+      mcp: # who may call this MCP endpoint, for oauth2 authorization_code and token_exchange only
+        # issuer: for token_exchange, the authorization server that mints tokens for this endpoint
+        # required_scopes: for token_exchange, what an inbound token must already carry
+        # operation_scopes: for authorization_code, which MCP scopes open which operations
+        #   {auto: tags, unscoped: deny, manual: {<scope>: {description: ..., operations: ["DELETE *"]}}}
+        # clients: the pre-registered clients allowed to sign in, which turns off dynamic registration
+        #   {<client_id>: {scopes: [...], default_scopes: [...], client_secret: ${SOME_SECRET}, redirect_uris: [...], consent: false}}
+        #   scopes is the most a client may hold; default_scopes (a subset, default all) is what it starts with,
+        #   and it steps up for the rest when a tool call is refused
+        #   consent: false skips the gateway's consent page for a client the operator trusts (default true)
+        # access_token_ttl: 3600, refresh_token_ttl: 86400, lifetimes of the MCP tokens the gateway mints
     policy: # the selector for which operations become tools
       allow: ["<operation_id>", "..."] # globs matched against operation ids, omit to expose all
     operations: # overrides only, applied to operations the policy kept
@@ -161,9 +165,10 @@ For API-key auth with a custom header, name the header, since it defaults to `X-
 
 ```yaml
     auth:
-      type: api_key
-      token: ${SOME_TOKEN}
-      api_key_header: X-Acme-Api-Key
+      upstream:
+        type: api_key
+        token: ${SOME_TOKEN}
+        api_key_header: X-Acme-Api-Key
 ```
 
 Both JSONata expressions compile when the gateway loads the config, so a broken expression fails validation with a message naming the side that broke. Validate with:
@@ -174,7 +179,7 @@ uvx openapi-mcp-gateway --config <config.yml> --dry-run
 
 It loads every spec, applies the policy, and compiles the shaping, then exits without serving and prints a summary of what would run, the resolved filter included. Exit 0 means the config is valid. An unrecognised key is a hard error, so a misspelled field is caught here rather than silently ignored. On failure, read the named side (request or response), fix the JSONata, and re-run until it validates clean.
 
-One config shape cannot be validated offline. `flow: token_exchange` contacts the issuer during startup to discover its JWKS and token endpoints, so `--dry-run` needs that provider reachable. Say so rather than reporting the config unverified.
+One config shape cannot be validated offline. `auth.upstream.flow: token_exchange` contacts the issuer during startup to discover its JWKS and token endpoints, so `--dry-run` needs that provider reachable. Say so rather than reporting the config unverified.
 
 Hand the finished config to the user with a one-line summary of each tool, the environment variables they must set, and the exact run command:
 

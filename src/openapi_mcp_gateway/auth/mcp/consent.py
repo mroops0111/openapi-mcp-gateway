@@ -25,10 +25,11 @@ _BROWSER_ID_PATTERN = re.compile(r'[0-9a-f]{64}')
 class PendingAuthorization(pydantic.BaseModel):
     """One sign-in between the MCP client's ``/authorize`` and the upstream's callback.
 
-    It is stored under ``request_id`` until the browser leaves for the upstream,
-    then under the fresh ``state`` the gateway sends the upstream, never the client's own ``state``.
+    It is stored under ``request_id`` until the browser leaves the consent page,
+    then under whatever key the step after consent chooses, such as the ``state`` sent to the upstream.
     ``browser_id`` is the browser that opened the consent page, the only one that may finish the sign-in.
     ``csrf_token`` is what the consent form must send back for its decision to count.
+    ``binding`` ties the sign-in to the server and upstream it was started against, as ``McpTokenIssuer`` does a token.
     """
 
     request_id: str
@@ -39,9 +40,7 @@ class PendingAuthorization(pydantic.BaseModel):
     scopes: list[str]
     client_state: str | None
     csrf_token: str
-    issuer: str
-    upstream_issuer: str | None
-    upstream_authorization_server: str
+    binding: dict[str, str]
     browser_id: str | None = None
 
     @property

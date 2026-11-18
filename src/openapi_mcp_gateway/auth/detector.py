@@ -10,7 +10,7 @@ class DetectedOAuthFlow(pydantic.BaseModel):
 
     ``authorization_code`` and ``client_credentials`` come directly from the spec via ``detect_oauth_flows``.
     ``token_exchange`` is never produced from a spec, since ``securitySchemes`` cannot declare it.
-    The factory short-circuits to it only when ``auth.flow`` names it explicitly.
+    The factory short-circuits to it only when ``auth.upstream.flow`` names it explicitly.
     """
 
     flow_type: typing.Literal['authorization_code', 'client_credentials', 'token_exchange']

@@ -6,8 +6,11 @@ class TokenStore(abc.ABC):
     """Namespaced key-value persistence with TTL and directional namespace mappings.
 
     Used to correlate MCP OAuth artefacts with upstream API credentials.
-    Common namespaces: ``mcp_client``, ``mcp_access_token``, ``mcp_refresh_token``,
-    ``mcp_auth_request``, ``mcp_auth_state``, ``mcp_auth_code``, ``mcp_consent``, ``api_access_token``.
+    The gateway keeps its records in these namespaces:
+
+    - **MCP Side**: ``mcp_client``, ``mcp_access_token``, ``mcp_refresh_token``, ``mcp_auth_request``,
+      ``mcp_auth_code`` and ``mcp_consent``
+    - **Upstream Side**: ``upstream_auth_state`` and ``upstream_access_token``
     """
 
     @abc.abstractmethod
@@ -33,7 +36,7 @@ class TokenStore(abc.ABC):
     ) -> None:
         """Record a directional mapping from ``(from_ns, from_key)`` to ``to_key`` in ``to_ns``.
 
-        Example: ``set_mapping('mcp_access_token', 'mcp_xxx', 'api_access_token', 'api_yyy')``.
+        Example: ``set_mapping('mcp_access_token', 'mcp_xxx', 'upstream_access_token', 'upstream_yyy')``.
         """
 
     @abc.abstractmethod

@@ -9,7 +9,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
 from ..openapi import ExposedTool, OperationInfo, ToolOverride
-from ..scopes import ScopeRegistry, UnrestrictedMcpScopePolicy
+from ..scopes import McpUnrestrictedScopePolicy, ScopeRegistry
 from ._shaping import shape_operation
 from ._shared import (
     _get_override,
@@ -108,7 +108,7 @@ class ToolGenerator:
     def __init__(self, mcp: MCPServer, binding: UpstreamBinding, scope_registry: ScopeRegistry | None = None):
         self.mcp = mcp
         self.binding = binding
-        self.scope_registry = scope_registry or ScopeRegistry(UnrestrictedMcpScopePolicy())
+        self.scope_registry = scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy())
 
     def register(self, operations: list[OperationInfo]) -> list[ExposedTool]:
         """Declare one MCP tool per ``OperationInfo`` in ``operations``, returning what was exposed."""

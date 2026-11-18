@@ -1,16 +1,41 @@
 import logging
 
 import pydantic
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings
 from mcp.shared.auth import ProtectedResourceMetadata
 
-from ..oidc import JWKSTokenVerifier, fetch_issuer_metadata
-from ..resolver import TokenExchangeAuthResolver
-from ..token_source import TokenExchangeTokenSource
-from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
+from ..mcp.jwks import McpJwksTokenVerifier, fetch_mcp_issuer_metadata
+from ..setup import ServerAuthSetup
+from ..upstream.resolver import UpstreamTokenSourceAuthResolver
+from ..upstream.token_exchange import UpstreamTokenExchangeClient
+from ..upstream.token_source import UpstreamTokenSource
+from .base import OAuthFlowContext, OAuthFlowHandler
 
 
 logger = logging.getLogger(__name__)
+
+
+class TokenExchangeBridge(UpstreamTokenSource):
+    """Joins the caller's validated MCP token to the upstream token exchanged for it, for ``token_exchange``.
+
+    Reads the token the MCP transport already verified for this request,
+    so the exchange only ever runs on a credential the gateway has accepted for itself.
+    Returns no token when there is no authenticated caller,
+    which lets the upstream reject the call rather than the gateway serving it anonymously.
+    """
+
+    def __init__(self, upstream: UpstreamTokenExchangeClient) -> None:
+        self.upstream = upstream
+
+    async def get_token(self) -> str | None:
+        access_token = get_access_token()
+        if access_token is None:
+            return None
+        return await self.upstream.exchange(access_token.token)
+
+    async def aclose(self) -> None:
+        await self.upstream.aclose()
 
 
 class TokenExchangeFlowHandler(OAuthFlowHandler):
@@ -27,13 +52,13 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
     so revoking a user at the issuer takes effect without waiting for a gateway-minted token to expire.
     """
 
-    def build(self, flow_context: OAuthFlowContext) -> OAuthFlowSetup:
+    def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry
 
-        issuer = entry.auth.resolve_issuer()
+        issuer = entry.auth.mcp.resolve_issuer()
         if not issuer:
             raise ValueError(
-                f'Server "{entry.name}": token_exchange flow requires auth.issuer, '
+                f'Server "{entry.name}": token_exchange flow requires auth.mcp.issuer, '
                 'the authorization server that mints tokens for this MCP endpoint.'
             )
 
@@ -55,7 +80,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
                 'and authorization servers require a confidential client for that grant.'
             )
 
-        metadata = fetch_issuer_metadata(issuer)
+        metadata = fetch_mcp_issuer_metadata(issuer)
         if not metadata.token_endpoint:
             raise ValueError(
                 f'Server "{entry.name}": issuer "{issuer}" publishes no token_endpoint, '
@@ -70,19 +95,21 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
         # The two scope lists point in opposite directions and must not be conflated.
         # Demanding the upstream scopes of the caller would lock out every client that did not match,
         # since the deployment picks what to request from the issuer but not what a caller registered with.
-        mcp_endpoint_scopes = list(entry.auth.required_scopes)
-        verifier = JWKSTokenVerifier(
+        mcp_endpoint_scopes = list(entry.auth.mcp.required_scopes)
+        verifier = McpJwksTokenVerifier(
             issuer=metadata.issuer,
             audience=canonical_uri,
             jwks_uri=metadata.jwks_uri,
             required_scopes=mcp_endpoint_scopes,
         )
-        token_source = TokenExchangeTokenSource(
-            token_endpoint=metadata.token_endpoint,
-            client_id=client_id,
-            client_secret=client_secret,
-            audience_params=audience_params,
-            scopes=entry.auth.upstream.scopes,
+        bridge = TokenExchangeBridge(
+            UpstreamTokenExchangeClient(
+                token_endpoint=metadata.token_endpoint,
+                client_id=client_id,
+                client_secret=client_secret,
+                audience_params=audience_params,
+                scopes=entry.auth.upstream.scopes,
+            )
         )
 
         settings = AuthSettings(
@@ -102,8 +129,8 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
             entry.auth.upstream.scopes,
         )
 
-        return OAuthFlowSetup(
-            resolver=TokenExchangeAuthResolver(token_source),
+        return ServerAuthSetup(
+            resolver=UpstreamTokenSourceAuthResolver(bridge),
             settings=settings,
             verifier=verifier,
             # Validated from strings so a path-less issuer keeps its exact form.
@@ -117,5 +144,5 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
                     'scopes_supported': mcp_endpoint_scopes or None,
                 }
             ),
-            on_shutdown=token_source.aclose,
+            on_shutdown=bridge.aclose,
         )

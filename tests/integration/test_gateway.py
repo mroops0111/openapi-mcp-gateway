@@ -19,8 +19,8 @@ from mcp.types import RequestParamsMeta, TextContent
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.app import _transport_security
-from openapi_mcp_gateway.auth import token_source as token_source_module
-from openapi_mcp_gateway.auth.oidc import IssuerMetadata
+from openapi_mcp_gateway.auth.mcp.jwks import McpIssuerMetadata
+from openapi_mcp_gateway.auth.upstream import token_source as token_source_module
 from openapi_mcp_gateway.client import APIClient, SharedAPIClient
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import (
@@ -28,6 +28,7 @@ from openapi_mcp_gateway.settings import (
     DNSRebindingProtectionConfig,
     ExposureConfig,
     GatewayConfig,
+    McpAuthConfig,
     PolicyConfig,
     SearchConfig,
     SearchFieldWeights,
@@ -83,14 +84,14 @@ def oauth_gateway(petstore_json_path):
                 name='petstore',
                 spec=str(petstore_json_path),
                 auth=AuthConfig(
-                    type='oauth2',
                     upstream=UpstreamAuthConfig(
+                        type='oauth2',
                         client_id='test-client-id',
                         client_secret='test-client-secret',
                         authorization_url=AUTHORIZE_URL,
                         token_url=TOKEN_URL,
                         scopes=['read'],
-                    ),
+                    )
                 ),
             ),
         ],
@@ -461,10 +462,9 @@ class TestClientCredentialsFlowEndToEnd:
                     name='petstore',
                     spec=str(client_credentials_spec_path),
                     auth=AuthConfig(
-                        type='oauth2',
                         upstream=UpstreamAuthConfig(
-                            client_id='gateway-id', client_secret='gateway-secret', scopes=['api']
-                        ),
+                            type='oauth2', client_id='gateway-id', client_secret='gateway-secret', scopes=['api']
+                        )
                     ),
                 ),
             ],
@@ -847,7 +847,7 @@ def _tool(gateway: Gateway, name: str):
 
 def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = None) -> TestClient:
     """Test client over a petstore server that validates tokens from ``ISSUER``, an issuer it does not own."""
-    metadata = IssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
+    metadata = McpIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
     config = GatewayConfig(
         url=GATEWAY_URL,
         servers=[
@@ -855,19 +855,22 @@ def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = N
                 name='petstore',
                 spec=str(spec_path),
                 auth=AuthConfig(
-                    type='oauth2',
-                    flow='token_exchange',
-                    issuer=ISSUER,
                     upstream=UpstreamAuthConfig(
-                        audience=API_URL, client_id='gateway', client_secret='secret', scopes=['read']
+                        type='oauth2',
+                        flow='token_exchange',
+                        audience=API_URL,
+                        client_id='gateway',
+                        client_secret='secret',
+                        scopes=['read'],
                     ),
+                    mcp=McpAuthConfig(issuer=ISSUER),
                 ),
             ),
         ],
     )
     with (
-        patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
-        patch('openapi_mcp_gateway.auth.oidc._build_jwk_client', return_value=jwk_client or MagicMock()),
+        patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_issuer_metadata', return_value=metadata),
+        patch('openapi_mcp_gateway.auth.mcp.jwks._build_jwk_client', return_value=jwk_client or MagicMock()),
     ):
         gateway = Gateway.from_config(config)
         return TestClient(gateway._build_app(transport='streamable-http'))

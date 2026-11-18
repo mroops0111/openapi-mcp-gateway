@@ -85,7 +85,7 @@ class TestConsentPage:
 
 
 class TestScopeDescriptions:
-    """The page leads each scope with what it allows, as the spec and ``auth.operation_scopes`` describe it."""
+    """The page leads each scope with what it allows, as the spec and ``auth.mcp.operation_scopes`` describe it."""
 
     def test_both_kinds_of_scope_are_described(self, scoped_browser):
         page = _open_consent(scoped_browser, scope='pets:read').text
