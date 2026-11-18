@@ -8,20 +8,20 @@ from openapi_mcp_gateway.settings import ServerConfig
 
 from .dataset import Benchmark, DatasetError, JudgedQuery, Manifest, Split, Style
 from .scoring import RANKING_DEPTH, score_all
-from .systems import SpecCorpus, System, served_operations
+from .variants import SpecCorpus, Variant, served_operations
 
 
 logger = logging.getLogger(__name__)
 
-# The server config a spec's operations are listed under, before any system narrows or renames them.
+# The server config a spec's operations are listed under, before any variant narrows or renames them.
 CORPUS_SERVER = {'exposure': {'style': 'dynamic'}}
 
-# System name, then every query result for it.
+# Variant name, then every query result for it.
 Results = dict[str, list['QueryResult']]
 
 
 class QueryResult(pydantic.BaseModel):
-    """One query's ranking under one system, and its score on every metric."""
+    """One query's ranking under one variant, and its score on every metric."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
@@ -32,12 +32,12 @@ class QueryResult(pydantic.BaseModel):
     scores: dict[str, float]
 
 
-def select_systems(benchmark: Benchmark, names: typing.Sequence[str] = ()) -> dict[str, System]:
-    """The systems the manifest declares, or only those ``names``, raising ``DatasetError`` for an unknown one."""
-    declared = benchmark.manifest.systems
+def select_variants(benchmark: Benchmark, names: typing.Sequence[str] = ()) -> dict[str, Variant]:
+    """The variants the manifest declares, or only those ``names``, raising ``DatasetError`` for an unknown one."""
+    declared = benchmark.manifest.variants
     unknown = [name for name in names if name not in declared]
     if unknown:
-        raise DatasetError(f'Unknown system(s) {unknown}; the benchmark declares {sorted(declared)}')
+        raise DatasetError(f'Unknown variant(s) {unknown}; the benchmark declares {sorted(declared)}')
     return {name: declared[name] for name in names} if names else dict(declared)
 
 
@@ -50,7 +50,7 @@ def corpus_server(manifest: Manifest, root: pathlib.Path, spec: str) -> ServerCo
 async def load_corpus(benchmark: Benchmark, spec: str) -> SpecCorpus:
     """List ``spec``'s operations, checking every judged one is among them.
 
-    A judgement no system could retrieve would quietly lower every score, so it is refused instead.
+    A judgement no variant could retrieve would quietly lower every score, so it is refused instead.
     """
     server = corpus_server(benchmark.manifest, benchmark.root, spec)
     operations = await served_operations(server)
@@ -60,14 +60,14 @@ async def load_corpus(benchmark: Benchmark, spec: str) -> SpecCorpus:
     return SpecCorpus(name=spec, spec_path=pathlib.Path(server.spec), operations=operations)
 
 
-async def run(benchmark: Benchmark, split: Split, systems: typing.Mapping[str, System]) -> Results:
-    """Rank every query of ``split`` under each system, spec by spec."""
-    results: Results = {name: [] for name in systems}
+async def run(benchmark: Benchmark, split: Split, variants: typing.Mapping[str, Variant]) -> Results:
+    """Rank every query of ``split`` under each variant, spec by spec."""
+    results: Results = {name: [] for name in variants}
     for spec, spec_dataset in benchmark.specs.items():
         corpus = await load_corpus(benchmark, spec)
         judged_queries = spec_dataset.judged_queries(split)
-        for name, system in systems.items():
-            async with system.open(corpus) as retriever:
+        for name, variant in variants.items():
+            async with variant.open(corpus) as retriever:
                 for judged_query in judged_queries:
                     ranking = await retriever.rank(judged_query.query.text, RANKING_DEPTH)
                     results[name].append(_query_result(spec, judged_query, ranking))

@@ -1,7 +1,7 @@
 - id: asana-t01
   prompt: >-
     Add a task called "Draft launch checklist" to our Website Redesign project, due December 1, 2026.
-  split: practice
+  split: dev
   expected_calls:
     - server: asana
       method: POST
@@ -28,7 +28,7 @@
 - id: asana-t02
   prompt: >-
     Add a task called "Book venue for offsite" to our Team Offsite project and assign it to Tom Becker.
-  split: practice
+  split: dev
   expected_calls:
     - server: asana
       method: POST
@@ -63,7 +63,7 @@
 - id: asana-t03
   prompt: >-
     I finished "Update onboarding docs" in the Customer Success Q4 project, can you mark it complete?
-  split: final
+  split: test
   expected_calls:
     - server: asana
       method: PUT
@@ -103,7 +103,7 @@
 - id: asana-t04
   prompt: >-
     Priya Shah is taking over "Prepare sprint demo" in the Platform Sprint 42 project. Assign it to her and push the due date to November 20, 2026.
-  split: final
+  split: test
   expected_calls:
     - server: asana
       method: PUT
@@ -151,7 +151,7 @@
 - id: asana-t05
   prompt: >-
     Under the "Vendor contract renewal" task in the Operations project, add a subtask called "Collect legal sign-off".
-  split: final
+  split: test
   expected_calls:
     - server: asana
       method: POST
@@ -187,7 +187,7 @@
 - id: asana-t06
   prompt: >-
     "Write API changelog" in the Developer Portal project is ready for review, please move it into the In Review section.
-  split: final
+  split: test
   expected_calls:
     - server: asana
       method: POST

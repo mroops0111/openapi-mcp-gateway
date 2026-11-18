@@ -1,0 +1,18 @@
+[
+  {
+    "model": "anthropic:claude-sonnet-5-5",
+    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
+    "finished_at": "2026-11-17T09:56:06+00:00",
+    "pydantic_ai_version": "2.69.0",
+    "input_tokens": 42736,
+    "output_tokens": 1314,
+    "model_requests": 5,
+    "scenario": "petstore",
+    "variant": "generated",
+    "skill": "generate-config",
+    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "request": "Run a small pet shop: keep its pets listed with the right status, and handle customers' orders.",
+    "gateway_version": "0.8.0",
+    "summary": "`config.yaml` now passes `--dry-run` with 9 tools. I left the spec, the placeholder `base_url` and `auth: none` as they were.\n\n- **Pets (5 tools):** `add_pet`, `update_pet`, `update_pet_with_form`, `find_pets_by_status` and `get_pet_by_id`. These let you list a pet, change its status (available, pending or sold) and look pets up. I left out deleting pets, uploading images and searching by tag, since they aren't needed to keep listings correct.\n- **Orders (4 tools):** `place_order`, `get_order_by_id`, `delete_order` (cancel) and `get_inventory`, which shows stock counts by status.\n- **Left out:** all the user-account operations, which a shop assistant doesn't need.\n- **Shaping:** none. The operations work fine as they are.\n- **Before real use:** set `base_url` to the real server. The spec's own server is `https://petstore3.swagger.io/api/v3`. The spec also declares an API key and OAuth for the pet-changing operations, so you'll need to add auth if your server enforces it."
+  }
+]

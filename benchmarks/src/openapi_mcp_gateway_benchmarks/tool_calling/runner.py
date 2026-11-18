@@ -73,7 +73,7 @@ async def run(
     scenario_names: typing.Sequence[str] = (),
     variant_names: typing.Sequence[str] = (),
     model_names: typing.Sequence[str] = (),
-    split: Split | None = 'final',
+    split: Split | None = 'test',
     repetitions: int | None = None,
     model_factory: ModelFactory | None = None,
 ) -> list[RunRecord]:

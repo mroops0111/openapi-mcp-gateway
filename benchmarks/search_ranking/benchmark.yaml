@@ -17,9 +17,9 @@ specs:
     source: https://raw.githubusercontent.com/discord/discord-api-spec/3a21a01249a763cd47f1dfec3da91c5ba71bb974/specs/openapi.json
     sha256: ef338088f4c6a73fdb9840acd1ce2bf8f16c1870f4437bfc563418c7e0de7278
 
-# The systems compared. Each one's type picks its kind.
-# A gateway system's server is the part of a server config that differs, applied to every spec.
-systems:
+# The variants compared. Each one's type picks its kind.
+# A gateway variant's server is the part of a server config that differs, applied to every spec.
+variants:
   default:
     type: gateway
     server:
@@ -37,9 +37,9 @@ systems:
   random:
     type: random
 
-# CI fails when a gated metric of this system falls more than `tolerance` below baseline.json.
+# CI fails when a gated metric of this variant falls more than `tolerance` below gate_scores.json.
 gate:
-  system: default
+  variant: default
   split: test
   metrics: [ndcg@10, recall@20]
   tolerance: 0.01

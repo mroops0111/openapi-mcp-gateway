@@ -7,20 +7,20 @@ from .scoring import METRIC_NAMES
 def to_markdown(report: Report) -> str:
     """Render ``report`` as the Markdown tables a results page or a PR description quotes.
 
-    The tables show every system's means over specs, the reference system by spec and by style, and the comparisons.
+    The tables show every variant's means over specs, the reference variant by spec and by style, and the comparisons.
     """
     sections = [
         f'Search ranking benchmark v{report.benchmark_version}, {report.split} split, '
         f'openapi-mcp-gateway {report.gateway_version}. Means over specs.',
         _table(
-            ['System', *METRIC_NAMES],
-            [[name, *(summary.macro[metric] for metric in METRIC_NAMES)] for name, summary in report.systems.items()],
+            ['Variant', *METRIC_NAMES],
+            [[name, *(summary.macro[metric] for metric in METRIC_NAMES)] for name, summary in report.variants.items()],
         ),
     ]
-    if report.reference_system is not None:
-        summary = report.systems[report.reference_system]
+    if report.reference_variant is not None:
+        summary = report.variants[report.reference_variant]
         sections += [
-            f'By spec, `{report.reference_system}`:',
+            f'By spec, `{report.reference_variant}`:',
             _table(
                 ['Spec', 'Queries', *METRIC_NAMES],
                 [
@@ -28,7 +28,7 @@ def to_markdown(report: Report) -> str:
                     for spec, spec_summary in summary.specs.items()
                 ],
             ),
-            f'By style, `{report.reference_system}`, means over specs:',
+            f'By style, `{report.reference_variant}`, means over specs:',
             _table(
                 ['Style', *METRIC_NAMES],
                 [
@@ -44,10 +44,10 @@ def to_markdown(report: Report) -> str:
 
 def _comparison_table(comparisons: typing.Sequence[Comparison]) -> str:
     return _table(
-        ['System', 'Against', 'Metric', 'Difference', 'Interval', 'Significant'],
+        ['Variant', 'Against', 'Metric', 'Difference', 'Interval', 'Significant'],
         [
             [
-                comparison.system,
+                comparison.variant,
                 comparison.against,
                 comparison.metric,
                 f'{comparison.difference:+.3f}',

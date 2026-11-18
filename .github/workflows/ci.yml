@@ -70,7 +70,7 @@ jobs:
   search-ranking-benchmark:
     name: Search Ranking Benchmark
     runs-on: ubuntu-latest
-    # Checks the committed data, ranks its queries through search_operations, and fails below the baseline.
+    # Checks the committed data, ranks its queries through search_operations, and fails below the gate scores.
     # It calls no model. The pinned specs download once and are cached by their checksums.
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +87,7 @@ jobs:
   tool-calling-benchmark:
     name: Tool Calling Benchmark
     runs-on: ubuntu-latest
-    # Proves every tool calling benchmark task passes with its solution and every variant reaches its in-intent tasks.
+    # Proves every tool calling benchmark task passes with its solution and every hand-written variant reaches it.
     # It calls no model, so it needs no API key. The pinned specs download once and are cached by their checksums.
     steps:
       - uses: actions/checkout@v4
@@ -99,7 +99,7 @@ jobs:
           path: ~/.cache/openapi-mcp-gateway/specs
           key: benchmark-specs-${{ hashFiles('benchmarks/**/benchmark.yaml') }}
       - run: uv sync --all-packages --extra dev --extra redis
-      - run: uv run openapi-mcp-gateway-benchmarks tool-calling validate benchmarks/tool_calling
+      - run: uv run openapi-mcp-gateway-benchmarks tool-calling check benchmarks/tool_calling
 
   build:
     name: Build

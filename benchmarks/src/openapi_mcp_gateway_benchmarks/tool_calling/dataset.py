@@ -17,6 +17,8 @@ SCENARIOS_DIRECTORY = 'scenarios'
 SCENARIO_FILE = 'scenario.yaml'
 TASKS_FILE = 'tasks.yaml'
 VARIANTS_DIRECTORY = 'variants'
+# The instructions given to the models that write the benchmark's data, kept with it.
+PROMPTS_DIRECTORY = 'prompts'
 
 # The variant every other is compared with, one tool per operation and nothing configured.
 BASELINE_VARIANT = 'baseline'
@@ -27,7 +29,7 @@ PLACEHOLDER_SERVER_FIELDS = {'name': 'placeholder', 'spec': 'placeholder.json', 
 # How a manifest names an operation, by method and path template, such as ``POST /v1/databases/{id}/query``.
 OPERATION_PATTERN = r'^[A-Z]+ /\S*$'
 
-Split = typing.Literal['practice', 'final']
+Split = typing.Literal['dev', 'test']
 SPLITS: tuple[Split, ...] = typing.get_args(Split)
 
 ModelType = typing.TypeVar('ModelType', bound=pydantic.BaseModel)

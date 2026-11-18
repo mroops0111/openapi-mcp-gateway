@@ -2,7 +2,7 @@
   prompt: 'In our Meeting Notes database (https://www.notion.so/acme/Meeting-Notes-3f1c2a9b8d7e4f60a1b2c3d4e5f60718),
     open the notes for "Q3 planning sync" and add a paragraph at the end saying: "Action item: Priya to share the
     revised hiring plan by Friday."'
-  split: practice
+  split: dev
   expected_calls:
   - server: notion
     method: PATCH
@@ -91,7 +91,7 @@
 
 - id: notion-t02
   prompt: 'I finished "Update onboarding doc" — can you mark it Done in our Tasks database? It''s this one: https://www.notion.so/acme/Tasks-7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f'
-  split: practice
+  split: dev
   expected_calls:
   - server: notion
     method: PATCH
@@ -172,7 +172,7 @@
 
 - id: notion-t03
   prompt: Can you move "Migrate CI to new runners" to In progress in the Tasks database? https://www.notion.so/acme/Tasks-7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f
-  split: final
+  split: test
   expected_calls:
   - server: notion
     method: PATCH
@@ -240,7 +240,7 @@
 - id: notion-t04
   prompt: 'Add a "Follow-ups" heading to the "Release 2.4 retro" notes in our Meeting Notes database (https://www.notion.so/acme/Meeting-Notes-3f1c2a9b8d7e4f60a1b2c3d4e5f60718),
     with a paragraph under it: "Write a runbook for rolling back the payments service."'
-  split: final
+  split: test
   expected_calls:
   - server: notion
     method: PATCH
@@ -322,7 +322,7 @@
 - id: notion-t05
   prompt: 'The "Design review for pricing page" task in our Tasks database (https://www.notion.so/acme/Tasks-7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f)
     is stuck. Set its status to Blocked and add a note on the task page: "Blocked: waiting on final copy from marketing."'
-  split: final
+  split: test
   expected_calls:
   - server: notion
     method: PATCH
@@ -418,7 +418,7 @@
 - id: notion-t06
   prompt: 'In our Meeting Notes database (https://www.notion.so/acme/Meeting-Notes-3f1c2a9b8d7e4f60a1b2c3d4e5f60718),
     find the notes from our most recent team offsite and add a paragraph at the end: "Book a room for the next offsite."'
-  split: final
+  split: test
   expected_calls:
   - server: notion
     method: PATCH

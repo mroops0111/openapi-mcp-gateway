@@ -1,6 +1,6 @@
 {
   "benchmark_version": 1,
-  "system": "default",
+  "variant": "default",
   "split": "test",
   "gateway_version": "0.8.0",
   "macro": {

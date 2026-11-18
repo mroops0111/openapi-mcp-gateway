@@ -2,7 +2,7 @@
   prompt: >-
     Every open issue in acme/web labelled release-blocker needs a task in our Web Platform project in Asana
     (Acme Engineering workspace). Create one task per issue, named exactly like the issue title.
-  split: practice
+  split: dev
   expected_calls:
     - server: asana
       method: POST
@@ -47,7 +47,7 @@
   prompt: >-
     Track acme/api issue #330 in Asana: create a task for it in the API Platform project (Acme Engineering
     workspace), named exactly like the issue title.
-  split: practice
+  split: dev
   expected_calls:
     - server: asana
       method: POST
@@ -83,7 +83,7 @@
     Clean up the Web Platform project in Asana (Acme Engineering workspace): each task there links its acme/web
     GitHub issue in the description. Mark complete every task whose GitHub issue has since been closed, and leave
     the rest alone.
-  split: final
+  split: test
   expected_calls:
     - server: asana
       method: PUT
@@ -157,7 +157,7 @@
   prompt: >-
     In Asana, under the "Q4 performance work" task in the Web Platform project (Acme Engineering workspace),
     add a subtask for each open pull request in acme/web labelled perf. Name each subtask after the PR title.
-  split: final
+  split: test
   # Asana makes a subtask under its parent, or as a new task naming that parent.
   expected_calls:
     - any_of:
@@ -223,7 +223,7 @@
   prompt: >-
     Set the due date of the Asana task "Ship billing v2" in the API Platform project (Acme Engineering workspace)
     to match the due date of the "Billing v2" milestone in acme/api.
-  split: final
+  split: test
   expected_calls:
     - server: asana
       method: PUT
@@ -269,7 +269,7 @@
   prompt: >-
     The Asana task "Fix flaky checkout test" in the Web Platform project (Acme Engineering workspace) tracks acme/web
     issue #520. Assign the Asana task to whoever is assigned to that issue on GitHub.
-  split: final
+  split: test
   expected_calls:
     - server: asana
       method: PUT

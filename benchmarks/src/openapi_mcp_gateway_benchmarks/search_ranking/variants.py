@@ -22,12 +22,12 @@ SEARCH_TOOL = 'search_operations'
 # The tool Pydantic AI's tool search gives a model for finding deferred tools.
 SEARCH_TOOLS_TOOL = 'search_tools'
 
-# Stand-ins for the fields every spec fills in, so a gateway system's server fragment can be checked on its own.
+# Stand-ins for the fields every spec fills in, so a gateway variant's server fragment can be checked on its own.
 PLACEHOLDER_SERVER_FIELDS = {'name': 'placeholder', 'spec': 'placeholder.json'}
 
 
 class SpecCorpus(pydantic.BaseModel):
-    """One spec as every system sees it, with its name, a local copy of its document, and every operation it serves."""
+    """One spec as every variant sees it, with its name, a local copy of its document, and every operation it serves."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
@@ -42,12 +42,12 @@ class Retriever(typing.Protocol):
     async def rank(self, query: str, depth: int) -> list[str]: ...
 
 
-class System(pydantic.BaseModel, abc.ABC):
+class Variant(pydantic.BaseModel, abc.ABC):
     """A way of ranking a spec's operations, opened once per spec to rank every query of it.
 
-    A manifest declares each system as a mapping whose ``type`` picks the subclass,
+    A manifest declares each variant as a mapping whose ``type`` picks the subclass,
     and the manifest validates its whole configuration on load.
-    A new kind of system, such as another framework's tool search, is a new subclass added to ``Manifest.systems``,
+    A new kind of variant, such as another framework's tool search, is a new subclass added to ``Manifest.variants``,
     and the runner, the report, and the CI gate stay as they are.
     """
 
@@ -60,10 +60,10 @@ class System(pydantic.BaseModel, abc.ABC):
         """Yield a retriever over ``corpus``, released when the spec's queries are done."""
 
 
-class GatewaySystem(System):
+class GatewayVariant(Variant):
     """The gateway's own ``search_operations``, called over MCP exactly as a model would call it.
 
-    ``server`` is the part of a server config that differs between gateway systems, such as ``exposure``.
+    ``server`` is the part of a server config that differs between gateway variants, such as ``exposure``.
     The spec's ``name`` and ``spec`` are filled in for each spec.
     """
 
@@ -84,7 +84,7 @@ class GatewaySystem(System):
         return server
 
     def server_config(self, corpus: SpecCorpus) -> ServerConfig:
-        """The server config this system serves ``corpus`` with."""
+        """The server config this variant serves ``corpus`` with."""
         return ServerConfig.model_validate({**self.server, 'name': corpus.name, 'spec': str(corpus.spec_path)})
 
     @contextlib.asynccontextmanager
@@ -93,7 +93,7 @@ class GatewaySystem(System):
             yield GatewaySearch(client)
 
 
-class RandomSystem(System):
+class RandomVariant(Variant):
     """A floor to compare against, ranking every operation in an order fixed by the query's text alone."""
 
     type: typing.Literal['random'] = 'random'
@@ -103,7 +103,7 @@ class RandomSystem(System):
         yield RandomRanking(corpus.operations)
 
 
-class PydanticAIKeywordSystem(System):
+class PydanticAIKeywordVariant(Variant):
     """Pydantic AI's own tool search with its keyword strategy, a common agent framework's default to compare with.
 
     Every operation becomes a deferred Pydantic AI tool with its name and its spec text as the description,

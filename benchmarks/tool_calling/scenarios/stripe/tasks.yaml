@@ -1,7 +1,7 @@
 - id: stripe-t01
   prompt: >-
     Please cancel the subscription for our customer with the email jane.ortiz@example.com, she asked to stop her plan right away.
-  split: practice
+  split: dev
   expected_calls:
     - server: stripe
       method: DELETE
@@ -54,7 +54,7 @@
 - id: stripe-t02
   prompt: >-
     The open invoice we sent to Kitchen Supply Co (orders@kitchensupply.co) should never have gone out, the order was cancelled. Void it.
-  split: practice
+  split: dev
   expected_calls:
     - server: stripe
       method: POST
@@ -90,7 +90,7 @@
 - id: stripe-t03
   prompt: >-
     Marco Bellini (marco@bellini-design.com) says he never got his open invoice. Can you email it to him again?
-  split: final
+  split: test
   expected_calls:
     - server: stripe
       method: POST
@@ -135,7 +135,7 @@
 - id: stripe-t04
   prompt: >-
     Priya Shah (priya.shah@example.org) returned her order. Refund her most recent payment in full.
-  split: final
+  split: test
   expected_calls:
     # Stripe refunds a charge by its own endpoint or by creating a refund for it.
     - any_of:
@@ -186,7 +186,7 @@
 - id: stripe-t05
   prompt: >-
     Tom Becker (tom.becker@example.net) paused his coffee subscription last month and wants it running again. Please resume it.
-  split: final
+  split: test
   expected_calls:
     - server: stripe
       method: POST
@@ -231,7 +231,7 @@
 - id: stripe-t06
   prompt: >-
     The draft invoice for our wholesale client Harbor Bakery (accounts@harborbakery.com) is ready. Finalize it so it can be sent.
-  split: final
+  split: test
   expected_calls:
     - server: stripe
       method: POST

@@ -7,8 +7,8 @@ from .dataset import Gate, Split
 from .report import Report
 
 
-class Baseline(pydantic.BaseModel):
-    """The gated metrics of the gated system from one run, over all specs and for each spec.
+class GateScores(pydantic.BaseModel):
+    """The gated metrics of the gated variant from one run, over all specs and for each spec.
 
     It is committed beside the benchmark, and CI holds every later run to it.
     """
@@ -16,7 +16,7 @@ class Baseline(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
     benchmark_version: int
-    system: str
+    variant: str
     split: Split
     gateway_version: str
     macro: dict[str, float]
@@ -25,10 +25,10 @@ class Baseline(pydantic.BaseModel):
     @classmethod
     def from_report(cls, report: Report, gate: Gate) -> typing.Self:
         """Take the numbers ``gate`` names out of ``report``."""
-        summary = report.systems[gate.system]
+        summary = report.variants[gate.variant]
         return cls(
             benchmark_version=report.benchmark_version,
-            system=gate.system,
+            variant=gate.variant,
             split=report.split,
             gateway_version=report.gateway_version,
             macro={metric: summary.macro[metric] for metric in gate.metrics},
@@ -45,15 +45,15 @@ class Baseline(pydantic.BaseModel):
     def save(self, path: pathlib.Path) -> None:
         path.write_text(self.model_dump_json(indent=2) + '\n', encoding='utf-8')
 
-    def regressions(self, current: 'Baseline', tolerance: float) -> list[str]:
-        """Each number of ``current`` more than ``tolerance`` below this baseline, described in one line.
+    def regressions(self, current: 'GateScores', tolerance: float) -> list[str]:
+        """Each number of ``current`` more than ``tolerance`` below these gate scores, described in one line.
 
-        A run of another benchmark version, system, or split measures something else, so it fails outright,
-        and the baseline is rewritten with ``search-ranking check --update`` in the PR that makes the change.
+        A run of another benchmark version, variant, or split measures something else, so it fails outright,
+        and the gate scores are rewritten with ``search-ranking check --update`` in the PR that makes the change.
         """
-        identity = ('benchmark_version', 'system', 'split')
+        identity = ('benchmark_version', 'variant', 'split')
         mismatches = [
-            f'{field} is {getattr(current, field)!r} in this run but {getattr(self, field)!r} in the baseline'
+            f'{field} is {getattr(current, field)!r} in this run but {getattr(self, field)!r} in the gate scores'
             for field in identity
             if getattr(current, field) != getattr(self, field)
         ]

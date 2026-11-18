@@ -1,11 +1,9 @@
-import datetime
 import hashlib
 import importlib.metadata
 import pathlib
 import shutil
 import typing
 
-import pydantic
 import yaml
 from pydantic_ai import Agent, ModelRetry, capture_run_messages
 from pydantic_ai.capabilities import LocalWorkspace
@@ -16,11 +14,9 @@ from pydantic_ai_harness import FileSystem, Shell, Skills
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 
-from .dataset import SCENARIOS_DIRECTORY, VARIANTS_DIRECTORY, Benchmark, DatasetError, Scenario
+from ..provenance import PROVENANCE_SUFFIX, ModelRun, model_run_fields, write_provenance
+from .dataset import PROMPTS_DIRECTORY, SCENARIOS_DIRECTORY, VARIANTS_DIRECTORY, Benchmark, DatasetError, Scenario
 
-
-# The record of how a generated variant was made, kept beside the scenario's other files, named after the variant.
-PROVENANCE_SUFFIX = '.provenance.json'
 
 # The config the generator edits in its workspace, and the exchange kept beside it for reading after the fact.
 WORKSPACE_CONFIG_FILE = 'config.yaml'
@@ -41,36 +37,21 @@ SHELL_TOOLS = ('run_command',)
 OUTPUT_RETRIES = 3
 TOOL_RETRIES = 5
 
-# What sets a benchmark run apart from a person using the skill, and nothing about how to write the config.
-GENERATOR_INSTRUCTIONS = f"""\
-You are writing an openapi-mcp-gateway config for the user's request, with the generate-config skill.
-No one can answer questions, so where the skill says to confirm with the user, decide as the request suggests.
-The specs are already chosen and saved in your working directory, so skip finding one.
-{WORKSPACE_CONFIG_FILE} in your working directory names each server with its spec, a placeholder base_url and no auth.
-Keep those, and add what the request calls for.
-Verify the config with `openapi-mcp-gateway --config {WORKSPACE_CONFIG_FILE} --dry-run`, which is installed.
-When it validates, reply with one short paragraph on what you exposed and why.
-"""
+# What sets a benchmark run apart from a person using the skill, kept with the benchmark's data,
+# so a change to it is a change to the data.
+GENERATOR_INSTRUCTIONS_FILE = 'config_generator.txt'
 
 
-class GenerationRun(pydantic.BaseModel):
-    """How one scenario's config was generated, by which model and skill, from which intent, when, and at what cost."""
-
-    model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
+class GenerationRun(ModelRun):
+    """How one scenario's config was generated, with which skill, from which request, and what the generator said."""
 
     scenario: str
     variant: str
-    model: str
     skill: str
     skill_sha256: str
     # What the generator was asked, the scenario's intent and anything the variant adds after it.
     request: str
-    finished_at: str
     gateway_version: str
-    pydantic_ai_version: str
-    input_tokens: int
-    output_tokens: int
-    model_requests: int
     summary: str
 
 
@@ -115,9 +96,9 @@ async def generate(
             workspace = work_directory / name / variant
             spec_paths = _prepare_workspace(benchmark, scenario, workspace)
             run, config = await _run_generator(benchmark, scenario, variant, request, workspace, spec_paths, model)
-            _write_variant(scenario_directory / VARIANTS_DIRECTORY / f'{variant}.yaml', config, run)
-            provenance = scenario_directory / f'{variant}{PROVENANCE_SUFFIX}'
-            provenance.write_text(run.model_dump_json(indent=2) + '\n', encoding='utf-8')
+            variant_path = scenario_directory / VARIANTS_DIRECTORY / f'{variant}.yaml'
+            _write_variant(variant_path, config, run)
+            write_provenance(variant_path, [run])
             runs.append(run)
     return runs
 
@@ -161,10 +142,12 @@ async def _run_generator(
 ) -> tuple[GenerationRun, dict[str, typing.Any]]:
     generator = benchmark.manifest.config_generator
     skill_library = (benchmark.root / generator.skill_library).resolve()
+    template = benchmark.root / PROMPTS_DIRECTORY / GENERATOR_INSTRUCTIONS_FILE
+    instructions = template.read_text(encoding='utf-8').format(config_file=WORKSPACE_CONFIG_FILE)
     agent = Agent(
         model or generator.model.model,
         name='config_generator',
-        instructions=GENERATOR_INSTRUCTIONS,
+        instructions=instructions,
         model_settings=typing.cast(typing.Any, generator.model.settings),
         retries={'output': OUTPUT_RETRIES, 'tools': TOOL_RETRIES},
         capabilities=[
@@ -185,21 +168,15 @@ async def _run_generator(
             result = await agent.run(request)
         finally:
             (workspace / MESSAGES_FILE).write_bytes(ModelMessagesTypeAdapter.dump_json(messages, indent=2))
-    usage = result.usage
     run = GenerationRun(
         scenario=scenario.name,
         variant=variant,
-        model=generator.model.model,
         skill=generator.skill,
         skill_sha256=hashlib.sha256((skill_library / generator.skill / 'SKILL.md').read_bytes()).hexdigest(),
         request=request,
-        finished_at=datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
         gateway_version=importlib.metadata.version('openapi-mcp-gateway'),
-        pydantic_ai_version=importlib.metadata.version('pydantic-ai-slim'),
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-        model_requests=usage.requests,
         summary=result.output,
+        **model_run_fields(generator.model.model, instructions, result.usage),
     )
     return run, _load_workspace_config(workspace, spec_paths)
 
@@ -233,7 +210,7 @@ def _load_workspace_config(workspace: pathlib.Path, spec_paths: dict[str, pathli
 def _write_variant(path: pathlib.Path, config: dict[str, typing.Any], run: GenerationRun) -> None:
     header = (
         f'# Generated by {run.model} with the {run.skill} skill, from the intent and never the tasks.\n'
-        f'# Written on {run.finished_at}, and {run.variant}{PROVENANCE_SUFFIX} records the request and the run.\n'
+        f'# Written on {run.finished_at}, and {run.variant}{PROVENANCE_SUFFIX} beside it records the request and the run.\n'
         '# Generate it again rather than editing it.\n'
     )
     body = yaml.dump(

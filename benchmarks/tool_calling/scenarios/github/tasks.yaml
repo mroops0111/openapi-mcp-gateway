@@ -1,7 +1,7 @@
 - id: github-t01
   prompt: >-
     Can you ask alice-chen to review the "Add rate limiting to API client" pull request in acme/api?
-  split: practice
+  split: dev
   expected_calls:
     - server: github
       method: POST
@@ -24,7 +24,7 @@
 - id: github-t02
   prompt: >-
     The issue "App crashes when uploading large photos" in acme/mobile was closed too early, it still happens on the latest build. Reopen it.
-  split: practice
+  split: dev
   expected_calls:
     - server: github
       method: PATCH
@@ -47,7 +47,7 @@
 - id: github-t03
   prompt: >-
     The issue "Dark mode toggle resets on reload" in acme/web was fixed by the settings refactor. Close it as completed.
-  split: final
+  split: test
   expected_calls:
     - server: github
       method: PATCH
@@ -70,7 +70,7 @@
 - id: github-t04
   prompt: >-
     I've looked over the "Migrate push notifications to FCM v1" pull request in acme/mobile and it's good to go. Approve it with a short note saying "LGTM, thanks!".
-  split: final
+  split: test
   expected_calls:
     - server: github
       method: POST
@@ -92,7 +92,7 @@
 - id: github-t05
   prompt: >-
     Leave a comment on the "Search returns stale results after reindex" issue in acme/api asking the reporter which version they're running.
-  split: final
+  split: test
   expected_calls:
     - server: github
       method: POST
@@ -114,7 +114,7 @@
 - id: github-t06
   prompt: >-
     dev-sam will look into the "Webhook retries ignore backoff setting" issue in acme/api. Assign it to them.
-  split: final
+  split: test
   expected_calls:
     - server: github
       method: POST

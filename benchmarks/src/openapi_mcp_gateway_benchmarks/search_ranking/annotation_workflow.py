@@ -2,18 +2,20 @@ import collections
 import csv
 import json
 import pathlib
+import shutil
 import typing
 
 import pydantic
 
 from ..gateway_connection import OperationListing, list_operations
-from .annotations import ANNOTATIONS_DIRECTORY, Annotation, read_annotations
-from .dataset import GRADES, STYLES, DatasetError, Manifest, Style
+from ..provenance import provenance_path
+from .annotations import ANNOTATIONS_FILE, Annotation, annotations_path, read_annotations
+from .dataset import GRADES, PROMPTS_DIRECTORY, STYLES, DatasetError, Manifest, Style
 from .metrics import ANSWER_GRADE
 from .runner import corpus_server
 
 
-# The instruction templates, kept beside the annotations they produced, so a change to them is a change to the data.
+# The instruction templates, kept with the benchmark's data, so a change to them is a change to the data.
 QUERY_AUTHOR_TEMPLATE = 'query_author.txt'
 INDEPENDENT_ASSESSOR_TEMPLATE = 'independent_assessor.txt'
 
@@ -126,9 +128,9 @@ def write_assessor_queries(spec: str, spec_directory: pathlib.Path) -> list[dict
 
 
 def query_author_instructions(root: pathlib.Path, spec: str, inputs: InstructionInputs) -> str:
-    """The query author's instructions for ``spec``, rendered from the template beside the annotations."""
+    """The query author's instructions for ``spec``, rendered from its template in the prompts."""
     return _render(
-        root / ANNOTATIONS_DIRECTORY / QUERY_AUTHOR_TEMPLATE,
+        root / PROMPTS_DIRECTORY / QUERY_AUTHOR_TEMPLATE,
         spec=spec,
         query_count=QUERY_COUNT,
         queries_per_area=QUERIES_PER_AREA,
@@ -142,9 +144,9 @@ def query_author_instructions(root: pathlib.Path, spec: str, inputs: Instruction
 def independent_assessor_instructions(
     root: pathlib.Path, spec: str, query_count: int, inputs: InstructionInputs
 ) -> str:
-    """The independent assessor's instructions for ``spec``, rendered from the template beside the annotations."""
+    """The independent assessor's instructions for ``spec``, rendered from its template in the prompts."""
     return _render(
-        root / ANNOTATIONS_DIRECTORY / INDEPENDENT_ASSESSOR_TEMPLATE,
+        root / PROMPTS_DIRECTORY / INDEPENDENT_ASSESSOR_TEMPLATE,
         spec=spec,
         query_count=query_count,
         **inputs.model_dump(),
@@ -157,6 +159,7 @@ def collect(manifest: Manifest, root: pathlib.Path, work_directory: pathlib.Path
     Raises ``DatasetError`` when an annotator names an operation the spec does not serve, gives a grade outside 1 and 2,
     or leaves a query without an answer, so a mistake is caught before it reaches the judgements.
     Nothing is written until every spec passes, so a failure leaves the annotations as they were.
+    The automated annotators' record of their runs goes with the annotations, and a hand-run annotation has none.
     An adjudication already in a spec's file is kept when its query's text and judgements are unchanged,
     since it settled exactly that disagreement.
     """
@@ -169,7 +172,7 @@ def collect(manifest: Manifest, root: pathlib.Path, work_directory: pathlib.Path
             assessed.id: assessed
             for assessed in _read_records(spec_directory / INDEPENDENT_ASSESSOR_OUTPUT_FILE, AssessedQuery)
         }
-        existing = _existing_annotations(root / ANNOTATIONS_DIRECTORY / f'{spec}.jsonl')
+        existing = _existing_annotations(annotations_path(root, spec))
         annotations = []
         for query_id, authored_query in zip(_query_ids(spec, len(authored_queries)), authored_queries, strict=True):
             if query_id not in assessed_queries:
@@ -194,8 +197,18 @@ def collect(manifest: Manifest, root: pathlib.Path, work_directory: pathlib.Path
         annotations_by_spec[spec] = annotations
     for spec, annotations in annotations_by_spec.items():
         lines = [annotation.model_dump_json(exclude_none=True) for annotation in annotations]
-        _write_text(root / ANNOTATIONS_DIRECTORY / f'{spec}.jsonl', '\n'.join(lines) + '\n')
+        _write_text(annotations_path(root, spec), '\n'.join(lines) + '\n')
+        _carry_provenance(work_directory / spec / ANNOTATIONS_FILE, annotations_path(root, spec))
     return {spec: len(annotations) for spec, annotations in annotations_by_spec.items()}
+
+
+def _carry_provenance(answers: pathlib.Path, collected: pathlib.Path) -> None:
+    """Keep the automated annotators' record beside the annotations, or none when they were run by hand."""
+    record = provenance_path(answers)
+    if record.exists():
+        shutil.copyfile(record, provenance_path(collected))
+    else:
+        provenance_path(collected).unlink(missing_ok=True)
 
 
 def _existing_annotations(path: pathlib.Path) -> dict[str, Annotation]:

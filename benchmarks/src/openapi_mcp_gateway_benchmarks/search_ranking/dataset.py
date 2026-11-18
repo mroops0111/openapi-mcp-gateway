@@ -10,11 +10,15 @@ from ..errors import BenchmarkDataError
 from ..spec_pins import SpecPin
 from .metrics import ANSWER_GRADE
 from .scoring import METRIC_NAMES
-from .systems import GatewaySystem, PydanticAIKeywordSystem, RandomSystem
+from .variants import GatewayVariant, PydanticAIKeywordVariant, RandomVariant
 
 
 MANIFEST_FILE = 'benchmark.yaml'
-BASELINE_FILE = 'baseline.json'
+GATE_SCORES_FILE = 'gate_scores.json'
+
+# Each spec's files sit in a directory of its own under this one, and the instructions given to models under prompts.
+SPECS_DIRECTORY = 'specs'
+PROMPTS_DIRECTORY = 'prompts'
 QUERIES_FILE = 'queries.jsonl'
 # BEIR names its judgement files qrels, for query relevance judgements, and keeps the name here so its tools read them.
 QRELS_DIRECTORY = 'qrels'
@@ -32,14 +36,14 @@ class DatasetError(BenchmarkDataError):
 
 
 class Gate(pydantic.BaseModel):
-    """What CI holds a change to, which is these metrics of one system, on one split, against the baseline."""
+    """What CI holds a change to, which is these metrics of one variant, on one split, against the gate scores."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
-    system: str
+    variant: str
     split: Split = 'test'
     metrics: tuple[str, ...] = ('ndcg@10', 'recall@20')
-    # How far a metric may fall below the baseline before the gate fails.
+    # How far a metric may fall below its gate score before the gate fails.
     tolerance: float = pydantic.Field(default=0.01, ge=0)
 
     @pydantic.field_validator('metrics')
@@ -52,25 +56,27 @@ class Gate(pydantic.BaseModel):
 
 
 class Manifest(pydantic.BaseModel):
-    """The manifest in ``benchmark.yaml``, naming the specs, the systems to compare on them, and the CI gate.
+    """The manifest in ``benchmark.yaml``, naming the specs, the variants to compare on them, and the CI gate.
 
-    Each system's ``type`` picks its class, so a new kind of system joins the union below.
+    Each variant's ``type`` picks its class, so a new kind of variant joins the union below.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
     version: int = pydantic.Field(ge=1)
     specs: dict[str, SpecPin] = pydantic.Field(min_length=1)
-    systems: dict[
+    variants: dict[
         str,
-        typing.Annotated[GatewaySystem | RandomSystem | PydanticAIKeywordSystem, pydantic.Field(discriminator='type')],
+        typing.Annotated[
+            GatewayVariant | RandomVariant | PydanticAIKeywordVariant, pydantic.Field(discriminator='type')
+        ],
     ] = pydantic.Field(min_length=1)
     gate: Gate
 
     @pydantic.model_validator(mode='after')
-    def _validate_gate_system(self) -> typing.Self:
-        if self.gate.system not in self.systems:
-            raise ValueError(f'gate.system {self.gate.system!r} is not one of the systems {sorted(self.systems)}')
+    def _validate_gate_variant(self) -> typing.Self:
+        if self.gate.variant not in self.variants:
+            raise ValueError(f'gate.variant {self.gate.variant!r} is not one of the variants {sorted(self.variants)}')
         return self
 
 
@@ -123,15 +129,15 @@ class Benchmark(pydantic.BaseModel):
     specs: dict[str, SpecDataset]
 
     @property
-    def baseline_path(self) -> pathlib.Path:
-        return self.root / BASELINE_FILE
+    def gate_scores_path(self) -> pathlib.Path:
+        return self.root / GATE_SCORES_FILE
 
 
 def load(root: pathlib.Path) -> Benchmark:
     """Load and validate the benchmark in ``root``, raising ``DatasetError`` on any inconsistency.
 
     Each spec's files follow BEIR's layout, so other retrieval tools read them unchanged.
-    ``<spec>/queries.jsonl`` holds one query per line, and ``<spec>/qrels/<split>.tsv`` holds its graded judgements,
+    ``specs/<spec>/queries.jsonl`` holds one query per line, and ``specs/<spec>/qrels/<split>.tsv`` holds its graded judgements,
     each corpus id an operation name as ``search_operations`` returns it.
     """
     manifest = load_manifest(root)
@@ -151,9 +157,14 @@ def load_manifest(root: pathlib.Path) -> Manifest:
         raise DatasetError(f'{path}: {error}') from error
 
 
+def spec_directory(root: pathlib.Path, spec: str) -> pathlib.Path:
+    """The directory holding ``spec``'s queries, judgements, and annotations."""
+    return root / SPECS_DIRECTORY / spec
+
+
 def write_spec_dataset(root: pathlib.Path, spec_dataset: SpecDataset) -> None:
     """Write ``spec_dataset`` in the layout ``load`` reads."""
-    directory = root / spec_dataset.name
+    directory = spec_directory(root, spec_dataset.name)
     (directory / QRELS_DIRECTORY).mkdir(parents=True, exist_ok=True)
     with (directory / QUERIES_FILE).open('w', encoding='utf-8') as file:
         for query in spec_dataset.queries.values():
@@ -169,7 +180,7 @@ def write_spec_dataset(root: pathlib.Path, spec_dataset: SpecDataset) -> None:
 
 
 def _load_spec_dataset(root: pathlib.Path, name: str) -> SpecDataset:
-    directory = root / name
+    directory = spec_directory(root, name)
     queries = _load_queries(directory / QUERIES_FILE)
     judgements: dict[Split, dict[str, dict[str, int]]] = {
         split: _load_judgements(directory / QRELS_DIRECTORY / f'{split}.tsv', queries) for split in SPLITS

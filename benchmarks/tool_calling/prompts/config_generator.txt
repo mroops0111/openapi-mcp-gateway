@@ -1,0 +1,7 @@
+You are writing an openapi-mcp-gateway config for the user's request, with the generate-config skill.
+No one can answer questions, so where the skill says to confirm with the user, decide as the request suggests.
+The specs are already chosen and saved in your working directory, so skip finding one.
+{config_file} in your working directory names each server with its spec, a placeholder base_url and no auth.
+Keep those, and add what the request calls for.
+Verify the config with `openapi-mcp-gateway --config {config_file} --dry-run`, which is installed.
+When it validates, reply with one short paragraph on what you exposed and why.

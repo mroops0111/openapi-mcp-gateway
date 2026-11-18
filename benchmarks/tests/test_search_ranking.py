@@ -9,6 +9,7 @@ from click.testing import CliRunner
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from openapi_mcp_gateway_benchmarks import provenance
 from openapi_mcp_gateway_benchmarks.cli import main
 from openapi_mcp_gateway_benchmarks.search_ranking import (
     annotation_workflow,
@@ -20,18 +21,18 @@ from openapi_mcp_gateway_benchmarks.search_ranking import (
     report,
     runner,
 )
-from openapi_mcp_gateway_benchmarks.search_ranking.baseline import Baseline
+from openapi_mcp_gateway_benchmarks.search_ranking.gate_scores import GateScores
 from openapi_mcp_gateway_benchmarks.search_ranking.metrics import (
     NormalizedDiscountedCumulativeGain,
     Recall,
     ReciprocalRank,
 )
-from openapi_mcp_gateway_benchmarks.search_ranking.systems import (
-    GatewaySystem,
-    PydanticAIKeywordSystem,
+from openapi_mcp_gateway_benchmarks.search_ranking.variants import (
+    GatewayVariant,
+    PydanticAIKeywordVariant,
     Retriever,
     SpecCorpus,
-    System,
+    Variant,
 )
 from openapi_mcp_gateway_benchmarks.significance import macro_mean, paired_bootstrap
 from openapi_mcp_gateway_benchmarks.spec_pins import SpecChecksumError, SpecPin, sha256_of
@@ -39,13 +40,13 @@ from openapi_mcp_gateway_benchmarks.spec_pins import SpecChecksumError, SpecPin,
 
 FIXTURES_DIR = pathlib.Path(__file__).parent / 'fixtures'
 PETSTORE = FIXTURES_DIR / 'petstore.json'
-REPOSITORY_ANNOTATIONS = pathlib.Path(__file__).parents[1] / 'search_ranking' / 'annotations'
+REPOSITORY_PROMPTS = pathlib.Path(__file__).parents[1] / 'search_ranking' / dataset.PROMPTS_DIRECTORY
 
 MANIFEST = """\
 version: 1
 specs:
   pets: {{source: petstore.json, sha256: {sha256}}}
-systems:
+variants:
   default:
     type: gateway
     server: {{exposure: {{style: dynamic}}}}
@@ -56,12 +57,12 @@ systems:
   random:
     type: random
 gate:
-  system: default
+  variant: default
 """
 
 
-class ReversedNameSystem(System):
-    """A system a test defines on its own, to show a new kind needs no change to the runner or the report."""
+class ReversedNameSystem(Variant):
+    """A variant a test defines on its own, to show a new kind needs no change to the runner or the report."""
 
     type: typing.Literal['reversed-names'] = 'reversed-names'
 
@@ -199,8 +200,8 @@ class TestAnnotations:
         assert sum(split == 'dev' for split in split_by_query.values()) == annotations.DEV_QUERIES_PER_STYLE
 
     def test_build_reports_the_agreement(self, tmp_path):
-        path = tmp_path / annotations.ANNOTATIONS_DIRECTORY / 'pets.jsonl'
-        path.parent.mkdir()
+        path = annotations.annotations_path(tmp_path, 'pets')
+        path.parent.mkdir(parents=True)
         annotated = [
             _annotation('q1', {'a': 2}, {'a': 2}),
             _annotation('q2', {'a': 2}, {'b': 2}, adjudication={'relevant': {'b': 2}, 'note': 'b fits'}),
@@ -218,18 +219,18 @@ class TestDataset:
         benchmark = dataset.load(_petstore_benchmark(tmp_path))
         assert set(benchmark.specs['pets'].judgements['test']) == {'p2', 'p3'}
         assert benchmark.specs['pets'].queries['p1'].style == 'literal'
-        assert isinstance(benchmark.manifest.systems['default'], GatewaySystem)
+        assert isinstance(benchmark.manifest.variants['default'], GatewayVariant)
 
     def test_a_query_judged_in_both_splits_is_refused(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
-        with (benchmark_directory / 'pets' / 'qrels' / 'test.tsv').open('a') as file:
+        with (dataset.spec_directory(benchmark_directory, 'pets') / 'qrels' / 'test.tsv').open('a') as file:
             file.write('p1\tlist_pets\t2\n')
         with pytest.raises(dataset.DatasetError, match='both dev and test'):
             dataset.load(benchmark_directory)
 
     def test_a_query_without_an_answer_is_refused(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
-        (benchmark_directory / 'pets' / 'qrels' / 'dev.tsv').write_text(
+        (dataset.spec_directory(benchmark_directory, 'pets') / 'qrels' / 'dev.tsv').write_text(
             'query-id\tcorpus-id\tscore\np1\tlist_pets\t1\n'
         )
         with pytest.raises(dataset.DatasetError, match='no operation graded 2'):
@@ -237,7 +238,7 @@ class TestDataset:
 
     def test_an_unknown_style_is_refused(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
-        queries = benchmark_directory / 'pets' / 'queries.jsonl'
+        queries = dataset.spec_directory(benchmark_directory, 'pets') / 'queries.jsonl'
         queries.write_text(queries.read_text().replace('"literal"', '"poetic"'))
         with pytest.raises(dataset.DatasetError, match='style'):
             dataset.load(benchmark_directory)
@@ -245,14 +246,14 @@ class TestDataset:
     @pytest.mark.parametrize(
         ('original', 'replacement', 'message'),
         [
-            ('system: default', 'system: missing', r'gate\.system'),
+            ('variant: default', 'variant: missing', r'gate\.variant'),
             ('type: random', 'type: nonsense', 'nonsense'),
             ('server: {exposure: {style: dynamic}}', 'server: {spec: other.json}', 'come from each spec'),
             ('server: {exposure: {style: dynamic}}', 'server: {exposure: {style: sideways}}', 'server config'),
         ],
     )
     def test_the_manifest_is_validated_on_load(self, tmp_path, original, replacement, message):
-        """A wrong system or gate fails when the manifest loads, not when a run reaches it."""
+        """A wrong variant or gate fails when the manifest loads, not when a run reaches it."""
         benchmark_directory = _petstore_benchmark(tmp_path)
         manifest = benchmark_directory / dataset.MANIFEST_FILE
         manifest.write_text(manifest.read_text().replace(original, replacement, 1))
@@ -265,7 +266,7 @@ class TestRun:
 
     async def test_scores_every_query_under_each_system(self, tmp_path):
         benchmark = dataset.load(_petstore_benchmark(tmp_path))
-        results = await runner.run(benchmark, 'test', runner.select_systems(benchmark))
+        results = await runner.run(benchmark, 'test', runner.select_variants(benchmark))
         assert set(results) == {'default', 'names-only', 'random'}
         result_by_query = {result.query_id: result for result in results['default']}
         assert result_by_query['p2'].ranking[0] == 'create_pet'
@@ -278,41 +279,39 @@ class TestRun:
 
     async def test_a_judged_operation_the_spec_does_not_serve_is_refused(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
-        (benchmark_directory / 'pets' / 'qrels' / 'test.tsv').write_text(
+        (dataset.spec_directory(benchmark_directory, 'pets') / 'qrels' / 'test.tsv').write_text(
             'query-id\tcorpus-id\tscore\np2\tcreate_pet\t2\np3\tadopt_pet\t2\n'
         )
         benchmark = dataset.load(benchmark_directory)
         with pytest.raises(dataset.DatasetError, match='adopt_pet'):
-            await runner.run(benchmark, 'test', runner.select_systems(benchmark))
+            await runner.run(benchmark, 'test', runner.select_variants(benchmark))
 
     def test_an_unknown_system_name_is_refused(self, tmp_path):
         benchmark = dataset.load(_petstore_benchmark(tmp_path))
         with pytest.raises(dataset.DatasetError, match='missing'):
-            runner.select_systems(benchmark, ['missing'])
+            runner.select_variants(benchmark, ['missing'])
 
-    async def test_report_baseline_and_regressions(self, tmp_path):
+    async def test_report_gate_scores_and_regressions(self, tmp_path):
         benchmark = dataset.load(_petstore_benchmark(tmp_path))
-        results = await runner.run(benchmark, 'test', runner.select_systems(benchmark))
+        results = await runner.run(benchmark, 'test', runner.select_variants(benchmark))
         built_report = report.build_report(benchmark, 'test', results)
         assert {comparison.against for comparison in built_report.comparisons} == {'names-only', 'random'}
         assert '| default |' in markdown.to_markdown(built_report)
 
-        baseline = Baseline.from_report(built_report, benchmark.manifest.gate)
-        assert baseline.regressions(baseline, 0.01) == []
-        raised = baseline.model_copy(
-            update={'macro': {metric: value + 0.5 for metric, value in baseline.macro.items()}}
-        )
-        assert len(raised.regressions(baseline, 0.01)) == 2
+        scores = GateScores.from_report(built_report, benchmark.manifest.gate)
+        assert scores.regressions(scores, 0.01) == []
+        raised = scores.model_copy(update={'macro': {metric: value + 0.5 for metric, value in scores.macro.items()}})
+        assert len(raised.regressions(scores, 0.01)) == 2
 
-        other_split = baseline.model_copy(update={'split': 'dev'})
-        assert baseline.regressions(other_split, 0.01) == ["split is 'dev' in this run but 'test' in the baseline"]
+        other_split = scores.model_copy(update={'split': 'dev'})
+        assert scores.regressions(other_split, 0.01) == ["split is 'dev' in this run but 'test' in the gate scores"]
 
     async def test_comparisons_follow_the_gated_metrics(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
         manifest = benchmark_directory / dataset.MANIFEST_FILE
         manifest.write_text(manifest.read_text() + '  metrics: [mrr@10]\n')
         benchmark = dataset.load(benchmark_directory)
-        results = await runner.run(benchmark, 'test', runner.select_systems(benchmark))
+        results = await runner.run(benchmark, 'test', runner.select_variants(benchmark))
         built_report = report.build_report(benchmark, 'test', results)
         assert {comparison.metric for comparison in built_report.comparisons} == {'mrr@10'}
 
@@ -320,16 +319,16 @@ class TestRun:
 class TestCli:
     """The commands CI and a developer run."""
 
-    def test_check_passes_against_its_own_baseline_and_fails_below_it(self, tmp_path):
+    def test_check_passes_against_its_own_gate_scores_and_fails_below_them(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
         cli = CliRunner()
         assert cli.invoke(main, ['search-ranking', 'check', str(benchmark_directory), '--update']).exit_code == 0
         assert cli.invoke(main, ['search-ranking', 'check', str(benchmark_directory)]).exit_code == 0
 
-        baseline_path = benchmark_directory / dataset.BASELINE_FILE
-        baseline = json.loads(baseline_path.read_text())
-        baseline['macro']['ndcg@10'] = 2.0
-        baseline_path.write_text(json.dumps(baseline))
+        gate_scores_path = benchmark_directory / dataset.GATE_SCORES_FILE
+        scores = json.loads(gate_scores_path.read_text())
+        scores['macro']['ndcg@10'] = 2.0
+        gate_scores_path.write_text(json.dumps(scores))
         failed = cli.invoke(main, ['search-ranking', 'check', str(benchmark_directory)])
         assert failed.exit_code == 1
         assert 'macro ndcg@10' in failed.output
@@ -340,13 +339,13 @@ class TestCli:
         result = CliRunner().invoke(main, ['search-ranking', 'run', str(benchmark_directory), '--output', str(output)])
         assert result.exit_code == 0, result.output
         written = report.Report.model_validate_json(output.read_text())
-        assert (written.benchmark_version, written.split, written.reference_system) == (1, 'test', 'default')
+        assert (written.benchmark_version, written.split, written.reference_variant) == (1, 'test', 'default')
 
     def test_an_unknown_system_is_a_clean_error(self, tmp_path):
-        arguments = ['search-ranking', 'run', str(_petstore_benchmark(tmp_path)), '--system', 'missing']
+        arguments = ['search-ranking', 'run', str(_petstore_benchmark(tmp_path)), '--variant', 'missing']
         result = CliRunner().invoke(main, arguments)
         assert result.exit_code == 1
-        assert 'Unknown system' in result.output
+        assert 'Unknown variant' in result.output
 
     def test_a_stale_pin_is_a_clean_error(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
@@ -358,7 +357,7 @@ class TestCli:
 
     def test_a_malformed_query_line_is_a_clean_error(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
-        with (benchmark_directory / 'pets' / 'queries.jsonl').open('a') as file:
+        with (dataset.spec_directory(benchmark_directory, 'pets') / 'queries.jsonl').open('a') as file:
             file.write('{not json\n')
         result = CliRunner().invoke(main, ['search-ranking', 'run', str(benchmark_directory)])
         assert result.exit_code == 1
@@ -367,12 +366,12 @@ class TestCli:
     def test_check_refuses_a_paraphrase_that_repeats_its_answer(self, tmp_path):
         """A mislabelled query fails the check before any ranking runs."""
         benchmark_directory = _petstore_benchmark(tmp_path)
-        queries = benchmark_directory / 'pets' / 'queries.jsonl'
+        queries = dataset.spec_directory(benchmark_directory, 'pets') / 'queries.jsonl'
         queries.write_text(queries.read_text().replace('"literal"}}\n{"_id": "p2"', '"paraphrase"}}\n{"_id": "p2"'))
         result = CliRunner().invoke(main, ['search-ranking', 'check', str(benchmark_directory), '--update'])
         assert result.exit_code == 1
         assert 'p1 (paraphrase' in result.output
-        assert not (benchmark_directory / dataset.BASELINE_FILE).exists()
+        assert not (benchmark_directory / dataset.GATE_SCORES_FILE).exists()
 
 
 class TestAnnotationWorkflow:
@@ -485,13 +484,15 @@ class TestAnnotationWorkflow:
             ],
         )
         annotation_workflow.collect(manifest, benchmark_directory, work_directory)
-        annotations_file = benchmark_directory / annotations.ANNOTATIONS_DIRECTORY / 'pets.jsonl'
+        annotations_file = annotations.annotations_path(benchmark_directory, 'pets')
         with pytest.raises(dataset.DatasetError, match='pets-q002'):
             annotations.build_spec_dataset(benchmark_directory, 'pets')
-        queries_before = (benchmark_directory / 'pets' / dataset.QUERIES_FILE).read_text()
+        queries_before = (dataset.spec_directory(benchmark_directory, 'pets') / dataset.QUERIES_FILE).read_text()
         result = CliRunner().invoke(main, ['search-ranking', 'annotations', 'build', str(benchmark_directory)])
         assert result.exit_code == 1
-        assert (benchmark_directory / 'pets' / dataset.QUERIES_FILE).read_text() == queries_before
+        assert (
+            dataset.spec_directory(benchmark_directory, 'pets') / dataset.QUERIES_FILE
+        ).read_text() == queries_before
 
         adjudicated = [
             annotation.model_copy(
@@ -516,7 +517,7 @@ class TestPydanticAIKeywordSystem:
     async def test_ranks_by_the_framework_search(self, tmp_path):
         benchmark = dataset.load(_petstore_benchmark(tmp_path))
         corpus = await runner.load_corpus(benchmark, 'pets')
-        async with PydanticAIKeywordSystem().open(corpus) as retriever:
+        async with PydanticAIKeywordVariant().open(corpus) as retriever:
             ranking = await retriever.rank('delete a pet', 20)
         assert ranking[0] == 'delete_pet'
         assert len(ranking) == len(set(ranking))
@@ -557,8 +558,9 @@ class TestAutomatedAnnotation:
             assessor_model=FunctionModel(assessor),
         )
         assert [(run.role, run.model_requests) for run in runs] == [('query author', 2), ('independent assessor', 1)]
-        assert (work_directory / 'pets' / automated_annotation.PROVENANCE_FILE).exists()
         assert annotation_workflow.collect(manifest, benchmark_directory, work_directory) == {'pets': 3}
+        record = provenance.provenance_path(annotations.annotations_path(benchmark_directory, 'pets'))
+        assert [run['role'] for run in json.loads(record.read_text())] == ['query author', 'independent assessor']
         assert annotations.build_spec_dataset(benchmark_directory, 'pets')[1].shared_answer_count == 3
 
 
@@ -581,8 +583,8 @@ def _annotation(
 
 
 def _copy_annotation_templates(benchmark_directory: pathlib.Path) -> None:
-    templates = REPOSITORY_ANNOTATIONS
-    target = benchmark_directory / annotations.ANNOTATIONS_DIRECTORY
+    templates = REPOSITORY_PROMPTS
+    target = benchmark_directory / dataset.PROMPTS_DIRECTORY
     target.mkdir(exist_ok=True)
     for template in (annotation_workflow.QUERY_AUTHOR_TEMPLATE, annotation_workflow.INDEPENDENT_ASSESSOR_TEMPLATE):
         shutil.copy(templates / template, target / template)

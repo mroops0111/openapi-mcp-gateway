@@ -6,11 +6,12 @@ import typing
 
 import pydantic
 
-from .dataset import GRADES, SPLITS, STYLES, DatasetError, Query, SpecDataset, Split, Style
+from .dataset import GRADES, SPLITS, STYLES, DatasetError, Query, SpecDataset, Split, Style, spec_directory
 from .metrics import ANSWER_GRADE, answers_in
 
 
-ANNOTATIONS_DIRECTORY = 'annotations'
+# Each spec's annotations, beside the queries and judgements built from them.
+ANNOTATIONS_FILE = 'annotations.jsonl'
 
 # The grade an operation gets when only one annotator calls it the answer, or either judges it a lesser one.
 LESSER_GRADE = 1
@@ -100,7 +101,7 @@ class Agreement(pydantic.BaseModel):
 
 def build_spec_dataset(root: pathlib.Path, spec: str) -> tuple[SpecDataset, Agreement]:
     """Merge the annotations of ``spec`` under ``root`` into its queries and judgements, with the agreement measured."""
-    annotations = read_annotations(root / ANNOTATIONS_DIRECTORY / f'{spec}.jsonl')
+    annotations = read_annotations(annotations_path(root, spec))
     split_by_query = assign_splits(annotations)
     judgements: dict[Split, dict[str, dict[str, int]]] = {split: {} for split in SPLITS}
     for annotation in annotations:
@@ -117,6 +118,10 @@ def build_spec_dataset(root: pathlib.Path, spec: str) -> tuple[SpecDataset, Agre
         adjudicated_count=sum(annotation.adjudication is not None for annotation in annotations),
     )
     return spec_dataset, agreement
+
+
+def annotations_path(root: pathlib.Path, spec: str) -> pathlib.Path:
+    return spec_directory(root, spec) / ANNOTATIONS_FILE
 
 
 def read_annotations(path: pathlib.Path) -> list[Annotation]:

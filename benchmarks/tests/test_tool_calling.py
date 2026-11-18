@@ -31,6 +31,7 @@ from openapi_mcp_gateway_benchmarks.tool_calling.solution import solution_model
 
 FIXTURES_DIR = pathlib.Path(__file__).parent / 'fixtures'
 PETSTORE = FIXTURES_DIR / 'petstore.json'
+REPOSITORY_PROMPTS = pathlib.Path(__file__).parents[1] / 'tool_calling' / dataset.PROMPTS_DIRECTORY
 
 MANIFEST = """\
 version: 1
@@ -80,14 +81,14 @@ servers: {pets: pets}
 TASKS = """\
 - id: pets-t01
   prompt: Pet 7 was adopted, take it off the list.
-  split: final
+  split: test
   expected_calls:
     - {server: pets, method: DELETE, path: '/pets/{petId}', path_parameters: {petId: '7'}}
   solution:
     - {server: pets, operation: delete_pet, arguments: {petId: 7}}
 - id: pets-t02
   prompt: Look up pet 3 for me.
-  split: final
+  split: test
   expected_calls:
     - {server: pets, method: GET, path: '/pets/{petId}', path_parameters: {petId: '3'}}
   solution:
@@ -244,7 +245,7 @@ class TestDataset:
         root = _petstore_benchmark(tmp_path)
         shutil.copytree(root / 'scenarios' / 'pets', root / 'scenarios' / 'more-pets')
         tasks = root / 'scenarios' / 'more-pets' / dataset.TASKS_FILE
-        tasks.write_text(tasks.read_text().replace('split: final', 'split: practice', 1))
+        tasks.write_text(tasks.read_text().replace('split: test', 'split: dev', 1))
         manifest = root / dataset.MANIFEST_FILE
         manifest.write_text(manifest.read_text().replace('scenarios: [pets]', 'scenarios: [pets, more-pets]'))
         with pytest.raises(dataset.DatasetError, match='as many tasks in each split'):
@@ -339,7 +340,7 @@ class TestValidation:
         root = _petstore_benchmark(tmp_path)
         variant = root / 'scenarios' / 'pets' / 'variants' / 'generated.yaml'
         variant.write_text('servers:\n  pets:\n    policy: {deny: ["DELETE /pets/*"]}\n')
-        result = CliRunner().invoke(main, ['tool-calling', 'validate', str(root)])
+        result = CliRunner().invoke(main, ['tool-calling', 'check', str(root)])
         assert result.exit_code == 0, result.output
         assert 'pets under generated reaches 1 of 2 tasks, missing pets-t01.' in result.output
 
@@ -359,7 +360,7 @@ class TestValidation:
         assert await validation.validate(dataset.load(root)) == []
 
     def test_the_command_reports_success(self, tmp_path):
-        result = CliRunner().invoke(main, ['tool-calling', 'validate', str(_petstore_benchmark(tmp_path))])
+        result = CliRunner().invoke(main, ['tool-calling', 'check', str(_petstore_benchmark(tmp_path))])
         assert result.exit_code == 0, result.output
         assert 'All 2 tasks pass' in result.output
 
@@ -390,9 +391,10 @@ class TestConfigGeneration:
         variant = yaml.safe_load((scenario_directory / 'variants' / 'generated.yaml').read_text())
         assert variant == {'servers': {'pets': {'policy': {'allow': ['*Pet*']}}}}
         assert dataset.load(benchmark.root).scenarios['pets'].variants['generated'].servers == variant['servers']
-        provenance = json.loads((scenario_directory / 'generated.provenance.json').read_text())
-        assert provenance['request'] == benchmark.scenarios['pets'].intent
-        assert provenance['skill'] == 'generate-config'
+        [record] = json.loads((scenario_directory / 'variants' / 'generated.provenance.json').read_text())
+        assert record['request'] == benchmark.scenarios['pets'].intent
+        assert record['skill'] == 'generate-config'
+        assert record['instructions_sha256'] == runs[0].instructions_sha256
         assert runs[0].summary == 'Exposed the pet operations.'
         assert (tmp_path / 'work' / 'pets' / 'generated' / config_generation.MESSAGES_FILE).exists()
 
@@ -431,6 +433,11 @@ def _petstore_benchmark(root: pathlib.Path) -> pathlib.Path:
     (benchmark_directory / dataset.MANIFEST_FILE).write_text(MANIFEST.format(sha256=sha256_of(PETSTORE)))
     (scenario_directory / dataset.SCENARIO_FILE).write_text(SCENARIO)
     (scenario_directory / dataset.TASKS_FILE).write_text(TASKS)
+    (benchmark_directory / dataset.PROMPTS_DIRECTORY).mkdir()
+    shutil.copy(
+        REPOSITORY_PROMPTS / config_generation.GENERATOR_INSTRUCTIONS_FILE,
+        benchmark_directory / dataset.PROMPTS_DIRECTORY,
+    )
     (benchmark_directory / 'skills' / 'generate-config').mkdir(parents=True)
     (benchmark_directory / 'skills' / 'generate-config' / 'SKILL.md').write_text(SKILL)
     for name, content in VARIANTS.items():

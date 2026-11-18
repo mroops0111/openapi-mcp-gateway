@@ -24,7 +24,7 @@ Scores = dict[str, RoundedScore]
 
 
 class SpecSummary(pydantic.BaseModel):
-    """One system's mean scores on one spec, overall and per style."""
+    """One variant's mean scores on one spec, overall and per style."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
@@ -33,8 +33,8 @@ class SpecSummary(pydantic.BaseModel):
     by_style: dict[Style, Scores]
 
 
-class SystemSummary(pydantic.BaseModel):
-    """One system's mean scores, macro-averaged over specs overall and per style, and for each spec."""
+class VariantSummary(pydantic.BaseModel):
+    """One variant's mean scores, macro-averaged over specs overall and per style, and for each spec."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
@@ -44,11 +44,11 @@ class SystemSummary(pydantic.BaseModel):
 
 
 class Comparison(pydantic.BaseModel):
-    """How far ``system`` scores above ``against`` on one metric, with its 95% bootstrap interval."""
+    """How far ``variant`` scores above ``against`` on one metric, with its 95% bootstrap interval."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
-    system: str
+    variant: str
     against: str
     metric: str
     difference: RoundedScore
@@ -58,7 +58,7 @@ class Comparison(pydantic.BaseModel):
 
 
 class QueryRecord(pydantic.BaseModel):
-    """One query's scores under one system, and the operations it ranked first."""
+    """One query's scores under one variant, and the operations it ranked first."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
@@ -77,33 +77,33 @@ class Report(pydantic.BaseModel):
     benchmark_version: int
     split: Split
     gateway_version: str
-    # The gated system, when it ran, which every comparison is made from.
-    reference_system: str | None
-    systems: dict[str, SystemSummary]
+    # The gated variant, when it ran, which every comparison is made from.
+    reference_variant: str | None
+    variants: dict[str, VariantSummary]
     comparisons: list[Comparison]
     queries: dict[str, list[QueryRecord]]
 
 
 def build_report(benchmark: Benchmark, split: Split, results: Results) -> Report:
-    """Summarize ``results``, and compare the gated system with every other one that ran on the gated metrics."""
-    gated_system = benchmark.manifest.gate.system
-    reference_system = gated_system if gated_system in results else None
+    """Summarize ``results``, and compare the gated variant with every other one that ran on the gated metrics."""
+    gated_variant = benchmark.manifest.gate.variant
+    reference_variant = gated_variant if gated_variant in results else None
     return Report(
         benchmark_version=benchmark.manifest.version,
         split=split,
         gateway_version=importlib.metadata.version('openapi-mcp-gateway'),
-        reference_system=reference_system,
-        systems={name: summarize(system_results) for name, system_results in results.items()},
-        comparisons=_comparisons(results, reference_system, benchmark.manifest.gate.metrics)
-        if reference_system
+        reference_variant=reference_variant,
+        variants={name: summarize(variant_results) for name, variant_results in results.items()},
+        comparisons=_comparisons(results, reference_variant, benchmark.manifest.gate.metrics)
+        if reference_variant
         else [],
         queries={
-            name: [_query_record(result) for result in system_results] for name, system_results in results.items()
+            name: [_query_record(result) for result in variant_results] for name, variant_results in results.items()
         },
     )
 
 
-def summarize(results: typing.Sequence[QueryResult]) -> SystemSummary:
+def summarize(results: typing.Sequence[QueryResult]) -> VariantSummary:
     """Mean scores per spec, per style within each spec, and macro-averaged over specs, overall and per style."""
     results_by_spec: dict[str, list[QueryResult]] = collections.defaultdict(list)
     for result in results:
@@ -125,7 +125,7 @@ def summarize(results: typing.Sequence[QueryResult]) -> SystemSummary:
         for style in STYLES
         if any(style in summary.by_style for summary in specs.values())
     }
-    return SystemSummary(macro=macro, macro_by_style=macro_by_style, specs=specs)
+    return VariantSummary(macro=macro, macro_by_style=macro_by_style, specs=specs)
 
 
 def compare(first: typing.Sequence[QueryResult], second: typing.Sequence[QueryResult], metric: str) -> Difference:
@@ -139,16 +139,16 @@ def compare(first: typing.Sequence[QueryResult], second: typing.Sequence[QueryRe
     return paired_bootstrap(differences_by_spec)
 
 
-def _comparisons(results: Results, reference_system: str, metrics: typing.Sequence[str]) -> list[Comparison]:
+def _comparisons(results: Results, reference_variant: str, metrics: typing.Sequence[str]) -> list[Comparison]:
     comparisons = []
-    for name, system_results in results.items():
-        if name == reference_system:
+    for name, variant_results in results.items():
+        if name == reference_variant:
             continue
         for metric in metrics:
-            difference = compare(results[reference_system], system_results, metric)
+            difference = compare(results[reference_variant], variant_results, metric)
             comparisons.append(
                 Comparison(
-                    system=reference_system,
+                    variant=reference_variant,
                     against=name,
                     metric=metric,
                     difference=difference.mean,

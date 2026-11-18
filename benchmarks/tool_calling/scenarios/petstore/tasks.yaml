@@ -1,7 +1,7 @@
 - id: petstore-t01
   prompt: >-
     We just got in a golden retriever puppy named Biscuit. Please add him to the shop's listings as a dog that's available for sale.
-  split: practice
+  split: dev
   expected_calls:
     - server: petstore
       method: POST
@@ -15,7 +15,7 @@
 - id: petstore-t02
   prompt: >-
     Our cat Whiskers went home with a new family this morning. Can you mark Whiskers as sold in the shop listings?
-  split: practice
+  split: dev
   expected_calls:
     # Petstore sets a pet's status by its form endpoint, or by sending the whole pet back.
     - any_of:
@@ -48,7 +48,7 @@
 - id: petstore-t03
   prompt: >-
     A customer just phoned to cancel their order, number 5. Please cancel it.
-  split: final
+  split: test
   expected_calls:
     - server: petstore
       method: DELETE
@@ -62,7 +62,7 @@
 - id: petstore-t04
   prompt: >-
     A customer wants to buy Kiwi, the parrot we have up for sale. Place an order for one Kiwi, and mark Kiwi as pending so nobody else tries to buy her.
-  split: final
+  split: test
   expected_calls:
     - server: petstore
       method: POST
@@ -102,7 +102,7 @@
 - id: petstore-t05
   prompt: >-
     Order 7 has been delivered to the customer. Look up which pet that order was for and mark that pet as sold.
-  split: final
+  split: test
   expected_calls:
     - server: petstore
       method: GET
@@ -143,7 +143,7 @@
 - id: petstore-t06
   prompt: >-
     The customer behind order 9 backed out. Cancel the order, and put the pet it was for back up for sale as available.
-  split: final
+  split: test
   expected_calls:
     - server: petstore
       method: GET

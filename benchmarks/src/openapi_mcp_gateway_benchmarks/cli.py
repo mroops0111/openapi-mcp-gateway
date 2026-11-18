@@ -20,7 +20,7 @@ from .search_ranking import (
     report,
     runner,
 )
-from .search_ranking.baseline import Baseline
+from .search_ranking.gate_scores import GateScores
 from .spec_pins import SpecChecksumError
 from .tool_calling import config_generation
 from .tool_calling import dataset as tool_calling_dataset
@@ -41,7 +41,7 @@ HANDLED_ERRORS = (BenchmarkDataError, SpecChecksumError, ToolCallError, FileNotF
 
 
 @click.group()
-@click.option('-v', '--verbose', is_flag=True, help='Log progress, including each spec and system as it runs.')
+@click.option('-v', '--verbose', is_flag=True, help='Log progress, including each spec and variant as it runs.')
 def main(verbose: bool) -> None:
     """Benchmarks of what the gateway does for a model."""
     # The gateway logs every registration at INFO, which buries a benchmark's own output.
@@ -59,18 +59,18 @@ def search_ranking() -> None:
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 @click.option('--split', type=click.Choice(dataset.SPLITS), default='test', show_default=True)
 @click.option(
-    '--system', 'system_names', multiple=True, help='A system to run. Repeat for several; the default is all.'
+    '--variant', 'variant_names', multiple=True, help='A variant to run. Repeat for several; the default is all.'
 )
 @click.option(
     '--output', type=click.Path(dir_okay=False, path_type=pathlib.Path), help='Write the full report as JSON.'
 )
 def search_ranking_run(
-    benchmark_directory: pathlib.Path, split: dataset.Split, system_names: tuple[str, ...], output: pathlib.Path | None
+    benchmark_directory: pathlib.Path, split: dataset.Split, variant_names: tuple[str, ...], output: pathlib.Path | None
 ) -> None:
-    """Rank BENCHMARK_DIRECTORY's queries under each system and print the tables."""
+    """Rank BENCHMARK_DIRECTORY's queries under each variant and print the tables."""
     benchmark = _without_traceback(lambda: dataset.load(benchmark_directory))
-    systems = _without_traceback(lambda: runner.select_systems(benchmark, system_names))
-    results = _without_traceback(lambda: asyncio.run(runner.run(benchmark, split, systems)))
+    variants = _without_traceback(lambda: runner.select_variants(benchmark, variant_names))
+    results = _without_traceback(lambda: asyncio.run(runner.run(benchmark, split, variants)))
     built_report = report.build_report(benchmark, split, results)
     if output is not None:
         output.write_text(built_report.model_dump_json(indent=2) + '\n', encoding='utf-8')
@@ -79,9 +79,9 @@ def search_ranking_run(
 
 @search_ranking.command('check')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
-@click.option('--update', is_flag=True, help='Write this run as the new baseline instead of comparing against it.')
+@click.option('--update', is_flag=True, help='Write this run as the new gate scores instead of comparing against them.')
 def search_ranking_check(benchmark_directory: pathlib.Path, update: bool) -> None:
-    """Check BENCHMARK_DIRECTORY's data, then fail when the gated system scores below its baseline, as CI runs it.
+    """Check BENCHMARK_DIRECTORY's data, then fail when the gated variant scores below its gate scores, as CI runs it.
 
     The data passes when its files agree and no paraphrase or indirect query repeats its answer's words.
     """
@@ -97,22 +97,59 @@ def search_ranking_check(benchmark_directory: pathlib.Path, update: bool) -> Non
         sys.exit(1)
 
     gate = benchmark.manifest.gate
-    systems = _without_traceback(lambda: runner.select_systems(benchmark, [gate.system]))
-    results = _without_traceback(lambda: asyncio.run(runner.run(benchmark, gate.split, systems)))
-    current = Baseline.from_report(report.build_report(benchmark, gate.split, results), gate)
+    variants = _without_traceback(lambda: runner.select_variants(benchmark, [gate.variant]))
+    results = _without_traceback(lambda: asyncio.run(runner.run(benchmark, gate.split, variants)))
+    current = GateScores.from_report(report.build_report(benchmark, gate.split, results), gate)
     if update:
-        current.save(benchmark.baseline_path)
-        click.echo(f'\nWrote {benchmark.baseline_path}')
+        current.save(benchmark.gate_scores_path)
+        click.echo(f'\nWrote {benchmark.gate_scores_path}')
         return
-    if not benchmark.baseline_path.exists():
-        raise click.ClickException(f'{benchmark.baseline_path} not found; run with --update to create it')
-    failures = Baseline.load(benchmark.baseline_path).regressions(current, gate.tolerance)
+    if not benchmark.gate_scores_path.exists():
+        raise click.ClickException(f'{benchmark.gate_scores_path} not found; run with --update to create it')
+    failures = GateScores.load(benchmark.gate_scores_path).regressions(current, gate.tolerance)
     click.echo(json.dumps({'macro': current.macro, 'specs': current.specs}, indent=2))
     if failures:
-        click.echo(f'\nBelow the baseline by more than {gate.tolerance}:', err=True)
+        click.echo(f'\nBelow the gate scores by more than {gate.tolerance}:', err=True)
         click.echo('\n'.join(failures), err=True)
         sys.exit(1)
-    click.echo(f'\nWithin {gate.tolerance} of the baseline.')
+    click.echo(f'\nWithin {gate.tolerance} of the gate scores.')
+
+
+@search_ranking.command('generate')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+@click.argument('work_directory', type=WORK_DIRECTORY)
+@click.option('--author-model', required=True, help='The query author, as Pydantic AI names a model.')
+@click.option('--assessor-model', required=True, help='The independent assessor, ideally from another provider.')
+@click.option('--spec', 'spec_names', multiple=True, help='A spec to annotate. Repeat for several; the default is all.')
+def search_ranking_generate(
+    benchmark_directory: pathlib.Path,
+    work_directory: pathlib.Path,
+    author_model: str,
+    assessor_model: str,
+    spec_names: tuple[str, ...],
+) -> None:
+    """Write each spec's annotations anew with both annotators run through Pydantic AI, into WORK_DIRECTORY.
+
+    It runs stages 1 and 2 with the annotators between them, leaving what collect reads.
+    It runs models, which need the providers' API keys in their usual variables.
+    """
+    manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
+    runs = _without_traceback(
+        lambda: asyncio.run(
+            automated_annotation.annotate(
+                manifest,
+                benchmark_directory,
+                work_directory,
+                author_model=author_model,
+                assessor_model=assessor_model,
+                specs=spec_names,
+            )
+        )
+    )
+    for run in runs:
+        click.echo(
+            f'{run.spec} {run.role}: {run.model}, {run.input_tokens} input and {run.output_tokens} output tokens'
+        )
 
 
 @search_ranking.group('annotations')
@@ -148,42 +185,6 @@ def search_ranking_annotations_prepare_assessment(
     )
     for path in paths:
         click.echo(f'Wrote {path}')
-
-
-@search_ranking_annotations.command('annotate')
-@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
-@click.argument('work_directory', type=WORK_DIRECTORY)
-@click.option('--author-model', required=True, help='The query author, as Pydantic AI names a model.')
-@click.option('--assessor-model', required=True, help='The independent assessor, ideally from another provider.')
-@click.option('--spec', 'spec_names', multiple=True, help='A spec to annotate. Repeat for several; the default is all.')
-def search_ranking_annotations_annotate(
-    benchmark_directory: pathlib.Path,
-    work_directory: pathlib.Path,
-    author_model: str,
-    assessor_model: str,
-    spec_names: tuple[str, ...],
-) -> None:
-    """Stages 1 and 2 with the annotators run through Pydantic AI, writing what collect reads into WORK_DIRECTORY.
-
-    It runs models, which need the providers' API keys in their usual variables.
-    """
-    manifest = _without_traceback(lambda: dataset.load_manifest(benchmark_directory))
-    runs = _without_traceback(
-        lambda: asyncio.run(
-            automated_annotation.annotate(
-                manifest,
-                benchmark_directory,
-                work_directory,
-                author_model=author_model,
-                assessor_model=assessor_model,
-                specs=spec_names,
-            )
-        )
-    )
-    for run in runs:
-        click.echo(
-            f'{run.spec} {run.role}: {run.model}, {run.input_tokens} input and {run.output_tokens} output tokens'
-        )
 
 
 @search_ranking_annotations.command('collect')
@@ -236,7 +237,7 @@ def tool_calling() -> None:
     '--variant', 'variant_names', multiple=True, help='A variant to run. Repeat for several; the default is all.'
 )
 @click.option('--model', 'model_names', multiple=True, help='A model to run. Repeat for several; the default is all.')
-@click.option('--split', type=click.Choice(tool_calling_dataset.SPLITS), default='final', show_default=True)
+@click.option('--split', type=click.Choice(tool_calling_dataset.SPLITS), default='test', show_default=True)
 @click.option('--repetitions', type=click.IntRange(min=1), help="Runs per task, in place of the manifest's count.")
 @click.option(
     '--output', type=click.Path(dir_okay=False, path_type=pathlib.Path), help='Write the full report as JSON.'
@@ -271,7 +272,32 @@ def tool_calling_run(
     click.echo(tool_calling_markdown.to_markdown(built_report), nl=False)
 
 
-@tool_calling.command('generate-configs')
+@tool_calling.command('check')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+def tool_calling_check(benchmark_directory: pathlib.Path) -> None:
+    """Prove every task of BENCHMARK_DIRECTORY can pass and every hand-written variant reaches it, for CI.
+
+    It calls no model, and lists the tasks each generated variant leaves out of reach without failing.
+    """
+    benchmark = _without_traceback(lambda: tool_calling_dataset.load(benchmark_directory))
+    problems = _without_traceback(lambda: asyncio.run(tool_calling_validation.validate(benchmark)))
+    task_count = sum(len(scenario.tasks) for scenario in benchmark.scenarios.values())
+    if problems:
+        for problem in problems:
+            click.echo(f'{problem.scenario} {problem.task_id} under {problem.variant}: {problem.problem}', err=True)
+        sys.exit(1)
+    click.echo(f'All {task_count} tasks pass with their solutions, and every hand-written variant reaches them.')
+    generated = set(benchmark.manifest.config_generator.variants)
+    coverage = _without_traceback(lambda: tool_calling_reach.intent_coverage(benchmark))
+    for entry in coverage:
+        if entry.variant in generated and entry.unreachable_tasks:
+            click.echo(
+                f'{entry.scenario} under {entry.variant} reaches {entry.reachable_task_count} of {entry.task_count} '
+                f'tasks, missing {", ".join(entry.unreachable_tasks)}.'
+            )
+
+
+@tool_calling.command('generate')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 @click.argument('work_directory', type=WORK_DIRECTORY)
 @click.option(
@@ -283,7 +309,7 @@ def tool_calling_run(
 @click.option(
     '--variant', 'variant_names', multiple=True, help='A variant to generate. Repeat for several; the default is all.'
 )
-def tool_calling_generate_configs(
+def tool_calling_generate(
     benchmark_directory: pathlib.Path,
     work_directory: pathlib.Path,
     scenario_names: tuple[str, ...],
@@ -305,31 +331,6 @@ def tool_calling_generate_configs(
             f'{run.scenario} {run.variant}: {run.model}, {run.input_tokens} input and {run.output_tokens} output tokens, '
             f'{run.model_requests} requests'
         )
-
-
-@tool_calling.command('validate')
-@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
-def tool_calling_validate(benchmark_directory: pathlib.Path) -> None:
-    """Prove every task of BENCHMARK_DIRECTORY can pass and every hand-written variant reaches it, for CI.
-
-    It calls no model, and lists the tasks each generated variant leaves out of reach without failing.
-    """
-    benchmark = _without_traceback(lambda: tool_calling_dataset.load(benchmark_directory))
-    problems = _without_traceback(lambda: asyncio.run(tool_calling_validation.validate(benchmark)))
-    task_count = sum(len(scenario.tasks) for scenario in benchmark.scenarios.values())
-    if problems:
-        for problem in problems:
-            click.echo(f'{problem.scenario} {problem.task_id} under {problem.variant}: {problem.problem}', err=True)
-        sys.exit(1)
-    click.echo(f'All {task_count} tasks pass with their solutions, and every hand-written variant reaches them.')
-    generated = set(benchmark.manifest.config_generator.variants)
-    coverage = _without_traceback(lambda: tool_calling_reach.intent_coverage(benchmark))
-    for entry in coverage:
-        if entry.variant in generated and entry.unreachable_tasks:
-            click.echo(
-                f'{entry.scenario} under {entry.variant} reaches {entry.reachable_task_count} of {entry.task_count} '
-                f'tasks, missing {", ".join(entry.unreachable_tasks)}.'
-            )
 
 
 def _without_traceback(step: typing.Callable[[], StepResult]) -> StepResult:

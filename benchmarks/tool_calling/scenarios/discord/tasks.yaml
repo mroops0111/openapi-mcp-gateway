@@ -2,7 +2,7 @@
   prompt: >-
     In our server (guild 81384788765712384), give the member quietfox the Helper role. They've been answering
     questions in support for weeks.
-  split: practice
+  split: dev
   expected_calls:
     - server: discord
       method: PUT
@@ -39,7 +39,7 @@
   prompt: >-
     The account spambot_9000 just flooded our server (guild 81384788765712384) with scam links. Ban them and wipe
     their messages from the last 24 hours.
-  split: practice
+  split: dev
   expected_calls:
     - server: discord
       method: PUT
@@ -68,7 +68,7 @@
   prompt: >-
     Please change the server nickname of xX_Gamer_Xx to just "Gamer" in guild 81384788765712384. The current one
     is way too long and full of symbols.
-  split: final
+  split: test
   expected_calls:
     - server: discord
       method: PATCH
@@ -97,7 +97,7 @@
   prompt: >-
     Someone posted a fake giveaway link in #general on our server (guild 81384788765712384), the message that says
     "FREE NITRO click here". Delete that message, leave everything else.
-  split: final
+  split: test
   expected_calls:
     - server: discord
       method: DELETE
@@ -140,7 +140,7 @@
   prompt: >-
     Create a new role called "Event Staff" in guild 81384788765712384. It should show separately in the member list
     and people should be able to @mention it.
-  split: final
+  split: test
   expected_calls:
     - server: discord
       method: POST
@@ -155,7 +155,7 @@
 - id: discord-t06
   prompt: >-
     Pin the "Server rules updated" post in #announcements on guild 81384788765712384 so new folks see it first.
-  split: final
+  split: test
   expected_calls:
     - server: discord
       method: PUT

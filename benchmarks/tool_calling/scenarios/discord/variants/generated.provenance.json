@@ -1,0 +1,18 @@
+[
+  {
+    "model": "anthropic:claude-sonnet-5-5",
+    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
+    "finished_at": "2026-11-17T09:58:16+00:00",
+    "pydantic_ai_version": "2.69.0",
+    "input_tokens": 98502,
+    "output_tokens": 2650,
+    "model_requests": 7,
+    "scenario": "discord",
+    "variant": "generated",
+    "skill": "generate-config",
+    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "request": "Moderate a community server: manage members and roles, and keep channels and messages tidy.",
+    "gateway_version": "0.8.0",
+    "summary": "`config.yaml` validates with `--dry-run`. It exposes 30 Discord tools, left unshaped, out of the roughly 230 operations in the spec.\n\n- **Members:** list, search and look up members. Update a member (nickname, timeout, roles). Kick, ban and unban, and list bans.\n- **Roles:** list, create, edit and delete roles. Add or remove a role on a member.\n- **Channels:** list, view, create, edit and delete channels.\n- **Messages:** list and view messages. Delete one message or many at once. List, add and remove pins.\n- **Context:** I added `list_my_guilds` and the audit log, both read-only, so the assistant can find the server ID and see who did what.\n\nI left out bot and app management, webhooks, emojis, scheduled events, lobbies, bulk role and channel reordering, member pruning and bulk bans. None of them are needed for moderation, and the last three are risky. I also left out `create_message`, so the assistant can't post as the bot. That's a one-line addition to `policy.allow` if you want it.\n\nAuth is the Discord bot token, sent in the `Authorization` header with the `Bot ` prefix. Set `DISCORD_BOT_TOKEN` to the token from the Discord Developer Portal. The bot also needs the matching permissions in your server, such as Manage Roles, Kick/Ban Members and Manage Messages. I set `base_url` to `https://discord.com/api/v10`, which replaces the placeholder.\n\nRun it with `uvx openapi-mcp-gateway --config config.yaml`."
+  }
+]

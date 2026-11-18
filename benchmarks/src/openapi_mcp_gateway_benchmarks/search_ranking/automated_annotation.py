@@ -1,5 +1,3 @@
-import datetime
-import importlib.metadata
 import json
 import pathlib
 import typing
@@ -7,6 +5,7 @@ import typing
 import pydantic
 from pydantic_ai import Agent, ModelRetry
 
+from ..provenance import ModelRun, model_run_fields, write_provenance
 from .annotation_workflow import (
     INDEPENDENT_ASSESSOR_OUTPUT_FILE,
     QUERY_AUTHOR_OUTPUT_FILE,
@@ -18,11 +17,11 @@ from .annotation_workflow import (
     write_assessor_queries,
     write_operation_list,
 )
+from .annotations import ANNOTATIONS_FILE
 from .dataset import STYLES, Manifest
 
 
-# What the automated annotators keep beside their answers, so a run can be traced after the fact.
-PROVENANCE_FILE = 'provenance.json'
+# Each annotator's raw exchange, kept beside its answers, so a run can be traced after the fact.
 MESSAGES_SUFFIX = '.messages.json'
 
 # How many operation lines a search of the list returns at most, enough to compare candidates without flooding.
@@ -46,19 +45,11 @@ AUTOMATED_INPUTS = InstructionInputs(
 )
 
 
-class AnnotatorRun(pydantic.BaseModel):
-    """One annotator's run on one spec, saying which model ran, when, through which framework, and at what cost."""
-
-    model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
+class AnnotatorRun(ModelRun):
+    """One annotator's run on one spec, in one of the two roles."""
 
     spec: str
     role: typing.Literal['query author', 'independent assessor']
-    model: str
-    finished_at: str
-    pydantic_ai_version: str
-    input_tokens: int
-    output_tokens: int
-    model_requests: int
 
 
 async def annotate(
@@ -108,9 +99,8 @@ async def annotate(
         )
         _write_jsonl(spec_directory / INDEPENDENT_ASSESSOR_OUTPUT_FILE, assessed)
         runs += [author_run, assessor_run]
-        (spec_directory / PROVENANCE_FILE).write_text(
-            json.dumps([author_run.model_dump(), assessor_run.model_dump()], indent=2) + '\n', encoding='utf-8'
-        )
+        # Named after the annotations collect writes from these answers, which take the record with them.
+        write_provenance(spec_directory / ANNOTATIONS_FILE, [author_run, assessor_run])
     return runs
 
 
@@ -150,16 +140,10 @@ async def _run_annotator(
 
     result = await agent.run(f'Annotate the {spec} API as your instructions say.')
     (spec_directory / f'{role.replace(" ", "_")}{MESSAGES_SUFFIX}').write_bytes(result.all_messages_json())
-    usage = result.usage
     run = AnnotatorRun(
         spec=spec,
         role=role,
-        model=str(getattr(agent.model, 'model_name', model)),
-        finished_at=datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
-        pydantic_ai_version=importlib.metadata.version('pydantic-ai-slim'),
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-        model_requests=usage.requests,
+        **model_run_fields(str(getattr(agent.model, 'model_name', model)), prompt, result.usage),
     )
     return list(result.output), run
 
