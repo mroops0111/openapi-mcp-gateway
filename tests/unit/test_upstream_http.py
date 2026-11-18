@@ -3,12 +3,12 @@ import asyncio
 import httpx
 import pytest
 
-from openapi_mcp_gateway.client import APIClient, BinaryBody, SharedAPIClient
+from openapi_mcp_gateway.upstream_http import UpstreamBinaryBody, UpstreamHttpClient, UpstreamSharedHttpClient
 
 
 def _client_with_handler(handler):
-    """Build an ``APIClient`` whose transport is a ``MockTransport`` over ``handler``."""
-    client = APIClient(base_url='https://example.com')
+    """Build an ``UpstreamHttpClient`` whose transport is a ``MockTransport`` over ``handler``."""
+    client = UpstreamHttpClient(base_url='https://example.com')
     client._client = httpx.AsyncClient(
         base_url='https://example.com',
         transport=httpx.MockTransport(handler),
@@ -65,7 +65,7 @@ async def test_invalid_json_with_json_content_type_falls_back_to_text():
 
 
 async def test_binary_body_kept_as_bytes():
-    """A binary media type comes back as a ``BinaryBody`` holding the exact bytes, not decoded text."""
+    """A binary media type comes back as a ``UpstreamBinaryBody`` holding the exact bytes, not decoded text."""
     body = b'\x89PNG\r\n\x1a\n\xff\xfe'
 
     def handler(_request):
@@ -74,7 +74,7 @@ async def test_binary_body_kept_as_bytes():
     async with _client_with_handler(handler) as client:
         result = await client.request('GET', '/pet/1/photo')
 
-    assert result == BinaryBody(body, 'image/png', 'https://example.com/pet/1/photo')
+    assert result == UpstreamBinaryBody(body, 'image/png', 'https://example.com/pet/1/photo')
 
 
 @pytest.mark.parametrize(
@@ -111,7 +111,7 @@ async def test_declared_charset_decodes_as_text():
     ('body', 'expected'),
     [
         (b'plain words', {'data': 'plain words'}),
-        (b'\xff\xfe', BinaryBody(b'\xff\xfe', 'application/octet-stream', 'https://example.com/blob')),
+        (b'\xff\xfe', UpstreamBinaryBody(b'\xff\xfe', 'application/octet-stream', 'https://example.com/blob')),
     ],
 )
 async def test_untyped_body_is_text_only_when_it_decodes(body, expected):
@@ -148,7 +148,7 @@ async def test_cookies_the_upstream_sets_are_never_sent_back():
         sent_cookies.append(request.headers.get('cookie'))
         return httpx.Response(200, json={}, headers={'set-cookie': 'session=alice; Path=/'})
 
-    async with APIClient(base_url='https://example.com', transport=httpx.MockTransport(handler)) as client:
+    async with UpstreamHttpClient(base_url='https://example.com', transport=httpx.MockTransport(handler)) as client:
         await client.request('GET', '/me')
         await client.request('GET', '/me')
 
@@ -163,28 +163,28 @@ async def test_a_cookie_header_on_the_request_is_sent_as_given():
         sent_cookies.append(request.headers.get('cookie'))
         return httpx.Response(200, json={}, headers={'set-cookie': 'session=alice; Path=/'})
 
-    async with APIClient(base_url='https://example.com', transport=httpx.MockTransport(handler)) as client:
+    async with UpstreamHttpClient(base_url='https://example.com', transport=httpx.MockTransport(handler)) as client:
         await client.request('GET', '/me')
         await client.request('GET', '/me', headers={'Cookie': 'session=bob'})
 
     assert sent_cookies == [None, 'session=bob']
 
 
-class TestSharedAPIClient:
-    """One ``APIClient`` per upstream server, bound to the event loop that first used it."""
+class TestUpstreamSharedHttpClient:
+    """One ``UpstreamHttpClient`` per upstream server, bound to the event loop that first used it."""
 
     async def test_the_same_client_serves_every_call_on_a_loop(self):
         """Calls on one loop reuse one client, so its connections are kept alive between them."""
-        shared = SharedAPIClient('https://example.com')
+        shared = UpstreamSharedHttpClient('https://example.com')
 
         assert shared.get() is shared.get()
         await shared.aclose()
 
     def test_another_loop_gets_a_fresh_client(self):
         """A client is not carried onto a second loop, since its connections belong to the first."""
-        shared = SharedAPIClient('https://example.com')
+        shared = UpstreamSharedHttpClient('https://example.com')
 
-        async def current() -> APIClient:
+        async def current() -> UpstreamHttpClient:
             return shared.get()
 
         first, second = asyncio.run(current()), asyncio.run(current())
@@ -193,7 +193,7 @@ class TestSharedAPIClient:
 
     async def test_aclose_closes_the_client_and_the_next_call_opens_another(self):
         """Closing on the client's own loop closes it, and a later call does not reuse the closed one."""
-        shared = SharedAPIClient('https://example.com')
+        shared = UpstreamSharedHttpClient('https://example.com')
         client = shared.get()
 
         await shared.aclose()
@@ -204,9 +204,9 @@ class TestSharedAPIClient:
 
     def test_aclose_on_another_loop_forgets_the_client_without_touching_it(self):
         """A shutdown hook run on a fresh loop, as stdio does, leaves the old loop's client alone."""
-        shared = SharedAPIClient('https://example.com')
+        shared = UpstreamSharedHttpClient('https://example.com')
 
-        async def open_client() -> APIClient:
+        async def open_client() -> UpstreamHttpClient:
             return shared.get()
 
         client = asyncio.run(open_client())

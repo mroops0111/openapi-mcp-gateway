@@ -1,25 +1,25 @@
 import logging
 
-from ..resolver import TokenSourceAuthResolver
-from ..token_source import ClientCredentialsTokenSource
-from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
+from ..assembly import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
+from ..upstream.resolver import UpstreamTokenSourceAuthResolver
+from ..upstream.token_source import UpstreamClientCredentialsTokenSource
 
 
 logger = logging.getLogger(__name__)
 
 
-class ClientCredentialsFlowHandler(OAuthFlowHandler):
+class UpstreamClientCredentialsFlowHandler(OAuthFlowHandler):
     """Build the service-level ``client_credentials`` setup.
 
     No MCP-side OAuth server is needed.
     The gateway uses its own credentials to fetch a single upstream access token, shared across all MCP clients.
-    The resulting setup carries only an ``AuthResolver`` plus an ``on_shutdown`` hook.
+    The resulting setup carries only an ``UpstreamAuthResolver`` plus an ``on_shutdown`` hook.
     The hook closes the underlying token source's HTTP client.
     """
 
-    def build(self, flow_context: OAuthFlowContext) -> OAuthFlowSetup:
+    def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry
-        oauth_flow = flow_context.oauth_flow
+        oauth_flow = flow_context.require_upstream_oauth_flow()
 
         client_id = entry.auth.upstream.resolve_client_id()
         client_secret = entry.auth.upstream.resolve_client_secret()
@@ -34,9 +34,9 @@ class ClientCredentialsFlowHandler(OAuthFlowHandler):
                 'Provide auth.upstream.token_url or add it to the spec securitySchemes.'
             )
 
-        scopes = entry.auth.upstream.scopes or list(oauth_flow.scopes.keys())
+        scopes = entry.auth.upstream.scopes or list(oauth_flow.scope_descriptions)
         audience_params = entry.auth.upstream.resolve_audience_params()
-        token_source = ClientCredentialsTokenSource(
+        token_source = UpstreamClientCredentialsTokenSource(
             token_url=oauth_flow.token_url,
             client_id=client_id,
             client_secret=client_secret,
@@ -52,7 +52,7 @@ class ClientCredentialsFlowHandler(OAuthFlowHandler):
             audience_params,
         )
 
-        return OAuthFlowSetup(
-            resolver=TokenSourceAuthResolver(token_source),
+        return ServerAuthSetup(
+            resolver=UpstreamTokenSourceAuthResolver(token_source),
             on_shutdown=token_source.aclose,
         )

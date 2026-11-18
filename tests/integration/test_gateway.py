@@ -14,26 +14,29 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from mcp import Client, StdioServerParameters
 from mcp.client.sse import sse_client
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context
 from mcp.types import RequestParamsMeta, TextContent
+from pydantic import AnyHttpUrl
 from starlette.testclient import TestClient
 
-from openapi_mcp_gateway.app import _transport_security
-from openapi_mcp_gateway.auth import token_source as token_source_module
-from openapi_mcp_gateway.auth.oidc import IssuerMetadata
-from openapi_mcp_gateway.client import APIClient, SharedAPIClient
+from openapi_mcp_gateway.app import _authorization_server_metadata, _ServerBundle, _transport_security
+from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
+from openapi_mcp_gateway.auth.upstream import token_source as token_source_module
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import (
     AuthConfig,
     DNSRebindingProtectionConfig,
     ExposureConfig,
     GatewayConfig,
+    McpAuthConfig,
     PolicyConfig,
     SearchConfig,
     SearchFieldWeights,
     ServerConfig,
     UpstreamAuthConfig,
 )
+from openapi_mcp_gateway.upstream_http import UpstreamHttpClient, UpstreamSharedHttpClient
 from tests.constants import (
     API_URL,
     ATTACKER_HOST,
@@ -41,6 +44,7 @@ from tests.constants import (
     AUTHORIZE_URL,
     BROWSER_ORIGIN,
     GATEWAY_HOST,
+    GATEWAY_ISSUER,
     GATEWAY_URL,
     ISSUER,
     JWKS_URL,
@@ -83,14 +87,14 @@ def oauth_gateway(petstore_json_path):
                 name='petstore',
                 spec=str(petstore_json_path),
                 auth=AuthConfig(
-                    type='oauth2',
                     upstream=UpstreamAuthConfig(
+                        type='oauth2',
                         client_id='test-client-id',
                         client_secret='test-client-secret',
                         authorization_url=AUTHORIZE_URL,
                         token_url=TOKEN_URL,
                         scopes=['read'],
-                    ),
+                    )
                 ),
             ),
         ],
@@ -211,6 +215,21 @@ class TestWellKnownOAuth:
         response = oauth_client.get(path)
         assert response.status_code == 200
         assert response.json()['authorization_response_iss_parameter_supported'] is True
+
+    def test_a_provider_that_sends_no_iss_does_not_promise_it(self):
+        """The metadata states what the setup declares, rather than assuming every provider sends ``iss``."""
+        bundle = _ServerBundle(
+            name='petstore',
+            mount_path='/petstore',
+            mcp=MagicMock(),
+            spec=MagicMock(),
+            auth_provider=MagicMock(),
+            scope_registry=MagicMock(),
+            tool_call_target=MagicMock(),
+            auth_settings=AuthSettings(issuer_url=AnyHttpUrl(GATEWAY_ISSUER), resource_server_url=None),
+        )
+
+        assert _authorization_server_metadata(bundle).authorization_response_iss_parameter_supported is None
 
     def test_authorization_server_with_mcp(self, oauth_client):
         """Suffixing ``/mcp`` on the metadata path is also served."""
@@ -461,10 +480,9 @@ class TestClientCredentialsFlowEndToEnd:
                     name='petstore',
                     spec=str(client_credentials_spec_path),
                     auth=AuthConfig(
-                        type='oauth2',
                         upstream=UpstreamAuthConfig(
-                            client_id='gateway-id', client_secret='gateway-secret', scopes=['api']
-                        ),
+                            type='oauth2', client_id='gateway-id', client_secret='gateway-secret', scopes=['api']
+                        )
                     ),
                 ),
             ],
@@ -545,19 +563,19 @@ class TestSpec20260728Adoption:
         assert first == tool_names()
 
 
-class TestUpstreamClientLifecycle:
+class TestUpstreamHttpClientLifecycle:
     """Each server keeps one upstream client across calls and closes it when the gateway shuts down."""
 
     async def test_calls_reuse_one_client_closed_at_shutdown(self, gateway, upstream_requests, monkeypatch):
         """Two calls go through one client, and running the shutdown hooks closes it."""
-        constructed: list[APIClient] = []
-        original_init = APIClient.__init__
+        constructed: list[UpstreamHttpClient] = []
+        original_init = UpstreamHttpClient.__init__
 
         def recording_init(self, *args, **kwargs):
             constructed.append(self)
             original_init(self, *args, **kwargs)
 
-        monkeypatch.setattr(APIClient, '__init__', recording_init)
+        monkeypatch.setattr(UpstreamHttpClient, '__init__', recording_init)
 
         async with Client(gateway._servers[0].mcp, raise_exceptions=True) as client:
             await client.call_tool('list_pets', {})
@@ -831,7 +849,9 @@ class _StubContext:
 def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Awaitable[None]]]:
     """The shutdown hooks an auth flow registered, leaving out the one closing each server's upstream client."""
     return [
-        hook for hook in gateway._shutdown_hooks if not isinstance(getattr(hook, '__self__', None), SharedAPIClient)
+        hook
+        for hook in gateway._shutdown_hooks
+        if not isinstance(getattr(hook, '__self__', None), UpstreamSharedHttpClient)
     ]
 
 
@@ -847,7 +867,7 @@ def _tool(gateway: Gateway, name: str):
 
 def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = None) -> TestClient:
     """Test client over a petstore server that validates tokens from ``ISSUER``, an issuer it does not own."""
-    metadata = IssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
+    metadata = McpExternalIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
     config = GatewayConfig(
         url=GATEWAY_URL,
         servers=[
@@ -855,19 +875,24 @@ def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = N
                 name='petstore',
                 spec=str(spec_path),
                 auth=AuthConfig(
-                    type='oauth2',
-                    flow='token_exchange',
-                    issuer=ISSUER,
                     upstream=UpstreamAuthConfig(
-                        audience=API_URL, client_id='gateway', client_secret='secret', scopes=['read']
+                        type='oauth2',
+                        flow='token_exchange',
+                        audience=API_URL,
+                        client_id='gateway',
+                        client_secret='secret',
+                        scopes=['read'],
                     ),
+                    mcp=McpAuthConfig(issuer=ISSUER),
                 ),
             ),
         ],
     )
     with (
-        patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_issuer_metadata', return_value=metadata),
-        patch('openapi_mcp_gateway.auth.oidc._build_jwk_client', return_value=jwk_client or MagicMock()),
+        patch(
+            'openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata', return_value=metadata
+        ),
+        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client', return_value=jwk_client or MagicMock()),
     ):
         gateway = Gateway.from_config(config)
         return TestClient(gateway._build_app(transport='streamable-http'))

@@ -7,9 +7,14 @@ from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
 
-from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeProvider
+from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeBridge, build_authorization_code_server
+from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
+from openapi_mcp_gateway.auth.mcp.client import McpClientDirectory, McpDynamicClientRegistry
+from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenPolicy
+from openapi_mcp_gateway.auth.upstream.authorization_code import UpstreamAuthorizationCodeClient
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
+from openapi_mcp_gateway.stores.base import TokenStore
 from tests.constants import GATEWAY_URL
 
 
@@ -27,6 +32,42 @@ SECURE_COOKIE = '__Host-openapi-mcp-gateway-browser'
 PLAIN_COOKIE = 'openapi-mcp-gateway-browser'
 
 
+def authorization_code_server(
+    store: TokenStore,
+    issuer: str,
+    upstream: UpstreamAuthorizationCodeClient,
+    policy: McpTokenPolicy | None = None,
+    clients: McpClientDirectory | None = None,
+    server_name: str = 'petstore',
+) -> McpAuthorizationCodeServer:
+    """The MCP authorization server ``AuthorizationCodeFlowHandler`` builds, joined to ``upstream`` by its Bridge.
+
+    ``clients`` defaults to Dynamic Client Registration into ``store``.
+    """
+    server, _ = build_authorization_code_server(
+        store,
+        issuer,
+        upstream,
+        policy or McpTokenPolicy(),
+        clients or McpDynamicClientRegistry(store, issuer),
+        server_name,
+    )
+    return server
+
+
+def server_of(provider: object) -> McpAuthorizationCodeServer:
+    """``provider`` as the gateway's own authorization server, which every ``authorization_code`` setup carries."""
+    assert isinstance(provider, McpAuthorizationCodeServer)
+    return provider
+
+
+def bridge_of(provider: object) -> AuthorizationCodeBridge:
+    """The Bridge that takes the sign-ins of ``provider`` on to the upstream."""
+    continuation = server_of(provider).continuation
+    assert isinstance(continuation, AuthorizationCodeBridge)
+    return continuation
+
+
 def authorization_code_gateway(
     spec: pathlib.Path,
     clients: dict[str, typing.Any],
@@ -39,17 +80,26 @@ def authorization_code_gateway(
     ``upstream`` is merged into ``auth.upstream``, which otherwise requests ``read``.
     """
     auth = {
-        'type': 'oauth2',
-        'upstream': {'client_id': 'gateway', 'client_secret': 'secret', 'scopes': ['read'], **(upstream or {})},
-        'clients': clients,
-        **({'operation_scopes': operation_scopes} if operation_scopes is not None else {}),
+        'upstream': {
+            'type': 'oauth2',
+            'client_id': 'gateway',
+            'client_secret': 'secret',
+            'scopes': ['read'],
+            **(upstream or {}),
+        },
+        'mcp': {
+            'clients': clients,
+            **({'operation_scopes': operation_scopes} if operation_scopes is not None else {}),
+        },
     }
     server = {'name': 'petstore', 'spec': str(spec), 'auth': auth, 'exposure': exposure or {}}
     return Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
 
 
-def upstream_token_response(granted: str = 'upstream-access-token', scope: str | None = None) -> MagicMock:
-    """Mock upstream token endpoint response granting ``granted`` plus a refresh token.
+def upstream_token_response(
+    granted: str = 'upstream-access-token', scope: str | None = None, expires_in: int = 3600
+) -> MagicMock:
+    """Mock upstream token endpoint response granting ``granted`` plus a refresh token, for ``expires_in`` seconds.
 
     ``scope`` is the granted scope it states, which it omits when ``None``.
     """
@@ -58,14 +108,14 @@ def upstream_token_response(granted: str = 'upstream-access-token', scope: str |
     response.json.return_value = {
         'access_token': granted,
         'refresh_token': 'upstream-refresh-token',
-        'expires_in': 3600,
+        'expires_in': expires_in,
         **({'scope': scope} if scope is not None else {}),
     }
     return response
 
 
 async def authorize(
-    provider: AuthorizationCodeProvider,
+    provider: McpAuthorizationCodeServer,
     client: OAuthClientInformationFull,
     state: str | None = CLIENT_STATE,
     scopes: list[str] | None = None,
@@ -85,7 +135,7 @@ async def authorize(
 
 
 async def begin_upstream(
-    provider: AuthorizationCodeProvider,
+    provider: McpAuthorizationCodeServer,
     client: OAuthClientInformationFull,
     state: str | None = CLIENT_STATE,
     scopes: list[str] | None = None,
@@ -95,27 +145,29 @@ async def begin_upstream(
         request_id_in(await authorize(provider, client, state, scopes)), BROWSER_ID
     )
     assert pending is not None
-    return await provider.continue_to_upstream(pending)
+    return await provider.continue_after_consent(pending)
 
 
 async def complete_upstream(
-    provider: AuthorizationCodeProvider,
+    provider: McpAuthorizationCodeServer,
     upstream_url: str,
     iss: str | None = None,
     upstream_scope: str | None = None,
+    upstream_expires_in: int = 3600,
 ) -> str:
     """Deliver the upstream's redirect for the sign-in ``upstream_url`` began, returning the redirect to the MCP client.
 
-    The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``.
+    The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``,
+    and grants a token lasting ``upstream_expires_in`` seconds.
     """
-    response = upstream_token_response(scope=upstream_scope)
+    response = upstream_token_response(scope=upstream_scope, expires_in=upstream_expires_in)
     with patch('httpx.AsyncClient.post', AsyncMock(return_value=response)):
         return await deliver_callback(provider, upstream_url, iss)
 
 
-async def deliver_callback(provider: AuthorizationCodeProvider, upstream_url: str, iss: str | None = None) -> str:
+async def deliver_callback(provider: McpAuthorizationCodeServer, upstream_url: str, iss: str | None = None) -> str:
     """Deliver the upstream's redirect to the browser that began ``upstream_url``, against a token endpoint the caller mocks."""
-    return await provider.handle_upstream_callback('upstream-code', state_in(upstream_url), BROWSER_ID, iss)
+    return await bridge_of(provider).handle_upstream_callback('upstream-code', state_in(upstream_url), BROWSER_ID, iss)
 
 
 def query_value(url: str, name: str) -> str:
@@ -139,17 +191,22 @@ def code_in(redirect: str) -> str:
 
 
 async def sign_in(
-    provider: AuthorizationCodeProvider,
+    provider: McpAuthorizationCodeServer,
     client: OAuthClientInformationFull,
     scopes: list[str] | None = None,
     upstream_scope: str | None = None,
+    upstream_expires_in: int = 3600,
 ) -> OAuthToken:
     """Run a whole authorization through ``provider`` and return the MCP tokens it issues.
 
-    The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``.
+    The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``,
+    and grants a token lasting ``upstream_expires_in`` seconds.
     """
     redirect = await complete_upstream(
-        provider, await begin_upstream(provider, client, scopes=scopes), upstream_scope=upstream_scope
+        provider,
+        await begin_upstream(provider, client, scopes=scopes),
+        upstream_scope=upstream_scope,
+        upstream_expires_in=upstream_expires_in,
     )
     auth_code = await provider.load_authorization_code(client, code_in(redirect))
     assert auth_code is not None

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # OpenID Connect Discovery 1.0 §4, then RFC 8414 §3.
 # Both are tried because an OpenID provider serves the former and a plain OAuth server the latter,
 # and a deployment should not have to tell the gateway which kind it runs.
-ISSUER_METADATA_PATHS = ('/.well-known/openid-configuration', '/.well-known/oauth-authorization-server')
+MCP_EXTERNAL_ISSUER_METADATA_PATHS = ('/.well-known/openid-configuration', '/.well-known/oauth-authorization-server')
 
 # Verification is restricted to the family of the key the issuer published,
 # rather than to whatever the token's own header asks for.
@@ -34,11 +34,11 @@ _ALGORITHMS_BY_KEY_TYPE = {
 }
 
 
-class OIDCConfigurationError(Exception):
+class McpExternalIssuerConfigurationError(Exception):
     """Raised when discovery cannot produce a usable JWKS or token endpoint."""
 
 
-class TokenVerificationError(Exception):
+class McpTokenVerificationError(Exception):
     """Raised when a bearer token is a JWT but is not acceptable.
 
     Distinct from returning ``None``, which means the credential is not a JWT at all.
@@ -48,7 +48,7 @@ class TokenVerificationError(Exception):
 
 
 @dataclasses.dataclass(frozen=True)
-class IssuerMetadata:
+class McpExternalIssuerMetadata:
     """The subset of an authorization server's metadata the gateway acts on."""
 
     issuer: str
@@ -56,7 +56,7 @@ class IssuerMetadata:
     token_endpoint: str | None = None
 
 
-def fetch_issuer_metadata(issuer: str, timeout: float = 10.0) -> IssuerMetadata:
+def fetch_mcp_external_issuer_metadata(issuer: str, timeout: float = 10.0) -> McpExternalIssuerMetadata:
     """Return the issuer's JWKS and token endpoints, trying OpenID Connect then RFC 8414.
 
     The ``issuer`` claim in the document must equal the issuer asked for.
@@ -66,7 +66,7 @@ def fetch_issuer_metadata(issuer: str, timeout: float = 10.0) -> IssuerMetadata:
     expected = issuer.rstrip('/')
     errors: list[str] = []
 
-    for path in ISSUER_METADATA_PATHS:
+    for path in MCP_EXTERNAL_ISSUER_METADATA_PATHS:
         url = f'{expected}{path}'
         try:
             response = httpx.get(url, timeout=timeout, follow_redirects=True)
@@ -86,7 +86,7 @@ def fetch_issuer_metadata(issuer: str, timeout: float = 10.0) -> IssuerMetadata:
 
         declared = str(payload.get('issuer', '')).rstrip('/')
         if declared != expected:
-            raise OIDCConfigurationError(
+            raise McpExternalIssuerConfigurationError(
                 f'Issuer metadata at {url} declares issuer "{declared}", expected "{expected}". '
                 'Refusing to trust it, since the document does not belong to the configured issuer.'
             )
@@ -103,16 +103,18 @@ def fetch_issuer_metadata(issuer: str, timeout: float = 10.0) -> IssuerMetadata:
             jwks_uri,
             token_endpoint,
         )
-        return IssuerMetadata(
+        return McpExternalIssuerMetadata(
             issuer=expected,
             jwks_uri=jwks_uri,
             token_endpoint=token_endpoint if isinstance(token_endpoint, str) else None,
         )
 
-    raise OIDCConfigurationError(f'Could not discover metadata for issuer "{issuer}". Tried:\n  ' + '\n  '.join(errors))
+    raise McpExternalIssuerConfigurationError(
+        f'Could not discover metadata for issuer "{issuer}". Tried:\n  ' + '\n  '.join(errors)
+    )
 
 
-class JWKSTokenVerifier:
+class McpExternalIssuerTokenVerifier:
     """Verify inbound bearer tokens as JWTs signed by an external issuer.
 
     Implements the MCP SDK's ``TokenVerifier`` protocol.
@@ -150,12 +152,12 @@ class JWKSTokenVerifier:
         """
         try:
             return self._verified_access_token(token)
-        except TokenVerificationError as rejection:
+        except McpTokenVerificationError as rejection:
             logger.info('Rejected bearer token for %s: %s', self.audience, rejection)
             return None
 
     def _verified_access_token(self, token: str) -> typing.Any | None:
-        """Validate ``token``, raising ``TokenVerificationError`` with the reason it is unacceptable."""
+        """Validate ``token``, raising ``McpTokenVerificationError`` with the reason it is unacceptable."""
         import jwt
         from mcp.server.auth.provider import AccessToken
 
@@ -175,21 +177,21 @@ class JWKSTokenVerifier:
                 options={'require': ['exp', 'iss', 'aud']},
             )
         except jwt.ExpiredSignatureError as exc:
-            raise TokenVerificationError('Access token has expired') from exc
+            raise McpTokenVerificationError('Access token has expired') from exc
         except jwt.InvalidAudienceError as exc:
-            raise TokenVerificationError(
+            raise McpTokenVerificationError(
                 f'Access token audience does not match "{self.audience}". '
                 'The token must be requested for this MCP endpoint, not for the API behind it.'
             ) from exc
         except jwt.InvalidIssuerError as exc:
-            raise TokenVerificationError(f'Access token was not issued by "{self.issuer}"') from exc
+            raise McpTokenVerificationError(f'Access token was not issued by "{self.issuer}"') from exc
         except jwt.PyJWTError as exc:
-            raise TokenVerificationError(f'Access token is not valid: {exc}') from exc
+            raise McpTokenVerificationError(f'Access token is not valid: {exc}') from exc
 
         scopes = _extract_scopes(claims)
         missing = [scope for scope in self.required_scopes if scope not in scopes]
         if missing:
-            raise TokenVerificationError(f'Access token is missing required scopes: {", ".join(missing)}')
+            raise McpTokenVerificationError(f'Access token is missing required scopes: {", ".join(missing)}')
 
         expires_at = claims.get('exp')
         subject = claims.get('sub')
@@ -208,8 +210,8 @@ def _build_jwk_client(jwks_uri: str) -> typing.Any:
     try:
         from jwt import PyJWKClient
     except ImportError as exc:  # pragma: no cover - only reachable without the extra installed
-        raise OIDCConfigurationError(
-            'auth.flow "token_exchange" needs the "oidc" extra for JWT signature verification. '
+        raise McpExternalIssuerConfigurationError(
+            'auth.upstream.flow "token_exchange" needs the "oidc" extra for JWT signature verification. '
             'Install it with: pip install "openapi-mcp-gateway[oidc]" '
             '(or uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway).'
         ) from exc
@@ -225,7 +227,7 @@ def _permitted_algorithms(signing_key: typing.Any) -> list[str]:
     key_type = getattr(signing_key, 'key_type', None)
     algorithms = _ALGORITHMS_BY_KEY_TYPE.get(str(key_type))
     if not algorithms:
-        raise TokenVerificationError(
+        raise McpTokenVerificationError(
             f'Issuer published an unusable signing key type "{key_type}" for this token. '
             'Only asymmetric keys (RSA, EC, OKP) are accepted.'
         )

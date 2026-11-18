@@ -5,9 +5,9 @@ import typing
 import pydantic
 from fastapi import FastAPI
 
-from .auth.detector import DetectedOAuthFlow
+from .auth.upstream.oauth_flow import UpstreamOAuthFlow
 from .openapi import OperationInfo
-from .settings import AuthConfig
+from .settings import AuthConfig, UpstreamAuthConfig
 
 
 logger = logging.getLogger(__name__)
@@ -139,7 +139,7 @@ def override_with_metadata(operation: OperationInfo, metadata: ToolMetadata) -> 
     return operation.model_copy(update=updates) if updates else operation
 
 
-def infer_auth_from_declared_flows(declared: list[DetectedOAuthFlow]) -> AuthConfig:
+def infer_auth_from_declared_flows(declared: list[UpstreamOAuthFlow]) -> AuthConfig:
     """Default to ``passthrough`` when the FastAPI app declares any supported OAuth flow, ``none`` otherwise.
 
     Passthrough is the correct default here, because the gateway is mounted onto the same app it exposes.
@@ -150,8 +150,8 @@ def infer_auth_from_declared_flows(declared: list[DetectedOAuthFlow]) -> AuthCon
     That path is selected by passing an explicit ``auth=AuthConfig(...)`` with credentials.
     """
     if declared:
-        return AuthConfig(type='passthrough')
-    return AuthConfig(type='none')
+        return AuthConfig(upstream=UpstreamAuthConfig(type='passthrough'))
+    return AuthConfig()
 
 
 def warn_on_mixed_security_schemes(server_name: str, operations: list[OperationInfo]) -> None:

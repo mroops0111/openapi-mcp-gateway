@@ -3,10 +3,10 @@ import typing
 
 from mcp.server.mcpserver import Context
 
-from .token_source import TokenSource
+from .token_source import UpstreamTokenSource
 
 
-class AuthResolver(abc.ABC):
+class UpstreamAuthResolver(abc.ABC):
     """Strategy that produces the upstream HTTP headers for one MCP tool call.
 
     The contract is header-shaped, not value-shaped.
@@ -19,14 +19,14 @@ class AuthResolver(abc.ABC):
         """Return headers to attach to the upstream request, or ``{}`` for none."""
 
 
-class NullAuthResolver(AuthResolver):
-    """Resolver that contributes no headers (used for public upstream APIs)."""
+class UpstreamNoCredentialAuthResolver(UpstreamAuthResolver):
+    """Contribute no headers, for a public upstream API."""
 
     async def resolve(self, ctx: Context) -> dict[str, str]:
         return {}
 
 
-class StaticAuthResolver(AuthResolver):
+class UpstreamStaticAuthResolver(UpstreamAuthResolver):
     """Fixed credential header captured at construction time.
 
     Used for ``bearer`` (``Authorization: Bearer ...``) and ``api_key`` (``<api_key_header>: ...``) configs.
@@ -40,28 +40,15 @@ class StaticAuthResolver(AuthResolver):
         return {self._header_name: self._header_value}
 
 
-class AuthorizationCodeAuthResolver(AuthResolver):
-    """Resolve the upstream bearer for the per-user ``authorization_code`` flow."""
+class UpstreamTokenSourceAuthResolver(UpstreamAuthResolver):
+    """Send the bearer an ``UpstreamTokenSource`` supplies, or nothing when it has none for this call.
 
-    def __init__(self, provider: typing.Any) -> None:
-        # provider is AuthorizationCodeProvider, typed Any to avoid a circular import.
-        self._provider = provider
-
-    async def resolve(self, ctx: Context) -> dict[str, str]:
-        api_token = await self._provider.get_api_access_token()
-        if api_token:
-            return {'Authorization': f'Bearer {api_token}'}
-        return {}
-
-
-class TokenSourceAuthResolver(AuthResolver):
-    """Resolver that delegates to a ``TokenSource`` for dynamic bearer tokens.
-
-    Used by service-level OAuth flows (e.g. ``client_credentials``) where one token is shared across all MCP clients,
-    and the gateway handles refreshes.
+    Every OAuth flow ends here.
+    ``client_credentials`` shares one token across all MCP clients,
+    while ``authorization_code`` and ``token_exchange`` find the one belonging to the caller.
     """
 
-    def __init__(self, token_source: TokenSource) -> None:
+    def __init__(self, token_source: UpstreamTokenSource) -> None:
         self._token_source = token_source
 
     async def resolve(self, ctx: Context) -> dict[str, str]:
@@ -71,7 +58,7 @@ class TokenSourceAuthResolver(AuthResolver):
         return {}
 
 
-class PassthroughAuthResolver(AuthResolver):
+class UpstreamPassthroughAuthResolver(UpstreamAuthResolver):
     """Forward selected headers from the live MCP request to the upstream call.
 
     Used when the gateway and the upstream API share an OAuth realm, typically the FastAPI in-process integration.
@@ -100,38 +87,15 @@ class PassthroughAuthResolver(AuthResolver):
         return result
 
 
-class TokenExchangeAuthResolver(AuthResolver):
-    """Resolve the upstream bearer by exchanging the caller's own validated token.
-
-    Reads the token the MCP transport already verified for this request,
-    so the exchange only ever runs on a credential the gateway has accepted for itself.
-    Returns no header when there is no authenticated caller,
-    which lets the upstream reject the call rather than the gateway serving it anonymously.
-    """
-
-    def __init__(self, token_source: typing.Any) -> None:
-        # token_source is TokenExchangeTokenSource, typed Any to avoid a circular import.
-        self._token_source = token_source
-
-    async def resolve(self, ctx: Context) -> dict[str, str]:
-        from mcp.server.auth.middleware.auth_context import get_access_token
-
-        access_token = get_access_token()
-        if access_token is None:
-            return {}
-        upstream_token = await self._token_source.exchange(access_token.token)
-        return {'Authorization': f'Bearer {upstream_token}'}
-
-
-class CompositeAuthResolver(AuthResolver):
+class UpstreamCompositeAuthResolver(UpstreamAuthResolver):
     """Compose multiple resolvers, with later resolvers overriding earlier ones on key collision.
 
-    Used to combine an incoming-header forwarder (e.g. ``PassthroughAuthResolver`` for ``X-API-Key`` or ``Cookie``),
-    with a credential-minting resolver (e.g. ``TokenSourceAuthResolver`` for ``client_credentials``).
+    Used to combine an incoming-header forwarder, such as ``UpstreamPassthroughAuthResolver`` for ``X-API-Key``,
+    with a credential-minting resolver, such as ``UpstreamTokenSourceAuthResolver`` for ``client_credentials``.
     Place the resolver that should win for ``Authorization`` last.
     """
 
-    def __init__(self, resolvers: typing.Sequence[AuthResolver]) -> None:
+    def __init__(self, resolvers: typing.Sequence[UpstreamAuthResolver]) -> None:
         self._resolvers = list(resolvers)
 
     async def resolve(self, ctx: Context) -> dict[str, str]:

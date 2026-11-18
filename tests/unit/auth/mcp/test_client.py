@@ -5,7 +5,7 @@ from mcp.server.auth.provider import RegistrationError
 from mcp.shared.auth import InvalidRedirectUriError, InvalidScopeError, OAuthClientInformationFull
 from pydantic import AnyUrl
 
-from openapi_mcp_gateway.auth.flows import DynamicClientRegistry, PreRegisteredClientDirectory
+from openapi_mcp_gateway.auth.mcp.client import McpDynamicClientRegistry, McpPreRegisteredClientDirectory
 from openapi_mcp_gateway.settings import ClientConfig
 from tests.constants import BROWSER_ORIGIN, GATEWAY_ISSUER
 
@@ -55,7 +55,10 @@ class TestScopeGrant:
             ClientConfig(scopes=['issues:read'], default_scopes=['issues:write'])
 
     async def test_endpoint_scopes_are_granted_beside_the_client_set(self):
-        """Without ``auth.operation_scopes`` every token carries the endpoint scopes, as a registered client's would."""
+        """Without ``auth.mcp.operation_scopes`` every token carries the endpoint scopes.
+
+        A pre-registered client is granted them as a registered client would be.
+        """
         client = await _pre_registered(mcp_endpoint_scopes=('api',))
         assert client.validate_scope(None) == ['api']
 
@@ -110,11 +113,11 @@ class TestConsentRequirement:
         ('client', 'required'), [({}, True), ({'consent': True}, True), ({'consent': False}, False)]
     )
     def test_a_pre_registered_client_follows_its_setting(self, client, required):
-        directory = PreRegisteredClientDirectory({'agent': ClientConfig.model_validate(client)}, ())
+        directory = McpPreRegisteredClientDirectory({'agent': ClientConfig.model_validate(client)}, ())
         assert directory.requires_consent('agent') is required
 
     def test_a_dynamically_registered_client_always_needs_consent(self, memory_store):
-        assert DynamicClientRegistry(memory_store, GATEWAY_ISSUER).requires_consent('anyone') is True
+        assert McpDynamicClientRegistry(memory_store, GATEWAY_ISSUER).requires_consent('anyone') is True
 
 
 class TestClientAuthentication:
@@ -133,11 +136,11 @@ class TestClientAuthentication:
         """An unset variable would otherwise turn a confidential client public, open to anyone knowing its id."""
         monkeypatch.delenv('AGENT_SECRET', raising=False)
         client = ClientConfig(client_secret='${AGENT_SECRET}')
-        with pytest.raises(ValueError, match=r'auth\.clients\.agent\.client_secret'):
-            PreRegisteredClientDirectory({'agent': client}, ())
+        with pytest.raises(ValueError, match=r'auth\.mcp\.clients\.agent\.client_secret'):
+            McpPreRegisteredClientDirectory({'agent': client}, ())
 
     async def test_an_unknown_client_is_absent(self):
-        directory = PreRegisteredClientDirectory({}, ())
+        directory = McpPreRegisteredClientDirectory({}, ())
         assert await directory.get('stranger') is None
 
 
@@ -145,26 +148,26 @@ class TestRegistration:
     """Dynamic Client Registration stays only where no client is pre-registered."""
 
     async def test_pre_registered_directories_refuse_registration(self):
-        directory = PreRegisteredClientDirectory({}, ())
-        assert directory.registration_options(['api']).enabled is False
+        directory = McpPreRegisteredClientDirectory({}, ())
+        assert directory.build_registration_options(['api']).enabled is False
         with pytest.raises(RegistrationError):
             await directory.register(OAuthClientInformationFull(client_id='newcomer'))
 
     @pytest.mark.parametrize(('mcp_endpoint_scopes', 'advertised'), [(['api'], ['api']), ([], None)])
     def test_pre_registered_directories_still_advertise_the_endpoint_scopes(self, mcp_endpoint_scopes, advertised):
         """``scopes_supported`` is read from the registration options, so it would vanish with registration."""
-        options = PreRegisteredClientDirectory({}, ()).registration_options(mcp_endpoint_scopes)
+        options = McpPreRegisteredClientDirectory({}, ()).build_registration_options(mcp_endpoint_scopes)
         assert options.valid_scopes == advertised
 
     def test_dynamic_registries_grant_the_endpoint_scopes(self, memory_store):
-        options = DynamicClientRegistry(memory_store, GATEWAY_ISSUER).registration_options(['api'])
+        options = McpDynamicClientRegistry(memory_store, GATEWAY_ISSUER).build_registration_options(['api'])
         assert options.enabled is True
         assert options.valid_scopes == options.default_scopes == ['api']
 
 
 async def _pre_registered(mcp_endpoint_scopes: tuple[str, ...] = (), **client: object) -> OAuthClientInformationFull:
-    """The record a directory holding one ``auth.clients`` entry, ``agent``, gives the SDK."""
-    directory = PreRegisteredClientDirectory({'agent': ClientConfig.model_validate(client)}, mcp_endpoint_scopes)
+    """The record a directory holding one ``auth.mcp.clients`` entry, ``agent``, gives the SDK."""
+    directory = McpPreRegisteredClientDirectory({'agent': ClientConfig.model_validate(client)}, mcp_endpoint_scopes)
     record = await directory.get('agent')
     assert record is not None
     return record

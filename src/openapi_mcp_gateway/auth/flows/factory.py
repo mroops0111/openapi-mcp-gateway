@@ -3,11 +3,10 @@ import logging
 
 from ...openapi import OpenAPISpec
 from ...settings import ServerConfig
-from ...stores.base import TokenStore
-from ..detector import DetectedOAuthFlow, detect_oauth_flows
+from ..assembly import AuthTypeContext, OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
+from ..upstream.oauth_flow import UpstreamOAuthFlow, detect_upstream_oauth_flows
 from .authorization_code import AuthorizationCodeFlowHandler
-from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
-from .client_credentials import ClientCredentialsFlowHandler
+from .client_credentials import UpstreamClientCredentialsFlowHandler
 from .token_exchange import TokenExchangeFlowHandler
 
 
@@ -16,50 +15,39 @@ logger = logging.getLogger(__name__)
 
 OAUTH_FLOW_HANDLERS: dict[str, type[OAuthFlowHandler]] = {
     'authorization_code': AuthorizationCodeFlowHandler,
-    'client_credentials': ClientCredentialsFlowHandler,
+    'client_credentials': UpstreamClientCredentialsFlowHandler,
     'token_exchange': TokenExchangeFlowHandler,
 }
 
 
-def build_oauth_flow(
-    entry: ServerConfig,
-    spec: OpenAPISpec,
-    store: TokenStore,
-    gateway_url: str,
-    mount_path: str,
-) -> OAuthFlowSetup:
-    """Resolve the effective OAuth flow for ``entry`` and dispatch to its handler.
+def build_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
+    """Resolve the effective OAuth flow for ``context.entry`` and dispatch to its handler.
 
     Resolution order:
 
     1. Detect all OAuth flows declared in the spec.
-    2. Pick one per ``entry.auth.flow`` if set, otherwise prefer ``authorization_code``.
-    3. If the spec declares none, synthesise from ``entry.auth.{authorization_url, token_url, scopes}``.
+    2. Pick one per ``auth.upstream.flow`` if set, otherwise prefer ``authorization_code``.
+    3. If the spec declares none, synthesise from ``auth.upstream.{authorization_url, token_url, scopes}``.
     4. Apply config-supplied URL overrides on top of the spec-declared values.
     """
-    oauth_flow = resolve_oauth_flow(entry, spec)
-    handler_class = OAUTH_FLOW_HANDLERS.get(oauth_flow.flow_type)
+    entry = context.entry
+    upstream_oauth_flow = resolve_upstream_oauth_flow(entry, context.spec)
+    flow_type = upstream_oauth_flow.flow_type if upstream_oauth_flow else entry.auth.upstream.flow
+    handler_class = OAUTH_FLOW_HANDLERS.get(flow_type or '')
     if handler_class is None:
         raise ValueError(
-            f'Server "{entry.name}": unsupported OAuth flow type "{oauth_flow.flow_type}". '
+            f'Server "{entry.name}": unsupported OAuth flow type "{flow_type}". '
             f'Supported flows: {sorted(OAUTH_FLOW_HANDLERS)}'
         )
 
-    flow_context = OAuthFlowContext(
-        entry=entry,
-        spec=spec,
-        oauth_flow=oauth_flow,
-        store=store,
-        gateway_url=gateway_url,
-        mount_path=mount_path,
-    )
-    return dataclasses.replace(handler_class().build(flow_context), flow_type=oauth_flow.flow_type)
+    flow_context = OAuthFlowContext(context, upstream_oauth_flow)
+    return dataclasses.replace(handler_class().build(flow_context), flow_type=flow_type)
 
 
-def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthFlow:
-    """Pick the effective OAuth flow for ``entry`` from the spec and config combined.
+def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> UpstreamOAuthFlow | None:
+    """Pick the effective OAuth flow for ``entry`` from the spec and config, or ``None`` for ``token_exchange``.
 
-    Honours ``entry.auth.flow`` as an explicit override,
+    Honours ``auth.upstream.flow`` as an explicit override,
     falls back to ``authorization_code`` when the spec declares both,
     and synthesises a flow from explicit URLs if the spec declares none.
 
@@ -68,16 +56,15 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
 
     Forwarding the MCP client's token to a third-party upstream violates RFC 8707 audience binding,
     the "confused deputy" pattern the MCP 2025-11-25 spec forbids,
-    so ``auth.type: passthrough`` is never reached from here and must be asked for by name.
+    so ``auth.upstream.type: passthrough`` is never reached from here and must be asked for by name.
     """
-    explicit_flow_type = entry.auth.flow
-
-    # No spec can declare this one, so the detector has nothing to contribute,
-    # and consulting it would only produce a misleading "flow not declared" error.
+    explicit_flow_type = entry.auth.upstream.flow
+    # No spec can declare token_exchange and it talks to no upstream authorization server,
+    # so there is no upstream flow to resolve, and consulting the spec would only report a misleading missing flow.
     if explicit_flow_type == 'token_exchange':
-        return DetectedOAuthFlow(flow_type='token_exchange')
+        return None
 
-    declared_flows = detect_oauth_flows(spec)
+    declared_flows = detect_upstream_oauth_flows(spec)
     selected_flow = _pick_from_declared_flows(declared_flows, explicit_flow_type)
 
     if selected_flow is None:
@@ -101,7 +88,7 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
             'so the gateway can mint its own upstream tokens. '
             "Forwarding the MCP client's token to a third-party upstream is forbidden by the MCP authorization spec "
             '(RFC 8707 audience binding).\n\n'
-            'auth.type: passthrough is ONLY for the rare case where the gateway and the upstream share the same OAuth audience, '
+            'auth.upstream.type: passthrough is ONLY for the rare case where the gateway and the upstream share the same OAuth audience, '
             'e.g. internal corporate SSO where both sides trust the same IdP-issued tokens, '
             'or the FastAPI integration where the gateway is mounted onto the app it exposes. '
             'It is NOT safe for third-party SaaS APIs.'
@@ -118,9 +105,9 @@ def resolve_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> DetectedOAuthF
 
 
 def _pick_from_declared_flows(
-    declared_flows: list[DetectedOAuthFlow],
+    declared_flows: list[UpstreamOAuthFlow],
     explicit_flow_type: str | None,
-) -> DetectedOAuthFlow | None:
+) -> UpstreamOAuthFlow | None:
     """Return the spec-declared flow matching ``explicit_flow_type``, or the preferred default."""
     if not declared_flows:
         return None
@@ -130,7 +117,7 @@ def _pick_from_declared_flows(
             if candidate.flow_type == explicit_flow_type:
                 return candidate
         raise ValueError(
-            f'auth.flow="{explicit_flow_type}" but the spec does not declare that flow. '
+            f'auth.upstream.flow="{explicit_flow_type}" but the spec does not declare that flow. '
             f'Declared flows: {[candidate.flow_type for candidate in declared_flows]}'
         )
 
@@ -140,8 +127,8 @@ def _pick_from_declared_flows(
     return declared_flows[0]
 
 
-def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None) -> DetectedOAuthFlow:
-    """Build a ``DetectedOAuthFlow`` from explicit config when the spec declares none."""
+def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None) -> UpstreamOAuthFlow:
+    """Build a ``UpstreamOAuthFlow`` from explicit config when the spec declares none."""
     if not entry.auth.upstream.token_url:
         raise ValueError(
             f'Server "{entry.name}": auth type is oauth2 but the spec has no OAuth2 flow and no token_url is provided. '
@@ -158,10 +145,9 @@ def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None)
     if flow_type == 'authorization_code' and not entry.auth.upstream.authorization_url:
         raise ValueError(f'Server "{entry.name}": authorization_code flow requires auth.upstream.authorization_url.')
 
-    scopes_map = dict.fromkeys(entry.auth.upstream.scopes, '')
-    return DetectedOAuthFlow(
+    return UpstreamOAuthFlow(
         flow_type=flow_type,  # type: ignore[arg-type]
         authorization_url=entry.auth.upstream.authorization_url,
         token_url=entry.auth.upstream.token_url,
-        scopes=scopes_map,
+        scope_descriptions=dict.fromkeys(entry.auth.upstream.scopes, ''),
     )

@@ -1,4 +1,5 @@
 import pathlib
+import re
 import typing
 
 import pydantic
@@ -80,65 +81,65 @@ class TestAuthConfig:
     def test_numeric_client_id_coerced_to_string(self):
         """An unquoted numeric ``client_id`` in YAML, such as Asana's or Facebook's, parses without raising."""
         auth = AuthConfig.model_validate(
-            {'type': 'oauth2', 'upstream': {'client_id': 1214443090174193, 'client_secret': 'abc'}}
+            {'upstream': {'type': 'oauth2', 'client_id': 1214443090174193, 'client_secret': 'abc'}}
         )
         assert auth.upstream.client_id == '1214443090174193'
         assert isinstance(auth.upstream.client_id, str)
 
     def test_numeric_token_coerced_to_string(self):
         """Same coercion applies to ``token`` and ``client_secret`` for consistency."""
-        auth = AuthConfig.model_validate({'type': 'bearer', 'token': 99999})
-        assert auth.token == '99999'
-        assert isinstance(auth.token, str)
+        auth = AuthConfig.model_validate({'upstream': {'type': 'bearer', 'token': 99999}})
+        assert auth.upstream.token == '99999'
+        assert isinstance(auth.upstream.token, str)
 
     def test_resolve_bearer_from_env(self, monkeypatch):
         """``${VAR}`` placeholders are resolved against the environment."""
         monkeypatch.setenv('TEST_TOKEN', 'env-token')
-        auth = AuthConfig(type='bearer', token='${TEST_TOKEN}')
-        assert auth.resolve_token() == 'env-token'
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='bearer', token='${TEST_TOKEN}'))
+        assert auth.upstream.resolve_token() == 'env-token'
 
     def test_resolve_env_var_with_default(self):
         """``${VAR:-default}`` falls back to the default when the var is unset."""
-        auth = AuthConfig(type='bearer', token='${NONEXISTENT_VAR:-fallback-token}')
-        assert auth.resolve_token() == 'fallback-token'
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='bearer', token='${NONEXISTENT_VAR:-fallback-token}'))
+        assert auth.upstream.resolve_token() == 'fallback-token'
 
     def test_resolve_env_var_unset_no_default(self):
         """An unset env var with no default resolves to ``None``."""
-        auth = AuthConfig(type='bearer', token='${NONEXISTENT_VAR}')
-        assert auth.resolve_token() is None
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='bearer', token='${NONEXISTENT_VAR}'))
+        assert auth.upstream.resolve_token() is None
 
     def test_resolve_no_token(self):
         """A config without a token resolves to ``None``."""
-        auth = AuthConfig(type='bearer')
-        assert auth.resolve_token() is None
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='bearer'))
+        assert auth.upstream.resolve_token() is None
 
     def test_resolve_client_id(self, monkeypatch):
         """OAuth ``client_id`` honours ``${VAR}`` substitution."""
         monkeypatch.setenv('CID', 'client-123')
-        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='${CID}'))
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='${CID}'))
         assert auth.upstream.resolve_client_id() == 'client-123'
 
     def test_mcp_token_ttl_defaults(self):
         """MCP token TTLs default to 1 hour access and 24 hours refresh."""
-        auth = AuthConfig(type='oauth2')
-        assert auth.mcp_access_token_ttl == 3600
-        assert auth.mcp_refresh_token_ttl == 86400
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='oauth2'))
+        assert auth.mcp.access_token_ttl == 3600
+        assert auth.mcp.refresh_token_ttl == 86400
 
-    @pytest.mark.parametrize('field', ['mcp_access_token_ttl', 'mcp_refresh_token_ttl'])
+    @pytest.mark.parametrize('field', ['access_token_ttl', 'refresh_token_ttl'])
     def test_mcp_token_ttl_rejects_non_positive(self, field):
         """A zero or negative TTL fails validation."""
-        with pytest.raises(pydantic.ValidationError):
-            AuthConfig.model_validate({'type': 'oauth2', field: 0})
+        with pytest.raises(pydantic.ValidationError, match='greater than 0'):
+            AuthConfig.model_validate({'upstream': {'type': 'oauth2'}, 'mcp': {field: 0}})
 
     def test_resolve_client_id_direct(self):
         """A literal ``client_id`` is returned verbatim."""
-        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='direct-id'))
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='direct-id'))
         assert auth.upstream.resolve_client_id() == 'direct-id'
 
     def test_resolve_client_secret(self, monkeypatch):
         """OAuth ``client_secret`` honours ``${VAR}`` substitution."""
         monkeypatch.setenv('SEC', 'secret-456')
-        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_secret='${SEC}'))
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_secret='${SEC}'))
         assert auth.upstream.resolve_client_secret() == 'secret-456'
 
 
@@ -299,12 +300,38 @@ class TestLayerHelpers:
             spec='api.json',
             name='api',
             base_url='https://example.com',
-            auth=AuthConfig(type='bearer', token='${TOK}'),
+            auth=AuthConfig(upstream=UpstreamAuthConfig(type='bearer', token='${TOK}')),
         )
         server = layer['servers'][0]
         assert server['base_url'] == 'https://example.com'
-        assert server['auth']['type'] == 'bearer'
-        assert server['auth']['token'] == '${TOK}'
+        assert server['auth']['upstream'] == {'type': 'bearer', 'token': '${TOK}'}
+
+
+class TestAuthLayout:
+    """``auth`` holds only ``upstream`` and ``mcp``, so each field means one thing in one place."""
+
+    @pytest.mark.parametrize(
+        ('old_key', 'new_place'),
+        [
+            ('type', 'auth.upstream.type'),
+            ('token', 'auth.upstream.token'),
+            ('flow', 'auth.upstream.flow'),
+            ('issuer', 'auth.mcp.issuer'),
+            ('clients', 'auth.mcp.clients'),
+            ('mcp_access_token_ttl', 'auth.mcp.access_token_ttl'),
+        ],
+    )
+    def test_a_key_from_the_old_layout_names_its_new_place(self, old_key, new_place):
+        """A config written before the split is refused with where each key went, not with a bare unknown key."""
+        with pytest.raises(pydantic.ValidationError, match=rf'auth\.{old_key} is now {re.escape(new_place)}'):
+            AuthConfig.model_validate({old_key: 'x'})
+
+    def test_every_moved_key_is_named_at_once(self):
+        """An operator migrating a config sees every key to move in one error."""
+        with pytest.raises(pydantic.ValidationError) as raised:
+            AuthConfig.model_validate({'type': 'oauth2', 'clients': {}})
+        assert 'auth.upstream.type' in str(raised.value)
+        assert 'auth.mcp.clients' in str(raised.value)
 
 
 class TestAuthConfigUpstreamAudience:
@@ -312,27 +339,28 @@ class TestAuthConfigUpstreamAudience:
 
     def test_empty_when_neither_configured(self):
         """An upstream that issues its own tokens needs no audience named, so nothing is sent."""
-        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec'))
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec'))
 
         assert auth.upstream.resolve_audience_params() == {}
 
     def test_resource_emits_rfc_8707_parameter(self):
         """``resource`` is passed through under its RFC 8707 name."""
-        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(resource=API_URL))
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', resource=API_URL))
 
         assert auth.upstream.resolve_audience_params() == {'resource': API_URL}
 
     def test_audience_emits_auth0_parameter(self):
         """``audience`` is passed through under the spelling Auth0 expects."""
-        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(audience=API_URL))
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', audience=API_URL))
 
         assert auth.upstream.resolve_audience_params() == {'audience': API_URL}
 
     def test_both_are_sent_when_both_configured(self):
         """Setting both is allowed, for an authorization server that accepts either spelling."""
         auth = AuthConfig(
-            type='oauth2',
-            upstream=UpstreamAuthConfig(resource='https://res.example.com', audience='https://aud.example.com'),
+            upstream=UpstreamAuthConfig(
+                type='oauth2', resource='https://res.example.com', audience='https://aud.example.com'
+            )
         )
 
         assert auth.upstream.resolve_audience_params() == {
@@ -343,7 +371,7 @@ class TestAuthConfigUpstreamAudience:
     def test_env_var_substitution(self, monkeypatch):
         """Both fields resolve ``${ENV_VAR}`` like the other credential fields do."""
         monkeypatch.setenv('UPSTREAM_AUD', 'https://from-env.example.com')
-        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(audience='${UPSTREAM_AUD}'))
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', audience='${UPSTREAM_AUD}'))
 
         assert auth.upstream.resolve_audience_params() == {'audience': 'https://from-env.example.com'}
 
@@ -353,12 +381,12 @@ class TestAuthConfigUpstreamIssuer:
 
     def test_unset_by_default(self):
         """Without it the gateway has nothing to compare a present ``iss`` with."""
-        assert AuthConfig(type='oauth2').upstream.resolve_issuer() is None
+        assert AuthConfig(upstream=UpstreamAuthConfig(type='oauth2')).upstream.resolve_issuer() is None
 
     def test_resolves_env_var(self, monkeypatch):
         """Accepts ``${ENV_VAR}`` like the other upstream fields."""
         monkeypatch.setenv('UPSTREAM_ISSUER', ISSUER)
-        auth = AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(issuer='${UPSTREAM_ISSUER}'))
+        auth = AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', issuer='${UPSTREAM_ISSUER}'))
         assert auth.upstream.resolve_issuer() == ISSUER
 
 
@@ -388,7 +416,7 @@ class TestUnknownKeysAreRefused:
         """Each rename from the 0.7.0 batch fails closed rather than silently doing nothing."""
         server: dict[str, typing.Any] = {'name': 'b', 'spec': 'x.json'}
         if section == 'auth.upstream':
-            server['auth'] = {'type': 'oauth2', 'upstream': payload}
+            server['auth'] = {'upstream': {'type': 'oauth2', **payload}}
         else:
             server[section] = payload
 
@@ -430,24 +458,39 @@ class TestSettingsThatCannotTakeEffect:
     @pytest.mark.parametrize(
         ('payload', 'offending'),
         [
-            ({'type': 'oauth2', 'flow': 'authorization_code', 'issuer': 'https://kc'}, 'issuer'),
-            ({'type': 'oauth2', 'flow': 'client_credentials', 'required_scopes': ['x']}, 'required_scopes'),
-            ({'type': 'bearer', 'token': 't', 'required_scopes': ['x']}, 'required_scopes'),
-            ({'type': 'bearer', 'token': 't', 'api_key_header': 'X-Custom'}, 'api_key_header'),
-            ({'type': 'oauth2', 'flow': 'client_credentials', 'token': 'ignored'}, 'token'),
-            ({'type': 'oauth2', 'flow': 'client_credentials', 'mcp_access_token_ttl': 60}, 'mcp_access_token_ttl'),
-            ({'type': 'bearer', 'token': 't', 'upstream': {'audience': 'https://api'}}, 'upstream'),
+            ({'upstream': {'type': 'oauth2', 'flow': 'authorization_code'}, 'mcp': {'issuer': 'https://kc'}}, 'issuer'),
             (
-                {'type': 'oauth2', 'flow': 'client_credentials', 'upstream': {'issuer': ISSUER}},
+                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials'}, 'mcp': {'required_scopes': ['x']}},
+                'required_scopes',
+            ),
+            ({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'required_scopes': ['x']}}, 'required_scopes'),
+            ({'upstream': {'type': 'bearer', 'token': 't', 'api_key_header': 'X-Custom'}}, 'api_key_header'),
+            ({'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'token': 'ignored'}}, 'token'),
+            (
+                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials'}, 'mcp': {'access_token_ttl': 60}},
+                'access_token_ttl',
+            ),
+            ({'upstream': {'type': 'bearer', 'token': 't', 'audience': 'https://api'}}, 'upstream'),
+            (
+                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'issuer': ISSUER}},
                 'upstream.issuer',
             ),
             (
-                {'type': 'oauth2', 'flow': 'client_credentials', 'upstream': {'enforce_scopes': True}},
+                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'enforce_scopes': True}},
                 'upstream.enforce_scopes',
             ),
-            ({'type': 'oauth2', 'flow': 'token_exchange', 'issuer': ISSUER, 'clients': {'agent': {}}}, 'clients'),
             (
-                {'type': 'oauth2', 'flow': 'client_credentials', 'operation_scopes': {}, 'clients': {'agent': {}}},
+                {
+                    'upstream': {'type': 'oauth2', 'flow': 'token_exchange'},
+                    'mcp': {'issuer': ISSUER, 'clients': {'agent': {}}},
+                },
+                'clients',
+            ),
+            (
+                {
+                    'upstream': {'type': 'oauth2', 'flow': 'client_credentials'},
+                    'mcp': {'operation_scopes': {}, 'clients': {'agent': {}}},
+                },
                 'operation_scopes',
             ),
         ],
@@ -460,16 +503,22 @@ class TestSettingsThatCannotTakeEffect:
     @pytest.mark.parametrize(
         'payload',
         [
-            {'type': 'bearer', 'token': 't'},
-            {'type': 'api_key', 'token': 'k', 'api_key_header': 'X-Custom'},
-            {'type': 'oauth2', 'flow': 'token_exchange', 'issuer': 'https://kc', 'required_scopes': ['x']},
-            {'type': 'oauth2', 'flow': 'authorization_code', 'mcp_access_token_ttl': 60},
-            {'type': 'oauth2', 'upstream': {'client_id': 'c'}},
-            {'type': 'oauth2', 'upstream': {'issuer': ISSUER}},
-            {'type': 'oauth2', 'flow': 'authorization_code', 'upstream': {'issuer': ISSUER}},
-            {'type': 'oauth2', 'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {'scopes': ['pets:read']}}},
-            {'type': 'oauth2', 'clients': {'agent': {}}},
-            {'type': 'none'},
+            {'upstream': {'type': 'bearer', 'token': 't'}},
+            {'upstream': {'type': 'api_key', 'token': 'k', 'api_key_header': 'X-Custom'}},
+            {
+                'upstream': {'type': 'oauth2', 'flow': 'token_exchange'},
+                'mcp': {'issuer': 'https://kc', 'required_scopes': ['x']},
+            },
+            {'upstream': {'type': 'oauth2', 'flow': 'authorization_code'}, 'mcp': {'access_token_ttl': 60}},
+            {'upstream': {'type': 'oauth2', 'client_id': 'c'}},
+            {'upstream': {'type': 'oauth2', 'issuer': ISSUER}},
+            {'upstream': {'type': 'oauth2', 'flow': 'authorization_code', 'issuer': ISSUER}},
+            {
+                'upstream': {'type': 'oauth2'},
+                'mcp': {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {'scopes': ['pets:read']}}},
+            },
+            {'upstream': {'type': 'oauth2'}, 'mcp': {'clients': {'agent': {}}}},
+            {'upstream': {'type': 'none'}},
         ],
     )
     def test_applicable_settings_are_accepted(self, payload):
@@ -481,37 +530,41 @@ class TestSettingsThatCannotTakeEffect:
 
         ``token_exchange`` is never inferred, so ``issuer`` still is.
         """
-        assert AuthConfig.model_validate({'type': 'oauth2', 'mcp_access_token_ttl': 60})
+        assert AuthConfig.model_validate({'upstream': {'type': 'oauth2'}, 'mcp': {'access_token_ttl': 60}})
 
         with pytest.raises(pydantic.ValidationError, match=r'issuer.*no effect'):
-            AuthConfig.model_validate({'type': 'oauth2', 'issuer': 'https://kc'})
+            AuthConfig.model_validate({'upstream': {'type': 'oauth2'}, 'mcp': {'issuer': 'https://kc'}})
 
 
 class TestScopeSettings:
-    """``auth.operation_scopes`` and ``auth.clients`` refuse what could never grant or restrict anything."""
+    """``auth.mcp.operation_scopes`` and ``auth.mcp.clients`` refuse what could never grant or restrict anything."""
 
     @pytest.mark.parametrize(
         ('auth', 'refusal'),
         [
-            ({'operation_scopes': {'auto': 'tags'}}, 'auth.operation_scopes needs auth.clients'),
+            ({'mcp': {'operation_scopes': {'auto': 'tags'}}}, 'auth.mcp.operation_scopes needs auth.mcp.clients'),
             (
-                {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {}}, 'required_scopes': ['api']},
-                'cannot be combined with auth.operation_scopes',
+                {'mcp': {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {}}, 'required_scopes': ['api']}},
+                'cannot be combined with auth.mcp.operation_scopes',
             ),
-            ({'clients': {'agent': {'scopes': ['pets:read']}}}, r'clients \(agent\) grant scopes'),
-            ({'clients': {'agent': {'scopes': ['pets read']}}}, 'invalid scopes'),
+            ({'mcp': {'clients': {'agent': {'scopes': ['pets:read']}}}}, r'clients \(agent\) grant scopes'),
+            ({'mcp': {'clients': {'agent': {'scopes': ['pets read']}}}}, 'invalid scopes'),
             ({'upstream': {'scope_implies': {'repo': ['public repo']}}}, 'invalid scopes'),
             (
                 {
-                    'operation_scopes': {'manual': {'pets admin': {'description': 'd', 'operations': ['*']}}},
-                    'clients': {'a': {}},
+                    'mcp': {
+                        'operation_scopes': {'manual': {'pets admin': {'description': 'd', 'operations': ['*']}}},
+                        'clients': {'a': {}},
+                    }
                 },
                 'invalid scopes',
             ),
             (
                 {
-                    'operation_scopes': {'manual': {'admin': {'description': 'd', 'operations': []}}},
-                    'clients': {'a': {}},
+                    'mcp': {
+                        'operation_scopes': {'manual': {'admin': {'description': 'd', 'operations': []}}},
+                        'clients': {'a': {}},
+                    }
                 },
                 'at least 1 item',
             ),
@@ -519,7 +572,7 @@ class TestScopeSettings:
     )
     def test_unusable_scope_settings_are_refused(self, auth, refusal):
         with pytest.raises(pydantic.ValidationError, match=refusal):
-            AuthConfig.model_validate({'type': 'oauth2', **auth})
+            AuthConfig.model_validate({**auth, 'upstream': {'type': 'oauth2', **auth.get('upstream', {})}})
 
 
 class TestSearchFieldWeights:

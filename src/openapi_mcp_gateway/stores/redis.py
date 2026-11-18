@@ -57,5 +57,12 @@ class RedisTokenStore(TokenStore):
         mapping_ns = f'{from_ns}__to__{to_ns}'
         return await self.get(mapping_ns, from_key)
 
+    async def pop(self, namespace: str, key: str) -> typing.Any | None:
+        raw = await self._redis.getdel(self._key(namespace, key))
+        return None if raw is None else json.loads(raw)
+
+    async def delete_mapping(self, from_ns: str, from_key: str, to_ns: str) -> None:
+        await self.delete(f'{from_ns}__to__{to_ns}', from_key)
+
     async def close(self) -> None:
         await self._redis.aclose()

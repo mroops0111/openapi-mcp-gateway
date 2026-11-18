@@ -19,8 +19,9 @@ servers:
     spec: examples/specs/movie-api.yaml
     base_url: https://api.themoviedb.org/3
     auth:
-      type: bearer
-      token: ${TMDB_TOKEN}
+      upstream:
+        type: bearer
+        token: ${TMDB_TOKEN}
     operations:
       discover_movies:
         tool:

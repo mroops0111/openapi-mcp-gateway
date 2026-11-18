@@ -26,5 +26,6 @@ servers:
       #   field_weights:
       #     description: 1
     auth:
-      type: bearer
-      token: ${GITHUB_TOKEN}
+      upstream:
+        type: bearer
+        token: ${GITHUB_TOKEN}

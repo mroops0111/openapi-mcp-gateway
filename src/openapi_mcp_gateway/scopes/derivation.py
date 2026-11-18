@@ -19,7 +19,10 @@ class DerivedScope(typing.NamedTuple):
 
 
 class ScopeDerivation(abc.ABC):
-    """Strategy that derives the MCP scopes covering one operation from the spec, selected by ``auth.operation_scopes.auto``."""
+    """Strategy that derives the MCP scopes covering one operation from the spec.
+
+    ``auth.mcp.operation_scopes.auto`` selects which one runs.
+    """
 
     @abc.abstractmethod
     def derive(self, operation: OperationInfo) -> collections.abc.Iterable[DerivedScope]:
@@ -79,8 +82,8 @@ class TagMethodDerivation(ScopeDerivation):
         if tag not in self._unusable_tags:
             self._unusable_tags.add(tag)
             logger.warning(
-                'Tag %r makes no valid scope name, so auth.operation_scopes.auto tags derives no scope from it. '
-                'Cover its operations with auth.operation_scopes.manual instead.',
+                'Tag %r makes no valid scope name, so auth.mcp.operation_scopes.auto tags derives no scope from it. '
+                'Cover its operations with auth.mcp.operation_scopes.manual instead.',
                 tag,
             )
         return False

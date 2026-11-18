@@ -2,26 +2,26 @@ import typing
 
 import pydantic
 
-from ..openapi import OpenAPISpec
+from ...openapi import OpenAPISpec
 
 
-class DetectedOAuthFlow(pydantic.BaseModel):
-    """Minimal OAuth2 flow metadata describing how the gateway should obtain tokens.
+class UpstreamOAuthFlow(pydantic.BaseModel):
+    """The OAuth flow the gateway runs against the upstream authorization server, and where that server is.
 
-    ``authorization_code`` and ``client_credentials`` come directly from the spec via ``detect_oauth_flows``.
-    ``token_exchange`` is never produced from a spec, since ``securitySchemes`` cannot declare it.
-    The factory short-circuits to it only when ``auth.flow`` names it explicitly.
+    It comes from the spec's ``securitySchemes`` when they declare one, and from ``auth.upstream`` otherwise.
+    ``token_exchange`` has none, since it asks the issuer of the caller's token rather than the upstream's server.
+    ``scope_descriptions`` maps each upstream scope to what it allows, as the spec states it.
     """
 
-    flow_type: typing.Literal['authorization_code', 'client_credentials', 'token_exchange']
+    flow_type: typing.Literal['authorization_code', 'client_credentials']
     authorization_url: str | None = None
     token_url: str | None = None
-    scopes: dict[str, str] = pydantic.Field(default_factory=dict)
+    scope_descriptions: dict[str, str] = pydantic.Field(default_factory=dict)
 
 
-def detect_oauth_flows(spec: OpenAPISpec) -> list[DetectedOAuthFlow]:
+def detect_upstream_oauth_flows(spec: OpenAPISpec) -> list[UpstreamOAuthFlow]:
     """Return every supported OAuth2 flow advertised under ``securitySchemes``."""
-    flows: list[DetectedOAuthFlow] = []
+    flows: list[UpstreamOAuthFlow] = []
 
     for _scheme_name, scheme in spec.security_schemes.items():
         if scheme.get('type') != 'oauth2':
@@ -32,30 +32,30 @@ def detect_oauth_flows(spec: OpenAPISpec) -> list[DetectedOAuthFlow]:
         if 'authorizationCode' in oauth_flows:
             flow_data = oauth_flows['authorizationCode']
             flows.append(
-                DetectedOAuthFlow(
+                UpstreamOAuthFlow(
                     flow_type='authorization_code',
                     authorization_url=flow_data.get('authorizationUrl'),
                     token_url=flow_data['tokenUrl'],
-                    scopes=flow_data.get('scopes', {}),
+                    scope_descriptions=flow_data.get('scopes', {}),
                 )
             )
 
         if 'clientCredentials' in oauth_flows:
             flow_data = oauth_flows['clientCredentials']
             flows.append(
-                DetectedOAuthFlow(
+                UpstreamOAuthFlow(
                     flow_type='client_credentials',
                     token_url=flow_data['tokenUrl'],
-                    scopes=flow_data.get('scopes', {}),
+                    scope_descriptions=flow_data.get('scopes', {}),
                 )
             )
 
     return flows
 
 
-def detect_primary_oauth_flow(spec: OpenAPISpec) -> DetectedOAuthFlow | None:
+def detect_primary_upstream_oauth_flow(spec: OpenAPISpec) -> UpstreamOAuthFlow | None:
     """Pick one OAuth2 flow, preferring ``authorization_code``, or return ``None`` if the spec declares none."""
-    flows = detect_oauth_flows(spec)
+    flows = detect_upstream_oauth_flows(spec)
     if not flows:
         return None
 
@@ -65,7 +65,7 @@ def detect_primary_oauth_flow(spec: OpenAPISpec) -> DetectedOAuthFlow | None:
     return flows[0]
 
 
-def detect_unsupported_oauth_flows(spec: OpenAPISpec) -> list[str]:
+def detect_unsupported_upstream_oauth_flows(spec: OpenAPISpec) -> list[str]:
     """Return spec-declared OAuth2 flow names that the gateway does not implement.
 
     Only ``authorizationCode`` and ``clientCredentials`` are supported.

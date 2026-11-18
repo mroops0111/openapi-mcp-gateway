@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from openapi_mcp_gateway.auth.token_source import ClientCredentialsTokenSource, TokenExchangeTokenSource
+from openapi_mcp_gateway.auth.upstream.token_source import UpstreamClientCredentialsTokenSource
 from tests.constants import API_URL, TOKEN_URL
 
 
@@ -18,11 +18,11 @@ def _build_response(status_code: int, payload: dict | None = None, text: str = '
 
 
 class TestClientCredentialsTokenSourceFetch:
-    """Initial fetch and caching behaviour of ``ClientCredentialsTokenSource``."""
+    """Initial fetch and caching behaviour of ``UpstreamClientCredentialsTokenSource``."""
 
     async def test_first_call_posts_client_credentials(self):
         """The first ``get_token`` POSTs ``grant_type=client_credentials`` to ``token_url``."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -45,7 +45,7 @@ class TestClientCredentialsTokenSourceFetch:
 
     async def test_second_call_uses_cached_token(self):
         """A still-fresh token is returned from cache without a second POST."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -62,7 +62,7 @@ class TestClientCredentialsTokenSourceFetch:
 
     async def test_expired_token_triggers_refresh(self):
         """When the cached token is past the refresh skew, a fresh token is fetched."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -87,7 +87,7 @@ class TestClientCredentialsTokenSourceFetch:
 
     async def test_concurrent_callers_share_one_fetch(self):
         """N parallel ``get_token`` calls trigger exactly one upstream fetch."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -114,7 +114,7 @@ class TestClientCredentialsTokenSourceErrors:
 
     async def test_non_200_raises(self):
         """A non-200 token response raises ``RuntimeError`` and does not cache anything."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -127,7 +127,7 @@ class TestClientCredentialsTokenSourceErrors:
 
     async def test_missing_access_token_raises(self):
         """A 200 response without ``access_token`` raises ``RuntimeError``."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -144,7 +144,7 @@ class TestClientCredentialsTokenSourceClose:
 
     async def test_aclose_closes_http_client(self):
         """``aclose`` calls ``aclose`` on the internal ``httpx.AsyncClient`` if present."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -160,7 +160,7 @@ class TestClientCredentialsTokenSourceClose:
 
     async def test_aclose_is_safe_when_unused(self):
         """``aclose`` on a never-used source is a no-op."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -173,7 +173,7 @@ class TestClientCredentialsTokenSourceAudience:
 
     async def test_audience_params_are_posted(self):
         """Configured audience parameters ride along with the client_credentials grant."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -190,7 +190,7 @@ class TestClientCredentialsTokenSourceAudience:
 
     async def test_no_audience_params_leaves_request_unchanged(self):
         """Without configuration the grant carries no audience keys at all."""
-        source = ClientCredentialsTokenSource(
+        source = UpstreamClientCredentialsTokenSource(
             token_url=TOKEN_URL,
             client_id='cid',
             client_secret='secret',
@@ -204,85 +204,3 @@ class TestClientCredentialsTokenSourceAudience:
         assert post_mock.await_args is not None
         assert 'audience' not in post_mock.await_args.kwargs['data']
         assert 'resource' not in post_mock.await_args.kwargs['data']
-
-
-class TestTokenExchangeTokenSource:
-    """RFC 8693 exchange of a caller's token for one the upstream API accepts."""
-
-    def _source(self, **kwargs) -> TokenExchangeTokenSource:
-        defaults = {
-            'token_endpoint': TOKEN_URL,
-            'client_id': 'gateway',
-            'client_secret': 'secret',
-            'audience_params': {'audience': API_URL},
-        }
-        return TokenExchangeTokenSource(**{**defaults, **kwargs})
-
-    async def test_posts_rfc_8693_grant(self):
-        """The request carries the token-exchange grant, the subject token, and the target audience."""
-        source = self._source()
-        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'upstream', 'expires_in': 3600}))
-        source._http_client = MagicMock()
-        source._http_client.post = post_mock
-
-        token = await source.exchange('caller-token')
-
-        assert token == 'upstream'
-        assert post_mock.await_args is not None
-        posted = post_mock.await_args.kwargs['data']
-        assert posted['grant_type'] == 'urn:ietf:params:oauth:grant-type:token-exchange'
-        assert posted['subject_token'] == 'caller-token'
-        assert posted['subject_token_type'] == 'urn:ietf:params:oauth:token-type:access_token'
-        assert posted['audience'] == API_URL
-        assert posted['client_id'] == 'gateway'
-
-    async def test_repeat_exchange_is_cached(self):
-        """One MCP session makes many tool calls, so a fresh result is reused."""
-        source = self._source()
-        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'upstream', 'expires_in': 3600}))
-        source._http_client = MagicMock()
-        source._http_client.post = post_mock
-
-        first = await source.exchange('caller-token')
-        second = await source.exchange('caller-token')
-
-        assert first == second == 'upstream'
-        post_mock.assert_awaited_once()
-
-    async def test_different_subject_tokens_do_not_share_a_result(self):
-        """Caching is keyed by the subject token, so a re-authenticated caller gets a fresh exchange.
-
-        Keying by user instead would let a new session inherit credentials minted for an old one.
-        """
-        source = self._source()
-        responses = [
-            _build_response(200, {'access_token': 'upstream-a', 'expires_in': 3600}),
-            _build_response(200, {'access_token': 'upstream-b', 'expires_in': 3600}),
-        ]
-        source._http_client = MagicMock()
-        source._http_client.post = AsyncMock(side_effect=responses)
-
-        assert await source.exchange('caller-a') == 'upstream-a'
-        assert await source.exchange('caller-b') == 'upstream-b'
-
-    async def test_expired_cache_entry_triggers_a_new_exchange(self):
-        """A result past its refresh skew is discarded rather than returned stale."""
-        source = self._source(refresh_skew_seconds=0.0)
-        responses = [
-            _build_response(200, {'access_token': 'first', 'expires_in': 0}),
-            _build_response(200, {'access_token': 'second', 'expires_in': 3600}),
-        ]
-        source._http_client = MagicMock()
-        source._http_client.post = AsyncMock(side_effect=responses)
-
-        assert await source.exchange('caller-token') == 'first'
-        assert await source.exchange('caller-token') == 'second'
-
-    async def test_failure_explains_the_likely_causes(self):
-        """A rejected exchange names what to check, since support varies between authorization servers."""
-        source = self._source()
-        source._http_client = MagicMock()
-        source._http_client.post = AsyncMock(return_value=_build_response(400, text='unsupported_grant_type'))
-
-        with pytest.raises(RuntimeError, match='RFC 8693'):
-            await source.exchange('caller-token')

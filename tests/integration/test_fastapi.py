@@ -7,9 +7,9 @@ from fastapi.security import APIKeyHeader, HTTPBasic, HTTPBasicCredentials, OAut
 from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway import Gateway, mcp_tool
-from openapi_mcp_gateway.auth import token_source as token_source_module
-from openapi_mcp_gateway.client import SharedAPIClient
+from openapi_mcp_gateway.auth.upstream import token_source as token_source_module
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
+from openapi_mcp_gateway.upstream_http import UpstreamSharedHttpClient
 from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
 
@@ -34,7 +34,9 @@ class _StubContext:
 def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Awaitable[None]]]:
     """The shutdown hooks an auth flow registered, leaving out the one closing each server's upstream client."""
     return [
-        hook for hook in gateway._shutdown_hooks if not isinstance(getattr(hook, '__self__', None), SharedAPIClient)
+        hook
+        for hook in gateway._shutdown_hooks
+        if not isinstance(getattr(hook, '__self__', None), UpstreamSharedHttpClient)
     ]
 
 
@@ -112,7 +114,7 @@ class TestGatewayFromFastapiAssembly:
         gateway = Gateway.from_fastapi(
             app,
             name='svc',
-            auth=AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec')),
+            auth=AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec')),
         )
         # client_credentials registers a shutdown hook that closes the token source's HTTP client.
         assert len(_auth_shutdown_hooks(gateway)) == 1
@@ -285,7 +287,7 @@ class TestGatewayFromFastapiToolCall:
         gateway = Gateway.from_fastapi(
             app,
             name='svc',
-            auth=AuthConfig(type='oauth2', upstream=UpstreamAuthConfig(client_id='cid', client_secret='sec')),
+            auth=AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec')),
         )
         mcp = gateway._servers[0].mcp
         tool = next(iter(mcp._tool_manager.list_tools()))

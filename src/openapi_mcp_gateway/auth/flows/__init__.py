@@ -1,37 +1,18 @@
-from .authorization_code import (
-    AuthorizationCodeFlowHandler,
-    AuthorizationCodeProvider,
-    IssuedTokenPolicy,
-    UpstreamOAuthClient,
-)
-from .authorization_routes import AuthorizationCodeRoutes
-from .base import OAuthFlowContext, OAuthFlowHandler, OAuthFlowSetup
-from .client_credentials import ClientCredentialsFlowHandler
-from .clients import (
-    ClientDirectory,
-    DynamicClientRegistry,
-    PreRegisteredClient,
-    PreRegisteredClientDirectory,
-)
-from .factory import OAUTH_FLOW_HANDLERS, build_oauth_flow
-from .token_exchange import TokenExchangeFlowHandler
+from ..assembly import OAuthFlowContext, OAuthFlowHandler
+from .authorization_code import AuthorizationCodeBridge, AuthorizationCodeCallbackRoutes, AuthorizationCodeFlowHandler
+from .factory import OAUTH_FLOW_HANDLERS, build_oauth_flow, resolve_upstream_oauth_flow
+from .token_exchange import TokenExchangeBridge, TokenExchangeFlowHandler
 
 
 __all__ = [
     'OAUTH_FLOW_HANDLERS',
+    'AuthorizationCodeBridge',
+    'AuthorizationCodeCallbackRoutes',
     'AuthorizationCodeFlowHandler',
-    'AuthorizationCodeProvider',
-    'AuthorizationCodeRoutes',
-    'ClientCredentialsFlowHandler',
-    'ClientDirectory',
-    'DynamicClientRegistry',
-    'IssuedTokenPolicy',
     'OAuthFlowContext',
     'OAuthFlowHandler',
-    'OAuthFlowSetup',
-    'PreRegisteredClient',
-    'PreRegisteredClientDirectory',
+    'TokenExchangeBridge',
     'TokenExchangeFlowHandler',
-    'UpstreamOAuthClient',
     'build_oauth_flow',
+    'resolve_upstream_oauth_flow',
 ]

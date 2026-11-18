@@ -51,6 +51,15 @@ class MemoryTokenStore(TokenStore):
         mapping_ns = f'{from_ns}__to__{to_ns}'
         return await self.get(mapping_ns, from_key)
 
+    async def pop(self, namespace: str, key: str) -> typing.Any | None:
+        # Neither call suspends, so no other task can take the entry between the read and the delete.
+        data = await self.get(namespace, key)
+        await self.delete(namespace, key)
+        return data
+
+    async def delete_mapping(self, from_ns: str, from_key: str, to_ns: str) -> None:
+        await self.delete(f'{from_ns}__to__{to_ns}', from_key)
+
     async def close(self) -> None:
         self._data.clear()
         self._expiry.clear()

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _LOOPBACK_NAMES = frozenset({'localhost'})
 
 
-class ClientDirectory(abc.ABC):
+class McpClientDirectory(abc.ABC):
     """Where the gateway's authorization server finds the MCP clients allowed to sign in.
 
     Only a directory that accepts Dynamic Client Registration overrides ``register``,
@@ -46,19 +46,22 @@ class ClientDirectory(abc.ABC):
         """
         return True
 
-    def registration_options(self, mcp_endpoint_scopes: collections.abc.Sequence[str]) -> ClientRegistrationOptions:
+    def build_registration_options(
+        self, mcp_endpoint_scopes: collections.abc.Sequence[str]
+    ) -> ClientRegistrationOptions:
         """The SDK's registration settings, granting a registered client ``mcp_endpoint_scopes``.
 
         Registration stays off, but the endpoint scopes are still advertised as ``scopes_supported``,
-        and none are when ``auth.operation_scopes`` leaves the endpoint without any.
+        and none are when ``auth.mcp.operation_scopes`` leaves the endpoint without any.
         """
         return ClientRegistrationOptions(enabled=False, valid_scopes=list(mcp_endpoint_scopes) or None)
 
 
-class DynamicClientRegistry(ClientDirectory):
+class McpDynamicClientRegistry(McpClientDirectory):
     """Clients that register themselves through Dynamic Client Registration, kept in ``store``.
 
-    The 2026-07-28 spec deprecates Dynamic Client Registration, which stays only for servers without ``auth.clients``.
+    The 2026-07-28 spec deprecates Dynamic Client Registration.
+    It stays only for servers without ``auth.mcp.clients``.
     """
 
     def __init__(self, store: TokenStore, issuer: str) -> None:
@@ -66,7 +69,7 @@ class DynamicClientRegistry(ClientDirectory):
         self._issuer = issuer
 
     async def get(self, client_id: str) -> OAuthClientInformationFull | None:
-        # A registration stored before issuer binding lives under the bare client_id and is never read here.
+        # A registration stored before issuers keyed them lives under the bare client_id, so it is never read here.
         # The client is then unknown to this server and registers again, which is the migration path.
         data = await self._store.get('mcp_client', self._client_key(client_id))
         return OAuthClientInformationFull(**data) if data else None
@@ -84,7 +87,9 @@ class DynamicClientRegistry(ClientDirectory):
             self._issuer,
         )
 
-    def registration_options(self, mcp_endpoint_scopes: collections.abc.Sequence[str]) -> ClientRegistrationOptions:
+    def build_registration_options(
+        self, mcp_endpoint_scopes: collections.abc.Sequence[str]
+    ) -> ClientRegistrationOptions:
         return ClientRegistrationOptions(
             enabled=True, valid_scopes=list(mcp_endpoint_scopes), default_scopes=list(mcp_endpoint_scopes)
         )
@@ -99,8 +104,8 @@ class DynamicClientRegistry(ClientDirectory):
         return f'{self._issuer} {client_id}'
 
 
-class PreRegisteredClient(OAuthClientInformationFull):
-    """A client declared under ``auth.clients``, granted what it asks for within ``scope``, its maximum.
+class McpPreRegisteredClient(OAuthClientInformationFull):
+    """A client declared under ``auth.mcp.clients``, granted what it asks for within ``scope``, its maximum.
 
     Asking for nothing grants ``default_scopes``.
     Asking for scopes partly outside its set grants the part within, as RFC 6749 §3.3 lets the server grant less.
@@ -123,7 +128,7 @@ class PreRegisteredClient(OAuthClientInformationFull):
         secret = client.resolve_client_secret()
         if client.client_secret is not None and not secret:
             raise ValueError(
-                f'auth.clients.{client_id}.client_secret resolves to nothing, so the client would turn public. '
+                f'auth.mcp.clients.{client_id}.client_secret resolves to nothing, so the client would turn public. '
                 'Set its environment variable, or remove client_secret to make the client public on purpose.'
             )
         return cls(
@@ -139,11 +144,11 @@ class PreRegisteredClient(OAuthClientInformationFull):
         requested = requested_scope.split() if requested_scope else []
         if not requested:
             return list(self.default_scopes)
-        allowed = registered_scopes(self)
+        allowed = get_mcp_registered_scopes(self)
         within = [scope for scope in dict.fromkeys(requested) if scope in allowed]
         if not within:
             logger.warning(
-                'Client "%s" asked for scopes %s, none of which auth.clients.%s.scopes allows (%s).',
+                'Client "%s" asked for scopes %s, none of which auth.mcp.clients.%s.scopes allows (%s).',
                 self.client_id,
                 requested,
                 self.client_id,
@@ -163,7 +168,7 @@ class PreRegisteredClient(OAuthClientInformationFull):
             return redirect_uri
         except InvalidRedirectUriError:
             logger.warning(
-                'Client "%s" used redirect_uri %s, which is not in auth.clients.%s.redirect_uris.',
+                'Client "%s" used redirect_uri %s, which is not in auth.mcp.clients.%s.redirect_uris.',
                 self.client_id,
                 redirect_uri,
                 self.client_id,
@@ -171,8 +176,8 @@ class PreRegisteredClient(OAuthClientInformationFull):
             raise
 
 
-class PreRegisteredClientDirectory(ClientDirectory):
-    """The clients ``auth.clients`` declares, each granted ``mcp_endpoint_scopes`` plus its own scopes."""
+class McpPreRegisteredClientDirectory(McpClientDirectory):
+    """The clients ``auth.mcp.clients`` declares, each granted ``mcp_endpoint_scopes`` plus its own scopes."""
 
     def __init__(
         self,
@@ -180,7 +185,7 @@ class PreRegisteredClientDirectory(ClientDirectory):
         mcp_endpoint_scopes: collections.abc.Sequence[str],
     ) -> None:
         self._clients = {
-            client_id: PreRegisteredClient.from_config(client_id, client, mcp_endpoint_scopes)
+            client_id: McpPreRegisteredClient.from_config(client_id, client, mcp_endpoint_scopes)
             for client_id, client in clients.items()
         }
         self._exempt_from_consent = frozenset(client_id for client_id, client in clients.items() if not client.consent)
@@ -192,7 +197,7 @@ class PreRegisteredClientDirectory(ClientDirectory):
         return client_id not in self._exempt_from_consent
 
 
-def registered_scopes(client: OAuthClientInformationFull) -> list[str]:
+def get_mcp_registered_scopes(client: OAuthClientInformationFull) -> list[str]:
     """Every scope ``client`` is registered with, the most it may be granted, or none when it names none."""
     return client.scope.split() if client.scope else []
 

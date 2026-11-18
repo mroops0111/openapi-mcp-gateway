@@ -5,6 +5,7 @@ import typing
 from fastapi import FastAPI
 from mcp.server import MCPServer
 from mcp.server.auth.handlers.metadata import MetadataHandler, ProtectedResourceMetadataHandler
+from mcp.server.auth.provider import OAuthAuthorizationServerProvider
 from mcp.server.auth.routes import (
     build_metadata,
     build_resource_metadata_url,
@@ -22,7 +23,6 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .auth.flows import AuthorizationCodeProvider
 from .openapi import ExposedTool, OpenAPISpec
 from .scopes import RequestTarget, ScopeChallengeMiddleware, ScopeRegistry
 from .settings import DNSRebindingProtectionConfig, GatewayConfig
@@ -49,11 +49,13 @@ class _ServerBundle(typing.NamedTuple):
     mount_path: str
     mcp: MCPServer
     spec: OpenAPISpec
-    auth_provider: AuthorizationCodeProvider | None
+    auth_provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None
     # What each tool or operation requires of a token's scopes, and how a call names the one it reaches.
     scope_registry: ScopeRegistry
     tool_call_target: RequestTarget
     auth_settings: AuthSettings | None = None
+    # Whether the provider names itself in ``iss`` on its authorization responses.
+    provider_sends_iss: bool = False
     token_verifier: typing.Any | None = None
     protected_resource: ProtectedResourceMetadata | None = None
 
@@ -354,8 +356,8 @@ def _authorization_server_metadata(bundle: _ServerBundle) -> OAuthMetadata:
     """Return the RFC 8414 document for a server where the gateway is the authorization server.
 
     The SDK builds the document, and the gateway adds what its provider does beyond the SDK.
-    ``AuthorizationCodeProvider`` sends ``iss`` on its authorization responses,
-    so RFC 9207 §2.3 requires ``authorization_response_iss_parameter_supported``.
+    A provider that sends ``iss`` on its authorization responses must announce it,
+    as RFC 9207 §2.3 requires with ``authorization_response_iss_parameter_supported``.
     That flag is what lets a client refuse a response that arrives without one.
 
     Callers reach this only for a bundle carrying ``auth_settings``.
@@ -367,7 +369,7 @@ def _authorization_server_metadata(bundle: _ServerBundle) -> OAuthMetadata:
         client_registration_options=bundle.auth_settings.client_registration_options or ClientRegistrationOptions(),
         revocation_options=bundle.auth_settings.revocation_options or RevocationOptions(),
     )
-    metadata.authorization_response_iss_parameter_supported = True
+    metadata.authorization_response_iss_parameter_supported = bundle.provider_sends_iss or None
     return metadata
 
 

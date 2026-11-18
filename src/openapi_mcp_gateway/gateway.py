@@ -9,20 +9,21 @@ import httpx
 import uvicorn
 from fastapi import FastAPI
 from mcp.server import MCPServer
+from mcp.server.auth.provider import OAuthAuthorizationServerProvider
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.caching import CacheableMethod, CacheHint
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from .app import _ServerBundle, build_app, mount_mcp_apps, register_auth_routes, serve_lifespan
-from .auth.detector import detect_oauth_flows, detect_unsupported_oauth_flows
-from .auth.flows import AuthorizationCodeProvider, AuthorizationCodeRoutes, OAuthFlowSetup
-from .auth.resolver import (
-    AuthResolver,
-    CompositeAuthResolver,
-    PassthroughAuthResolver,
+from .auth.assembly import AuthTypeContext, ServerAuthSetup
+from .auth.factory import build_auth
+from .auth.upstream.oauth_flow import detect_unsupported_upstream_oauth_flows, detect_upstream_oauth_flows
+from .auth.upstream.resolver import (
+    UpstreamAuthResolver,
+    UpstreamCompositeAuthResolver,
+    UpstreamPassthroughAuthResolver,
 )
-from .auth.types import AuthTypeContext, build_auth
-from .exposure import DynamicOperationTarget, MetaToolGenerator, ResourceGenerator, ToolGenerator, UpstreamBinding
+from .exposure import DynamicOperationTarget, MetaToolGenerator, ResourceGenerator, ToolGenerator, UpstreamConnection
 from .fastapi import (
     collect_marked_routes,
     filter_marked_operations,
@@ -38,8 +39,8 @@ from .scopes import (
     RequestTarget,
     ScopeFilterMiddleware,
     ScopeRegistry,
-    SpecSecurityUpstreamScopePolicy,
     UpstreamScopePolicy,
+    UpstreamSpecSecurityScopePolicy,
     build_mcp_scope_policy,
     build_upstream_scope_policy,
 )
@@ -305,8 +306,8 @@ class Gateway:
         logger.info('Registering FastAPI app as MCP server "%s"', name)
         spec = parse_spec(app.openapi())
 
-        declared = detect_oauth_flows(spec)
-        unsupported = detect_unsupported_oauth_flows(spec)
+        declared = detect_upstream_oauth_flows(spec)
+        unsupported = detect_unsupported_upstream_oauth_flows(spec)
         if unsupported and not declared:
             raise ValueError(
                 f'FastAPI server "{name}" declares only unsupported OAuth2 flows: {unsupported}. '
@@ -354,13 +355,15 @@ class Gateway:
         transport: httpx.AsyncBaseTransport | None = None,
         forward_incoming_headers: tuple[str, ...] = (),
     ) -> None:
-        mcp_scope_policy = build_mcp_scope_policy(server_config.auth.operation_scopes, operations, server_config.name)
+        mcp_scope_policy = build_mcp_scope_policy(
+            server_config.auth.mcp.operation_scopes, operations, server_config.name
+        )
         _refuse_undefined_mcp_scopes(server_config, mcp_scope_policy)
         upstream = server_config.auth.upstream
-        spec_security = SpecSecurityUpstreamScopePolicy(spec.security_schemes, upstream.scope_implies)
+        spec_security = UpstreamSpecSecurityScopePolicy(spec.security_schemes, upstream.scope_implies)
         if upstream.enforce_scopes and not upstream.scopes:
             server_config = _with_requested_upstream_scopes(server_config, spec_security.requested_scopes(operations))
-        auth = self._resolve_auth(server_config, spec)
+        auth = self._resolve_auth(server_config, spec, mcp_scope_policy)
         auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
         scope_registry = ScopeRegistry(
             mcp_scope_policy,
@@ -369,17 +372,17 @@ class Gateway:
         mcp = self._build_mcp_server(
             server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions, scope_registry
         )
-        if auth.provider is not None:
-            AuthorizationCodeRoutes(auth.provider, mcp_scope_policy).register(mcp)
+        for routes in auth.routes:
+            routes.register(mcp)
 
-        binding = UpstreamBinding(
+        connection = UpstreamConnection(
             base_url=base_url,
             auth_resolver=auth_resolver,
             timeout=server_config.timeout,
             transport=transport,
             headers=server_config.resolve_headers(),
         )
-        self._shutdown_hooks.append(binding.client.aclose)
+        self._shutdown_hooks.append(connection.client.aclose)
         exposed_tools: list[ExposedTool] = []
         # A policy pattern that matches no operation at all is almost always a typo,
         # and the result is only ever a shorter list that nobody notices is short.
@@ -416,7 +419,7 @@ class Gateway:
             search = server_config.exposure.search
             exposed_tools = MetaToolGenerator(
                 mcp=mcp,
-                binding=binding,
+                connection=connection,
                 field_weight_overrides=search.field_weights.model_dump(exclude_none=True) if search else None,
                 scope_registry=scope_registry,
             ).register(operations)
@@ -427,10 +430,10 @@ class Gateway:
             )
             if resource_ops:
                 resource_names = ResourceGenerator(
-                    mcp=mcp, binding=binding, server_name=server_config.name, scope_registry=scope_registry
+                    mcp=mcp, connection=connection, server_name=server_config.name, scope_registry=scope_registry
                 ).register(resource_ops)
             if tool_ops:
-                exposed_tools = ToolGenerator(mcp=mcp, binding=binding, scope_registry=scope_registry).register(
+                exposed_tools = ToolGenerator(mcp=mcp, connection=connection, scope_registry=scope_registry).register(
                     tool_ops
                 )
 
@@ -442,15 +445,18 @@ class Gateway:
                 spec=spec,
                 auth_provider=auth.provider,
                 auth_settings=auth.settings,
+                provider_sends_iss=auth.provider_sends_iss,
                 token_verifier=auth.verifier,
                 protected_resource=auth.protected_resource,
                 scope_registry=scope_registry,
                 tool_call_target=tool_call_target,
                 base_url=base_url,
                 auth_summary=_auth_summary(server_config.auth),
-                auth_type=server_config.auth.type,
+                auth_type=server_config.auth.upstream.type,
                 auth_api_key_header=(
-                    server_config.auth.api_key_header if server_config.auth.type == 'api_key' else None
+                    server_config.auth.upstream.api_key_header
+                    if server_config.auth.upstream.type == 'api_key'
+                    else None
                 ),
                 auth_flow=auth.flow_type,
                 policy_summary=_policy_summary(server_config.policy),
@@ -471,14 +477,24 @@ class Gateway:
             type(auth_resolver).__name__,
         )
 
-    def _resolve_auth(self, entry: ServerConfig, spec: OpenAPISpec) -> OAuthFlowSetup:
-        """Return the auth components for ``entry``, dispatching on ``auth.type``.
+    def _resolve_auth(
+        self, entry: ServerConfig, spec: OpenAPISpec, mcp_scope_policy: McpScopePolicy
+    ) -> ServerAuthSetup:
+        """Return the auth components for ``entry``, dispatching on ``auth.upstream.type``.
 
         Every type produces the same shape, so callers never branch on which one ran.
         Registering the shutdown hook is the gateway's business rather than a handler's,
         since only the gateway owns the process lifecycle.
         """
-        setup = build_auth(AuthTypeContext(entry=entry, spec=spec, store=self._store, gateway_url=self._config.url))
+        setup = build_auth(
+            AuthTypeContext(
+                entry=entry,
+                spec=spec,
+                store=self._store,
+                gateway_url=self._config.url,
+                mcp_scope_policy=mcp_scope_policy,
+            )
+        )
         if setup.on_shutdown is not None:
             self._shutdown_hooks.append(setup.on_shutdown)
         return setup
@@ -486,7 +502,7 @@ class Gateway:
     @staticmethod
     def _build_mcp_server(
         name: str,
-        auth_provider: AuthorizationCodeProvider | None,
+        auth_provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None,
         auth_settings: AuthSettings | None,
         token_verifier: typing.Any | None,
         instructions: str | None,
@@ -563,16 +579,16 @@ def _warn_if_deprecated_transport(transport: str) -> None:
 
 
 def _compose_with_passthrough(
-    base: AuthResolver,
+    base: UpstreamAuthResolver,
     forward_incoming_headers: tuple[str, ...],
-) -> AuthResolver:
+) -> UpstreamAuthResolver:
     """Forward ``forward_incoming_headers`` from the live MCP request alongside ``base``.
 
     ``base`` wins on collision, so gateway-minted credentials override the client's incoming token.
     """
     if not forward_incoming_headers:
         return base
-    return CompositeAuthResolver([PassthroughAuthResolver(forward_incoming_headers), base])
+    return UpstreamCompositeAuthResolver([UpstreamPassthroughAuthResolver(forward_incoming_headers), base])
 
 
 def _resource_eligibility_problem(operation: OperationInfo) -> tuple[str, str] | None:
@@ -671,8 +687,8 @@ def _apply_yaml_override(operation: OperationInfo, override: OperationOverride) 
 
 def _upstream_scope_policy(
     server_config: ServerConfig,
-    auth: OAuthFlowSetup,
-    spec_security: SpecSecurityUpstreamScopePolicy,
+    auth: ServerAuthSetup,
+    spec_security: UpstreamSpecSecurityScopePolicy,
     operations: list[OperationInfo],
     mcp_scope_policy: McpScopePolicy,
 ) -> UpstreamScopePolicy:
@@ -681,18 +697,18 @@ def _upstream_scope_policy(
     Raises ``ValueError`` when ``enforce_scopes`` is on but the flow records no user grant.
     """
     upstream = server_config.auth.upstream
-    if auth.provider is not None:
+    if auth.mcp_tokens_carry_upstream_grant:
         spec_security.warn_on_unrequested_scopes(
             operations,
-            auth.provider.upstream.scopes,
+            upstream.scopes,
             mcp_scope_policy,
-            {client_id: client.scopes for client_id, client in server_config.auth.clients.items()},
+            {client_id: client.scopes for client_id, client in server_config.auth.mcp.clients.items()},
             server_config.name,
         )
     elif upstream.enforce_scopes:
         raise ValueError(
-            f'Server "{server_config.name}": auth.upstream.enforce_scopes needs auth.flow authorization_code, '
-            f'but the spec resolves to {auth.flow_type}. Set auth.flow, or turn enforce_scopes off.'
+            f'Server "{server_config.name}": auth.upstream.enforce_scopes needs auth.upstream.flow authorization_code, '
+            f'but the spec resolves to {auth.flow_type}. Set auth.upstream.flow, or turn enforce_scopes off.'
         )
     return build_upstream_scope_policy(upstream.enforce_scopes, spec_security, server_config.name)
 
@@ -746,7 +762,7 @@ def _partition_operations(
 class _AppContext:
     """Per-server lifespan context injected into MCPServer tool handlers."""
 
-    auth_provider: AuthorizationCodeProvider | None = None
+    auth_provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None = None
 
 
 def _policy_summary(policy: PolicyConfig) -> str:
@@ -779,20 +795,20 @@ def _cache_hints(scope_registry: ScopeRegistry) -> dict[CacheableMethod, CacheHi
 def _refuse_undefined_mcp_scopes(server_config: ServerConfig, mcp_scope_policy: McpScopePolicy) -> None:
     """Refuse a client granted a scope the server does not define, since it would open nothing."""
     undefined = {
-        client_id: sorted(set(client.scopes) - set(mcp_scope_policy.defined_mcp_scopes))
-        for client_id, client in server_config.auth.clients.items()
+        client_id: sorted(set(client.scopes) - set(mcp_scope_policy.mcp_defined_scopes))
+        for client_id, client in server_config.auth.mcp.clients.items()
     }
     named = '; '.join(f'{client_id}: {", ".join(scopes)}' for client_id, scopes in undefined.items() if scopes)
     if named:
         raise ValueError(
-            f'Server "{server_config.name}": auth.clients grant scopes auth.operation_scopes does not define ({named}).'
+            f'Server "{server_config.name}": auth.mcp.clients grant scopes auth.mcp.operation_scopes does not define ({named}).'
         )
 
 
 def _auth_summary(auth: AuthConfig) -> str:
     """A short human label for a server's auth, naming the header for api_key and the OAuth flow."""
-    if auth.type == 'api_key':
-        return f'api_key (header {auth.api_key_header})'
-    if auth.type == 'oauth2' and auth.flow:
-        return f'oauth2 ({auth.flow})'
-    return auth.type
+    if auth.upstream.type == 'api_key':
+        return f'api_key (header {auth.upstream.api_key_header})'
+    if auth.upstream.type == 'oauth2' and auth.upstream.flow:
+        return f'oauth2 ({auth.upstream.flow})'
+    return auth.upstream.type

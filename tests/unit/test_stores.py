@@ -99,20 +99,20 @@ class TestStoreMapping:
 
     async def test_set_and_get_mapping(self, store):
         """A mapping from one (ns, key) to another is retrievable."""
-        await store.set_mapping('mcp_access', 'mcp_123', 'api_access', 'api_456', ttl=60)
-        result = await store.get_mapping('mcp_access', 'mcp_123', 'api_access')
-        assert result == 'api_456'
+        await store.set_mapping('mcp_access', 'mcp_123', 'upstream_access', 'upstream_456', ttl=60)
+        result = await store.get_mapping('mcp_access', 'mcp_123', 'upstream_access')
+        assert result == 'upstream_456'
 
     async def test_mapping_nonexistent(self, store):
         """A missing mapping returns ``None``."""
-        result = await store.get_mapping('mcp_access', 'missing', 'api_access')
+        result = await store.get_mapping('mcp_access', 'missing', 'upstream_access')
         assert result is None
 
     async def test_multiple_mappings(self, store):
         """The same source can map to multiple target namespaces independently."""
-        await store.set_mapping('mcp_access', 'mcp_1', 'api_access', 'api_a')
+        await store.set_mapping('mcp_access', 'mcp_1', 'upstream_access', 'upstream_a')
         await store.set_mapping('mcp_access', 'mcp_1', 'mcp_refresh', 'ref_b')
-        assert await store.get_mapping('mcp_access', 'mcp_1', 'api_access') == 'api_a'
+        assert await store.get_mapping('mcp_access', 'mcp_1', 'upstream_access') == 'upstream_a'
         assert await store.get_mapping('mcp_access', 'mcp_1', 'mcp_refresh') == 'ref_b'
 
     async def test_mapping_direction(self, store):
