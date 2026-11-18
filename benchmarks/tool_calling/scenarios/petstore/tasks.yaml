@@ -40,6 +40,10 @@
         - {id: 31, name: Whiskers, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: available}
         - {id: 32, name: Mittens, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: available}
         - {id: 33, name: Rex, category: {id: 1, name: Dogs}, photoUrls: [], tags: [], status: available}
+    - server: petstore
+      method: GET
+      path: /pet/31
+      body: {id: 31, name: Whiskers, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: available}
 
 - id: petstore-t03
   prompt: >-
@@ -90,6 +94,10 @@
         - {id: 51, name: Rio, category: {id: 4, name: Birds}, photoUrls: [], tags: [], status: available}
         - {id: 52, name: Kiwi, category: {id: 4, name: Birds}, photoUrls: [], tags: [], status: available}
         - {id: 53, name: Goldie, category: {id: 5, name: Fish}, photoUrls: [], tags: [], status: available}
+    - server: petstore
+      method: GET
+      path: /pet/52
+      body: {id: 52, name: Kiwi, category: {id: 4, name: Birds}, photoUrls: [], tags: [], status: available}
 
 - id: petstore-t05
   prompt: >-
@@ -127,6 +135,10 @@
       method: GET
       path: /store/order/8
       body: {id: 8, petId: 89, quantity: 1, shipDate: '2026-11-13T10:00:00Z', status: approved, complete: false}
+    - server: petstore
+      method: GET
+      path: /pet/88
+      body: {id: 88, name: Pepper, category: {id: 1, name: Dogs}, photoUrls: [], tags: [], status: pending}
 
 - id: petstore-t06
   prompt: >-
@@ -171,3 +183,7 @@
       method: GET
       path: /store/order/10
       body: {id: 10, petId: 65, quantity: 1, shipDate: '2026-11-21T10:00:00Z', status: placed, complete: false}
+    - server: petstore
+      method: GET
+      path: /pet/64
+      body: {id: 64, name: Mochi, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: pending}
