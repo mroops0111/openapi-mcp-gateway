@@ -4,6 +4,7 @@ import typing
 import urllib.parse
 
 import pydantic
+from fastapi.encoders import jsonable_encoder
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -155,6 +156,7 @@ def _parse_body(raw: bytes, content_type: str) -> typing.Any:
 
 
 def _json_response(status: int, body: typing.Any) -> Response:
+    """Answer with ``body`` as JSON, writing a date as text, since a YAML spec's examples load as dates."""
     if body is None:
         return Response(status_code=status)
-    return JSONResponse(body, status_code=status)
+    return JSONResponse(jsonable_encoder(body), status_code=status)

@@ -1,3 +1,4 @@
+import datetime
 import json
 import pathlib
 import shutil
@@ -155,6 +156,14 @@ class TestReplay:
             ('DELETE', 'DELETE /pets/{petId}'),
             ('GET', None),
         ]
+
+    async def test_answers_a_date_a_yaml_spec_loaded_as_text(self):
+        replay = ReplayUpstream({'pets': json.loads(PETSTORE.read_text())})
+        created = datetime.datetime(2026, 11, 12, 10, tzinfo=datetime.UTC)
+        replay.start_task([ResponseOverride(server='pets', method='GET', path='/pets/{petId}', body={'at': created})])
+        async with serve(replay.app) as url, httpx.AsyncClient() as client:
+            answered = await client.get(f'{url}/pets/pets/7')
+        assert answered.json() == {'at': '2026-11-12T10:00:00+00:00'}
 
 
 class TestGrading:
