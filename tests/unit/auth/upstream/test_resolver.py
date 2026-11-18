@@ -17,7 +17,7 @@ def mock_context():
     return MagicMock()
 
 
-class TestNullAuthResolver:
+class TestNoCredentialAuthResolver:
     """``UpstreamNoCredentialAuthResolver`` always resolves to an empty header dict."""
 
     async def test_returns_empty_dict(self, mock_context):

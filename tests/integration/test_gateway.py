@@ -545,7 +545,7 @@ class TestSpec20260728Adoption:
         assert first == tool_names()
 
 
-class TestUpstreamClientLifecycle:
+class TestUpstreamHttpClientLifecycle:
     """Each server keeps one upstream client across calls and closes it when the gateway shuts down."""
 
     async def test_calls_reuse_one_client_closed_at_shutdown(self, gateway, upstream_requests, monkeypatch):

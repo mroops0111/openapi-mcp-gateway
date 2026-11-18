@@ -579,7 +579,7 @@ class TestGatewayAuthorizationResponseIssuer:
         assert query_value(redirect, 'state') == CLIENT_STATE
 
 
-class TestClientRegistrationBinding:
+class TestClientRegistrationIssuer:
     """MCP client registrations are keyed by the issuer they were registered with."""
 
     async def test_a_client_registered_with_one_server_is_unknown_to_another(self, make_provider, mcp_client_info):
@@ -609,7 +609,7 @@ class TestClientRegistrationBinding:
         assert await provider.get_client('mcp-client-123') is not None
 
 
-class TestTokenBinding:
+class TestTokenOrigin:
     """MCP codes and tokens are honoured only by the server, and against the upstream, that issued them."""
 
     async def test_a_token_minted_by_one_server_is_refused_by_another(self, make_provider, mcp_client_info):

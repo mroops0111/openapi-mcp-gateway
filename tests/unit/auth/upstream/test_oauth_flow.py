@@ -35,7 +35,7 @@ CLIENT_CREDS_SCHEME = {
 }
 
 
-class TestDetectOAuthFlows:
+class TestDetectUpstreamOAuthFlows:
     """Enumerate every OAuth2 flow declared under ``securitySchemes``."""
 
     def test_no_security_schemes(self):
@@ -77,7 +77,7 @@ class TestDetectOAuthFlows:
         assert types == ['authorization_code', 'client_credentials']
 
 
-class TestDetectPrimaryOAuthFlow:
+class TestDetectPrimaryUpstreamOAuthFlow:
     """Pick a single representative flow, preferring ``authorization_code``."""
 
     def test_returns_none_without_oauth(self):
@@ -101,7 +101,7 @@ class TestDetectPrimaryOAuthFlow:
         assert primary.flow_type == 'client_credentials'
 
 
-class TestDetectUnsupportedOAuthFlows:
+class TestDetectUnsupportedUpstreamOAuthFlows:
     """``detect_unsupported_upstream_oauth_flows`` lists OAuth2 flow names the gateway does not implement."""
 
     def test_empty_when_only_supported_flows(self):

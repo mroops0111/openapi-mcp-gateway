@@ -61,7 +61,7 @@ def _verifier(signing_key, **kwargs) -> McpExternalIssuerTokenVerifier:
         )
 
 
-class TestFetchIssuerMetadata:
+class TestFetchExternalIssuerMetadata:
     """Discovery tries both well-known documents and refuses one that names another issuer."""
 
     def test_prefers_openid_configuration(self):

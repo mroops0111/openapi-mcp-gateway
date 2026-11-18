@@ -21,7 +21,7 @@ from tests.flows import (
 from tests.oauth import server_of
 
 
-class TestResolveOAuthFlow:
+class TestResolveUpstreamOAuthFlow:
     """``resolve_upstream_oauth_flow`` selects between spec-declared and config-supplied flows."""
 
     def test_picks_authorization_code_by_default(self):

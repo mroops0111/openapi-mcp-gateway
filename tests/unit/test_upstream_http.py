@@ -170,7 +170,7 @@ async def test_a_cookie_header_on_the_request_is_sent_as_given():
     assert sent_cookies == [None, 'session=bob']
 
 
-class TestSharedAPIClient:
+class TestUpstreamSharedHttpClient:
     """One ``UpstreamHttpClient`` per upstream server, bound to the event loop that first used it."""
 
     async def test_the_same_client_serves_every_call_on_a_loop(self):
