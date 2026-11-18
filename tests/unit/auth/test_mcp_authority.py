@@ -4,7 +4,7 @@ from openapi_mcp_gateway.auth.factory import build_auth
 from openapi_mcp_gateway.auth.mcp.client_credentials import (
     McpClientCredentialsExtension,
     McpClientCredentialsRoutes,
-    McpIssuedTokenVerifier,
+    McpGatewayTokenVerifier,
 )
 from openapi_mcp_gateway.auth.mcp_authority import (
     MCP_TOKEN_AUTHORITIES,
@@ -31,21 +31,29 @@ class TestAuthoritySelection:
 
     @pytest.mark.parametrize(
         'upstream',
-        [{'type': 'none'}, {'type': 'bearer', 'token': 't'}, {'type': 'api_key', 'token': 'k'}],
+        [
+            {'type': 'none'},
+            {'type': 'bearer', 'token': 't'},
+            {'type': 'api_key', 'token': 'k'},
+            {'type': 'oauth2', 'flow': 'client_credentials', 'client_id': 'cid', 'client_secret': 'sec'},
+        ],
     )
     def test_a_shared_credential_server_with_clients_issues_tokens(self, upstream):
-        setup = build_auth(auth_context(_entry({'upstream': upstream, 'mcp': {'clients': AGENT}}), build_spec()))
+        spec = spec_with_client_credentials() if upstream['type'] == 'oauth2' else build_spec()
+        setup = build_auth(auth_context(_build_entry({'upstream': upstream, 'mcp': {'clients': AGENT}}), spec))
 
-        assert isinstance(setup.verifier, McpIssuedTokenVerifier)
+        assert isinstance(setup.verifier, McpGatewayTokenVerifier)
         assert setup.provider is None
         assert any(isinstance(routes, McpClientCredentialsRoutes) for routes in setup.routes)
         assert any(isinstance(extension, McpClientCredentialsExtension) for extension in setup.extensions)
         assert setup.authorization_server_metadata is not None
         assert setup.authorization_server_metadata.grant_types_supported == ['client_credentials']
         assert not setup.mcp_tokens_carry_upstream_grant
+        # The upstream half survives the MCP half being attached.
+        assert setup.flow_type == upstream.get('flow')
 
     def test_a_server_without_clients_stays_open(self):
-        setup = build_auth(auth_context(_entry({'upstream': {'type': 'bearer', 'token': 't'}}), build_spec()))
+        setup = build_auth(auth_context(_build_entry({'upstream': {'type': 'bearer', 'token': 't'}}), build_spec()))
 
         assert setup.verifier is None
         assert setup.authorization_server_metadata is None
@@ -53,7 +61,7 @@ class TestAuthoritySelection:
 
     def test_a_resolved_client_credentials_flow_checks_its_clients(self):
         """An unset flow defers the check to startup, once the spec has resolved it."""
-        entry = _entry(
+        entry = _build_entry(
             {
                 'upstream': {'type': 'oauth2', 'client_id': 'cid', 'client_secret': 'sec'},
                 'mcp': {'clients': {'agent': {}}},
@@ -63,6 +71,6 @@ class TestAuthoritySelection:
             build_auth(auth_context(entry, spec_with_client_credentials()))
 
 
-def _entry(auth: dict):
+def _build_entry(auth: dict):
     """A server carrying ``auth``."""
     return server_entry(AuthConfig.model_validate(auth))

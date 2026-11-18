@@ -37,8 +37,8 @@ class ServerAuthSetup:
     ``resolver`` is the upstream half and is always set.
     The rest is the MCP half, and stays empty where nothing checks who calls the endpoint.
 
-    ``provider`` is set when the gateway is the authorization server for this endpoint.
-    ``verifier`` is set instead when it validates tokens another server issued.
+    ``provider`` is set when the gateway issues this endpoint's tokens through the SDK's routes.
+    ``verifier`` is set instead when it only checks them, issued elsewhere or through its own ``routes``.
     The MCP SDK rejects a server given both.
     ``settings`` and ``protected_resource`` accompany either one and drive the discovery documents.
     ``protected_resource`` is the RFC 9728 document this server publishes.
@@ -70,6 +70,8 @@ class ServerAuthSetup:
     def __post_init__(self) -> None:
         if self.provider is not None and self.verifier is not None:
             raise ValueError('A server takes either an authorization server provider or a token verifier, not both.')
+        if self.authorization_server_metadata is not None and self.settings is None:
+            raise ValueError('A server publishing authorization server metadata needs the auth settings it describes.')
 
 
 class AuthTypeHandler(abc.ABC):

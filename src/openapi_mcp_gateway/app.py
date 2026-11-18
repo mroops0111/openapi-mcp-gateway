@@ -218,7 +218,7 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
         mount = bundle.mount_path.rstrip('/')
         app.router.add_route(
             path=f'{mount}/.well-known/oauth-authorization-server',
-            endpoint=_metadata_endpoint(bundle.authorization_server_metadata),
+            endpoint=_build_metadata_endpoint(bundle.authorization_server_metadata),
             methods=['GET', 'OPTIONS'],
         )
         if bundle.auth_provider is not None and bundle.auth_settings is not None:
@@ -350,7 +350,7 @@ def _register_health_route(app: FastAPI, servers: list[_ServerBundle]) -> None:
         }
 
 
-def _metadata_endpoint(metadata: OAuthMetadata) -> typing.Callable[..., typing.Any]:
+def _build_metadata_endpoint(metadata: OAuthMetadata) -> typing.Callable[..., typing.Any]:
     """The route serving ``metadata`` as an RFC 8414 document, open to cross-origin reads."""
     return cors_middleware(MetadataHandler(metadata).handle, ['GET', 'OPTIONS'])
 
@@ -358,11 +358,11 @@ def _metadata_endpoint(metadata: OAuthMetadata) -> typing.Callable[..., typing.A
 def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:
     """Return the RFC 9728 document this server publishes.
 
-    A flow that delegates to an external issuer supplies its own, since only it knows which issuer to name.
+    A strategy that builds its own document supplies it, such as one delegating to an external issuer.
     Otherwise the gateway is both issuer and resource, so the document follows from the settings it built for itself.
 
-    Callers reach this only for a bundle carrying ``auth_settings``,
-    which the surrounding checks have already established.
+    Callers reach this only for a bundle carrying ``authorization_server_metadata``,
+    which ``ServerAuthSetup`` never holds without ``auth_settings``.
     """
     if bundle.protected_resource is not None:
         return bundle.protected_resource

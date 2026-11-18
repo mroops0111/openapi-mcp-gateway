@@ -8,19 +8,19 @@ import urllib.parse
 from mcp.server import MCPServer
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.extension import Extension
-from mcp.shared.auth import InvalidScopeError, OAuthClientInformationFull, OAuthToken
+from mcp.shared.auth import InvalidScopeError, OAuthToken
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ..routes import AuthRoutes
-from .client import McpClientDirectory, McpPreRegisteredClient
+from .client import McpPreRegisteredClient, McpPreRegisteredClientDirectory
 from .token_issuer import McpTokenAttachment, McpTokenIssuer
 
 
 logger = logging.getLogger(__name__)
 
 
-# Where a client obtains a token, and the authorize endpoint RFC 8414 metadata must name even though none is served.
+# Where a client obtains a token, and the authorize endpoint the SDK's metadata model requires though no user signs in.
 TOKEN_PATH = '/token'  # noqa: S105
 AUTHORIZE_PATH = '/authorize'
 
@@ -53,11 +53,11 @@ class McpClientCredentialsGrant:
     since nothing would approve a narrower start and step-up would follow at once.
     """
 
-    def __init__(self, tokens: McpTokenIssuer, clients: McpClientDirectory) -> None:
+    def __init__(self, tokens: McpTokenIssuer, clients: McpPreRegisteredClientDirectory) -> None:
         self.tokens = tokens
         self.clients = clients
 
-    async def authenticate(self, client_id: str, client_secret: str) -> OAuthClientInformationFull:
+    async def authenticate(self, client_id: str, client_secret: str) -> McpPreRegisteredClient:
         """The client ``client_id`` names, once ``client_secret`` proves it, compared in constant time."""
         client = await self.clients.get(client_id)
         expected = client.client_secret if client else None
@@ -66,10 +66,8 @@ class McpClientCredentialsGrant:
             raise McpClientCredentialsError('invalid_client', 'Client authentication failed', status_code=401)
         return client
 
-    async def exchange(self, client: OAuthClientInformationFull, requested_scope: str | None) -> OAuthToken:
+    async def exchange(self, client: McpPreRegisteredClient, requested_scope: str | None) -> OAuthToken:
         """Mint an MCP access token for ``client``, granting what it asks for within the scopes it may hold."""
-        if not isinstance(client, McpPreRegisteredClient):
-            raise McpClientCredentialsError('unauthorized_client', 'This client may not use client_credentials')
         try:
             scopes = client.validate_scope(requested_scope)
         except InvalidScopeError as exc:
@@ -83,7 +81,8 @@ class McpClientCredentialsRoutes(AuthRoutes):
     """The token endpoint of the gateway's ``client_credentials`` grant, under the server's own path.
 
     ``resource`` is the endpoint's canonical URI, the one RFC 8707 ``resource`` parameter must name when sent.
-    ``/authorize`` answers ``unauthorized_client``, since RFC 8414 metadata must name one but no user signs in here.
+    ``/authorize`` answers ``unauthorized_client``, since the SDK's metadata model requires one,
+    but no user signs in here.
     """
 
     def __init__(self, grant: McpClientCredentialsGrant, resource: str) -> None:
@@ -125,7 +124,7 @@ class McpClientCredentialsRoutes(AuthRoutes):
         )
 
 
-class McpIssuedTokenVerifier(TokenVerifier):
+class McpGatewayTokenVerifier(TokenVerifier):
     """The SDK's ``TokenVerifier`` for the access tokens the gateway issued itself."""
 
     def __init__(self, tokens: McpTokenIssuer) -> None:
@@ -145,22 +144,25 @@ def _read_client_credentials(request: Request, form: typing.Any) -> tuple[str, s
     """The client id and secret a token request presents, by HTTP Basic or in the form body.
 
     RFC 6749 §2.3.1 lets a client use one method per request, so presenting both is refused.
+    Basic credentials are percent-decoded as the SDK's own token endpoint does,
+    so a raw ``+`` in a secret, as ``curl -u`` sends it, stays a ``+``.
+    The scheme name is matched in any case, as RFC 9110 §11.1 requires.
     """
-    header = request.headers.get('Authorization', '')
+    scheme, _, credentials = request.headers.get('Authorization', '').partition(' ')
     form_secret = form.get('client_secret')
-    if header.startswith('Basic '):
+    if scheme.lower() == 'basic':
         if form_secret is not None:
             raise McpClientCredentialsError('invalid_request', 'Use one client authentication method, not two')
         try:
-            decoded = base64.b64decode(header.removeprefix('Basic ').strip(), validate=True).decode()
+            decoded = base64.b64decode(credentials.strip(), validate=True).decode()
             client_id, client_secret = decoded.split(':', 1)
         except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
             raise McpClientCredentialsError('invalid_client', 'Malformed Basic credentials', status_code=401) from exc
         form_client_id = form.get('client_id')
-        client_id = urllib.parse.unquote_plus(client_id)
+        client_id = urllib.parse.unquote(client_id)
         if form_client_id is not None and str(form_client_id) != client_id:
             raise McpClientCredentialsError('invalid_client', 'client_id does not match', status_code=401)
-        return client_id, urllib.parse.unquote_plus(client_secret)
+        return client_id, urllib.parse.unquote(client_secret)
     form_client_id = form.get('client_id')
     if form_client_id is None or form_secret is None:
         raise McpClientCredentialsError('invalid_client', 'Client authentication is required', status_code=401)

@@ -19,12 +19,14 @@ from .openapi import McpIntegration
 SCOPE_TOKEN = re.compile(r'[\x21\x23-\x5B\x5D-\x7E]+')
 
 
-# What an applicability error names for a setting only the gateway's own token minting reads.
-_MINTING_FLOW = 'auth.upstream.flow authorization_code, the only flow where users sign in to the gateway'
+# What an applicability error names for a setting only the gateway's own MCP tokens read.
+# Users sign in for them under one flow, and agents obtain them in front of a shared upstream credential.
+_SIGN_IN_FLOW = 'auth.upstream.flow authorization_code, the only flow where users sign in to the gateway'
 _ISSUING_SETUP = (
     'auth.upstream.flow authorization_code, or one shared upstream credential '
     '(type none, bearer or api_key, or flow client_credentials), where the gateway issues MCP tokens'
 )
+_AGENTS_SETUP = 'auth.mcp.clients, the agents the gateway issues MCP tokens to in front of this shared credential'
 
 # Keys that left the top of ``auth``, and where each lives now.
 # A config written for the old layout is refused with the new place named, rather than with a bare unknown key.
@@ -227,8 +229,8 @@ class McpAuthConfig(pydantic.BaseModel):
     """Who may call this MCP endpoint, the inbound half of ``auth``.
 
     ``issuer`` serves ``token_exchange``, where another authorization server mints the tokens.
-    ``required_scopes`` is what every token must carry, checked on that server's tokens under ``token_exchange``
-    and granted on every token the gateway mints.
+    ``required_scopes`` is what every token must carry.
+    It is checked on that server's tokens under ``token_exchange``, and granted on every token the gateway mints.
     The rest serve the gateway's own tokens, which users sign in for under ``authorization_code``,
     and which agents obtain with their own credentials in front of one shared upstream credential.
     """
@@ -239,7 +241,7 @@ class McpAuthConfig(pydantic.BaseModel):
     issuer: str | None = None
     required_scopes: list[str] = pydantic.Field(default_factory=list)
 
-    # Which operations each scope opens, and the clients allowed to sign in with the scopes each is granted.
+    # Which operations each scope opens, and the clients the gateway issues tokens to, with the scopes each may hold.
     operation_scopes: OperationScopesConfig | None = None
     clients: dict[str, ClientConfig] = pydantic.Field(default_factory=dict)
 
@@ -346,12 +348,14 @@ class AuthConfig(pydantic.BaseModel):
         # ``token_exchange`` is never inferred from a spec, so an unset flow rules it out.
         # ``authorization_code`` is, so an unset flow leaves its fields plausible.
         flow_unresolved = oauth and upstream.flow is None
-        mints_tokens = upstream.flow == 'authorization_code' or flow_unresolved
+        users_sign_in = upstream.flow == 'authorization_code' or flow_unresolved
         # One credential every caller shares upstream, where only the gateway's own tokens can tell agents apart.
         shared_credential = upstream.type in ('none', 'bearer', 'api_key') or (
             oauth and upstream.flow in ('client_credentials', None)
         )
         issues_to_agents = shared_credential and bool(self.mcp.clients)
+        # A shared credential lacks only the clients to issue to, so that is what an error there names.
+        issuing_requirement = _AGENTS_SETUP if shared_credential and not users_sign_in else _ISSUING_SETUP
 
         upstream_applicable: dict[str, tuple[bool, str]] = {
             'token': (upstream.type in ('bearer', 'api_key'), 'auth.upstream.type bearer or api_key'),
@@ -372,7 +376,7 @@ class AuthConfig(pydantic.BaseModel):
             'scope_implies': "the only flow that records each user's upstream grant",
         }
         for field, reason in receives_grant_reason.items():
-            upstream_applicable[field] = (mints_tokens, f'auth.upstream.flow authorization_code, {reason}')
+            upstream_applicable[field] = (users_sign_in, f'auth.upstream.flow authorization_code, {reason}')
         self._refuse_inapplicable(upstream, 'auth.upstream', upstream_applicable)
 
         self._refuse_inapplicable(
@@ -382,12 +386,14 @@ class AuthConfig(pydantic.BaseModel):
                 'issuer': (upstream.flow == 'token_exchange', 'auth.upstream.flow token_exchange'),
                 'required_scopes': (
                     upstream.flow in ('authorization_code', 'token_exchange') or flow_unresolved or issues_to_agents,
-                    'auth.upstream.flow token_exchange or a setup where the gateway issues MCP tokens',
+                    issuing_requirement
+                    if shared_credential
+                    else f'auth.upstream.flow token_exchange, or {_ISSUING_SETUP}',
                 ),
-                'access_token_ttl': (mints_tokens or issues_to_agents, _ISSUING_SETUP),
-                'refresh_token_ttl': (mints_tokens, _MINTING_FLOW),
-                'operation_scopes': (mints_tokens or shared_credential, _ISSUING_SETUP),
-                'clients': (mints_tokens or shared_credential, _ISSUING_SETUP),
+                'access_token_ttl': (users_sign_in or issues_to_agents, issuing_requirement),
+                'refresh_token_ttl': (users_sign_in, _SIGN_IN_FLOW),
+                'operation_scopes': (users_sign_in or shared_credential, _ISSUING_SETUP),
+                'clients': (users_sign_in or shared_credential, _ISSUING_SETUP),
             },
         )
         # An unresolved flow may still turn out to be authorization_code, so its clients are checked once it resolves.

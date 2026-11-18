@@ -3,7 +3,7 @@ import dataclasses
 
 import pydantic
 from mcp.server.auth.settings import AuthSettings
-from mcp.shared.auth import OAuthMetadata
+from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
 from ..settings import AuthConfig
 from .assembly import AuthTypeContext, ServerAuthSetup
@@ -15,7 +15,7 @@ from .mcp.client_credentials import (
     McpClientCredentialsExtension,
     McpClientCredentialsGrant,
     McpClientCredentialsRoutes,
-    McpIssuedTokenVerifier,
+    McpGatewayTokenVerifier,
 )
 from .mcp.record_origin import McpRecordOrigin
 from .mcp.token_issuer import McpTokenIssuer, McpTokenPolicy
@@ -73,6 +73,10 @@ class McpClientCredentialsAuthority(McpTokenAuthority):
         grant = McpClientCredentialsGrant(
             tokens, McpPreRegisteredClientDirectory(entry.auth.mcp.clients, policy.scopes)
         )
+        # The endpoint's canonical URI, published in the protected resource document and enforced at the token endpoint.
+        protected_resource = ProtectedResourceMetadata.model_validate(
+            {'resource': f'{base}/mcp', 'authorization_servers': [issuer]}
+        )
         metadata = OAuthMetadata.model_validate(
             {
                 'issuer': issuer,
@@ -85,7 +89,7 @@ class McpClientCredentialsAuthority(McpTokenAuthority):
         )
         return dataclasses.replace(
             setup,
-            verifier=McpIssuedTokenVerifier(tokens),
+            verifier=McpGatewayTokenVerifier(tokens),
             # The verifier reads only tokens whose origin is this server, so they cannot be for another resource.
             settings=AuthSettings(
                 issuer_url=server_url,
@@ -93,7 +97,8 @@ class McpClientCredentialsAuthority(McpTokenAuthority):
                 required_scopes=policy.scopes,
                 validate_token_resource=False,
             ),
-            routes=[*setup.routes, McpClientCredentialsRoutes(grant, resource=f'{base}/mcp')],
+            protected_resource=protected_resource,
+            routes=[*setup.routes, McpClientCredentialsRoutes(grant, resource=str(protected_resource.resource))],
             authorization_server_metadata=metadata,
             extensions=[*setup.extensions, McpClientCredentialsExtension()],
         )

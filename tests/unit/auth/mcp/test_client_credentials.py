@@ -1,14 +1,13 @@
 import base64
 
 import pytest
-from mcp.shared.auth import OAuthClientInformationFull
 from starlette.requests import Request
 
-from openapi_mcp_gateway.auth.mcp.client import McpDynamicClientRegistry, McpPreRegisteredClientDirectory
+from openapi_mcp_gateway.auth.mcp.client import McpPreRegisteredClientDirectory
 from openapi_mcp_gateway.auth.mcp.client_credentials import (
     McpClientCredentialsError,
     McpClientCredentialsGrant,
-    McpIssuedTokenVerifier,
+    McpGatewayTokenVerifier,
     _read_client_credentials,
 )
 from openapi_mcp_gateway.auth.mcp.record_origin import McpRecordOrigin
@@ -36,7 +35,7 @@ class TestGrant:
         client = await grant.authenticate('agent', 'secret')
         token = await grant.exchange(client, None)
 
-        verified = await McpIssuedTokenVerifier(tokens).verify_token(token.access_token)
+        verified = await McpGatewayTokenVerifier(tokens).verify_token(token.access_token)
 
         assert isinstance(verified, McpAccessToken)
         assert verified.scopes == ['pets:read']
@@ -50,40 +49,40 @@ class TestGrant:
         assert raised.value.error == 'invalid_client'
         assert raised.value.status_code == 401
 
-    async def test_a_self_registered_client_may_not_use_the_grant(self, tokens, memory_store):
-        """Only an operator-declared agent has the secret that proves who it is."""
-        grant = McpClientCredentialsGrant(tokens, McpDynamicClientRegistry(memory_store, GATEWAY_ISSUER))
-        client = OAuthClientInformationFull(client_id='self-registered', redirect_uris=None)
-
-        with pytest.raises(McpClientCredentialsError) as raised:
-            await grant.exchange(client, None)
-        assert raised.value.error == 'unauthorized_client'
-
 
 class TestClientAuthentication:
     """A client presents its secret one way, by HTTP Basic or in the form."""
 
-    def test_basic_credentials_are_form_decoded(self):
-        header = 'Basic ' + base64.b64encode(b'my+agent:p%40ss').decode()
-        assert _read_client_credentials(_request(header), {}) == ('my agent', 'p@ss')
+    def test_basic_credentials_are_percent_decoded(self):
+        header = 'Basic ' + base64.b64encode(b'my%20agent:p%40ss').decode()
+        assert _read_client_credentials(_build_request(header), {}) == ('my agent', 'p@ss')
+
+    def test_a_raw_plus_in_a_secret_stays_a_plus(self):
+        """``curl -u`` sends a secret unencoded, and a base64 secret often holds a ``+``."""
+        header = 'Basic ' + base64.b64encode(b'agent:ab+cd').decode()
+        assert _read_client_credentials(_build_request(header), {}) == ('agent', 'ab+cd')
+
+    def test_the_scheme_name_is_matched_in_any_case(self):
+        header = 'basic ' + base64.b64encode(b'agent:secret').decode()
+        assert _read_client_credentials(_build_request(header), {}) == ('agent', 'secret')
 
     def test_two_methods_at_once_are_refused(self):
         header = 'Basic ' + base64.b64encode(b'agent:secret').decode()
         with pytest.raises(McpClientCredentialsError) as raised:
-            _read_client_credentials(_request(header), {'client_secret': 'secret'})
+            _read_client_credentials(_build_request(header), {'client_secret': 'secret'})
         assert raised.value.error == 'invalid_request'
 
     def test_malformed_basic_credentials_are_refused(self):
         with pytest.raises(McpClientCredentialsError) as raised:
-            _read_client_credentials(_request('Basic not-base64!'), {})
+            _read_client_credentials(_build_request('Basic not-base64!'), {})
         assert raised.value.error == 'invalid_client'
 
     def test_a_basic_client_id_must_match_the_forms(self):
         header = 'Basic ' + base64.b64encode(b'agent:secret').decode()
         with pytest.raises(McpClientCredentialsError):
-            _read_client_credentials(_request(header), {'client_id': 'other'})
+            _read_client_credentials(_build_request(header), {'client_id': 'other'})
 
 
-def _request(authorization: str) -> Request:
+def _build_request(authorization: str) -> Request:
     """A request carrying ``authorization`` and nothing else."""
     return Request({'type': 'http', 'headers': [(b'authorization', authorization.encode())]})

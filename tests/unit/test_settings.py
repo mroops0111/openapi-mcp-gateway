@@ -573,6 +573,12 @@ class TestClientCredentialsSettings:
                 }
             )
 
+    @pytest.mark.parametrize('mcp', [{'access_token_ttl': 600}, {'required_scopes': ['x']}])
+    def test_a_token_setting_without_clients_names_the_clients(self, mcp):
+        """The upstream already shares one credential, so the clients to issue to are what is missing."""
+        with pytest.raises(pydantic.ValidationError, match=r'needs auth\.mcp\.clients'):
+            AuthConfig.model_validate({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': mcp})
+
     def test_an_unresolved_flow_defers_the_check(self):
         """``authorization_code`` may still be resolved from the spec, where a public client is fine."""
         assert AuthConfig.model_validate({'upstream': {'type': 'oauth2'}, 'mcp': {'clients': {'agent': {}}}})

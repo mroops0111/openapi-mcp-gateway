@@ -15,3 +15,8 @@ class TestServerAuthSetup:
         """Issuing tokens and validating someone else's are alternatives rather than layers."""
         with pytest.raises(ValueError, match='not both'):
             ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver(), provider=MagicMock(), verifier=MagicMock())
+
+    def test_authorization_server_metadata_needs_the_settings_it_describes(self):
+        """The protected resource document is built from the settings, so metadata alone cannot be served."""
+        with pytest.raises(ValueError, match='needs the auth settings'):
+            ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver(), authorization_server_metadata=MagicMock())

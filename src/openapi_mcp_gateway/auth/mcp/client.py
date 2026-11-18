@@ -190,7 +190,7 @@ class McpPreRegisteredClientDirectory(McpClientDirectory):
         }
         self._exempt_from_consent = frozenset(client_id for client_id, client in clients.items() if not client.consent)
 
-    async def get(self, client_id: str) -> OAuthClientInformationFull | None:
+    async def get(self, client_id: str) -> McpPreRegisteredClient | None:
         return self._clients.get(client_id)
 
     def requires_consent(self, client_id: str) -> bool:
