@@ -15,6 +15,7 @@ dependencies = [
     "uvicorn>=0.54.0",
     "pydantic-ai-slim[anthropic,openai,google,mcp]>=2.68.0",
     "pydantic-evals>=2.68.0",
+    "pydantic-ai-harness[skills]>=0.69.0",
 ]
 
 [project.scripts]

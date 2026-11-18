@@ -1,6 +1,6 @@
 # Tool Calling Benchmark
 
-56 tasks over seven scenarios, each run by a model through the gateway under several configs, for measuring whether the gateway's features help a model finish real work compared with one tool per operation. The data is a first version, built to give the harness something to run, and is expected to be revised.
+42 tasks over seven scenarios, each run by a model through the gateway under several configs, for measuring whether the gateway's features help a model finish real work compared with one tool per operation. The data is a first version, built to give the harness something to run, and is expected to be revised.
 
 ## Scenarios
 
@@ -20,7 +20,9 @@ Notion stands in for the TMDB spec #163 planned, since the TMDB spec in `example
 
 ## Tasks
 
-Each scenario has 8 tasks in `tasks.yaml`, 56 in all. Six fall within the intent, 2 for practice and 4 for the final runs, and two are plausible requests outside it, so the results show what narrowing a config to the intent costs. 47 of the 56 need two or more calls, mostly finding something by name before changing it.
+Each scenario has 6 tasks in `tasks.yaml`, 42 in all, 2 for practice and 4 for the final runs. Loading refuses scenarios whose tasks split differently, so each scenario weighs the same in a mean over them. 39 of the 42 need two or more calls, mostly finding something by name before changing it.
+
+Every task is one the intent's own words name, such as cancelling an order for "handle customers' orders". A request the intent leaves out would only fail wherever a config follows the intent, which the config itself already shows.
 
 Every task carries three things:
 
@@ -59,10 +61,12 @@ No real API is called. A replay server stands in for every upstream, answering e
 
 ## Validation
 
-`agent validate` calls no model, and proves two things.
+`tool-calling validate` calls no model, and proves two things.
 
 - **Every task can pass.** Each task's solution runs under the baseline through the gateway and the replay upstream, and has to pass the grader with no failing tool call.
-- **Every variant reaches what its in-intent tasks need.** A variant that hides an operation such a task expects is a mistake in its config. An out-of-intent task may lose its operation, since showing that cost is what it is for.
+- **Every hand-written variant reaches what each task needs.** Every task is one the intent names, so a hand-written variant that hides an operation a task expects is a mistake in its config.
+
+A generated variant may leave a task out of reach too, and that is the generator's miss to measure, never one to fix by hand. `validate` lists those tasks without failing, and `run` reports them as intent coverage beside the success rates.
 
 ## Known Biases
 

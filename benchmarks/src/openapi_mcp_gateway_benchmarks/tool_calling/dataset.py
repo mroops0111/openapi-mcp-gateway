@@ -1,3 +1,4 @@
+import collections
 import pathlib
 import typing
 
@@ -43,6 +44,19 @@ class ModelSpec(pydantic.BaseModel):
     settings: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
 
 
+class ConfigGenerator(pydantic.BaseModel):
+    """The model and skill that write a scenario's generated config from its intent alone."""
+
+    model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
+
+    model: ModelSpec
+    # The skill library holding the skill, relative to the benchmark directory.
+    skill_library: pathlib.Path
+    skill: str
+    # Each variant the generator writes, by name, to what the user adds after the intent, empty for the intent alone.
+    variants: dict[str, str] = pydantic.Field(min_length=1)
+
+
 class Manifest(pydantic.BaseModel):
     """The manifest in ``benchmark.yaml``, naming the specs, the models, and how each task runs."""
 
@@ -56,6 +70,7 @@ class Manifest(pydantic.BaseModel):
     # The most model requests one task may make before it counts as failed.
     request_limit: int = pydantic.Field(default=20, ge=1)
     system_prompt: str
+    config_generator: ConfigGenerator
 
 
 class ExpectedCall(pydantic.BaseModel):
@@ -74,10 +89,29 @@ class ExpectedCall(pydantic.BaseModel):
     query: dict[str, str] = pydantic.Field(default_factory=dict)
     body: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
 
+    @property
+    def alternatives(self) -> list['ExpectedCall']:
+        return [self]
+
     @pydantic.field_validator('method')
     @classmethod
     def _validate_method(cls, method: str) -> str:
         return method.upper()
+
+
+class AnyOf(pydantic.BaseModel):
+    """Calls that each do what one step of a task asks, any one of which counts.
+
+    Some APIs do one thing by more than one endpoint, as Stripe refunds a charge by its own endpoint or a new refund.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
+
+    any_of: list[ExpectedCall] = pydantic.Field(min_length=2)
+
+    @property
+    def alternatives(self) -> list[ExpectedCall]:
+        return list(self.any_of)
 
 
 class SolutionCall(pydantic.BaseModel):
@@ -98,9 +132,7 @@ class Task(pydantic.BaseModel):
     id: str
     prompt: str = pydantic.Field(min_length=1)
     split: Split
-    # Whether the task is one the scenario's intent covers, so a config written for the intent should serve it.
-    in_intent: bool
-    expected_calls: list[ExpectedCall] = pydantic.Field(min_length=1)
+    expected_calls: list[ExpectedCall | AnyOf] = pydantic.Field(min_length=1)
     solution: list[SolutionCall] = pydantic.Field(min_length=1)
     responses: list[ResponseOverride] = pydantic.Field(default_factory=list)
 
@@ -152,7 +184,8 @@ class Scenario(pydantic.BaseModel):
         if duplicates:
             raise ValueError(f'{self.name} repeats task ids {duplicates}')
         for task in self.tasks:
-            named = {call.server for call in task.expected_calls} | {call.server for call in task.solution}
+            named = {call.server for step in task.expected_calls for call in step.alternatives}
+            named |= {call.server for call in task.solution}
             named |= {response.server for response in task.responses}
             unknown = sorted(named - set(self.servers))
             if unknown:
@@ -165,7 +198,7 @@ class Scenario(pydantic.BaseModel):
 
 
 class Benchmark(pydantic.BaseModel):
-    """An tool calling benchmark directory, loaded and validated."""
+    """A tool calling benchmark directory, loaded and validated."""
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
@@ -197,7 +230,18 @@ def load(root: pathlib.Path) -> Benchmark:
         if unknown_specs:
             raise DatasetError(f'{directory}: specs {unknown_specs} are not in the manifest')
         scenarios[name] = scenario
+    _check_splits(scenarios)
     return Benchmark(root=root, manifest=manifest, scenarios=scenarios)
+
+
+def _check_splits(scenarios: dict[str, Scenario]) -> None:
+    """Refuse scenarios whose tasks split differently, so each scenario weighs the same in a mean over them."""
+    splits = {
+        name: dict(sorted(collections.Counter(task.split for task in scenario.tasks).items()))
+        for name, scenario in scenarios.items()
+    }
+    if len({tuple(counts.items()) for counts in splits.values()}) > 1:
+        raise DatasetError(f'Every scenario must have as many tasks in each split, but they have {splits}')
 
 
 def _validated(model: type[ModelType], data: typing.Any, location: pathlib.Path) -> ModelType:

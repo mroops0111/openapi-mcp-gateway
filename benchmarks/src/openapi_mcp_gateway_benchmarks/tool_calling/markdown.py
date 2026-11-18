@@ -7,6 +7,7 @@ def to_markdown(report: AgentReport) -> str:
     """Render ``report`` as the Markdown tables a results page or a PR description quotes.
 
     One table holds every scenario, variant, and model, and a second compares each variant with the baseline.
+    A third lists each variant leaving tasks out of reach, which caps its success rate under every model.
     """
     sections = [
         f'Tool calling benchmark v{report.benchmark_version}, openapi-mcp-gateway {report.gateway_version}, '
@@ -21,8 +22,6 @@ def to_markdown(report: AgentReport) -> str:
                 'Runs',
                 'Success',
                 'Spread',
-                'In Intent',
-                'Out of Intent',
                 'Input Tokens',
                 'Tool Calls',
                 'Tool Errors',
@@ -35,8 +34,6 @@ def to_markdown(report: AgentReport) -> str:
                     f'{cell.run_count - cell.errored_count}/{cell.run_count}',
                     _percent(cell.success_rate),
                     _percent(cell.success_rate_spread),
-                    _percent(cell.in_intent_success_rate),
-                    _percent(cell.out_of_intent_success_rate),
                     f'{cell.mean_input_tokens:,.0f}',
                     f'{cell.mean_tool_calls:.1f}',
                     f'{cell.mean_tool_errors:.1f}',
@@ -65,6 +62,25 @@ def to_markdown(report: AgentReport) -> str:
                 ],
             ),
         ]
+    gaps = [entry for entry in report.coverage if entry.unreachable_tasks]
+    if gaps:
+        sections += [
+            'Variants that serve no operation for some step of a task, so the task fails under every model:',
+            _table(
+                ['Scenario', 'Variant', 'Reachable Tasks', 'Out of Reach'],
+                [
+                    [
+                        entry.scenario,
+                        entry.variant,
+                        f'{entry.reachable_task_count}/{entry.task_count}',
+                        '<br>'.join(
+                            f'{task_id}: {", ".join(steps)}' for task_id, steps in entry.unreachable_tasks.items()
+                        ),
+                    ]
+                    for entry in gaps
+                ],
+            ),
+        ]
     return '\n\n'.join(sections) + '\n'
 
 
@@ -75,8 +91,8 @@ def _measure(measure: str, value: float, *, signed: bool = False) -> str:
     return f'{value:{sign},.0f}'
 
 
-def _percent(value: float | None) -> str:
-    return '' if value is None else f'{value * 100:.0f}%'
+def _percent(value: float) -> str:
+    return f'{value * 100:.0f}%'
 
 
 def _table(header: typing.Sequence[str], rows: typing.Sequence[typing.Sequence[str]]) -> str:

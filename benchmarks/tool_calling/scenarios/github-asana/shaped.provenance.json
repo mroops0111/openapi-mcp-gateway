@@ -1,0 +1,15 @@
+{
+  "scenario": "github-asana",
+  "variant": "shaped",
+  "model": "anthropic:claude-sonnet-5-5",
+  "skill": "generate-config",
+  "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+  "request": "Turn engineering work on GitHub into tracked tasks in Asana, and keep the two in step. Also shape the operations, so that each tool is easy for a model to call correctly.",
+  "finished_at": "2026-11-17T10:15:45+00:00",
+  "gateway_version": "0.8.0",
+  "pydantic_ai_version": "2.69.0",
+  "input_tokens": 110727,
+  "output_tokens": 5373,
+  "model_requests": 8,
+  "summary": "`config.yaml` now passes `--dry-run`: 2 servers and 16 tools. I only ran the dry-run, so none of the shaped requests or responses have been tried against the live APIs.\n\n- **GitHub (8 tools):** I exposed the issue tools (list, get, create, update, list comments, comment) and read-only pull request list and get, so work can be read and linked back. I trimmed the issue and PR responses to the key fields (number, title, state, URL, assignees, labels, dates).\n- **Asana (8 tools):** The tools are workspace and project lookup, task list, get, create, update, and story (comment) list and create.\n- **Task shaping:** `createTask`, `updateTask` and `createStoryForTask` take flat arguments such as `name`, `project_gid`, `notes`, `completed` and `due_on`. The gateway builds Asana's `{data: {...}}` wrapper and returns a short result. The task tools also return the task URL so it can be pasted back into GitHub.\n- **Keeping the two in step:** Each server has instructions telling the model to put the GitHub URL in the Asana task notes and the Asana link in a GitHub comment. It also tells the model to set `completed` when an issue or PR closes.\n- **Not exposed:** I left out webhooks, because the gateway can't receive events. Syncing therefore only happens when the model calls these tools.\n- **Auth:** Both servers use static bearer tokens, which suits one user running it locally. Set `GITHUB_TOKEN` (a personal access token) and `ASANA_TOKEN` (an Asana personal access token) before running `openapi-mcp-gateway --config config.yaml`."
+}

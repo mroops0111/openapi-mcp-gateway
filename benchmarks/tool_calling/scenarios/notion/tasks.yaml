@@ -3,7 +3,6 @@
     open the notes for "Q3 planning sync" and add a paragraph at the end saying: "Action item: Priya to share the
     revised hiring plan by Friday."'
   split: practice
-  in_intent: true
   expected_calls:
   - server: notion
     method: PATCH
@@ -89,10 +88,10 @@
       results: []
       has_more: false
       next_cursor: null
+
 - id: notion-t02
   prompt: 'I finished "Update onboarding doc" — can you mark it Done in our Tasks database? It''s this one: https://www.notion.so/acme/Tasks-7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f'
   split: practice
-  in_intent: true
   expected_calls:
   - server: notion
     method: PATCH
@@ -170,108 +169,10 @@
     body:
       object: page
       id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e11
+
 - id: notion-t03
-  prompt: Standup moved to 10:00. On the "Team rituals" page in our Team Wiki database (https://www.notion.so/acme/Team-Wiki-5e8a1c3b7d9f4a2e8c6b4d2f0a8e6c4b),
-    the paragraph that says standup is at 9:30 needs to read "Daily standup is at 10:00 in the Huddle room." instead.
-    Please fix it.
-  split: final
-  in_intent: true
-  expected_calls:
-  - server: notion
-    method: PATCH
-    path: /v1/blocks/{id}
-    path_parameters:
-      id: e1f2a3b4-5c6d-4e7f-8a9b-0c1d2e3f4a22
-    body:
-      paragraph:
-        rich_text:
-        - text:
-            content: Daily standup is at 10:00 in the Huddle room.
-  solution:
-  - server: notion
-    operation: update_a_block
-    arguments:
-      id: e1f2a3b4-5c6d-4e7f-8a9b-0c1d2e3f4a22
-      paragraph:
-        rich_text:
-        - type: text
-          text:
-            content: Daily standup is at 10:00 in the Huddle room.
-  responses:
-  - server: notion
-    method: POST
-    path: /v1/databases/{id}/query
-    body:
-      object: list
-      has_more: false
-      next_cursor: null
-      results:
-      - object: page
-        id: d0e1f2a3-4b5c-4d6e-8f7a-9b0c1d2e3f01
-        properties:
-          Name:
-            type: title
-            title:
-            - type: text
-              plain_text: Team rituals
-              text:
-                content: Team rituals
-      - object: page
-        id: d0e1f2a3-4b5c-4d6e-8f7a-9b0c1d2e3f02
-        properties:
-          Name:
-            type: title
-            title:
-            - type: text
-              plain_text: Office info
-              text:
-                content: Office info
-  - server: notion
-    method: GET
-    path: /v1/blocks/d0e1f2a3-4b5c-4d6e-8f7a-9b0c1d2e3f01/children
-    body:
-      object: list
-      has_more: false
-      next_cursor: null
-      results:
-      - object: block
-        id: e1f2a3b4-5c6d-4e7f-8a9b-0c1d2e3f4a21
-        type: paragraph
-        paragraph:
-          rich_text:
-          - type: text
-            plain_text: Retro happens every other Thursday at 15:00.
-            text:
-              content: Retro happens every other Thursday at 15:00.
-      - object: block
-        id: e1f2a3b4-5c6d-4e7f-8a9b-0c1d2e3f4a22
-        type: paragraph
-        paragraph:
-          rich_text:
-          - type: text
-            plain_text: Daily standup is at 9:30 in the Huddle room.
-            text:
-              content: Daily standup is at 9:30 in the Huddle room.
-      - object: block
-        id: e1f2a3b4-5c6d-4e7f-8a9b-0c1d2e3f4a23
-        type: paragraph
-        paragraph:
-          rich_text:
-          - type: text
-            plain_text: Planning is on the first Monday of each month.
-            text:
-              content: Planning is on the first Monday of each month.
-  - server: notion
-    method: PATCH
-    path: /v1/blocks/e1f2a3b4-5c6d-4e7f-8a9b-0c1d2e3f4a22
-    body:
-      object: block
-      id: e1f2a3b4-5c6d-4e7f-8a9b-0c1d2e3f4a22
-      type: paragraph
-- id: notion-t04
   prompt: Can you move "Migrate CI to new runners" to In progress in the Tasks database? https://www.notion.so/acme/Tasks-7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f
   split: final
-  in_intent: true
   expected_calls:
   - server: notion
     method: PATCH
@@ -335,11 +236,11 @@
     body:
       object: page
       id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e32
-- id: notion-t05
+
+- id: notion-t04
   prompt: 'Add a "Follow-ups" heading to the "Release 2.4 retro" notes in our Meeting Notes database (https://www.notion.so/acme/Meeting-Notes-3f1c2a9b8d7e4f60a1b2c3d4e5f60718),
     with a paragraph under it: "Write a runbook for rolling back the payments service."'
   split: final
-  in_intent: true
   expected_calls:
   - server: notion
     method: PATCH
@@ -417,11 +318,11 @@
     method: PATCH
     path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d42/children
     body: *id001
-- id: notion-t06
+
+- id: notion-t05
   prompt: 'The "Design review for pricing page" task in our Tasks database (https://www.notion.so/acme/Tasks-7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f)
     is stuck. Set its status to Blocked and add a note on the task page: "Blocked: waiting on final copy from marketing."'
   split: final
-  in_intent: true
   expected_calls:
   - server: notion
     method: PATCH
@@ -513,55 +414,37 @@
     method: PATCH
     path: /v1/blocks/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52/children
     body: *id001
-- id: notion-t07
-  prompt: Our Tasks database (https://www.notion.so/acme/Tasks-7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f) now covers the
-    whole platform team, so please rename the database itself to "Platform Team Tasks".
+
+- id: notion-t06
+  prompt: 'In our Meeting Notes database (https://www.notion.so/acme/Meeting-Notes-3f1c2a9b8d7e4f60a1b2c3d4e5f60718),
+    find the notes from our most recent team offsite and add a paragraph at the end: "Book a room for the next offsite."'
   split: final
-  in_intent: false
   expected_calls:
   - server: notion
     method: PATCH
-    path: /v1/databases/{id}
-    body:
-      title:
-      - text:
-          content: Platform Team Tasks
-  solution:
-  - server: notion
-    operation: update_a_database
-    arguments:
-      id: 7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f
-      title:
-      - text:
-          content: Platform Team Tasks
-  responses:
-  - server: notion
-    method: PATCH
-    path: /v1/databases/{id}
-    body:
-      object: database
-      id: 7b2d4e6f-8a0c-4b1d-9e3f-5a7c9b1d3e5f
-      title:
-      - type: text
-        plain_text: Platform Team Tasks
-        text:
-          content: Platform Team Tasks
-- id: notion-t08
-  prompt: On the "Office info" page in our Team Wiki database (https://www.notion.so/acme/Team-Wiki-5e8a1c3b7d9f4a2e8c6b4d2f0a8e6c4b)
-    there's a paragraph with the old guest wifi password. Please delete that paragraph entirely.
-  split: final
-  in_intent: false
-  expected_calls:
-  - server: notion
-    method: DELETE
-    path: /v1/blocks/{id}
+    path: /v1/blocks/{id}/children
     path_parameters:
-      id: f2a3b4c5-6d7e-4f8a-9b0c-1d2e3f4a5b62
+      id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21
+    body:
+      children:
+      - type: paragraph
+        paragraph:
+          rich_text:
+          - text:
+              content: Book a room for the next offsite.
   solution:
   - server: notion
-    operation: delete_a_block
+    operation: append_block_children
     arguments:
-      id: f2a3b4c5-6d7e-4f8a-9b0c-1d2e3f4a5b62
+      id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21
+      children:
+      - object: block
+        type: paragraph
+        paragraph:
+          rich_text:
+          - type: text
+            text:
+              content: Book a room for the next offsite.
   responses:
   - server: notion
     method: POST
@@ -572,64 +455,38 @@
       next_cursor: null
       results:
       - object: page
-        id: d0e1f2a3-4b5c-4d6e-8f7a-9b0c1d2e3f01
+        id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21
         properties:
           Name:
             type: title
             title:
             - type: text
-              plain_text: Team rituals
+              plain_text: Team offsite, November 2026
               text:
-                content: Team rituals
+                content: Team offsite, November 2026
+          Date:
+            type: date
+            date:
+              start: '2026-11-16'
       - object: page
-        id: d0e1f2a3-4b5c-4d6e-8f7a-9b0c1d2e3f02
+        id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d22
         properties:
           Name:
             type: title
             title:
             - type: text
-              plain_text: Office info
+              plain_text: Team offsite, May 2026
               text:
-                content: Office info
+                content: Team offsite, May 2026
+          Date:
+            type: date
+            date:
+              start: '2026-05-21'
   - server: notion
-    method: GET
-    path: /v1/blocks/d0e1f2a3-4b5c-4d6e-8f7a-9b0c1d2e3f02/children
+    method: PATCH
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21/children
     body:
       object: list
+      results: []
       has_more: false
       next_cursor: null
-      results:
-      - object: block
-        id: f2a3b4c5-6d7e-4f8a-9b0c-1d2e3f4a5b61
-        type: paragraph
-        paragraph:
-          rich_text:
-          - type: text
-            plain_text: 'Office hours: 8:00 to 19:00, Monday to Friday.'
-            text:
-              content: 'Office hours: 8:00 to 19:00, Monday to Friday.'
-      - object: block
-        id: f2a3b4c5-6d7e-4f8a-9b0c-1d2e3f4a5b62
-        type: paragraph
-        paragraph:
-          rich_text:
-          - type: text
-            plain_text: 'Guest wifi: AcmeGuest / password sunflower42'
-            text:
-              content: 'Guest wifi: AcmeGuest / password sunflower42'
-      - object: block
-        id: f2a3b4c5-6d7e-4f8a-9b0c-1d2e3f4a5b63
-        type: paragraph
-        paragraph:
-          rich_text:
-          - type: text
-            plain_text: 'Staff wifi: ask IT for an account.'
-            text:
-              content: 'Staff wifi: ask IT for an account.'
-  - server: notion
-    method: DELETE
-    path: /v1/blocks/f2a3b4c5-6d7e-4f8a-9b0c-1d2e3f4a5b62
-    body:
-      object: block
-      id: f2a3b4c5-6d7e-4f8a-9b0c-1d2e3f4a5b62
-      archived: true

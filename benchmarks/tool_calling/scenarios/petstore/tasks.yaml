@@ -2,7 +2,6 @@
   prompt: >-
     We just got in a golden retriever puppy named Biscuit. Please add him to the shop's listings as a dog that's available for sale.
   split: practice
-  in_intent: true
   expected_calls:
     - server: petstore
       method: POST
@@ -17,13 +16,18 @@
   prompt: >-
     Our cat Whiskers went home with a new family this morning. Can you mark Whiskers as sold in the shop listings?
   split: practice
-  in_intent: true
   expected_calls:
-    - server: petstore
-      method: POST
-      path: /pet/{petId}
-      path_parameters: {petId: '31'}
-      query: {status: sold}
+    # Petstore sets a pet's status by its form endpoint, or by sending the whole pet back.
+    - any_of:
+        - server: petstore
+          method: POST
+          path: /pet/{petId}
+          path_parameters: {petId: '31'}
+          query: {status: sold}
+        - server: petstore
+          method: PUT
+          path: /pet
+          body: {id: 31, status: sold}
   solution:
     - server: petstore
       operation: update_pet_with_form
@@ -41,7 +45,6 @@
   prompt: >-
     A customer just phoned to cancel their order, number 5. Please cancel it.
   split: final
-  in_intent: true
   expected_calls:
     - server: petstore
       method: DELETE
@@ -56,17 +59,22 @@
   prompt: >-
     A customer wants to buy Kiwi, the parrot we have up for sale. Place an order for one Kiwi, and mark Kiwi as pending so nobody else tries to buy her.
   split: final
-  in_intent: true
   expected_calls:
     - server: petstore
       method: POST
       path: /store/order
       body: {petId: 52, quantity: 1}
-    - server: petstore
-      method: POST
-      path: /pet/{petId}
-      path_parameters: {petId: '52'}
-      query: {status: pending}
+    # Petstore sets a pet's status by its form endpoint, or by sending the whole pet back.
+    - any_of:
+        - server: petstore
+          method: POST
+          path: /pet/{petId}
+          path_parameters: {petId: '52'}
+          query: {status: pending}
+        - server: petstore
+          method: PUT
+          path: /pet
+          body: {id: 52, status: pending}
   solution:
     - server: petstore
       operation: place_order
@@ -87,17 +95,22 @@
   prompt: >-
     Order 7 has been delivered to the customer. Look up which pet that order was for and mark that pet as sold.
   split: final
-  in_intent: true
   expected_calls:
     - server: petstore
       method: GET
       path: /store/order/{orderId}
       path_parameters: {orderId: '7'}
-    - server: petstore
-      method: POST
-      path: /pet/{petId}
-      path_parameters: {petId: '88'}
-      query: {status: sold}
+    # Petstore sets a pet's status by its form endpoint, or by sending the whole pet back.
+    - any_of:
+        - server: petstore
+          method: POST
+          path: /pet/{petId}
+          path_parameters: {petId: '88'}
+          query: {status: sold}
+        - server: petstore
+          method: PUT
+          path: /pet
+          body: {id: 88, status: sold}
   solution:
     - server: petstore
       operation: get_order_by_id
@@ -117,54 +130,44 @@
 
 - id: petstore-t06
   prompt: >-
-    We're no longer selling Nibbles the hamster, he's staying on as the shop mascot. Please take him off our listings entirely.
+    The customer behind order 9 backed out. Cancel the order, and put the pet it was for back up for sale as available.
   split: final
-  in_intent: true
   expected_calls:
     - server: petstore
+      method: GET
+      path: /store/order/{orderId}
+      path_parameters: {orderId: '9'}
+    - server: petstore
       method: DELETE
-      path: /pet/{petId}
-      path_parameters: {petId: '61'}
+      path: /store/order/{orderId}
+      path_parameters: {orderId: '9'}
+    # Petstore sets a pet's status by its form endpoint, or by sending the whole pet back.
+    - any_of:
+        - server: petstore
+          method: POST
+          path: /pet/{petId}
+          path_parameters: {petId: '64'}
+          query: {status: available}
+        - server: petstore
+          method: PUT
+          path: /pet
+          body: {id: 64, status: available}
   solution:
     - server: petstore
-      operation: delete_pet
-      arguments: {petId: 61}
+      operation: get_order_by_id
+      arguments: {orderId: 9}
+    - server: petstore
+      operation: delete_order
+      arguments: {orderId: 9}
+    - server: petstore
+      operation: update_pet_with_form
+      arguments: {petId: 64, status: available}
   responses:
     - server: petstore
       method: GET
-      path: /pet/findByStatus
-      body:
-        - {id: 60, name: Peanut, category: {id: 6, name: Hamsters}, photoUrls: [], tags: [], status: available}
-        - {id: 61, name: Nibbles, category: {id: 6, name: Hamsters}, photoUrls: [], tags: [], status: available}
-        - {id: 62, name: Biscuit, category: {id: 1, name: Dogs}, photoUrls: [], tags: [], status: available}
-
-- id: petstore-t07
-  prompt: >-
-    I've hired a new assistant, Jamie Lee. Please set up an account for her with the username jamielee and the email jamie.lee@example.com.
-  split: final
-  in_intent: false
-  expected_calls:
+      path: /store/order/9
+      body: {id: 9, petId: 64, quantity: 1, shipDate: '2026-11-20T10:00:00Z', status: placed, complete: false}
     - server: petstore
-      method: POST
-      path: /user
-      body: {username: jamielee, email: jamie.lee@example.com}
-  solution:
-    - server: petstore
-      operation: create_user
-      arguments: {username: jamielee, firstName: Jamie, lastName: Lee, email: jamie.lee@example.com}
-
-- id: petstore-t08
-  prompt: >-
-    Marco changed his phone number. Please update the phone on his account (username mrossi) to 555-0142.
-  split: final
-  in_intent: false
-  expected_calls:
-    - server: petstore
-      method: PUT
-      path: /user/{username}
-      path_parameters: {username: mrossi}
-      body: {phone: 555-0142}
-  solution:
-    - server: petstore
-      operation: update_user
-      arguments: {username: mrossi, phone: 555-0142}
+      method: GET
+      path: /store/order/10
+      body: {id: 10, petId: 65, quantity: 1, shipDate: '2026-11-21T10:00:00Z', status: placed, complete: false}

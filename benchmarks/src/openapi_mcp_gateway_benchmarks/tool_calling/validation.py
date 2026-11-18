@@ -1,14 +1,9 @@
-import re
-
 import pydantic
 
-from ..gateway_connection import list_operations
-from .dataset import BASELINE_VARIANT, Benchmark, ExpectedCall, Scenario
+from .dataset import BASELINE_VARIANT, Benchmark, Scenario
 from .harness import ScenarioRun
+from .reach import unreached_steps
 from .solution import solution_model
-
-
-PATH_PARAMETER = re.compile(r'\{[^}/]+\}')
 
 
 class ValidationProblem(pydantic.BaseModel):
@@ -23,12 +18,12 @@ class ValidationProblem(pydantic.BaseModel):
 
 
 async def validate(benchmark: Benchmark) -> list[ValidationProblem]:
-    """Prove every task can pass and every variant still reaches what an in-intent task needs, calling no model.
+    """Prove every task can pass and every hand-written variant reaches what each task needs, calling no model.
 
     Each task's solution runs under the baseline through the real gateway and the replay upstream,
     and has to pass the grader, so a task can never expect a call the gateway cannot make or the grader cannot see.
-    A variant that hides an operation an in-intent task needs is a problem in that variant's config.
-    An out-of-intent task may lose its operation to a variant, since showing that cost is what it is for.
+    Every task is one the scenario's intent names, so a hand-written variant hiding an operation a task needs is faulty.
+    A generated variant is the generator's to get right, so what it leaves out is measured as intent coverage instead.
     """
     spec_paths = {name: str(pin.fetch(benchmark.root)) for name, pin in benchmark.manifest.specs.items()}
     problems = []
@@ -63,41 +58,16 @@ async def _validate_solutions(scenario_run: ScenarioRun) -> list[ValidationProbl
 
 
 def _validate_reach(scenario_run: ScenarioRun) -> list[ValidationProblem]:
+    """Each task a hand-written variant leaves out of reach, which for a generated one the report counts instead."""
     scenario = scenario_run.scenario
-    problems = []
-    for variant in scenario.variants:
-        config = scenario_run.gateway_config(variant)
-        served = {
-            server.name: [(listing.method, listing.path) for listing in list_operations(server)]
-            for server in config.servers
-        }
-        for task in scenario.tasks:
-            if not task.in_intent:
-                continue
-            for expected in task.expected_calls:
-                if not any(_same_operation(expected, method, path) for method, path in served[expected.server]):
-                    problems.append(
-                        _problem(
-                            scenario,
-                            task.id,
-                            variant,
-                            f'{expected.method} {expected.path} is not served on {expected.server}',
-                        )
-                    )
-    return problems
-
-
-def _same_operation(expected: ExpectedCall, method: str, template: str) -> bool:
-    """Whether ``expected`` names the operation at ``method`` and ``template``, whatever its placeholders are called.
-
-    An expected call names its path as a template or as a concrete path, so either one is tried.
-    """
-    if expected.method != method:
-        return False
-    if PATH_PARAMETER.sub('{}', expected.path) == PATH_PARAMETER.sub('{}', template):
-        return True
-    pattern = '^' + '[^/]+'.join(re.escape(part) for part in PATH_PARAMETER.split(template)) + '/?$'
-    return re.match(pattern, expected.path) is not None
+    generated = set(scenario_run.benchmark.manifest.config_generator.variants)
+    return [
+        _problem(scenario, task_id, variant, f'{step} is not served')
+        for variant in scenario.variants
+        if variant not in generated
+        for task_id, steps in unreached_steps(scenario_run, variant).items()
+        for step in steps
+    ]
 
 
 def _problem(scenario: Scenario, task_id: str, variant: str, problem: str) -> ValidationProblem:

@@ -43,7 +43,8 @@ benchmarks/src/openapi_mcp_gateway_benchmarks/
     runner.py                         every task under every variant and model, as Pydantic Evals datasets
     report.py                         summaries per scenario, variant, and model, and comparisons with the baseline
     markdown.py                       a report as Markdown tables
-    validation.py                     every task passing with its solution, and every variant reaching it
+    reach.py                          the tasks each variant serves every operation for, as intent coverage
+    validation.py                     every task passing with its solution, and every hand-written variant reaching it
 
 benchmarks/                           data
   search_ranking/
@@ -134,7 +135,7 @@ uv run openapi-mcp-gateway-benchmarks tool-calling run benchmarks/tool_calling -
 
 Each scenario, variant, and model reports five measures.
 
-- **Success Rate**: the share of runs that made the expected calls and wrote nothing else, overall and split into tasks inside and outside the intent, with its spread across repetitions.
+- **Success Rate**: the share of runs that made the expected calls and wrote nothing else, with its spread across repetitions.
 - **Input and output tokens per task**, as the provider reports them.
 - **Tool calls per task**, every call the model made, searches and failures included.
 - **Tool errors per task**, calls the gateway or the upstream refused, such as arguments that do not fit the schema.

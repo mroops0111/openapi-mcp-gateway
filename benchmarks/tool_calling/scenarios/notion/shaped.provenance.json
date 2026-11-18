@@ -1,0 +1,15 @@
+{
+  "scenario": "notion",
+  "variant": "shaped",
+  "model": "anthropic:claude-sonnet-5-5",
+  "skill": "generate-config",
+  "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+  "request": "Keep a team's notes in Notion organized: find pages, add content to them, and update database entries. Also shape the operations, so that each tool is easy for a model to call correctly.",
+  "finished_at": "2026-11-17T10:12:01+00:00",
+  "gateway_version": "0.8.0",
+  "pydantic_ai_version": "2.69.0",
+  "input_tokens": 196212,
+  "output_tokens": 4831,
+  "model_requests": 13,
+  "summary": "`config.yaml` validates with `--dry-run`: 1 server and 6 tools. I haven't run any of the tools against the live Notion API. I replaced the placeholder `base_url` with `https://api.notion.com` and the `none` auth with a bearer token read from `NOTION_TOKEN`. Create a Notion integration, share your team's pages and databases with it, and set that variable before you run the gateway.\n\n- **Find pages and read them:** `query_a_database`, `retrieve_a_database`, `retrieve_a_page` and `retrieve_block_children`. The spec has no search operation, so pages are found by querying a database. The server instructions tell the model this.\n- **Add content:** `append_block_children`. I reshaped it into three simple inputs: the page id, the text, and a block type (paragraph, heading, bullet, numbered item, to-do or quote). The gateway builds Notion's nested block JSON from those. The spec has no create-page operation, so this adds to existing pages only.\n- **Update database entries:** `update_page_properties`, left as it comes in the spec.\n- **Hidden header:** the required `Notion-Version` header (`2022-06-28`) is hidden on every tool, so the model never sets it.\n- **Left out:** deleting blocks, editing blocks or database schemas, comments and users. The model can't destroy or restructure anything.\n\nRun it with `uvx openapi-mcp-gateway --config config.yaml`."
+}

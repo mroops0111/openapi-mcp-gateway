@@ -39,7 +39,6 @@ class RunRecord(pydantic.BaseModel):
     model: str
     task_id: str
     split: Split
-    in_intent: bool
     repetition: int
     passed: bool
     # True when the run failed for reasons outside the model and the variant, after every retry.
@@ -147,7 +146,6 @@ def _records(
                 model=model,
                 task_id=case.inputs.id,
                 split=case.inputs.split,
-                in_intent=case.inputs.in_intent,
                 repetition=_repetition(case.name),
                 passed=outcome.grade.passed,
                 errored=False,
@@ -169,7 +167,6 @@ def _records(
                 model=model,
                 task_id=failure.inputs.id,
                 split=failure.inputs.split,
-                in_intent=failure.inputs.in_intent,
                 repetition=_repetition(failure.name),
                 passed=False,
                 errored=True,

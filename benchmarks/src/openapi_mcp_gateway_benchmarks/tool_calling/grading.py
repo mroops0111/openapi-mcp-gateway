@@ -4,7 +4,7 @@ import urllib.parse
 
 import pydantic
 
-from .dataset import ExpectedCall
+from .dataset import AnyOf, ExpectedCall
 from .replay import RecordedRequest
 
 
@@ -26,19 +26,20 @@ class Grade(pydantic.BaseModel):
     unexpected_writes: list[str]
 
 
-def grade(expected_calls: typing.Sequence[ExpectedCall], requests: typing.Sequence[RecordedRequest]) -> Grade:
+def grade(expected_calls: typing.Sequence[ExpectedCall | AnyOf], requests: typing.Sequence[RecordedRequest]) -> Grade:
     """Grade the requests one run sent upstream against what its task expected.
 
     Each expected call needs a request of its own that matches it, in any order.
+    An ``any_of`` step needs a request that matches one of its calls.
     A run passes when every expected call is matched and every request that writes is one of them,
     so reading more than needed costs nothing, while changing more than asked fails the task.
     """
     unused = list(requests)
     missing_calls = []
-    for expected in expected_calls:
-        match = next((request for request in unused if matches(expected, request)), None)
+    for step in expected_calls:
+        match = next((request for request in unused if any(matches(call, request) for call in step.alternatives)), None)
         if match is None:
-            missing_calls.append(_describe(expected))
+            missing_calls.append(' or '.join(_describe(call) for call in step.alternatives))
         else:
             unused.remove(match)
     unexpected_writes = [

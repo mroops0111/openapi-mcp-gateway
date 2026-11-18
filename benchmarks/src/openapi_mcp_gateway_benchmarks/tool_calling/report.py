@@ -7,6 +7,7 @@ import pydantic
 
 from ..significance import paired_bootstrap
 from .dataset import BASELINE_VARIANT, Benchmark
+from .reach import IntentCoverage
 from .runner import RunRecord
 
 
@@ -36,8 +37,6 @@ class CellSummary(pydantic.BaseModel):
     success_rate: RoundedValue
     # The standard deviation of the success rate across repetitions, how much a rerun moves it.
     success_rate_spread: RoundedValue
-    in_intent_success_rate: RoundedValue | None
-    out_of_intent_success_rate: RoundedValue | None
     mean_input_tokens: RoundedValue
     mean_output_tokens: RoundedValue
     mean_tool_calls: RoundedValue
@@ -71,11 +70,18 @@ class AgentReport(pydantic.BaseModel):
     models: dict[str, str]
     cells: list[CellSummary]
     comparisons: list[Comparison]
+    # Each scenario and variant run, with how many of the tasks run it serves every operation for.
+    coverage: list[IntentCoverage]
     records: list[RunRecord]
 
 
-def build_report(benchmark: Benchmark, records: typing.Sequence[RunRecord]) -> AgentReport:
-    """Summarize ``records`` per scenario, variant, and model, and compare each variant with the baseline."""
+def build_report(
+    benchmark: Benchmark, records: typing.Sequence[RunRecord], coverage: typing.Sequence[IntentCoverage]
+) -> AgentReport:
+    """Summarize ``records`` per scenario, variant, and model, and compare each variant with the baseline.
+
+    ``coverage`` is narrowed to the scenarios, variants, and tasks the records ran.
+    """
     cells: dict[tuple[str, str, str], list[RunRecord]] = collections.defaultdict(list)
     for record in records:
         cells[(record.scenario, record.variant, record.model)].append(record)
@@ -86,6 +92,7 @@ def build_report(benchmark: Benchmark, records: typing.Sequence[RunRecord]) -> A
         models={name: spec.model for name, spec in benchmark.manifest.models.items()},
         cells=[_cell_summary(key, cell_records) for key, cell_records in cells.items()],
         comparisons=_comparisons(records),
+        coverage=_run_coverage(coverage, records),
         records=list(records),
     )
 
@@ -105,8 +112,6 @@ def _cell_summary(key: tuple[str, str, str], records: typing.Sequence[RunRecord]
         errored_count=len(records) - len(scored),
         success_rate=_mean(float(record.passed) for record in scored),
         success_rate_spread=statistics.pstdev(repetition_rates) if len(repetition_rates) > 1 else 0.0,
-        in_intent_success_rate=_optional_mean(float(record.passed) for record in scored if record.in_intent),
-        out_of_intent_success_rate=_optional_mean(float(record.passed) for record in scored if not record.in_intent),
         mean_input_tokens=_mean(record.input_tokens for record in scored),
         mean_output_tokens=_mean(record.output_tokens for record in scored),
         mean_tool_calls=_mean(record.tool_calls for record in scored),
@@ -165,11 +170,30 @@ def _comparisons(records: typing.Sequence[RunRecord]) -> list[Comparison]:
     return comparisons
 
 
+def _run_coverage(
+    coverage: typing.Sequence[IntentCoverage], records: typing.Sequence[RunRecord]
+) -> list[IntentCoverage]:
+    tasks_run: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
+    for record in records:
+        tasks_run[(record.scenario, record.variant)].add(record.task_id)
+    narrowed = []
+    for entry in coverage:
+        task_ids = tasks_run.get((entry.scenario, entry.variant))
+        if not task_ids:
+            continue
+        unreachable = {task_id: steps for task_id, steps in entry.unreachable_tasks.items() if task_id in task_ids}
+        narrowed.append(
+            entry.model_copy(
+                update={
+                    'task_count': len(task_ids),
+                    'reachable_task_count': len(task_ids) - len(unreachable),
+                    'unreachable_tasks': unreachable,
+                }
+            )
+        )
+    return narrowed
+
+
 def _mean(values: typing.Iterable[float]) -> float:
     collected = list(values)
     return statistics.fmean(collected) if collected else 0.0
-
-
-def _optional_mean(values: typing.Iterable[float]) -> float | None:
-    collected = list(values)
-    return statistics.fmean(collected) if collected else None

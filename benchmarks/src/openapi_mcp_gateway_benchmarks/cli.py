@@ -22,8 +22,10 @@ from .search_ranking import (
 )
 from .search_ranking.baseline import Baseline
 from .spec_pins import SpecChecksumError
+from .tool_calling import config_generation
 from .tool_calling import dataset as tool_calling_dataset
 from .tool_calling import markdown as tool_calling_markdown
+from .tool_calling import reach as tool_calling_reach
 from .tool_calling import report as tool_calling_report
 from .tool_calling import runner as tool_calling_runner
 from .tool_calling import validation as tool_calling_validation
@@ -262,16 +264,56 @@ def tool_calling_run(
             )
         )
     )
-    built_report = tool_calling_report.build_report(benchmark, records)
+    coverage = _without_traceback(lambda: tool_calling_reach.intent_coverage(benchmark))
+    built_report = tool_calling_report.build_report(benchmark, records, coverage)
     if output is not None:
         output.write_text(built_report.model_dump_json(indent=2) + '\n', encoding='utf-8')
     click.echo(tool_calling_markdown.to_markdown(built_report), nl=False)
 
 
+@tool_calling.command('generate-configs')
+@click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
+@click.argument('work_directory', type=WORK_DIRECTORY)
+@click.option(
+    '--scenario',
+    'scenario_names',
+    multiple=True,
+    help='A scenario to generate. Repeat for several; the default is all.',
+)
+@click.option(
+    '--variant', 'variant_names', multiple=True, help='A variant to generate. Repeat for several; the default is all.'
+)
+def tool_calling_generate_configs(
+    benchmark_directory: pathlib.Path,
+    work_directory: pathlib.Path,
+    scenario_names: tuple[str, ...],
+    variant_names: tuple[str, ...],
+) -> None:
+    """Write each scenario's generated variants with the manifest's config generator.
+
+    Each run's workspace and exchange stay in WORK_DIRECTORY.
+    It runs a model, which needs its provider's API key in the usual variable.
+    """
+    benchmark = _without_traceback(lambda: tool_calling_dataset.load(benchmark_directory))
+    runs = _without_traceback(
+        lambda: asyncio.run(
+            config_generation.generate(benchmark, work_directory, scenarios=scenario_names, variants=variant_names)
+        )
+    )
+    for run in runs:
+        click.echo(
+            f'{run.scenario} {run.variant}: {run.model}, {run.input_tokens} input and {run.output_tokens} output tokens, '
+            f'{run.model_requests} requests'
+        )
+
+
 @tool_calling.command('validate')
 @click.argument('benchmark_directory', type=BENCHMARK_DIRECTORY)
 def tool_calling_validate(benchmark_directory: pathlib.Path) -> None:
-    """Prove every task of BENCHMARK_DIRECTORY can pass and every variant reaches it, calling no model, for CI."""
+    """Prove every task of BENCHMARK_DIRECTORY can pass and every hand-written variant reaches it, for CI.
+
+    It calls no model, and lists the tasks each generated variant leaves out of reach without failing.
+    """
     benchmark = _without_traceback(lambda: tool_calling_dataset.load(benchmark_directory))
     problems = _without_traceback(lambda: asyncio.run(tool_calling_validation.validate(benchmark)))
     task_count = sum(len(scenario.tasks) for scenario in benchmark.scenarios.values())
@@ -279,7 +321,15 @@ def tool_calling_validate(benchmark_directory: pathlib.Path) -> None:
         for problem in problems:
             click.echo(f'{problem.scenario} {problem.task_id} under {problem.variant}: {problem.problem}', err=True)
         sys.exit(1)
-    click.echo(f'All {task_count} tasks pass with their solutions, and every variant reaches its in-intent tasks.')
+    click.echo(f'All {task_count} tasks pass with their solutions, and every hand-written variant reaches them.')
+    generated = set(benchmark.manifest.config_generator.variants)
+    coverage = _without_traceback(lambda: tool_calling_reach.intent_coverage(benchmark))
+    for entry in coverage:
+        if entry.variant in generated and entry.unreachable_tasks:
+            click.echo(
+                f'{entry.scenario} under {entry.variant} reaches {entry.reachable_task_count} of {entry.task_count} '
+                f'tasks, missing {", ".join(entry.unreachable_tasks)}.'
+            )
 
 
 def _without_traceback(step: typing.Callable[[], StepResult]) -> StepResult:

@@ -1,0 +1,15 @@
+{
+  "scenario": "github",
+  "variant": "generated",
+  "model": "anthropic:claude-sonnet-5-5",
+  "skill": "generate-config",
+  "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+  "request": "Help a team triage issues and review pull requests in its repositories.",
+  "finished_at": "2026-11-17T09:58:50+00:00",
+  "gateway_version": "0.8.0",
+  "pydantic_ai_version": "2.69.0",
+  "input_tokens": 83651,
+  "output_tokens": 2560,
+  "model_requests": 8,
+  "summary": "I added a `policy.allow` list to the `github` server in `config.yaml`, and `--dry-run` validates it with 31 tools. For issue triage, it exposes the following:\n- Listing, reading, creating and updating issues.\n- Reading and adding comments.\n- Viewing issue events.\n- Labels: list, add, set and remove.\n- Assignees: list, add and remove.\n- Listing milestones.\n\nFor pull request review, it exposes the following:\n- Listing and reading PRs, their files and commits.\n- Reading reviews and review comments.\n- Creating and submitting reviews, adding review comments and replying to them.\n- Viewing and requesting reviewers.\n- Checking whether a PR is merged.\n\nI left out merging, deleting comments, labels or milestones, branch updates, locking, and sub-issue and dependency management. Those go beyond triage and review and are riskier to give an assistant. You can add any of them later with one more line in the allow list. I kept the tools unshaped, because the raw GitHub operations already work as tools.\n\nI kept the placeholder `base_url` (`https://upstream.invalid`) and `auth: none` as you asked, so the config won't reach GitHub yet. Before running it, set `base_url` to `https://api.github.com`. Then set `auth` to `type: bearer` with `token: ${GITHUB_TOKEN}`, using a personal access token that can read and write issues and pull requests."
+}

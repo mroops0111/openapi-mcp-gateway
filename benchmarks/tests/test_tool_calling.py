@@ -5,12 +5,23 @@ import typing
 
 import httpx
 import pytest
+import yaml
 from click.testing import CliRunner
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from openapi_mcp_gateway_benchmarks.cli import main
 from openapi_mcp_gateway_benchmarks.local_server import serve
 from openapi_mcp_gateway_benchmarks.spec_pins import sha256_of
-from openapi_mcp_gateway_benchmarks.tool_calling import dataset, grading, report, runner, validation
+from openapi_mcp_gateway_benchmarks.tool_calling import (
+    config_generation,
+    dataset,
+    grading,
+    reach,
+    report,
+    runner,
+    validation,
+)
 from openapi_mcp_gateway_benchmarks.tool_calling.markdown import to_markdown
 from openapi_mcp_gateway_benchmarks.tool_calling.replay import RecordedRequest, ReplayUpstream, ResponseOverride
 from openapi_mcp_gateway_benchmarks.tool_calling.sampling import SchemaSampler
@@ -29,6 +40,35 @@ models:
 scenarios: [pets]
 repetitions: 2
 system_prompt: Carry out the request with the tools.
+config_generator:
+  model: {{model: test}}
+  skill_library: skills
+  skill: generate-config
+  variants: {{generated: ''}}
+"""
+
+SKILL = """\
+---
+name: generate-config
+description: Generate an openapi-mcp-gateway config for an API.
+---
+
+Expose only the operations the request needs.
+"""
+
+# A config the gateway refuses, since a server has no key by this name.
+UNLOADABLE_CONFIG = """\
+servers:
+  - {name: pets, spec: pets.json, base_url: https://upstream.invalid, polcy: {allow: ['*Pet*']}}
+"""
+
+GENERATED_CONFIG = """\
+servers:
+  - name: pets
+    spec: pets.json
+    base_url: https://upstream.invalid
+    auth: {type: none}
+    policy: {allow: ['*Pet*']}
 """
 
 SCENARIO = """\
@@ -40,19 +80,17 @@ TASKS = """\
 - id: pets-t01
   prompt: Pet 7 was adopted, take it off the list.
   split: final
-  in_intent: true
   expected_calls:
     - {server: pets, method: DELETE, path: '/pets/{petId}', path_parameters: {petId: '7'}}
   solution:
     - {server: pets, operation: delete_pet, arguments: {petId: 7}}
 - id: pets-t02
-  prompt: Show me the admin view of the pets.
+  prompt: Look up pet 3 for me.
   split: final
-  in_intent: false
   expected_calls:
-    - {server: pets, method: GET, path: /admin/pets}
+    - {server: pets, method: GET, path: '/pets/{petId}', path_parameters: {petId: '3'}}
   solution:
-    - {server: pets, operation: listAdminPets, arguments: {}}
+    - {server: pets, operation: get_pet_by_id, arguments: {petId: 3}}
 """
 
 VARIANTS = {
@@ -145,9 +183,26 @@ class TestGrading:
         requests = [_request('POST', '/v1/refunds', body={'amount': ['500'], 'charge': ['ch_1']})]
         assert grading.grade(expected, requests).passed
 
+    def test_any_of_passes_with_either_call(self):
+        refund = dataset.AnyOf(
+            any_of=[
+                _expected('POST', '/v1/charges/{charge}/refund', {'charge': 'ch_1'}),
+                _expected('POST', '/v1/refunds', {}, body={'charge': 'ch_1'}),
+            ]
+        )
+        for request in [
+            _request('POST', '/v1/charges/ch_1/refund'),
+            _request('POST', '/v1/refunds', {'charge': ['ch_1']}),
+        ]:
+            assert grading.grade([refund], [request]).passed
+        missed = grading.grade([refund], [_request('POST', '/v1/refunds', {'charge': ['ch_2']})])
+        assert missed.missing_calls == [
+            "POST /v1/charges/{charge}/refund on stripe with {'charge': 'ch_1'} or POST /v1/refunds on stripe with {'charge': 'ch_1'}"
+        ]
+
 
 class TestDataset:
-    """Loading an tool calling benchmark and refusing an inconsistent one."""
+    """Loading a tool calling benchmark and refusing an inconsistent one."""
 
     def test_loads_scenarios_tasks_and_variants(self, tmp_path):
         benchmark = dataset.load(_petstore_benchmark(tmp_path))
@@ -159,6 +214,16 @@ class TestDataset:
         root = _petstore_benchmark(tmp_path)
         (root / 'scenarios' / 'pets' / 'variants' / 'baseline.yaml').unlink()
         with pytest.raises(dataset.DatasetError, match='baseline'):
+            dataset.load(root)
+
+    def test_scenarios_must_split_their_tasks_alike(self, tmp_path):
+        root = _petstore_benchmark(tmp_path)
+        shutil.copytree(root / 'scenarios' / 'pets', root / 'scenarios' / 'more-pets')
+        tasks = root / 'scenarios' / 'more-pets' / dataset.TASKS_FILE
+        tasks.write_text(tasks.read_text().replace('split: final', 'split: practice', 1))
+        manifest = root / dataset.MANIFEST_FILE
+        manifest.write_text(manifest.read_text().replace('scenarios: [pets]', 'scenarios: [pets, more-pets]'))
+        with pytest.raises(dataset.DatasetError, match='as many tasks in each split'):
             dataset.load(root)
 
     def test_a_variant_cannot_set_the_upstream(self, tmp_path):
@@ -176,16 +241,28 @@ class TestRun:
         records = await runner.run(benchmark, model_factory=_scripted)
         outcomes = {(record.variant, record.task_id, record.repetition): record.passed for record in records}
         assert len(outcomes) == len(VARIANTS) * 2 * 2
-        assert all(passed for (variant, task, _), passed in outcomes.items() if task == 'pets-t01')
-        assert outcomes[('no-admin', 'pets-t02', 1)] is False
+        assert all(outcomes.values())
 
     async def test_the_report_compares_with_the_baseline(self, tmp_path):
         benchmark = dataset.load(_petstore_benchmark(tmp_path))
-        built = report.build_report(benchmark, await runner.run(benchmark, model_factory=_scripted))
+        records = await runner.run(benchmark, model_factory=_scripted)
+        built = report.build_report(benchmark, records, reach.intent_coverage(benchmark))
         no_admin = next(cell for cell in built.cells if cell.variant == 'no-admin')
-        assert (no_admin.in_intent_success_rate, no_admin.out_of_intent_success_rate) == (1.0, 0.0)
+        assert no_admin.success_rate == 1.0
         assert {comparison.variant for comparison in built.comparisons} == {'dynamic', 'no-admin'}
         assert '| pets | no-admin | scripted |' in to_markdown(built)
+        assert 'Out of Reach' not in to_markdown(built)
+
+    async def test_the_report_lists_tasks_a_variant_leaves_out_of_reach(self, tmp_path):
+        root = _petstore_benchmark(tmp_path)
+        variant = root / 'scenarios' / 'pets' / 'variants' / 'no-admin.yaml'
+        variant.write_text('servers:\n  pets:\n    policy: {deny: ["DELETE /pets/*"]}\n')
+        benchmark = dataset.load(root)
+        records = await runner.run(benchmark, variant_names=['no-admin'], model_factory=_scripted)
+        built = report.build_report(benchmark, records, reach.intent_coverage(benchmark))
+        [coverage] = built.coverage
+        assert (coverage.variant, coverage.reachable_task_count, coverage.task_count) == ('no-admin', 1, 2)
+        assert '| pets | no-admin | 1/2 | pets-t01: DELETE /pets/{petId} on pets |' in to_markdown(built)
 
 
 class TestValidation:
@@ -201,17 +278,87 @@ class TestValidation:
         problems = await validation.validate(dataset.load(root))
         assert [(problem.task_id, problem.variant) for problem in problems] == [('pets-t01', 'baseline')]
 
-    async def test_a_variant_hiding_an_in_intent_operation_is_reported(self, tmp_path):
+    async def test_a_variant_hiding_an_operation_a_task_needs_is_reported(self, tmp_path):
         root = _petstore_benchmark(tmp_path)
         variant = root / 'scenarios' / 'pets' / 'variants' / 'no-admin.yaml'
         variant.write_text('servers:\n  pets:\n    policy: {deny: ["DELETE /pets/*"]}\n')
         problems = await validation.validate(dataset.load(root))
         assert [(problem.task_id, problem.variant) for problem in problems] == [('pets-t01', 'no-admin')]
 
+    async def test_a_generated_variant_hiding_an_operation_is_counted_rather_than_reported(self, tmp_path):
+        root = _petstore_benchmark(tmp_path)
+        variant = root / 'scenarios' / 'pets' / 'variants' / 'generated.yaml'
+        variant.write_text('servers:\n  pets:\n    policy: {deny: ["DELETE /pets/*"]}\n')
+        benchmark = dataset.load(root)
+        assert await validation.validate(benchmark) == []
+        coverage = {entry.variant: entry for entry in reach.intent_coverage(benchmark)}
+        assert coverage['generated'].unreachable_tasks == {'pets-t01': ['DELETE /pets/{petId} on pets']}
+        assert coverage['baseline'].reachable_task_count == 2
+
+    def test_the_command_lists_what_a_generated_variant_leaves_out_of_reach(self, tmp_path):
+        root = _petstore_benchmark(tmp_path)
+        variant = root / 'scenarios' / 'pets' / 'variants' / 'generated.yaml'
+        variant.write_text('servers:\n  pets:\n    policy: {deny: ["DELETE /pets/*"]}\n')
+        result = CliRunner().invoke(main, ['tool-calling', 'validate', str(root)])
+        assert result.exit_code == 0, result.output
+        assert 'pets under generated reaches 1 of 2 tasks, missing pets-t01.' in result.output
+
+    async def test_a_variant_serving_one_of_any_of_has_no_problem(self, tmp_path):
+        root = _petstore_benchmark(tmp_path)
+        tasks = root / 'scenarios' / 'pets' / 'tasks.yaml'
+        tasks.write_text(
+            tasks.read_text().replace(
+                "    - {server: pets, method: DELETE, path: '/pets/{petId}', path_parameters: {petId: '7'}}\n",
+                '    - any_of:\n'
+                "        - {server: pets, method: DELETE, path: '/pets/{petId}', path_parameters: {petId: '7'}}\n"
+                '        - {server: pets, method: GET, path: /admin/pets}\n',
+            )
+        )
+        variant = root / 'scenarios' / 'pets' / 'variants' / 'no-admin.yaml'
+        variant.write_text('servers:\n  pets:\n    policy: {deny: ["DELETE /pets/*"]}\n')
+        assert await validation.validate(dataset.load(root)) == []
+
     def test_the_command_reports_success(self, tmp_path):
         result = CliRunner().invoke(main, ['tool-calling', 'validate', str(_petstore_benchmark(tmp_path))])
         assert result.exit_code == 0, result.output
         assert 'All 2 tasks pass' in result.output
+
+
+class TestConfigGeneration:
+    """Generating a scenario's config with the skill, from its intent, until the config loads."""
+
+    async def test_writes_generated_variant_after_retrying_an_unloadable_config(self, tmp_path: pathlib.Path):
+        benchmark = dataset.load(_petstore_benchmark(tmp_path))
+        seen: list[ModelMessage] = []
+
+        def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            seen[:] = messages
+            steps = [
+                ToolCallPart('load_capability', {'id': 'generate-config'}),
+                ToolCallPart('write_file', {'path': 'config.yaml', 'content': UNLOADABLE_CONFIG}),
+                TextPart('Exposed the pet operations.'),
+                ToolCallPart('write_file', {'path': 'config.yaml', 'content': GENERATED_CONFIG}),
+                TextPart('Exposed the pet operations.'),
+            ]
+            return ModelResponse(parts=[steps[sum(isinstance(message, ModelResponse) for message in messages)]])
+
+        runs = await config_generation.generate(benchmark, tmp_path / 'work', model=FunctionModel(respond))
+
+        assert str(seen).count('config.yaml does not load') == 1
+        assert 'Expose only the operations the request needs.' in str(seen)
+        scenario_directory = benchmark.root / 'scenarios' / 'pets'
+        variant = yaml.safe_load((scenario_directory / 'variants' / 'generated.yaml').read_text())
+        assert variant == {'servers': {'pets': {'policy': {'allow': ['*Pet*']}}}}
+        assert dataset.load(benchmark.root).scenarios['pets'].variants['generated'].servers == variant['servers']
+        provenance = json.loads((scenario_directory / 'generated.provenance.json').read_text())
+        assert provenance['request'] == benchmark.scenarios['pets'].intent
+        assert provenance['skill'] == 'generate-config'
+        assert runs[0].summary == 'Exposed the pet operations.'
+        assert (tmp_path / 'work' / 'pets' / 'generated' / config_generation.MESSAGES_FILE).exists()
+
+    def test_drops_the_fields_the_benchmark_fills_in(self):
+        config = yaml.safe_load(GENERATED_CONFIG)
+        assert config_generation.server_fragments(config) == {'pets': {'policy': {'allow': ['*Pet*']}}}
 
 
 def _scripted(_model_name: str, task: dataset.Task) -> typing.Any:
@@ -244,6 +391,8 @@ def _petstore_benchmark(root: pathlib.Path) -> pathlib.Path:
     (benchmark_directory / dataset.MANIFEST_FILE).write_text(MANIFEST.format(sha256=sha256_of(PETSTORE)))
     (scenario_directory / dataset.SCENARIO_FILE).write_text(SCENARIO)
     (scenario_directory / dataset.TASKS_FILE).write_text(TASKS)
+    (benchmark_directory / 'skills' / 'generate-config').mkdir(parents=True)
+    (benchmark_directory / 'skills' / 'generate-config' / 'SKILL.md').write_text(SKILL)
     for name, content in VARIANTS.items():
         (scenario_directory / 'variants' / f'{name}.yaml').write_text(content)
     return benchmark_directory
