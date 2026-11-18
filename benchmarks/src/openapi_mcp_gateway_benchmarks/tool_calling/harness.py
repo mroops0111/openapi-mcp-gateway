@@ -4,6 +4,7 @@ import typing
 import fastapi
 import pydantic
 from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai.capabilities import ToolSearch
 from pydantic_ai.exceptions import (
     AgentRunError,
     ModelConnectionError,
@@ -98,12 +99,21 @@ class ScenarioRun:
         async with serve(app) as gateway_url:
             yield {server: f'{gateway_url}/{server}/mcp' for server in self.scenario.servers}
 
-    def agent(self, model: Model | str, model_spec: ModelSpec | None, mcp_urls: typing.Mapping[str, str]) -> Agent:
-        """An agent for ``model`` with one MCP toolset per server, told only what the manifest's system prompt says."""
+    def agent(
+        self, model: Model | str, model_spec: ModelSpec | None, variant: str, mcp_urls: typing.Mapping[str, str]
+    ) -> Agent:
+        """An agent for ``model`` with one MCP toolset per server, told only what the manifest's system prompt says.
+
+        Under a variant with ``tool_search``, every tool is deferred until Pydantic AI's tool search finds it,
+        with the search the provider offers natively, else Pydantic AI's keyword search.
+        """
+        tool_search = self.scenario.variants[variant].tool_search
+        toolsets = [self._toolset(server, url) for server, url in mcp_urls.items()]
         return Agent(
             model,
             system_prompt=self.benchmark.manifest.system_prompt,
-            toolsets=[self._toolset(server, url) for server, url in mcp_urls.items()],
+            toolsets=[toolset.defer_loading() for toolset in toolsets] if tool_search else toolsets,
+            capabilities=[ToolSearch()] if tool_search else [],
             model_settings=typing.cast(typing.Any, model_spec.settings) if model_spec else None,
         )
 

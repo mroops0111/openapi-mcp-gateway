@@ -39,26 +39,26 @@ A model may fix a tool call the gateway refused up to `tool_retries` times, thre
 
 ## Variants
 
-Each file in a scenario's `variants/` is a gateway server config fragment per server.
+Each file in a scenario's `variants/` is a gateway server config fragment per server. No variant is written by hand for the intent. The first three need no intent, and the generator writes the last two.
 
-| Variant | What It Adds |
-| --- | --- |
-| `baseline` | nothing: one tool per operation, the approach other OpenAPI-to-MCP tools share |
-| `policy` | `policy.allow` narrowed to the intent |
-| `policy-dynamic` | the same policy behind dynamic exposure, for the specs with more than 50 operations |
-| `tailored` | the policy, dynamic exposure where it applies, and tool shaping for the operations central to the intent |
-| `generic` | what a user would write knowing nothing of the intent: dynamic exposure for a large spec, and rules that suit any use |
+| Variant | What It Adds | Compared With |
+| --- | --- | --- |
+| `baseline` | nothing: one tool per operation, the approach other OpenAPI-to-MCP tools share | |
+| `pydantic-ai-tool-search` | the baseline's tools, each deferred until Pydantic AI's tool search finds it | the third-party way to keep many tools out of the context |
+| `dynamic` | the gateway's dynamic exposure alone, so a model searches the operations and calls one | `pydantic-ai-tool-search` |
+| `generated` | what the generate-config skill writes from the intent alone | `baseline`, and `dynamic` |
+| `generated-shaped` | what the skill writes when the user also asks for shaped tools | `generated` |
 
-`policy`, `policy-dynamic`, and `tailored` add one feature at a time, so each step's gain shows.
+`pydantic-ai-tool-search` sets `tool_search: true` instead of a server fragment. The model then searches with its provider's native tool search where there is one, else with Pydantic AI's keyword search.
 
 ## Data Provenance
 
-Two kinds of annotator wrote each scenario, both Claude agents launched from one Claude Code session on 2026-11-15, configured as `claude-opus-5-5`.
+Claude agents wrote every task, and a fixed model running the skill wrote every generated config.
 
-- **Config writers** saw the intent, the operation list with each tool's input schema, and the README's config reference, and wrote the variants. They never saw the tasks.
-- **Task writers** saw the intent and the operation list, and wrote the tasks. They never saw the variants.
+- **Task writers** were Claude agents launched from one Claude Code session on 2026-11-15, configured as `claude-opus-5-5`. They saw the intent and the operation list, and wrote the tasks.
+- **The config generator** is the model the manifest names under `config_generator`, running the generate-config skill in a workspace holding the scenario's pinned specs. It sees the intent, and never the tasks. `tool-calling generate-configs` writes each generated variant, and records the request, the model, the skill's hash, and the run's cost in a provenance file beside it. A generated config is regenerated, never edited.
 
-Each task writer checked its tasks by running every solution through the real gateway against the stand-in upstream, and `agent validate` repeats that check in CI.
+Each task writer checked its tasks by running every solution through the real gateway against the stand-in upstream, and `tool-calling validate` repeats that check in CI.
 
 ## Upstream
 
@@ -77,9 +77,9 @@ A generated variant may leave a task out of reach too, and that is the generator
 
 The data has five known biases, each worth weighing before citing a number.
 
-- **Model-written data.** The configs and tasks were written by instances of one model, which may phrase tasks the way that model expects to read them.
+- **Model-written data.** Claude models wrote the tasks and the generated configs, and may phrase both the way a Claude model expects to read them.
 - **Well-known APIs.** Models have likely seen GitHub's and Stripe's documentation in training, so a model may reach an operation from memory rather than through the tools. A scenario over an API models are unlikely to know is planned.
-- **Stripe writes carry no body.** The gateway reads only JSON request bodies, and Stripe's are form-encoded, so no Stripe tool accepts body fields. Stripe's tasks are therefore writes that need only ids in the path, such as refunding a charge or cancelling a subscription.
+- **Stripe writes carry no body.** The gateway reads only JSON request bodies, and Stripe's are form-encoded, so no Stripe tool accepts body fields. Stripe's tasks are therefore writes that need only ids in the path, such as refunding a charge or cancelling a subscription. A refund through `POST /v1/refunds`, which the grader accepts, needs the charge in its body, so a variant that serves only that endpoint cannot refund.
 - **Notion's broken parameter.** Notion's spec declares a header parameter with no name on one operation, which the gateway now skips with a warning.
 - **Synthetic responses.** A response built from a schema is plausible but not real, so a task that depends on data a real API would return carries that data in its responses.
 

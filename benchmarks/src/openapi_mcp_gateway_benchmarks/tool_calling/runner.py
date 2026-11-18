@@ -117,7 +117,7 @@ async def _evaluate(
     model_spec = scenario_run.benchmark.manifest.models[model_name]
 
     async def run_case(task: Task) -> RunOutcome:
-        agent = scenario_run.agent(factory(model_name, task), model_spec, mcp_urls)
+        agent = scenario_run.agent(factory(model_name, task), model_spec, variant, mcp_urls)
         return await scenario_run.run_task(agent, task)
 
     dataset = Dataset[Task, RunOutcome, None](

@@ -1,0 +1,4 @@
+# Dynamic exposure alone, which needs no intent, so a model searches the operations and calls the one it picks.
+servers:
+  discord:
+    exposure: {style: dynamic}

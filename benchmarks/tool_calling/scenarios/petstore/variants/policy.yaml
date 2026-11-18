@@ -1,6 +1,0 @@
-# The policy alone, keeping the pet catalog and the store order operations, and hiding user accounts and image upload.
-servers:
-  petstore:
-    policy:
-      allow: ["* /pet", "* /pet/*", "* /store/*"]
-      deny: ["uploadFile"]

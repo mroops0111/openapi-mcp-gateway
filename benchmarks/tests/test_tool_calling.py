@@ -258,6 +258,22 @@ class TestRun:
         assert len(outcomes) == len(VARIANTS) * 2 * 2
         assert all(outcomes.values())
 
+    async def test_tool_search_defers_the_gateway_tools(self, tmp_path):
+        root = _petstore_benchmark(tmp_path)
+        (root / 'scenarios' / 'pets' / 'variants' / 'tool-search.yaml').write_text('tool_search: true\n')
+        benchmark = dataset.load(root)
+        withheld: list[dict[str, typing.Any]] = []
+
+        def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            withheld.append(dict(info.model_request_parameters.tool_visibility or {}))
+            return ModelResponse(parts=[TextPart('Done.')])
+
+        await runner.run(
+            benchmark, variant_names=['tool-search'], repetitions=1, model_factory=lambda *_: FunctionModel(respond)
+        )
+        assert withheld
+        assert all(visibility.get('delete_pet') == 'withheld' for visibility in withheld)
+
     async def test_the_report_compares_with_the_baseline(self, tmp_path):
         benchmark = dataset.load(_petstore_benchmark(tmp_path))
         records = await runner.run(benchmark, model_factory=_scripted)

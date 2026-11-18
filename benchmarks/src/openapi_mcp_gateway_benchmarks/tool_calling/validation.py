@@ -40,7 +40,7 @@ async def _validate_solutions(scenario_run: ScenarioRun) -> list[ValidationProbl
     problems = []
     async with scenario_run.serving(), scenario_run.gateway(BASELINE_VARIANT) as mcp_urls:
         for task in scenario.tasks:
-            agent = scenario_run.agent(solution_model(task, prefixes), None, mcp_urls)
+            agent = scenario_run.agent(solution_model(task, prefixes), None, BASELINE_VARIANT, mcp_urls)
             outcome = await scenario_run.run_task(agent, task)
             if outcome.tool_errors:
                 problems.append(

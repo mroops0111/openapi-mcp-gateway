@@ -157,11 +157,16 @@ class Task(pydantic.BaseModel):
 
 
 class Variant(pydantic.BaseModel):
-    """One way of exposing a scenario's servers, as a server config fragment per server."""
+    """One way of exposing a scenario's servers, as a server config fragment per server.
+
+    ``tool_search`` hides every tool the gateway lists behind Pydantic AI's own tool search,
+    so the client, not the gateway, finds the tools a task needs.
+    """
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
     servers: dict[str, dict[str, typing.Any]] = pydantic.Field(default_factory=dict)
+    tool_search: bool = False
 
     @pydantic.field_validator('servers')
     @classmethod
