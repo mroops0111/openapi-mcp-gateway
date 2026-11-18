@@ -291,6 +291,21 @@ class TestTransports:
         assert server_info.name.startswith('petstore')
         assert tools.tools
 
+    def test_stdio_refuses_a_server_that_checks_mcp_tokens(self, petstore_json_path):
+        """A stdio client presents no token, so such a server would refuse or hide everything without a word."""
+        server = {
+            'name': 'petstore',
+            'spec': str(petstore_json_path),
+            'auth': {
+                'upstream': {'type': 'bearer', 'token': 't'},
+                'mcp': {'clients': {'agent': {'client_secret': 's'}}},
+            },
+        }
+        gateway = Gateway.from_config(GatewayConfig.model_validate({'servers': [server]}))
+
+        with pytest.raises(ValueError, match='never presents'):
+            gateway.run(transport='stdio')
+
     def test_sse_transport_emits_deprecation_warning(self, gateway):
         """Selecting the deprecated ``sse`` transport warns the caller."""
         with pytest.warns(DeprecationWarning, match='sse'):

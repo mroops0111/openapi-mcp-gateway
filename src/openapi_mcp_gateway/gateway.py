@@ -195,6 +195,13 @@ class Gateway:
         if transport == 'stdio':
             if len(self._servers) != 1:
                 raise ValueError('stdio transport only supports a single server')
+            server = self._servers[0]
+            # A stdio client launches the gateway itself and presents no token, so a check on one would refuse it.
+            if server.auth_provider is not None or server.token_verifier is not None:
+                raise ValueError(
+                    f'Server "{server.name}" checks MCP tokens, which a stdio client never presents. '
+                    'Serve it over streamable-http, or drop the auth.mcp settings and auth.upstream.flow that need them.'
+                )
             logger.info('Starting MCP server "%s" over stdio', self._servers[0].name)
             try:
                 self._servers[0].mcp.run(transport='stdio')
