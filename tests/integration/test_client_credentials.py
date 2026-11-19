@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import pathlib
 import typing
 
@@ -6,15 +7,13 @@ import httpx
 import httpx2
 import pytest
 from mcp import Client, MCPError
-from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuthProvider
-from mcp.client.streamable_http import streamable_http_client
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.auth.mcp.client_credentials import CLIENT_CREDENTIALS_EXTENSION
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
-from tests.oauth import MemoryTokenStorage
+from tests.mcp_client import MemoryTokenStorage, client_credentials_auth, connect
 from tests.serving import bind_loopback_socket, build_socket_url, serve
 
 
@@ -167,47 +166,24 @@ class TestMcpEndpoint:
         assert response.status_code == 401
 
     async def test_each_agent_lists_only_what_its_scopes_open(self, make_gateway, upstream_requests):
-        async with serve(make_gateway()._build_app(transport='streamable-http')) as base_url:
-            reader_token = await _obtain_token(base_url, READER)
-            async with _open_client(base_url, reader_token) as client:
-                assert [tool.name for tool in (await client.list_tools()).tools] == READ_TOOLS
-                await client.call_tool('list_pets', {})
-                with pytest.raises(MCPError):
-                    await client.call_tool('create_pet', {'name': 'Rex'})
+        async with _serve(make_gateway) as base_url, _connect(base_url, READER) as client:
+            assert [tool.name for tool in (await client.list_tools()).tools] == READ_TOOLS
+            await client.call_tool('list_pets', {})
+            with pytest.raises(MCPError):
+                await client.call_tool('create_pet', {'name': 'Rex'})
 
         assert [request.headers['authorization'] for request in upstream_requests] == [f'Bearer {UPSTREAM_TOKEN}']
 
     async def test_the_server_advertises_the_extension(self, make_gateway):
         """A client probing ``server/discover`` learns it may obtain a token with its own credentials."""
-        async with serve(make_gateway()._build_app(transport='streamable-http')) as base_url:
-            token = await _obtain_token(base_url, READER)
-            async with _open_client(base_url, token, mode='auto') as client:
-                assert CLIENT_CREDENTIALS_EXTENSION in (client.server_capabilities.extensions or {})
-
-
-class TestSdkClient:
-    """The MCP SDK's own client credentials provider discovers the gateway, obtains a token and steps up."""
+        async with _serve(make_gateway) as base_url, _connect(base_url, READER, mode='auto') as client:
+            assert CLIENT_CREDENTIALS_EXTENSION in (client.server_capabilities.extensions or {})
 
     async def test_an_agent_steps_up_without_a_user(self, make_gateway, upstream_requests):
         """Within its own scopes the agent steps up by asking again, since no user has anything to approve."""
-        sock = bind_loopback_socket()
-        gateway = make_gateway(url=build_socket_url(sock))
-        async with serve(gateway._build_app(transport='streamable-http'), sock) as base_url:
-            server_url = f'{base_url}/petstore/mcp'
-            storage = MemoryTokenStorage()
-            auth = ClientCredentialsOAuthProvider(
-                server_url,
-                storage,
-                client_id=WRITER,
-                client_secret=SECRETS[WRITER],
-                scope='pets:read',
-                issuer=f'{base_url}/petstore',
-            )
-            async with (
-                httpx2.AsyncClient(auth=auth) as http_client,
-                Client(streamable_http_client(server_url, http_client=http_client), mode='2026-07-28') as client,
-            ):
-                result = await client.call_tool('create_pet', {'name': 'Rex'})
+        storage = MemoryTokenStorage()
+        async with _serve(make_gateway) as base_url, _connect(base_url, WRITER, storage=storage) as client:
+            result = await client.call_tool('create_pet', {'name': 'Rex'})
 
         assert not result.is_error
         assert storage.tokens is not None
@@ -252,7 +228,22 @@ async def _obtain_token(base_url: str, client_id: str) -> str:
     return response.json()['access_token']
 
 
-def _open_client(base_url: str, token: str, mode: typing.Any = '2026-07-28') -> Client:
-    """An MCP client of the petstore server at ``base_url``, presenting ``token`` and speaking ``mode``."""
-    http_client = httpx2.AsyncClient(headers={'Authorization': f'Bearer {token}'})
-    return Client(streamable_http_client(f'{base_url}/petstore/mcp', http_client=http_client), mode=mode)
+@contextlib.asynccontextmanager
+async def _serve(make_gateway: typing.Callable[..., Gateway]) -> typing.AsyncIterator[str]:
+    """Serve a gateway built by ``make_gateway`` at the address it publishes, and yield that address."""
+    sock = bind_loopback_socket()
+    gateway = make_gateway(url=build_socket_url(sock))
+    async with serve(gateway._build_app(transport='streamable-http'), sock) as base_url:
+        yield base_url
+
+
+def _connect(
+    base_url: str, client_id: str, mode: typing.Any = '2026-07-28', storage: MemoryTokenStorage | None = None
+) -> contextlib.AbstractAsyncContextManager[Client]:
+    """An MCP SDK client of the petstore server at ``base_url``, signed in as ``client_id`` and speaking ``mode``.
+
+    It asks for ``pets:read`` and steps up from there.
+    """
+    endpoint = f'{base_url}/petstore/mcp'
+    auth = client_credentials_auth(endpoint, client_id, SECRETS[client_id], 'pets:read', storage)
+    return connect(endpoint, auth, mode=mode)

@@ -3,7 +3,6 @@ import socket
 import threading
 import time
 import typing
-import urllib.parse
 from unittest.mock import AsyncMock, patch
 
 import httpx2
@@ -14,16 +13,15 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Form
 from fastapi.responses import JSONResponse
 from jwt.algorithms import RSAAlgorithm
-from mcp import Client
 from mcp.client.auth import OAuthClientProvider
 from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuthProvider
-from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import AuthorizationCodeResult, OAuthClientMetadata
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
-from tests.oauth import MemoryTokenStorage, query_value, shared_credential_server, upstream_token_response
+from tests.mcp_client import MemoryTokenStorage, client_credentials_auth, connect
+from tests.oauth import query_value, shared_credential_server, upstream_token_response
 from tests.serving import bind_loopback_socket, build_socket_url, serve
 
 
@@ -43,7 +41,7 @@ class TestClientCredentials:
         async with serve(gateway._build_app(transport='streamable-http'), sock):
             mount = path_prefix.strip('/')
             endpoint = f'{base_url}/{mount}/mcp' if mount else f'{base_url}/mcp'
-            assert await _list_tools(endpoint, _client_credentials(endpoint))
+            assert await _list_tools(endpoint, _agent_auth(endpoint))
 
     async def test_a_client_signs_in_behind_a_proxy_that_strips_the_gateway_path(self, petstore_json_path):
         sock = bind_loopback_socket()
@@ -52,7 +50,7 @@ class TestClientCredentials:
 
         async with serve(_strip_path_prefix(gateway._build_app(transport='streamable-http'), '/gw'), sock):
             endpoint = f'{gateway_url}/pets/mcp'
-            assert await _list_tools(endpoint, _client_credentials(endpoint))
+            assert await _list_tools(endpoint, _agent_auth(endpoint))
 
     async def test_each_server_signs_in_when_one_is_mounted_at_the_others_name(self, petstore_json_path):
         sock = bind_loopback_socket()
@@ -66,7 +64,7 @@ class TestClientCredentials:
         async with serve(gateway._build_app(transport='streamable-http'), sock):
             for path in ('alpha', 'beta'):
                 endpoint = f'{base_url}/{path}/mcp'
-                assert await _list_tools(endpoint, _client_credentials(endpoint))
+                assert await _list_tools(endpoint, _agent_auth(endpoint))
 
     async def test_a_client_signs_in_to_a_gateway_mounted_into_a_host_app(self, petstore_json_path):
         sock = bind_loopback_socket()
@@ -88,7 +86,7 @@ class TestClientCredentials:
 
         async with serve(host, sock):
             endpoint = f'{base_url}/pets/mcp'
-            assert await _list_tools(endpoint, _client_credentials(endpoint))
+            assert await _list_tools(endpoint, _agent_auth(endpoint))
             async with httpx2.AsyncClient() as http:
                 host_document = await http.get(f'{base_url}/.well-known/oauth-authorization-server')
             assert host_document.json() == {'issuer': 'host'}
@@ -200,29 +198,6 @@ def _build_gateway(gateway_url: str, servers: list[dict[str, typing.Any]]) -> Ga
     return Gateway.from_config(GatewayConfig.model_validate({'url': gateway_url, 'servers': servers}))
 
 
-def _client_credentials(endpoint: str) -> ClientCredentialsOAuthProvider:
-    """The SDK's own client_credentials sign-in as ``agent``, naming the issuer it discovers from ``endpoint``."""
-    issuer = endpoint.removesuffix('/mcp')
-    return ClientCredentialsOAuthProvider(
-        server_url=endpoint,
-        storage=MemoryTokenStorage(),
-        client_id='agent',
-        client_secret='agent-secret',
-        scope='pets:read',
-        # The gateway publishes a root issuer with its trailing slash, as ``pydantic.AnyHttpUrl`` renders it.
-        issuer=issuer if urllib.parse.urlparse(issuer).path else f'{issuer}/',
-    )
-
-
-async def _list_tools(endpoint: str, auth: httpx2.Auth) -> list[str]:
-    """The tools an MCP client signed in through ``auth`` sees at ``endpoint``."""
-    async with (
-        httpx2.AsyncClient(auth=auth) as http_client,
-        Client(streamable_http_client(endpoint, http_client=http_client)) as client,
-    ):
-        return [tool.name for tool in (await client.list_tools()).tools]
-
-
 def _strip_path_prefix(app: ASGIApp, prefix: str) -> ASGIApp:
     """``app`` behind a proxy that strips ``prefix`` from each request path before forwarding it."""
 
@@ -279,3 +254,14 @@ def _build_external_issuer(issuer_url: str, signing_key: rsa.RSAPrivateKey) -> F
         return JSONResponse({'access_token': access_token, 'token_type': 'Bearer', 'expires_in': 300})
 
     return app
+
+
+async def _list_tools(endpoint: str, auth: httpx2.Auth) -> list[str]:
+    """The tools an MCP client signed in through ``auth`` sees at ``endpoint``."""
+    async with connect(endpoint, auth) as client:
+        return [tool.name for tool in (await client.list_tools()).tools]
+
+
+def _agent_auth(endpoint: str) -> httpx2.Auth:
+    """The client_credentials sign-in of the agent ``shared_credential_server`` declares."""
+    return client_credentials_auth(endpoint, 'agent', 'agent-secret', 'pets:read')
