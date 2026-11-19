@@ -9,7 +9,6 @@ from mcp.server.auth.provider import construct_redirect_uri
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 from ...scopes import McpAccessToken
-from ...settings import McpAuthConfig
 from ...stores.base import TokenStore
 from .client import get_mcp_registered_scopes
 from .consent import PendingAuthorization
@@ -35,16 +34,6 @@ class McpTokenPolicy:
     scopes: list[str] = dataclasses.field(default_factory=lambda: [MCP_DEFAULT_SCOPE])
     access_token_ttl: int = 3600
     refresh_token_ttl: int = 86400
-
-    @classmethod
-    def from_config(cls, config: McpAuthConfig) -> typing.Self:
-        """The policy ``auth.mcp`` describes.
-
-        Every token carries ``required_scopes``, or ``MCP_DEFAULT_SCOPE`` so the OAuth machinery has one to name.
-        With ``operation_scopes`` there are none, since each operation names its own scopes instead.
-        """
-        scopes = [] if config.operation_scopes is not None else list(config.required_scopes) or [MCP_DEFAULT_SCOPE]
-        return cls(scopes=scopes, access_token_ttl=config.access_token_ttl, refresh_token_ttl=config.refresh_token_ttl)
 
 
 @dataclasses.dataclass(frozen=True)

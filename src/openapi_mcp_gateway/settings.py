@@ -274,7 +274,7 @@ class McpAuthConfig(pydantic.BaseModel):
         """Refuse what only a user signing in reads, for a server where agents obtain tokens as themselves.
 
         Each client needs a secret, since it is its only proof of identity.
-        A redirect, default scopes, the consent page and refresh tokens all belong to a sign-in that never happens.
+        A redirect, default scopes and the consent page all belong to a sign-in that never happens.
         A request with no scope is granted all of ``scopes``, so ``default_scopes`` would have nothing to narrow.
         """
         problems = [
@@ -282,8 +282,6 @@ class McpAuthConfig(pydantic.BaseModel):
             for client_id, client in self.clients.items()
             for field, reason in client.find_settings_without_sign_in()
         ]
-        if 'refresh_token_ttl' in self.model_fields_set:
-            problems.append('auth.mcp.refresh_token_ttl has no effect, since no refresh token is issued')
         if problems:
             raise ValueError(
                 f'Server "{server_name}": agents here obtain tokens with their own credentials, and no user signs in. '

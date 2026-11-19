@@ -62,7 +62,7 @@ class McpClientCredentialsGrant:
         client = await self.clients.get(client_id)
         expected = client.client_secret if client else None
         if client is None or not expected or not hmac.compare_digest(expected.encode(), client_secret.encode()):
-            logger.warning('Client credentials rejected: reason=invalid_client client_id=%s', client_id)
+            logger.warning('Client credentials rejected: reason=invalid_client client_id=%r', client_id)
             raise McpClientCredentialsError('invalid_client', 'Client authentication failed', status_code=401)
         return client
 

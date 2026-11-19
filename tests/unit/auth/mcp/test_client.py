@@ -5,8 +5,11 @@ from mcp.server.auth.provider import RegistrationError
 from mcp.shared.auth import InvalidRedirectUriError, InvalidScopeError, OAuthClientInformationFull
 from pydantic import AnyUrl
 
-from openapi_mcp_gateway.auth.mcp.client import McpDynamicClientRegistry, McpPreRegisteredClientDirectory
-from openapi_mcp_gateway.settings import ClientConfig
+from openapi_mcp_gateway.auth.mcp.client import (
+    McpDynamicClientRegistry,
+    McpPreRegisteredClient,
+    McpPreRegisteredClientDirectory,
+)
 from tests.constants import BROWSER_ORIGIN, GATEWAY_ISSUER
 
 
@@ -34,33 +37,21 @@ class TestScopeGrant:
             ('issues:write issues:delete', ['issues:write']),
         ],
     )
-    async def test_requested_scopes_are_narrowed_to_the_client_set(self, requested, granted):
+    def test_requested_scopes_are_narrowed_to_the_client_set(self, requested, granted):
         """Nothing asked grants the defaults, and a request is narrowed to the set, as RFC 6749 §3.3 allows."""
-        client = await _pre_registered(scopes=['issues:read', 'issues:write'], default_scopes=['issues:read'])
+        client = _pre_registered(scopes=('issues:read', 'issues:write'), default_scopes=['issues:read'])
         assert client.validate_scope(requested) == granted
 
-    async def test_without_default_scopes_the_whole_set_is_the_default(self):
-        client = await _pre_registered(scopes=['issues:read', 'issues:write'])
+    def test_without_default_scopes_the_whole_set_is_the_default(self):
+        client = _pre_registered(scopes=('issues:read', 'issues:write'))
         assert client.validate_scope(None) == ['issues:read', 'issues:write']
 
-    async def test_a_request_with_nothing_in_reach_is_refused(self, caplog):
+    def test_a_request_with_nothing_in_reach_is_refused(self, caplog):
         """Granting something other than what was asked would be silent, so ``invalid_scope`` says so instead."""
-        client = await _pre_registered(scopes=['issues:read'])
+        client = _pre_registered(scopes=('issues:read',))
         with caplog.at_level(logging.WARNING), pytest.raises(InvalidScopeError):
             client.validate_scope('issues:delete')
         assert "asked for scopes ['issues:delete']" in caplog.text
-
-    def test_defaults_beyond_the_set_are_refused(self):
-        with pytest.raises(ValueError, match=r"default_scopes names \['issues:write'\]"):
-            ClientConfig(scopes=['issues:read'], default_scopes=['issues:write'])
-
-    async def test_endpoint_scopes_are_granted_beside_the_client_set(self):
-        """Without ``auth.mcp.operation_scopes`` every token carries the endpoint scopes.
-
-        A pre-registered client is granted them as a registered client would be.
-        """
-        client = await _pre_registered(mcp_endpoint_scopes=('api',))
-        assert client.validate_scope(None) == ['api']
 
 
 class TestRedirectUris:
@@ -70,35 +61,35 @@ class TestRedirectUris:
         'redirect_uri',
         ['http://localhost:51234/callback', 'http://127.0.0.1:8080/', 'http://[::1]:9000/oauth/cb'],
     )
-    async def test_any_loopback_redirect_is_accepted_without_registered_uris(self, redirect_uri):
+    def test_any_loopback_redirect_is_accepted_without_registered_uris(self, redirect_uri):
         """A CLI client picks its port at run time, so its user never has to know the callback."""
-        client = await _pre_registered()
+        client = _pre_registered()
         assert str(client.validate_redirect_uri(AnyUrl(redirect_uri))) == redirect_uri
 
     @pytest.mark.parametrize('redirect_uri', ['https://localhost/callback', 'http://evil.example.com/callback', None])
-    async def test_anything_but_a_loopback_redirect_is_refused_without_registered_uris(self, redirect_uri, caplog):
+    def test_anything_but_a_loopback_redirect_is_refused_without_registered_uris(self, redirect_uri, caplog):
         """The refusal logs what the client sent, so its operator can copy it into ``redirect_uris``."""
-        client = await _pre_registered()
+        client = _pre_registered()
         with caplog.at_level(logging.WARNING), pytest.raises(InvalidRedirectUriError):
             client.validate_redirect_uri(AnyUrl(redirect_uri) if redirect_uri else None)
         assert f'used redirect_uri {redirect_uri}' in caplog.text
 
-    async def test_registered_uris_match_exactly(self):
+    def test_registered_uris_match_exactly(self):
         """Registering a callback turns off the loopback allowance, loopback addresses included."""
-        client = await _pre_registered(redirect_uris=[WEB_CALLBACK])
+        client = _pre_registered(redirect_uris=[WEB_CALLBACK])
         assert str(client.validate_redirect_uri(AnyUrl(WEB_CALLBACK))) == WEB_CALLBACK
         with pytest.raises(InvalidRedirectUriError):
             client.validate_redirect_uri(AnyUrl('http://localhost:3000/callback'))
 
     @pytest.mark.parametrize('redirect_uri', NEAR_MISSES)
     @pytest.mark.parametrize('registered', ['pre-registered', 'dynamic'])
-    async def test_a_near_miss_of_a_registered_uri_is_refused(self, registered, redirect_uri):
+    def test_a_near_miss_of_a_registered_uri_is_refused(self, registered, redirect_uri):
         """No prefix, suffix, or added query matches, as the MCP Security Best Practices require.
 
         The SDK does the matching, so this pins its behaviour for both kinds of client.
         """
         client = (
-            await _pre_registered(redirect_uris=[WEB_CALLBACK])
+            _pre_registered(redirect_uris=[WEB_CALLBACK])
             if registered == 'pre-registered'
             else OAuthClientInformationFull(client_id='dynamic', redirect_uris=[AnyUrl(WEB_CALLBACK)])
         )
@@ -109,46 +100,36 @@ class TestRedirectUris:
 class TestConsentRequirement:
     """Every client passes the consent page unless the operator exempts a pre-registered one."""
 
-    @pytest.mark.parametrize(
-        ('client', 'required'), [({}, True), ({'consent': True}, True), ({'consent': False}, False)]
-    )
-    def test_a_pre_registered_client_follows_its_setting(self, client, required):
-        directory = McpPreRegisteredClientDirectory({'agent': ClientConfig.model_validate(client)}, ())
+    @pytest.mark.parametrize('required', [True, False])
+    def test_a_pre_registered_client_follows_its_setting(self, required):
+        directory = McpPreRegisteredClientDirectory([_pre_registered(consent_required=required)])
         assert directory.requires_consent('agent') is required
 
     def test_a_dynamically_registered_client_always_needs_consent(self, memory_store):
         assert McpDynamicClientRegistry(memory_store, GATEWAY_ISSUER).requires_consent('anyone') is True
 
 
-class TestClientAuthentication:
-    """How a pre-registered client proves itself at the token endpoint."""
+class TestClientLookup:
+    """A pre-registered directory knows only the clients it was given."""
 
-    @pytest.mark.parametrize(
-        ('client', 'method'),
-        [({'client_secret': 'shh'}, 'client_secret_basic'), ({}, 'none')],
-    )
-    async def test_a_secret_selects_basic_authentication(self, client, method):
-        """Without a secret the client is public and held to PKCE alone."""
-        record = await _pre_registered(**client)
-        assert record.token_endpoint_auth_method == method
-
-    def test_a_secret_that_resolves_to_nothing_is_refused(self, monkeypatch):
-        """An unset variable would otherwise turn a confidential client public, open to anyone knowing its id."""
-        monkeypatch.delenv('AGENT_SECRET', raising=False)
-        client = ClientConfig(client_secret='${AGENT_SECRET}')
-        with pytest.raises(ValueError, match=r'auth\.mcp\.clients\.agent\.client_secret'):
-            McpPreRegisteredClientDirectory({'agent': client}, ())
+    async def test_a_given_client_is_found(self):
+        client = _pre_registered()
+        assert await McpPreRegisteredClientDirectory([client]).get('agent') is client
 
     async def test_an_unknown_client_is_absent(self):
-        directory = McpPreRegisteredClientDirectory({}, ())
-        assert await directory.get('stranger') is None
+        assert await McpPreRegisteredClientDirectory([]).get('stranger') is None
+
+    def test_a_client_registered_twice_is_refused(self):
+        """Keeping either record would decide silently which secret and consent setting apply."""
+        with pytest.raises(ValueError, match='registered twice'):
+            McpPreRegisteredClientDirectory([_pre_registered(), _pre_registered(consent_required=False)])
 
 
 class TestRegistration:
     """Dynamic Client Registration stays only where no client is pre-registered."""
 
     async def test_pre_registered_directories_refuse_registration(self):
-        directory = McpPreRegisteredClientDirectory({}, ())
+        directory = McpPreRegisteredClientDirectory([])
         assert directory.build_registration_options(['api']).enabled is False
         with pytest.raises(RegistrationError):
             await directory.register(OAuthClientInformationFull(client_id='newcomer'))
@@ -156,7 +137,7 @@ class TestRegistration:
     @pytest.mark.parametrize(('mcp_endpoint_scopes', 'advertised'), [(['api'], ['api']), ([], None)])
     def test_pre_registered_directories_still_advertise_the_endpoint_scopes(self, mcp_endpoint_scopes, advertised):
         """``scopes_supported`` is read from the registration options, so it would vanish with registration."""
-        options = McpPreRegisteredClientDirectory({}, ()).build_registration_options(mcp_endpoint_scopes)
+        options = McpPreRegisteredClientDirectory([]).build_registration_options(mcp_endpoint_scopes)
         assert options.valid_scopes == advertised
 
     def test_dynamic_registries_grant_the_endpoint_scopes(self, memory_store):
@@ -165,9 +146,17 @@ class TestRegistration:
         assert options.valid_scopes == options.default_scopes == ['api']
 
 
-async def _pre_registered(mcp_endpoint_scopes: tuple[str, ...] = (), **client: object) -> OAuthClientInformationFull:
-    """The record a directory holding one ``auth.mcp.clients`` entry, ``agent``, gives the SDK."""
-    directory = McpPreRegisteredClientDirectory({'agent': ClientConfig.model_validate(client)}, mcp_endpoint_scopes)
-    record = await directory.get('agent')
-    assert record is not None
-    return record
+def _pre_registered(
+    scopes: tuple[str, ...] = (),
+    default_scopes: list[str] | None = None,
+    redirect_uris: list[str] | None = None,
+    consent_required: bool = True,
+) -> McpPreRegisteredClient:
+    """A pre-registered client ``agent`` holding ``scopes``, granted ``default_scopes`` or else all of them."""
+    return McpPreRegisteredClient(
+        client_id='agent',
+        redirect_uris=[AnyUrl(uri) for uri in redirect_uris] if redirect_uris else None,
+        scope=' '.join(scopes),
+        default_scopes=list(scopes if default_scopes is None else default_scopes),
+        consent_required=consent_required,
+    )

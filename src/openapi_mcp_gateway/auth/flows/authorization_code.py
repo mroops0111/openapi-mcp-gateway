@@ -21,11 +21,12 @@ from ..mcp.authorization_code import (
     McpAuthorizationCodeServer,
     McpNextSignIn,
 )
-from ..mcp.client import McpClientDirectory, McpDynamicClientRegistry, McpPreRegisteredClientDirectory
+from ..mcp.client import McpClientDirectory, McpDynamicClientRegistry
 from ..mcp.consent import PENDING_AUTHORIZATION_TTL, BrowserCookie, PendingAuthorization
 from ..mcp.consent_page import redirect_without_cache, render_error_page
 from ..mcp.record_origin import McpRecordOrigin
 from ..mcp.token_issuer import McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
+from ..settings_mapping import build_mcp_client_directory, build_mcp_token_policy
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamTokenSource
@@ -250,6 +251,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
     """
 
     upstream_principal = 'user'
+    builds_mcp_half = True
     mcp_settings = frozenset(
         {'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl', 'refresh_token_ttl'}
     )
@@ -290,7 +292,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             issuer=upstream_config.resolve_issuer(),
         )
 
-        policy = McpTokenPolicy.from_config(mcp_config)
+        policy = build_mcp_token_policy(mcp_config)
         mcp_endpoint_scopes = policy.scopes
         server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')
         # The same string the metadata publishes as ``issuer``,
@@ -382,7 +384,7 @@ def _build_client_directory(
     """The clients ``auth.mcp.clients`` declares, or Dynamic Client Registration when it declares none."""
     entry = flow_context.entry
     if entry.auth.mcp.clients:
-        return McpPreRegisteredClientDirectory(entry.auth.mcp.clients, mcp_endpoint_scopes)
+        return build_mcp_client_directory(entry.auth.mcp.clients, mcp_endpoint_scopes)
     logger.warning(
         'Server "%s" accepts Dynamic Client Registration, which the MCP 2026-07-28 spec deprecates. '
         'Declare the clients allowed to sign in under auth.mcp.clients instead.',

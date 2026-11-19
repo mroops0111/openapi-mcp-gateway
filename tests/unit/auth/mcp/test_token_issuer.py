@@ -5,12 +5,10 @@ from mcp.shared.auth import OAuthClientInformationFull
 
 from openapi_mcp_gateway.auth.mcp.record_origin import McpRecordOrigin
 from openapi_mcp_gateway.auth.mcp.token_issuer import (
-    MCP_DEFAULT_SCOPE,
     McpTokenAttachment,
     McpTokenIssuer,
     McpTokenPolicy,
 )
-from openapi_mcp_gateway.settings import McpAuthConfig
 from tests.constants import GATEWAY_ISSUER
 
 
@@ -21,27 +19,6 @@ CLIENT = OAuthClientInformationFull(client_id='agent', redirect_uris=None, scope
 @pytest.fixture
 def tokens(memory_store) -> McpTokenIssuer:
     return McpTokenIssuer(memory_store, McpRecordOrigin(issuer=GATEWAY_ISSUER), McpTokenPolicy(scopes=[]))
-
-
-class TestPolicyFromConfig:
-    """``auth.mcp`` decides the endpoint scopes and lifetimes of every token the gateway mints."""
-
-    def test_an_unset_endpoint_scope_falls_back_to_the_default(self):
-        assert McpTokenPolicy.from_config(McpAuthConfig()).scopes == [MCP_DEFAULT_SCOPE]
-
-    def test_required_scopes_are_carried_on_every_token(self):
-        assert McpTokenPolicy.from_config(McpAuthConfig(required_scopes=['read'])).scopes == ['read']
-
-    def test_operation_scopes_leave_no_endpoint_scope(self):
-        """Each operation names its own scopes, so no endpoint-wide one is granted."""
-        config = McpAuthConfig.model_validate(
-            {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {'scopes': ['pets:read']}}}
-        )
-        assert McpTokenPolicy.from_config(config).scopes == []
-
-    def test_lifetimes_come_from_the_config(self):
-        policy = McpTokenPolicy.from_config(McpAuthConfig(access_token_ttl=60, refresh_token_ttl=120))
-        assert (policy.access_token_ttl, policy.refresh_token_ttl) == (60, 120)
 
 
 class TestIssuing:

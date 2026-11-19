@@ -8,7 +8,6 @@ from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
 from ..settings import AuthConfig
 from .assembly import AuthTypeContext, ServerAuthSetup, UpstreamPrincipal
-from .mcp.client import McpPreRegisteredClientDirectory
 from .mcp.client_credentials import (
     AUTHORIZE_PATH,
     TOKEN_ENDPOINT_AUTH_METHODS,
@@ -19,7 +18,8 @@ from .mcp.client_credentials import (
     McpGatewayTokenVerifier,
 )
 from .mcp.record_origin import McpRecordOrigin
-from .mcp.token_issuer import McpTokenIssuer, McpTokenPolicy
+from .mcp.token_issuer import McpTokenIssuer
+from .settings_mapping import build_mcp_client_directory, build_mcp_token_policy
 
 
 class McpTokenAuthority(abc.ABC):
@@ -39,8 +39,13 @@ class McpTokenAuthority(abc.ABC):
 
     @classmethod
     @abc.abstractmethod
-    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal | None) -> bool:
+    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
         """Whether ``auth`` selects this authority for an upstream that sees ``upstream_principal``."""
+
+    @classmethod
+    def refuse_unusable_settings(cls, auth: AuthConfig, server_name: str) -> None:
+        """Refuse ``auth`` settings this authority cannot honour, before anything is built. Nothing, by default."""
+        return None
 
     @abc.abstractmethod
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
@@ -51,7 +56,7 @@ class McpNoTokenAuthority(McpTokenAuthority):
     """Leave the endpoint open, as for a server on localhost or inside a private network."""
 
     @classmethod
-    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal | None) -> bool:
+    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
         return True
 
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
@@ -67,27 +72,29 @@ class McpClientCredentialsAuthority(McpTokenAuthority):
 
     upstream_principal = 'gateway'
     mcp_settings = frozenset({'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl'})
-    mcp_settings_requirement = 'auth.mcp.clients, the agents the gateway issues MCP tokens to'
+    mcp_settings_requirement = "auth.mcp.clients on an upstream that sees only the gateway's identity"
 
     @classmethod
-    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal | None) -> bool:
+    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
         return upstream_principal == cls.upstream_principal and bool(auth.mcp.clients)
+
+    @classmethod
+    def refuse_unusable_settings(cls, auth: AuthConfig, server_name: str) -> None:
+        auth.mcp.refuse_client_settings_without_sign_in(server_name)
 
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
         entry = context.entry
-        entry.auth.mcp.refuse_client_settings_without_sign_in(entry.name)
         server_url = pydantic.AnyHttpUrl(f'{context.gateway_url.rstrip("/")}{entry.mount_path}')
         # The same string the metadata publishes as ``issuer``, since clients compare the two exactly.
         issuer = str(server_url)
         base = issuer.rstrip('/')
-        policy = McpTokenPolicy.from_config(entry.auth.mcp)
+        policy = build_mcp_token_policy(entry.auth.mcp)
         tokens = McpTokenIssuer(context.store, McpRecordOrigin(issuer=issuer), policy)
-        grant = McpClientCredentialsGrant(
-            tokens, McpPreRegisteredClientDirectory(entry.auth.mcp.clients, policy.scopes)
-        )
+        clients = build_mcp_client_directory(entry.auth.mcp.clients, policy.scopes)
+        grant = McpClientCredentialsGrant(tokens, clients)
         # The endpoint's canonical URI, published in the protected resource document and enforced at the token endpoint.
         protected_resource = ProtectedResourceMetadata.model_validate(
-            {'resource': f'{base}/mcp', 'authorization_servers': [issuer]}
+            {'resource': f'{base}/mcp', 'authorization_servers': [issuer], 'scopes_supported': policy.scopes or None}
         )
         metadata = OAuthMetadata.model_validate(
             {
@@ -97,6 +104,7 @@ class McpClientCredentialsAuthority(McpTokenAuthority):
                 'grant_types_supported': ['client_credentials'],
                 'token_endpoint_auth_methods_supported': list(TOKEN_ENDPOINT_AUTH_METHODS),
                 'response_types_supported': [],
+                'scopes_supported': policy.scopes or None,
             }
         )
         return dataclasses.replace(
@@ -114,7 +122,6 @@ class McpClientCredentialsAuthority(McpTokenAuthority):
             authorization_server_metadata=metadata,
             extensions=[*setup.extensions, McpClientCredentialsExtension()],
             mcp_summary='gateway (client_credentials)',
-            mcp_settings_read=self.mcp_settings,
         )
 
 
@@ -122,16 +129,6 @@ class McpClientCredentialsAuthority(McpTokenAuthority):
 MCP_TOKEN_AUTHORITIES: tuple[type[McpTokenAuthority], ...] = (McpClientCredentialsAuthority, McpNoTokenAuthority)
 
 
-def attach_mcp_token_authority(setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
-    """Give ``setup`` an MCP half from the first authority the config selects, unless it already has one.
-
-    The authorities decide by the upstream's principal.
-    The check for an existing MCP half only keeps one from overwriting a strategy that built both.
-    """
-    if setup.provider is not None or setup.verifier is not None:
-        return setup
-    auth = context.entry.auth
-    authority = next(
-        authority for authority in MCP_TOKEN_AUTHORITIES if authority.applies_to(auth, setup.upstream_principal)
-    )
-    return authority().attach(setup, context)
+def select_mcp_token_authority(auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> type[McpTokenAuthority]:
+    """The first authority ``auth`` selects for an upstream that sees ``upstream_principal``."""
+    return next(authority for authority in MCP_TOKEN_AUTHORITIES if authority.applies_to(auth, upstream_principal))

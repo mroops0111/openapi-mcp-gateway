@@ -1,9 +1,8 @@
-import dataclasses
 import typing
 
-from .assembly import AuthTypeContext, AuthTypeHandler, ServerAuthSetup
-from .flows import OAUTH_FLOW_HANDLERS, build_oauth_flow
-from .mcp_authority import MCP_TOKEN_AUTHORITIES, attach_mcp_token_authority
+from .assembly import AuthTypeContext, AuthTypeHandler, ServerAuthSetup, UpstreamPrincipal, UpstreamSelection
+from .authorities import MCP_TOKEN_AUTHORITIES, select_mcp_token_authority
+from .flows import OAUTH_FLOW_HANDLERS, build_oauth_flow, select_oauth_flow
 from .upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
@@ -87,7 +86,13 @@ class UpstreamPassthroughHandler(AuthTypeHandler):
 class OAuth2Handler(AuthTypeHandler):
     """Defer to ``auth.upstream.flow``, which selects among the OAuth grants in turn and decides the principal."""
 
-    upstream_principal = None
+    def select(self, context: AuthTypeContext) -> UpstreamSelection:
+        handler_class = select_oauth_flow(context).handler_class
+        return UpstreamSelection(
+            upstream_principal=handler_class.upstream_principal,
+            builds_mcp_half=handler_class.builds_mcp_half,
+            mcp_settings=handler_class.mcp_settings,
+        )
 
     def build(self, context: AuthTypeContext) -> ServerAuthSetup:
         return build_oauth_flow(context)
@@ -108,38 +113,44 @@ AUTH_TYPE_HANDLERS: dict[str, type[AuthTypeHandler]] = {
 def build_auth(context: AuthTypeContext) -> ServerAuthSetup:
     """Assemble the auth components for one server, dispatching on ``auth.upstream.type``.
 
+    Every strategy is selected first without any I/O, so a setting nothing reads is refused before anything is built.
     An upstream strategy that leaves the MCP half open gets one from ``MCP_TOKEN_AUTHORITIES``.
-    An ``auth.mcp`` field the resulting MCP half never reads is refused.
     """
-    auth_type = context.entry.auth.upstream.type
+    entry = context.entry
+    auth_type = entry.auth.upstream.type
     handler_class = AUTH_TYPE_HANDLERS.get(auth_type)
     if handler_class is None:
         raise ValueError(
-            f'Server "{context.entry.name}": unsupported auth type "{auth_type}". '
-            f'Supported types: {sorted(AUTH_TYPE_HANDLERS)}'
+            f'Server "{entry.name}": unsupported auth type "{auth_type}". Supported types: {sorted(AUTH_TYPE_HANDLERS)}'
         )
-    setup = handler_class().build(context)
-    # ``oauth2`` leaves the principal to its flow, whose factory has already set it.
-    setup = dataclasses.replace(setup, upstream_principal=handler_class.upstream_principal or setup.upstream_principal)
-    setup = attach_mcp_token_authority(setup, context)
-    _refuse_unread_mcp_settings(setup, context)
-    return setup
+    handler = handler_class()
+    selection = handler.select(context)
+    authority = (
+        None if selection.builds_mcp_half else select_mcp_token_authority(entry.auth, selection.upstream_principal)
+    )
+    mcp_settings_read = authority.mcp_settings if authority else selection.mcp_settings
+    _refuse_unread_mcp_settings(
+        entry.name, entry.auth.mcp.model_fields_set - mcp_settings_read, selection.upstream_principal
+    )
+    if authority is not None:
+        authority.refuse_unusable_settings(entry.auth, entry.name)
+
+    setup = handler.build(context)
+    return authority().attach(setup, context) if authority else setup
 
 
-def _refuse_unread_mcp_settings(setup: ServerAuthSetup, context: AuthTypeContext) -> None:
-    """Refuse an ``auth.mcp`` field the MCP half never reads, naming what would read it.
+def _refuse_unread_mcp_settings(server_name: str, unread: set[str], upstream_principal: UpstreamPrincipal) -> None:
+    """Refuse an ``auth.mcp`` field the MCP half would never read, naming what would read it.
 
     Only explicitly-set fields are checked, so defaults never trip this.
     The suggestion prefers strategies for an upstream that sees the same identity, since those need no other change.
     """
-    entry = context.entry
-    unread = sorted(entry.auth.mcp.model_fields_set - setup.mcp_settings_read)
     if not unread:
         return
-    field = unread[0]
+    field = sorted(unread)[0]
     readers = [
         reader for reader in (*OAUTH_FLOW_HANDLERS.values(), *MCP_TOKEN_AUTHORITIES) if field in reader.mcp_settings
     ]
-    nearest = [reader for reader in readers if reader.upstream_principal == setup.upstream_principal] or readers
+    nearest = [reader for reader in readers if reader.upstream_principal == upstream_principal] or readers
     requirement = ', or '.join(reader.mcp_settings_requirement for reader in nearest)
-    raise ValueError(f'Server "{entry.name}": auth.mcp.{field} needs {requirement}, so it would have no effect here.')
+    raise ValueError(f'Server "{server_name}": auth.mcp.{field} needs {requirement}, so it would have no effect here.')

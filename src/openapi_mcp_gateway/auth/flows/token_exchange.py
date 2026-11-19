@@ -52,6 +52,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
     """
 
     upstream_principal = 'user'
+    builds_mcp_half = True
     mcp_settings = frozenset({'issuer', 'required_scopes'})
     mcp_settings_requirement = 'auth.upstream.flow token_exchange, where another authorization server issues MCP tokens'
 

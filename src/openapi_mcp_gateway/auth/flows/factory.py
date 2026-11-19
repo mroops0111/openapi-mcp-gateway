@@ -20,8 +20,17 @@ OAUTH_FLOW_HANDLERS: dict[str, type[OAuthFlowHandler]] = {
 }
 
 
-def build_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
-    """Resolve the effective OAuth flow for ``context.entry`` and dispatch to its handler.
+@dataclasses.dataclass(frozen=True)
+class OAuthFlowSelection:
+    """The OAuth flow settled for one server, before anything is built."""
+
+    handler_class: type[OAuthFlowHandler]
+    flow_type: str
+    upstream_oauth_flow: UpstreamOAuthFlow | None
+
+
+def select_oauth_flow(context: AuthTypeContext) -> OAuthFlowSelection:
+    """Resolve the effective OAuth flow for ``context.entry`` and its handler, reading only the config and spec.
 
     Resolution order:
 
@@ -34,19 +43,19 @@ def build_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
     upstream_oauth_flow = resolve_upstream_oauth_flow(entry, context.spec)
     flow_type = upstream_oauth_flow.flow_type if upstream_oauth_flow else entry.auth.upstream.flow
     handler_class = OAUTH_FLOW_HANDLERS.get(flow_type or '')
-    if handler_class is None:
+    if flow_type is None or handler_class is None:
         raise ValueError(
             f'Server "{entry.name}": unsupported OAuth flow type "{flow_type}". '
             f'Supported flows: {sorted(OAUTH_FLOW_HANDLERS)}'
         )
+    return OAuthFlowSelection(handler_class, flow_type, upstream_oauth_flow)
 
-    flow_context = OAuthFlowContext(context, upstream_oauth_flow)
-    return dataclasses.replace(
-        handler_class().build(flow_context),
-        flow_type=flow_type,
-        upstream_principal=handler_class.upstream_principal,
-        mcp_settings_read=handler_class.mcp_settings,
-    )
+
+def build_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
+    """Build the OAuth flow ``select_oauth_flow`` resolves for ``context.entry``."""
+    selection = select_oauth_flow(context)
+    flow_context = OAuthFlowContext(context, selection.upstream_oauth_flow)
+    return dataclasses.replace(selection.handler_class().build(flow_context), flow_type=selection.flow_type)
 
 
 def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> UpstreamOAuthFlow | None:

@@ -5,10 +5,10 @@ import pydantic
 import pytest
 
 from openapi_mcp_gateway.auth.assembly import AuthTypeContext
+from openapi_mcp_gateway.auth.authorities import MCP_TOKEN_AUTHORITIES
 from openapi_mcp_gateway.auth.factory import AUTH_TYPE_HANDLERS, build_auth
 from openapi_mcp_gateway.auth.flows import OAUTH_FLOW_HANDLERS
 from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
-from openapi_mcp_gateway.auth.mcp_authority import MCP_TOKEN_AUTHORITIES
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
@@ -188,7 +188,9 @@ class TestUpstreamPrincipal:
     )
     def test_each_upstream_names_its_principal(self, auth, principal):
         """An unset flow takes the principal of the flow the spec resolves it to."""
-        assert _build(auth).upstream_principal == principal
+        context = _build_context(auth)
+        handler = AUTH_TYPE_HANDLERS[context.entry.auth.upstream.type]()
+        assert handler.select(context).upstream_principal == principal
 
 
 class TestMcpSettingsWithoutEffect:
@@ -205,11 +207,11 @@ class TestMcpSettingsWithoutEffect:
     @pytest.mark.parametrize(
         ('auth', 'refusal'),
         [
-            ({'upstream': BEARER, 'mcp': {'required_scopes': ['x']}}, r'required_scopes needs auth\.mcp\.clients,'),
-            ({'upstream': BEARER, 'mcp': {'access_token_ttl': 60}}, r'access_token_ttl needs auth\.mcp\.clients,'),
+            ({'upstream': BEARER, 'mcp': {'required_scopes': ['x']}}, r'required_scopes needs auth\.mcp\.clients on'),
+            ({'upstream': BEARER, 'mcp': {'access_token_ttl': 60}}, r'access_token_ttl needs auth\.mcp\.clients on'),
             (
                 {'upstream': CLIENT_CREDENTIALS, 'mcp': {'access_token_ttl': 60}},
-                r'access_token_ttl needs auth\.mcp\.clients,',
+                r'access_token_ttl needs auth\.mcp\.clients on',
             ),
             (
                 {'upstream': AUTHORIZATION_CODE, 'mcp': {'issuer': ISSUER}},
@@ -225,7 +227,7 @@ class TestMcpSettingsWithoutEffect:
             ),
             (
                 {'upstream': {'type': 'passthrough'}, 'mcp': {'clients': {'agent': {'client_secret': 's'}}}},
-                r'clients needs auth\.upstream\.flow authorization_code.*, or auth\.mcp\.clients',
+                r'clients needs auth\.upstream\.flow authorization_code.*, or auth\.mcp\.clients on an upstream that sees only',
             ),
         ],
     )
@@ -255,15 +257,22 @@ class TestMcpSettingsWithoutEffect:
     def test_a_setting_the_mcp_half_reads_is_accepted(self, auth):
         assert _build(auth)
 
+    def test_the_refusal_comes_before_anything_is_built(self):
+        """``token_exchange`` fetches its issuer's metadata when built, so a misplaced setting must stop it first."""
+        context = _build_context({'upstream': TOKEN_EXCHANGE, 'mcp': {**TOKEN_EXCHANGE_MCP, 'access_token_ttl': 60}})
+        with (
+            patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata') as fetch,
+            pytest.raises(ValueError, match=r'access_token_ttl needs'),
+        ):
+            build_auth(context)
+        fetch.assert_not_called()
+
 
 def _build(auth: dict):
     """Build the auth of a server carrying ``auth``, against a spec declaring its flow.
 
     Issuer discovery is stubbed, so ``token_exchange`` builds offline.
     """
-    upstream = auth['upstream']
-    flow = upstream.get('flow') or ('client_credentials' if upstream['type'] == 'oauth2' else None)
-    spec = SPEC_BY_FLOW[flow]() if flow in SPEC_BY_FLOW else build_spec()
     metadata = McpExternalIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
     with (
         patch(
@@ -271,4 +280,12 @@ def _build(auth: dict):
         ),
         patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client'),
     ):
-        return build_auth(auth_context(server_entry(AuthConfig.model_validate(auth)), spec))
+        return build_auth(_build_context(auth))
+
+
+def _build_context(auth: dict) -> AuthTypeContext:
+    """What ``build_auth`` receives for a server carrying ``auth``, against a spec declaring its flow."""
+    upstream = auth['upstream']
+    flow = upstream.get('flow') or ('client_credentials' if upstream['type'] == 'oauth2' else None)
+    spec = SPEC_BY_FLOW[flow]() if flow in SPEC_BY_FLOW else build_spec()
+    return auth_context(server_entry(AuthConfig.model_validate(auth)), spec)

@@ -8,6 +8,7 @@ import yaml
 
 from openapi_mcp_gateway.settings import (
     AuthConfig,
+    ClientConfig,
     GatewayConfig,
     ServerConfig,
     UpstreamAuthConfig,
@@ -489,6 +490,14 @@ class TestSettingsThatCannotTakeEffect:
     def test_applicable_settings_are_accepted(self, payload):
         """Refusing the inapplicable must not refuse the ordinary."""
         assert AuthConfig.model_validate(payload)
+
+
+class TestClientConfig:
+    """A client declared under ``auth.mcp.clients`` refuses a default it could never be granted."""
+
+    def test_defaults_beyond_the_set_are_refused(self):
+        with pytest.raises(ValueError, match=r"default_scopes names \['issues:write'\]"):
+            ClientConfig(scopes=['issues:read'], default_scopes=['issues:write'])
 
 
 class TestScopeSettings:

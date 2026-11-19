@@ -3,7 +3,7 @@ import base64
 import pytest
 from starlette.requests import Request
 
-from openapi_mcp_gateway.auth.mcp.client import McpPreRegisteredClientDirectory
+from openapi_mcp_gateway.auth.mcp.client import McpPreRegisteredClient, McpPreRegisteredClientDirectory
 from openapi_mcp_gateway.auth.mcp.client_credentials import (
     McpClientCredentialsError,
     McpClientCredentialsGrant,
@@ -13,7 +13,6 @@ from openapi_mcp_gateway.auth.mcp.client_credentials import (
 from openapi_mcp_gateway.auth.mcp.record_origin import McpRecordOrigin
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenIssuer, McpTokenPolicy
 from openapi_mcp_gateway.scopes import McpAccessToken
-from openapi_mcp_gateway.settings import ClientConfig
 from tests.constants import GATEWAY_ISSUER
 
 
@@ -24,8 +23,15 @@ def tokens(memory_store) -> McpTokenIssuer:
 
 @pytest.fixture
 def grant(tokens) -> McpClientCredentialsGrant:
-    clients = {'agent': ClientConfig(client_secret='secret', scopes=['pets:read'])}
-    return McpClientCredentialsGrant(tokens, McpPreRegisteredClientDirectory(clients, []))
+    agent = McpPreRegisteredClient(
+        client_id='agent',
+        client_secret='secret',
+        token_endpoint_auth_method='client_secret_basic',
+        redirect_uris=None,
+        scope='pets:read',
+        default_scopes=['pets:read'],
+    )
+    return McpClientCredentialsGrant(tokens, McpPreRegisteredClientDirectory([agent]))
 
 
 class TestGrant:

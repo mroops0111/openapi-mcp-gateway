@@ -1,15 +1,15 @@
 import pytest
 
+from openapi_mcp_gateway.auth.authorities import (
+    MCP_TOKEN_AUTHORITIES,
+    McpClientCredentialsAuthority,
+    McpNoTokenAuthority,
+)
 from openapi_mcp_gateway.auth.factory import build_auth
 from openapi_mcp_gateway.auth.mcp.client_credentials import (
     McpClientCredentialsExtension,
     McpClientCredentialsRoutes,
     McpGatewayTokenVerifier,
-)
-from openapi_mcp_gateway.auth.mcp_authority import (
-    MCP_TOKEN_AUTHORITIES,
-    McpClientCredentialsAuthority,
-    McpNoTokenAuthority,
 )
 from openapi_mcp_gateway.settings import AuthConfig
 from tests.flows import auth_context, build_spec, server_entry, spec_with_client_credentials
@@ -52,6 +52,18 @@ class TestAuthoritySelection:
         assert setup.mcp_summary == 'gateway (client_credentials)'
         # The upstream half survives the MCP half being attached.
         assert setup.flow_type == upstream.get('flow')
+
+    def test_discovery_names_the_endpoint_scopes(self):
+        """A client asking for fewer than these would be refused on every call."""
+        entry = _build_entry(
+            {'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': AGENT, 'required_scopes': ['api', 'mcp']}}
+        )
+        setup = build_auth(auth_context(entry, build_spec()))
+
+        assert setup.authorization_server_metadata is not None
+        assert setup.authorization_server_metadata.scopes_supported == ['api', 'mcp']
+        assert setup.protected_resource is not None
+        assert setup.protected_resource.scopes_supported == ['api', 'mcp']
 
     def test_a_server_without_clients_stays_open(self):
         setup = build_auth(auth_context(_build_entry({'upstream': {'type': 'bearer', 'token': 't'}}), build_spec()))
@@ -97,7 +109,9 @@ class TestClientSettingsWithoutSignIn:
     def test_a_refresh_token_ttl_is_refused(self):
         """No refresh token is issued, since the agent can always ask for a new token."""
         entry = _build_entry({'upstream': {'type': 'none'}, 'mcp': {'clients': AGENT, 'refresh_token_ttl': 600}})
-        with pytest.raises(ValueError, match=r'refresh_token_ttl has no effect, since no refresh token is issued'):
+        with pytest.raises(
+            ValueError, match=r'auth\.mcp\.refresh_token_ttl needs auth\.upstream\.flow authorization_code'
+        ):
             build_auth(auth_context(entry, build_spec()))
 
 
