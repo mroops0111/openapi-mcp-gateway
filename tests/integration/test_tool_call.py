@@ -23,8 +23,8 @@ from tests.constants import (
     PETSTORE_URL,
     TOKEN_URL,
 )
-from tests.context import stub_context
 from tests.gateway import auth_shutdown_hooks
+from tests.tool_result import text_of
 
 
 class TestEndToEndToolInvocation:
@@ -41,15 +41,15 @@ class TestEndToEndToolInvocation:
 
         mock_upstream(handler)
 
-        tool = _tool(gateway, 'list_pets')
-        result = await tool.run({'limit': 5}, context=stub_context())
+        async with Client(gateway._servers[0].mcp) as client:
+            result = await client.call_tool('list_pets', {'limit': 5})
 
         assert captured['method'] == 'GET'
         assert 'limit=5' in captured['url']
         assert captured['url'].startswith(f'{PETSTORE_URL}/pets')
 
         assert result.is_error is False
-        assert json.loads(result.content[0].text) == [{'id': 1, 'name': 'fido'}]
+        assert json.loads(text_of(result)) == [{'id': 1, 'name': 'fido'}]
 
 
 class TestDynamicExposureEndToEnd:
@@ -65,10 +65,10 @@ class TestDynamicExposureEndToEnd:
         )
         return Gateway.from_config(config)
 
-    def test_only_three_meta_tools_registered(self, dynamic_gateway):
+    async def test_only_three_meta_tools_registered(self, dynamic_gateway):
         """An MCP client sees just ``search_operations``, ``get_operation``, ``call_operation``."""
-        mcp = dynamic_gateway._servers[0].mcp
-        names = {tool.name for tool in mcp._tool_manager.list_tools()}
+        async with Client(dynamic_gateway._servers[0].mcp) as client:
+            names = {tool.name for tool in (await client.list_tools()).tools}
         assert names == {'search_operations', 'get_operation', 'call_operation'}
 
     async def test_search_field_weights_reach_the_ranking(self, petstore_json_path):
@@ -87,12 +87,11 @@ class TestDynamicExposureEndToEnd:
                 ),
             ],
         )
-        mcp = Gateway.from_config(config)._servers[0].mcp
-        search = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'search_operations')
-        by_path = (await search.fn(ctx=stub_context(), query='pets')).structured_content
-        by_summary_word = (await search.fn(ctx=stub_context(), query='list')).structured_content
-        assert by_path['operations']
-        assert by_summary_word['operations'] == []
+        async with Client(Gateway.from_config(config)._servers[0].mcp) as client:
+            by_path = (await client.call_tool('search_operations', {'query': 'pets'})).structured_content
+            by_summary_word = (await client.call_tool('search_operations', {'query': 'list'})).structured_content
+        assert by_path is not None and by_path['operations']
+        assert by_summary_word is not None and by_summary_word['operations'] == []
 
     async def test_list_then_get_then_call_roundtrip(self, dynamic_gateway, mock_upstream):
         """An LLM-style search, get, and call sequence drives an upstream call with correct query."""
@@ -105,20 +104,18 @@ class TestDynamicExposureEndToEnd:
 
         mock_upstream(handler)
 
-        mcp = dynamic_gateway._servers[0].mcp
-        tools = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
+        async with Client(dynamic_gateway._servers[0].mcp) as client:
+            listing = (await client.call_tool('search_operations', {'query': 'list pets'})).structured_content
+            assert listing is not None and listing['operations'][0]['name'] == 'list_pets'
 
-        listing = (await tools['search_operations'].fn(ctx=stub_context(), query='list pets')).structured_content
-        assert listing['operations'][0]['name'] == 'list_pets'
+            described = (await client.call_tool('get_operation', {'name': 'list_pets'})).structured_content
+            assert described is not None and described['input_schema']['properties']['limit']['type'] == 'integer'
 
-        described = (await tools['get_operation'].fn(name='list_pets', ctx=stub_context())).structured_content
-        assert described['input_schema']['properties']['limit']['type'] == 'integer'
-
-        result = await tools['call_operation'].fn(name='list_pets', arguments={'limit': 5}, ctx=stub_context())
+            result = await client.call_tool('call_operation', {'name': 'list_pets', 'arguments': {'limit': 5}})
         assert captured['method'] == 'GET'
         assert 'limit=5' in captured['url']
         assert result.is_error is False
-        assert json.loads(result.content[0].text) == [{'id': 1, 'name': 'fido'}]
+        assert json.loads(text_of(result)) == [{'id': 1, 'name': 'fido'}]
 
 
 class TestClientCredentialsFlowEndToEnd:
@@ -170,7 +167,8 @@ class TestClientCredentialsFlowEndToEnd:
 
         mock_upstream(handler)
 
-        await _tool(cc_gateway, 'list_pets').run({}, context=stub_context())
+        async with Client(cc_gateway._servers[0].mcp) as client:
+            await client.call_tool('list_pets', {})
 
         assert captured['authorization'] == 'Bearer cc-bearer-xyz'
         token_post.assert_awaited_once()
@@ -184,9 +182,9 @@ class TestClientCredentialsFlowEndToEnd:
         """Multiple tool calls share a single cached token (one POST to the IdP)."""
         mock_upstream(lambda request: httpx.Response(200, json=[]))
 
-        tool = _tool(cc_gateway, 'list_pets')
-        for _ in range(3):
-            await tool.run({}, context=stub_context())
+        async with Client(cc_gateway._servers[0].mcp) as client:
+            for _ in range(3):
+                await client.call_tool('list_pets', {})
 
         assert token_post.await_count == 1
 
@@ -351,8 +349,3 @@ class TestMovieShapingExample:
             'rating': 8.4,
             'cast': ['Edward Norton', 'Brad Pitt'],
         }
-
-
-def _tool(gateway: Gateway, name: str):
-    """The registered tool called ``name`` on the gateway's only server."""
-    return next(tool for tool in gateway._servers[0].mcp._tool_manager.list_tools() if tool.name == name)

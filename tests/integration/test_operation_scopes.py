@@ -11,7 +11,6 @@ import pytest
 from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import InvalidScopeError
-from mcp.types import CallToolResult, TextContent
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
@@ -20,6 +19,7 @@ from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
 from tests.oauth import authorization_code_gateway, bridge_of, server_of, sign_in
 from tests.serving import serve
+from tests.tool_result import text_of
 
 
 # The protocol revisions a client may speak.
@@ -171,7 +171,7 @@ class TestScopeRejection:
         async with _connect(gateway, READER, LEGACY) as session:
             result = await session.client.call_tool('delete_pet', {'petId': '1'})
         assert result.is_error
-        assert _text(result) == 'This operation needs one of these scopes: pets:delete.'
+        assert text_of(result) == 'This operation needs one of these scopes: pets:delete.'
         assert upstream_requests == []
 
     @pytest.mark.parametrize('mode', [MODERN, LEGACY])
@@ -193,7 +193,7 @@ class TestDynamicExposure:
         async with _connect(gateway, READER, MODERN) as session:
             searched = await session.client.call_tool('search_operations', {})
             hidden = await session.client.call_tool('get_operation', {'name': 'delete_pet'})
-        listing = json.loads(_text(searched))
+        listing = json.loads(text_of(searched))
         assert [operation['name'] for operation in listing['operations']] == READ_TOOLS
         assert listing['tags'] == [{'name': 'pets', 'operations': 2}]
         assert hidden.is_error
@@ -202,7 +202,7 @@ class TestDynamicExposure:
         async with _connect(gateway, STEPPER, MODERN) as session:
             searched = await session.client.call_tool('search_operations', {})
             described = await session.client.call_tool('get_operation', {'name': 'delete_pet'})
-        assert 'delete_pet' in [operation['name'] for operation in json.loads(_text(searched))['operations']]
+        assert 'delete_pet' in [operation['name'] for operation in json.loads(text_of(searched))['operations']]
         assert not described.is_error
 
     async def test_a_modern_client_is_challenged_for_the_operation_it_calls(self, gateway):
@@ -219,7 +219,7 @@ class TestDynamicExposure:
                 'call_operation', {'name': 'delete_pet', 'arguments': {'petId': '1'}}
             )
         assert result.is_error
-        assert 'pets:delete' in _text(result)
+        assert 'pets:delete' in text_of(result)
         assert upstream_requests == []
 
 
@@ -352,7 +352,7 @@ class TestUpstreamGrant:
             result = await session.client.call_tool(tool, arguments)
         assert result.is_error
         # The meta-tool's refusal arrives prefixed by the SDK, as any error a tool raises does.
-        assert DELETE_UPSTREAM_REFUSAL in _text(result)
+        assert DELETE_UPSTREAM_REFUSAL in text_of(result)
         assert upstream_requests == []
 
     async def test_missing_mcp_scopes_are_challenged_first(self, make_enforcing_gateway):
@@ -437,10 +437,3 @@ async def _connect(
 async def _tool_names(session: _Session) -> list[str]:
     """The tools ``tools/list`` shows the session's token, in registration order."""
     return [tool.name for tool in (await session.client.list_tools()).tools]
-
-
-def _text(result: CallToolResult) -> str:
-    """The text a tool result carries."""
-    [content] = result.content
-    assert isinstance(content, TextContent)
-    return content.text
