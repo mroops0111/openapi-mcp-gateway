@@ -27,7 +27,6 @@ from openapi_mcp_gateway.exposure._shaping import shape_operation
 from openapi_mcp_gateway.exposure._shared import (
     _sanitize_name,
     _schema_to_python_type,
-    build_input_schema,
 )
 from openapi_mcp_gateway.exposure.tool import _build_tool_signature
 from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ParamOverride, ToolOverride, parse_spec
