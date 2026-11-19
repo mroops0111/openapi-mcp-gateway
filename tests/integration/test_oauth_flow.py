@@ -11,6 +11,7 @@ from pydantic import AnyHttpUrl
 from starlette.exceptions import HTTPException
 
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
+from openapi_mcp_gateway.auth.mcp.client import McpPreRegisteredClient, McpPreRegisteredClientDirectory
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenPolicy
 from openapi_mcp_gateway.auth.upstream.authorization_code import UpstreamAuthorizationCodeClient
 from openapi_mcp_gateway.scopes import McpAccessToken
@@ -231,6 +232,7 @@ class TestFullOAuthLifecycle:
 
     async def test_full_flow(self, provider, mcp_client_info, memory_store):
         """Walk through every step of the OAuth lifecycle and verify token mappings."""
+        await provider.register_client(mcp_client_info)
         upstream_url = await begin_upstream(provider, mcp_client_info, scopes=['read', 'write'])
 
         redirect = await complete_upstream(provider, upstream_url)
@@ -717,6 +719,27 @@ class TestClientRegistrationIssuer:
         assert await provider.get_client('mcp-client-123') is not None
 
 
+class TestClientRemoval:
+    """Removing a client from the config revokes the tokens it already holds, even ones a shared store kept."""
+
+    async def test_a_token_of_a_removed_client_is_refused(self, make_provider, memory_store):
+        upstream = bridge_of(make_provider()).upstream
+        agent = McpPreRegisteredClient(
+            client_id='agent', redirect_uris=[AnyHttpUrl(CLIENT_REDIRECT_URI)], scope='api', default_scopes=['api']
+        )
+        before = authorization_code_server(
+            memory_store, GATEWAY_ISSUER, upstream, clients=McpPreRegisteredClientDirectory([agent])
+        )
+        token = await sign_in(before, agent)
+
+        after = authorization_code_server(
+            memory_store, GATEWAY_ISSUER, upstream, clients=McpPreRegisteredClientDirectory([])
+        )
+
+        assert await before.load_access_token(token.access_token) is not None
+        assert await after.load_access_token(token.access_token) is None
+
+
 class TestTokenOrigin:
     """MCP codes and tokens are honoured only by the server, and against the upstream, that issued them."""
 
@@ -725,10 +748,11 @@ class TestTokenOrigin:
         petstore = make_provider(issuer=GATEWAY_ISSUER)
         inventory = make_provider(issuer=OTHER_GATEWAY_ISSUER)
         token = await sign_in(petstore, mcp_client_info)
+        # The client is known to both, so only the origin can tell the tokens apart.
+        await inventory.register_client(mcp_client_info)
 
         assert await petstore.load_access_token(token.access_token) is not None
         assert await inventory.load_access_token(token.access_token) is None
-        await inventory.register_client(mcp_client_info)
         assert token.refresh_token is not None
         assert await inventory.load_refresh_token(mcp_client_info, token.refresh_token) is None
 

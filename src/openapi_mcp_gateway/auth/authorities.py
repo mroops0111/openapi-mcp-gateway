@@ -109,7 +109,7 @@ class McpClientCredentialsAuthority(McpTokenAuthority):
         )
         return dataclasses.replace(
             setup,
-            verifier=McpGatewayTokenVerifier(tokens),
+            verifier=McpGatewayTokenVerifier(tokens, clients),
             # The verifier reads only tokens whose origin is this server, so they cannot be for another resource.
             settings=AuthSettings(
                 issuer_url=server_url,

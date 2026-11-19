@@ -41,12 +41,20 @@ class TestGrant:
         client = await grant.authenticate('agent', 'secret')
         token = await grant.exchange(client, None)
 
-        verified = await McpGatewayTokenVerifier(tokens).verify_token(token.access_token)
+        verified = await McpGatewayTokenVerifier(tokens, grant.clients).verify_token(token.access_token)
 
         assert isinstance(verified, McpAccessToken)
         assert verified.scopes == ['pets:read']
         assert verified.mcp_grantable_scopes == ['pets:read']
         assert verified.upstream_scopes == []
+
+    async def test_a_token_of_a_removed_client_is_refused(self, grant, tokens):
+        """Removing an agent from the config revokes the tokens it already holds, even ones a shared store kept."""
+        token = await grant.exchange(await grant.authenticate('agent', 'secret'), None)
+
+        verifier = McpGatewayTokenVerifier(tokens, McpPreRegisteredClientDirectory([]))
+
+        assert await verifier.verify_token(token.access_token) is None
 
     @pytest.mark.parametrize(('client_id', 'secret'), [('agent', 'wrong'), ('stranger', 'secret')])
     async def test_an_unknown_client_or_wrong_secret_is_refused(self, grant, client_id, secret):

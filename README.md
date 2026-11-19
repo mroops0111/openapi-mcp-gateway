@@ -317,6 +317,8 @@ Under `authorization_code` the gateway's own access token lives 1 hour and its r
 
 `token_exchange` mints nothing, so neither applies. Lifetimes are the issuer's to set.
 
+Removing a client from `auth.mcp.clients` revokes its tokens once the gateway restarts. Rotating its secret does not, so its access token lasts until it expires.
+
 </details>
 
 ## Tool Results

@@ -13,7 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ..routes import AuthRoutes
-from .client import McpPreRegisteredClient, McpPreRegisteredClientDirectory
+from .client import McpClientDirectory, McpPreRegisteredClient, McpPreRegisteredClientDirectory
 from .token_issuer import McpTokenAttachment, McpTokenIssuer
 
 
@@ -125,13 +125,21 @@ class McpClientCredentialsRoutes(AuthRoutes):
 
 
 class McpGatewayTokenVerifier(TokenVerifier):
-    """The SDK's ``TokenVerifier`` for the access tokens the gateway issued itself."""
+    """The SDK's ``TokenVerifier`` for the access tokens the gateway issued itself.
 
-    def __init__(self, tokens: McpTokenIssuer) -> None:
+    A token outlives a restart in a shared store, so it is refused once its client is no longer in ``clients``.
+    Removing an agent from the config then revokes what it already holds.
+    """
+
+    def __init__(self, tokens: McpTokenIssuer, clients: McpClientDirectory) -> None:
         self._tokens = tokens
+        self._clients = clients
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        return await self._tokens.load_access_token(token)
+        access_token = await self._tokens.load_access_token(token)
+        if access_token is None or await self._clients.get(access_token.client_id) is None:
+            return None
+        return access_token
 
 
 class McpClientCredentialsExtension(Extension):
