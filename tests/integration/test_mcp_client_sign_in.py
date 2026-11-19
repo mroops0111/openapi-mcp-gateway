@@ -13,20 +13,14 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Form
 from fastapi.responses import JSONResponse
 from jwt.algorithms import RSAAlgorithm
-from mcp.client.auth import OAuthClientProvider
 from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuthProvider
-from mcp.shared.auth import AuthorizationCodeResult, OAuthClientMetadata
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
-from tests.mcp_client import MemoryTokenStorage, client_credentials_auth, connect
-from tests.oauth import query_value, shared_credential_server, upstream_token_response
+from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, client_credentials_auth, connect
+from tests.oauth import shared_credential_server, upstream_token_response
 from tests.serving import bind_loopback_socket, build_socket_url, serve
-
-
-# Where the MCP client sends the browser back to, which it never serves since the test plays the browser.
-CLIENT_CALLBACK = 'http://127.0.0.1:3030/callback'
 
 
 class TestClientCredentials:
@@ -109,15 +103,8 @@ class TestAuthorizationCode:
         }
         gateway = _build_gateway(base_url, [server])
         mount = '' if path_prefix == '/' else f'/{path_prefix}'
-        browser = _Browser(f'{base_url}{mount}')
         endpoint = f'{base_url}{mount}/mcp'
-        auth = OAuthClientProvider(
-            server_url=endpoint,
-            client_metadata=OAuthClientMetadata(redirect_uris=[CLIENT_CALLBACK], client_name='agent'),  # type: ignore[list-item]
-            storage=MemoryTokenStorage(),
-            redirect_handler=browser.sign_in,
-            callback_handler=browser.return_to_client,
-        )
+        auth = authorization_code_auth(endpoint, Browser(f'{base_url}{mount}'))
 
         with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())):
             async with serve(gateway._build_app(transport='streamable-http'), sock):
@@ -161,37 +148,6 @@ class TestTokenExchange:
                     issuer=issuer_url,
                 )
                 assert await _list_tools(endpoint, auth)
-
-
-class _Browser:
-    """The user's browser, which approves the client and plays the upstream sending the user back."""
-
-    def __init__(self, server_url: str) -> None:
-        self.server_url = server_url
-        self._client_redirect: str | None = None
-
-    async def sign_in(self, authorization_url: str) -> None:
-        async with httpx2.AsyncClient(follow_redirects=False) as browser:
-            consent_url = (await browser.get(authorization_url)).headers['location']
-            page = await browser.get(consent_url)
-            csrf_token = page.text.split('name="csrf_token" value="')[1].split('"')[0]
-            upstream_url = (
-                await browser.post(consent_url, data={'csrf_token': csrf_token, 'decision': 'approve'})
-            ).headers['location']
-            callback = await browser.get(
-                f'{self.server_url}/auth/callback',
-                params={'code': 'upstream-code', 'state': query_value(upstream_url, 'state')},
-            )
-            self._client_redirect = callback.headers['location']
-
-    async def return_to_client(self) -> AuthorizationCodeResult:
-        """What the redirect to the client carries, ``iss`` included, which the SDK checks per RFC 9207."""
-        assert self._client_redirect is not None
-        return AuthorizationCodeResult(
-            code=query_value(self._client_redirect, 'code'),
-            state=query_value(self._client_redirect, 'state'),
-            iss=query_value(self._client_redirect, 'iss'),
-        )
 
 
 def _build_gateway(gateway_url: str, servers: list[dict[str, typing.Any]]) -> Gateway:

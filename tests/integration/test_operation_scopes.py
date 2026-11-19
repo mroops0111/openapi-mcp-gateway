@@ -4,21 +4,23 @@ import json
 import logging
 import pathlib
 import typing
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import httpx2
 import pytest
 from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared.auth import InvalidScopeError
+from mcp.shared.auth import InvalidScopeError, OAuthToken
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
-from tests.oauth import authorization_code_gateway, bridge_of, server_of, sign_in
-from tests.serving import serve
+from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, connect
+from tests.oauth import authorization_code_gateway, bridge_of, server_of, sign_in, upstream_token_response
+from tests.serving import bind_loopback_socket, build_socket_url, serve
 from tests.tool_result import text_of
 
 
@@ -83,6 +85,7 @@ def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gatew
         promote_resources: bool = False,
         upstream: dict[str, typing.Any] | None = None,
         spec: pathlib.Path = petstore_json_path,
+        url: str = GATEWAY_URL,
     ) -> Gateway:
         return authorization_code_gateway(
             spec,
@@ -90,6 +93,7 @@ def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gatew
             operation_scopes=operation_scopes if operation_scopes is not None else {'auto': 'tags'},
             upstream=upstream,
             exposure={'style': style, 'promote_resources': promote_resources},
+            url=url,
         )
 
     return make
@@ -282,6 +286,12 @@ class TestAuthorizationServer:
         token = await _sign_in(gateway, client_id, requested)
         assert token.scope == granted
 
+    @pytest.mark.parametrize(('client_id', 'granted'), [(DELETER, 'pets:read pets:delete'), (STEPPER, 'pets:write')])
+    async def test_the_sdk_client_is_granted_the_clients_defaults(self, make_gateway, client_id, granted):
+        """The SDK's own client names no scope on its first sign-in, so it starts on the client's defaults."""
+        token = await _sign_in_through_the_sdk(make_gateway, client_id)
+        assert token.scope == granted
+
     async def test_a_request_for_nothing_the_client_may_hold_is_refused(self, gateway):
         with pytest.raises(InvalidScopeError):
             await _sign_in(gateway, DELETER, 'pets:write')
@@ -437,3 +447,18 @@ async def _connect(
 async def _tool_names(session: _Session) -> list[str]:
     """The tools ``tools/list`` shows the session's token, in registration order."""
     return [tool.name for tool in (await session.client.list_tools()).tools]
+
+
+async def _sign_in_through_the_sdk(make_gateway: typing.Callable[..., Gateway], client_id: str) -> OAuthToken:
+    """Sign ``client_id`` in with the SDK's own client, through consent and the upstream, and return its tokens."""
+    sock = bind_loopback_socket()
+    base_url = build_socket_url(sock)
+    gateway = make_gateway(url=base_url)
+    endpoint = f'{base_url}/petstore/mcp'
+    storage = MemoryTokenStorage()
+    auth = authorization_code_auth(endpoint, Browser(f'{base_url}/petstore'), client_id, storage=storage)
+    with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())):
+        async with serve(gateway._build_app(transport='streamable-http'), sock), connect(endpoint, auth):
+            pass
+    assert storage.tokens is not None
+    return storage.tokens

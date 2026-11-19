@@ -75,8 +75,9 @@ def authorization_code_gateway(
     operation_scopes: dict[str, typing.Any] | None = None,
     upstream: dict[str, typing.Any] | None = None,
     exposure: dict[str, typing.Any] | None = None,
+    url: str = GATEWAY_URL,
 ) -> Gateway:
-    """A gateway serving ``spec`` as ``petstore`` behind an ``authorization_code`` server declaring ``clients``.
+    """A gateway at ``url`` serving ``spec`` as ``petstore`` behind an ``authorization_code`` server for ``clients``.
 
     ``upstream`` is merged into ``auth.upstream``, which otherwise requests ``read``.
     """
@@ -94,7 +95,7 @@ def authorization_code_gateway(
         },
     }
     server = {'name': 'petstore', 'spec': str(spec), 'auth': auth, 'exposure': exposure or {}}
-    return Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
+    return Gateway.from_config(GatewayConfig.model_validate({'url': url, 'servers': [server]}))
 
 
 def shared_credential_server(spec_path: pathlib.Path, name: str, path_prefix: str) -> dict[str, typing.Any]:
