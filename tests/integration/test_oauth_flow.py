@@ -5,7 +5,7 @@ import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from mcp.server.auth.provider import AuthorizeError, TokenError
+from mcp.server.auth.provider import TokenError
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata
 from pydantic import AnyHttpUrl
 from starlette.exceptions import HTTPException
@@ -159,6 +159,13 @@ class TestAuthorize:
         """``authorize`` has no request to read a cookie from, so the consent page decides what happens next."""
         url = await authorize(provider, mcp_client_info)
         assert url.startswith(f'{GATEWAY_ISSUER}/auth/consent?request=')
+
+    async def test_a_root_issuer_joins_the_consent_url_with_one_slash(self, make_provider, mcp_client_info):
+        provider = make_provider(issuer=f'{GATEWAY_URL}/')
+        await provider.register_client(mcp_client_info)
+
+        url = await authorize(provider, mcp_client_info)
+        assert url.startswith(f'{GATEWAY_URL}/auth/consent?request=')
 
     async def test_the_upstream_url_carries_the_gateway_client_and_scopes(self, provider, mcp_client_info):
         url = await begin_upstream(provider, mcp_client_info)
@@ -760,9 +767,12 @@ class TestTokenResource:
         provider = make_provider()
         await provider.register_client(mcp_client_info)
 
-        with pytest.raises(AuthorizeError) as exc_info:
-            await authorize(provider, mcp_client_info, resource=f'{ATTACKER_URL}/mcp')
-        assert exc_info.value.error == 'invalid_target'
+        redirect = await authorize(provider, mcp_client_info, resource=f'{ATTACKER_URL}/mcp')
+
+        assert redirect.startswith(CLIENT_REDIRECT_URI)
+        assert query_value(redirect, 'error') == 'invalid_target'
+        assert query_value(redirect, 'state') == CLIENT_STATE
+        assert query_value(redirect, 'iss') == GATEWAY_ISSUER
 
     async def test_a_sign_in_naming_the_endpoint_goes_on(self, make_provider, mcp_client_info):
         """A trailing slash names the same resource."""

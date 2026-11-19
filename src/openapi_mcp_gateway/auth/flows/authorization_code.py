@@ -299,7 +299,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             token_url=oauth_flow.token_url,
             client_id=client_id,
             client_secret=client_secret,
-            callback_url=f'{gateway_url}{flow_context.mount_path}{CALLBACK_PATH}',
+            callback_url=f'{gateway_url}{flow_context.mount_path.rstrip("/")}{CALLBACK_PATH}',
             scopes=list(upstream_config.scopes),
             scope_descriptions=oauth_flow.scope_descriptions,
             audience_params=upstream_config.resolve_audience_params(),

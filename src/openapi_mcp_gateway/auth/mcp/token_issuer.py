@@ -78,6 +78,8 @@ class McpTokenIssuer:
         self.policy = policy
         self.resource = resource
         self.legacy_resources = tuple(legacy_resources)
+        # Compared on every authorization and client_credentials request, so normalized once.
+        self._served_resources = frozenset(_normalize_resource(url) for url in (resource, *self.legacy_resources))
         # Compared on every authenticated request, so serialized once.
         self._origin_fields = origin.model_dump()
 
@@ -98,11 +100,9 @@ class McpTokenIssuer:
         if requested is None:
             return True
         try:
-            normalized = str(pydantic.AnyHttpUrl(requested))
+            return _normalize_resource(requested) in self._served_resources
         except pydantic.ValidationError:
             return False
-        served = (self.resource, *self.legacy_resources)
-        return any(normalized.rstrip('/') == str(pydantic.AnyHttpUrl(url)).rstrip('/') for url in served)
 
     async def complete_authorization(self, pending: PendingAuthorization, attachment: McpTokenAttachment) -> str:
         """Mint the MCP authorization code that ends ``pending``, and return the redirect carrying it to the client.
@@ -306,3 +306,8 @@ def require_client_id(client: OAuthClientInformationFull) -> str:
     if not client.client_id:
         raise ValueError('client_id is required')
     return client.client_id
+
+
+def _normalize_resource(url: str) -> str:
+    """``url`` as ``pydantic.AnyHttpUrl`` normalizes it, without a trailing slash, so equal resources compare equal."""
+    return str(pydantic.AnyHttpUrl(url)).rstrip('/')

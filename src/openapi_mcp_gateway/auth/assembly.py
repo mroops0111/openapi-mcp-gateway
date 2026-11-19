@@ -52,6 +52,7 @@ class AuthTypeContext(typing.NamedTuple):
         """This server's URL, which is its issuer wherever the gateway issues its tokens.
 
         Normalized as ``pydantic.AnyHttpUrl`` has it, the form every document publishes.
+        Every other URL of this server appends a path to it, and so stays normalized without parsing it again.
         """
         return str(pydantic.AnyHttpUrl(f'{self.gateway_url.rstrip("/")}{self.entry.mount_path}'))
 
@@ -61,7 +62,7 @@ class AuthTypeContext(typing.NamedTuple):
 
         RFC 8707 has a client name it as ``resource``, and RFC 9728 has the server publish it.
         """
-        return str(pydantic.AnyHttpUrl(f'{self.issuer_url.rstrip("/")}{MCP_ENDPOINT_PATH}'))
+        return f'{self.issuer_url.rstrip("/")}{MCP_ENDPOINT_PATH}'
 
     @property
     def legacy_sse_resource_url(self) -> str:
@@ -70,7 +71,7 @@ class AuthTypeContext(typing.NamedTuple):
         A client there names it as ``resource``, since the published resource is not a parent of it.
         Tokens are still issued for ``mcp_resource_url``, the one the SDK checks them against.
         """
-        return str(pydantic.AnyHttpUrl(f'{self.issuer_url.rstrip("/")}{LEGACY_SSE_ENDPOINT_PATH}'))
+        return f'{self.issuer_url.rstrip("/")}{LEGACY_SSE_ENDPOINT_PATH}'
 
 
 @dataclasses.dataclass

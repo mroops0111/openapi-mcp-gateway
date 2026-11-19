@@ -293,6 +293,25 @@ class TestWellKnownUnderPathPrefix:
         assert http.get('/.well-known/oauth-authorization-server/petstore').status_code == 200
         assert http.get('/.well-known/oauth-protected-resource/petstore/mcp').status_code == 200
 
+    def test_a_server_mounted_at_another_servers_name_keeps_its_own_documents(self, petstore_json_path):
+        """A name only finds a server where no server is mounted at that path."""
+        config = GatewayConfig.model_validate(
+            {
+                'url': GATEWAY_URL,
+                'servers': [
+                    _shared_credential_server(petstore_json_path, 'alpha', 'beta'),
+                    _shared_credential_server(petstore_json_path, 'beta2', 'alpha'),
+                ],
+            }
+        )
+        http = TestClient(Gateway.from_config(config)._build_app(transport='streamable-http'))
+
+        for path in ('alpha', 'beta'):
+            metadata = http.get(f'/.well-known/oauth-authorization-server/{path}')
+            assert metadata.json()['issuer'] == f'{GATEWAY_URL}/{path}'
+            resource = http.get(f'/.well-known/oauth-protected-resource/{path}/mcp')
+            assert resource.json()['resource'] == f'{GATEWAY_URL}/{path}/mcp'
+
 
 class TestMountEmbedding:
     """``Gateway.mount`` wires OAuth and ``.well-known`` routes onto a host FastAPI app."""
@@ -306,6 +325,22 @@ class TestMountEmbedding:
         response = client.get('/.well-known/oauth-authorization-server/petstore')
         assert response.status_code == 200
         assert response.json()['authorization_endpoint'].endswith('/authorize')
+
+    def test_mount_leaves_the_host_apps_own_discovery_documents(self, oauth_gateway):
+        host = FastAPI()
+        oauth_gateway.mount(host, transport='streamable-http')
+
+        @host.get('/.well-known/oauth-authorization-server')
+        async def host_metadata():
+            return {'issuer': 'host'}
+
+        @host.get('/.well-known/oauth-protected-resource/api/v1')
+        async def host_resource():
+            return {'resource': 'host'}
+
+        client = TestClient(host)
+        assert client.get('/.well-known/oauth-authorization-server').json() == {'issuer': 'host'}
+        assert client.get('/.well-known/oauth-protected-resource/api/v1').json() == {'resource': 'host'}
 
     async def test_mounted_gateway_answers_mcp_inside_the_host_lifespan(self, gateway):
         """A host app that enters ``gateway.lifespan`` serves MCP through the mounted gateway."""
@@ -1008,8 +1043,15 @@ async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) ->
 
 def _shared_credential_gateway(spec_path: pathlib.Path, gateway_url: str, path_prefix: str) -> FastAPI:
     """The app of a gateway at ``gateway_url`` issuing MCP tokens for one bearer-token server under ``path_prefix``."""
-    server = {
-        'name': 'petstore',
+    server = _shared_credential_server(spec_path, 'petstore', path_prefix)
+    gateway = Gateway.from_config(GatewayConfig.model_validate({'url': gateway_url, 'servers': [server]}))
+    return gateway._build_app(transport='streamable-http')
+
+
+def _shared_credential_server(spec_path: pathlib.Path, name: str, path_prefix: str) -> dict[str, typing.Any]:
+    """The config of a bearer-token server named ``name`` under ``path_prefix``, issuing MCP tokens to one agent."""
+    return {
+        'name': name,
         'path_prefix': path_prefix,
         'spec': str(spec_path),
         'auth': {
@@ -1020,5 +1062,3 @@ def _shared_credential_gateway(spec_path: pathlib.Path, gateway_url: str, path_p
             },
         },
     }
-    gateway = Gateway.from_config(GatewayConfig.model_validate({'url': gateway_url, 'servers': [server]}))
-    return gateway._build_app(transport='streamable-http')
