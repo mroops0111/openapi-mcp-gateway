@@ -383,7 +383,7 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `instructions` | string |  | Guidance about the server as a whole, such as when to use it rather than another server or which tool to call first. Sent in the MCP `initialize` result, which clients place in the model's context. Unset leaves the field out |
 | `exposure.style` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`search_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand, and ignores `promote_resources`. |
 | `exposure.promote_resources` | bool | `false` | Promotes eligible GETs (no required non-path parameter) to MCP resources. A per-operation `resource` declaration applies either way. |
-| `exposure.search.field_weights` | map |  | Per-field search weights for `dynamic` exposure, over `name`, `summary`, `description`, `path`, and `tags`. Unset fields keep their defaults, listed under [Search Ranking](#dynamic-exposure). Refused under `static` exposure |
+| `exposure.search.field_weights` | map |  | Per-field search weights for `dynamic` exposure, over `name`, `summary`, `description`, `path`, `tags`, and `parameters`. Unset fields keep their defaults, listed under [Search Ranking](#dynamic-exposure). Refused under `static` exposure |
 | `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation. Useful when you do not control the upstream spec. |
 
 </details>
@@ -545,7 +545,7 @@ For APIs with hundreds of operations (GitHub, Stripe, etc.), registering each as
 <details>
 <summary><b>The Three Meta-Tools</b></summary>
 
-- `search_operations(query, tags, cursor)` ranks operations against `query` with BM25F and returns `[{name, description}, ...]`, 20 per page, with `nextCursor` when more matches exist. `tags` limits the search to operations carrying any of them. An omitted argument filters nothing, so with no arguments it lists every operation, and the first page also carries each tag with its operation count.
+- `search_operations(query, tags, cursor)` ranks operations against `query` with BM25F, or against each of a list of queries with their matches merged, and returns `[{name, description}, ...]`, 20 per page, with `nextCursor` when more matches exist. `tags` limits the search to operations carrying any of them. An omitted argument filters nothing, so with no arguments it lists every operation, and the first page also carries each tag with its operation count.
 - `get_operation(name)` returns one operation's JSON Schema for input arguments.
 - `call_operation(name, arguments)` invokes that operation against the upstream.
 
@@ -565,6 +565,7 @@ Auth, path templating, and per-operation request shape match static mode, so onl
 | `description` | `0.5` |
 | `path` | `0.5` |
 | `tags` | `0.5` |
+| `parameters`, each argument's name and description | `0` |
 
 A weight multiplies how much a matching word counts in that field, so `1` is an ordinary match and the weights need not add up to anything. `exposure.search.field_weights` overrides them per server, field by field, and `0` leaves a field out of search:
 
