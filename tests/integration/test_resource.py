@@ -2,13 +2,13 @@ import json
 
 import httpx
 import pytest
-from mcp.types import InputRequiredResult
+from mcp import Client
+from mcp.types import TextResourceContents
 
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import ResourceOverride
 from openapi_mcp_gateway.settings import ExposureConfig, GatewayConfig, OperationOverride, ServerConfig
 from tests.constants import PETSTORE_URL
-from tests.context import stub_context
 
 
 def _spec_with_resource_optin() -> dict:
@@ -217,7 +217,7 @@ class TestResourceUpstreamCall:
     """
 
     async def test_read_concrete_resource_calls_upstream(self, tmp_path, mock_upstream):
-        """``mcp.read_resource`` against a concrete URI issues ``GET /store/inventory`` upstream."""
+        """Reading a concrete URI issues ``GET /store/inventory`` upstream."""
         captured: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -234,27 +234,15 @@ class TestResourceUpstreamCall:
                 ]
             )
         )
-        mcp = gateway._servers[0].mcp
-        result = await mcp.read_resource('petstore://store/inventory')
-        # mcp v2 widened read_resource to also return an InputRequiredResult, the MRTR interim result.
-        # This read never triggers one, so narrow to the resource-contents arm.
-        assert not isinstance(result, InputRequiredResult)
-        contents = list(result)
+        async with Client(gateway._servers[0].mcp) as client:
+            result = await client.read_resource('petstore://store/inventory')
         assert captured['url'].startswith(f'{PETSTORE_URL}/store/inventory')
-        assert len(contents) == 1
-        body = contents[0].content
-        assert isinstance(body, str)
-        assert '"available": 7' in body
+        [contents] = result.contents
+        assert isinstance(contents, TextResourceContents)
+        assert '"available": 7' in contents.text
 
     async def test_read_template_calls_upstream(self, tmp_path, mock_upstream):
-        """A template-resource read with a stub ctx issues ``GET /pets/<id>`` upstream.
-
-        ``mcp.read_resource`` would FastMCP-inject a real ``Context``,
-        whose ``request_context`` is unset outside a live JSON-RPC session,
-        so the closure's ``ctx.report_progress`` call would raise.
-        We instead pull the registered template's underlying function and invoke it with a stub ctx,
-        matching the tool integration tests in ``test_gateway.py``.
-        """
+        """A template-resource read issues ``GET /pets/<id>`` upstream."""
         captured: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -272,14 +260,13 @@ class TestResourceUpstreamCall:
                 ]
             )
         )
-        mcp = gateway._servers[0].mcp
-        template = mcp._resource_manager._templates['petstore://pets/{petId}']
-        raw_fn = template.fn.raw_function
-
-        text = await raw_fn(petId='42', ctx=stub_context())
+        async with Client(gateway._servers[0].mcp) as client:
+            result = await client.read_resource('petstore://pets/42')
         assert captured['method'] == 'GET'
         assert captured['url'].startswith(f'{PETSTORE_URL}/pets/42')
-        assert '"id": 42' in text
+        [contents] = result.contents
+        assert isinstance(contents, TextResourceContents)
+        assert '"id": 42' in contents.text
 
 
 def _vanilla_spec() -> dict:
