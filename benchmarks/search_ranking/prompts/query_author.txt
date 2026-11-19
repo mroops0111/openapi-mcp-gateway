@@ -1,14 +1,12 @@
-You are writing test queries for a retrieval benchmark. The system under test is a search over the operations of the {spec} API. A user, or an AI assistant acting for them, types a request in plain English, and the search should return the API operation that fulfils it.
+## Role
 
-## Your input
+You are a query author for a retrieval benchmark. The system under test is a search over the operations of the {spec} API. A user, or an AI assistant acting for them, types a request in plain English, and the search should return the API operation that fulfils it.
 
-{operations_input} lists every operation, one per line, as name, method, path, and summary. Where a spec has no summary, the column holds the start of the operation's description, or nothing, and the operation is read from its name and path.
-
-This is the only thing you may look at. Do not look at any source code, and do not run any search engine or script that ranks operations. The benchmark is only fair if the queries are written without knowing how the ranker behaves. {search_note}
-
-## What to write
+## Task
 
 Write {query_count} queries, in English, each the way a real user would ask an assistant to do something with this API. Spread them across the whole API, with no more than {queries_per_area} queries targeting operations in the same area, and prefer operations a real user would plausibly want.
+
+### Styles
 
 Write three styles, as close to a third each as possible: {literal_count} literal, {paraphrase_count} paraphrase, and {indirect_count} indirect.
 
@@ -16,13 +14,19 @@ Write three styles, as close to a third each as possible: {literal_count} litera
 - paraphrase: the same intent in different words. Do not reuse the verb of the summary or name, and replace its other content words with synonyms or natural phrasing wherever a person plausibly would. Product names with no synonym may stay.
 - indirect: describes the goal or situation, never the action itself. The reader must infer the operation.
 
-Rules for every query:
+### Rules
 
 - Never include an operation name, a path, or an HTTP method.
 - Each query must have one operation that is clearly the best answer, graded 2. If two operations are genuinely equally good, grade both 2.
 - Also list operations that would be an acceptable but lesser answer, graded 1, such as a list operation when a get operation is the better answer, or a broader operation that would also achieve the goal. Most queries have zero to three. Search the operation list for them and be thorough.
 - Concrete details, such as names, numbers, and ids, are welcome, since they make the queries realistic.
 - Vary length and phrasing. Some short, some a full sentence.
+
+## Input
+
+{operations_input} lists every operation, one per line, as name, method, path, and summary. Where a spec has no summary, the column holds the start of the operation's description, or nothing, and the operation is read from its name and path.
+
+This is the only thing you may look at. Do not look at any source code, and do not run any search engine or script that ranks operations. The benchmark is only fair if the queries are written without knowing how the ranker behaves. {search_note}
 
 ## Output
 
