@@ -52,6 +52,7 @@ def authorization_code_server(
         clients or McpDynamicClientRegistry(store, issuer),
         server_name,
         f'{issuer}/mcp',
+        [f'{issuer}/sse'],
     )
     return server
 

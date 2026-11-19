@@ -82,7 +82,9 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
         base = issuer.rstrip('/')
         policy = build_mcp_token_policy(entry.auth.mcp)
         resource = context.mcp_resource_url
-        tokens = McpTokenIssuer(context.store, McpRecordOrigin(issuer=issuer), policy, resource)
+        tokens = McpTokenIssuer(
+            context.store, McpRecordOrigin(issuer=issuer), policy, resource, [context.legacy_sse_resource_url]
+        )
         clients = build_mcp_client_directory(entry.auth.mcp.clients, policy.scopes)
         grant = McpClientCredentialsGrant(tokens, clients)
         protected_resource = ProtectedResourceMetadata.model_validate(

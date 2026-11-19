@@ -23,7 +23,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .auth.assembly import MCP_ENDPOINT_PATH
+from .auth.assembly import LEGACY_SSE_ENDPOINT_PATH, MCP_ENDPOINT_PATH
 from .openapi import ExposedTool, OpenAPISpec
 from .scopes import RequestTarget, ScopeChallengeMiddleware, ScopeRegistry
 from .settings import DNSRebindingProtectionConfig, GatewayConfig
@@ -140,7 +140,7 @@ def build_mcp_asgi_app(
     # The SDK reads ``host`` only when ``transport_security`` is ``None``, which never happens for a mounted gateway,
     # so the empty string standing in for its missing bind is never read.
     if transport == 'sse':
-        return mcp.sse_app(transport_security=transport_security, host=host or '')
+        return mcp.sse_app(sse_path=LEGACY_SSE_ENDPOINT_PATH, transport_security=transport_security, host=host or '')
     # Named rather than left to the SDK default, since every token is bound to this path.
     return mcp.streamable_http_app(
         streamable_http_path=MCP_ENDPOINT_PATH, transport_security=transport_security, host=host or ''

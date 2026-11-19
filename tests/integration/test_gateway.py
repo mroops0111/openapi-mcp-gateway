@@ -275,6 +275,17 @@ class TestWellKnownUnderPathPrefix:
         )
         assert token.status_code == 200, token.text
 
+    def test_a_client_of_the_deprecated_sse_endpoint_obtains_a_token(self, petstore_json_path):
+        """It names its own endpoint as ``resource``, and gets a token for the MCP endpoint the SDK checks."""
+        http = TestClient(_shared_credential_gateway(petstore_json_path, GATEWAY_URL, 'pets'))
+
+        token = http.post(
+            '/pets/token',
+            data={'grant_type': 'client_credentials', 'resource': f'{GATEWAY_URL}/pets/sse'},
+            auth=('agent', 'agent-secret'),
+        )
+        assert token.status_code == 200, token.text
+
     def test_the_server_name_still_finds_the_documents(self, petstore_json_path):
         """The URLs served before discovery followed the mount path keep working."""
         http = TestClient(_shared_credential_gateway(petstore_json_path, GATEWAY_URL, 'pets'))
