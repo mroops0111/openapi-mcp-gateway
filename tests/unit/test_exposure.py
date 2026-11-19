@@ -787,7 +787,7 @@ class TestSearchOperations:
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'search_operations')
         branches = tool.parameters['properties']['query']['anyOf']
         assert {'type': 'string'} in branches
-        assert {'type': 'array', 'items': {'type': 'string'}} in branches
+        assert {'type': 'array', 'items': {'type': 'string'}, 'maxItems': 10} in branches
 
     async def test_parameters_are_searched_when_weighted(self):
         """An argument's name and description reach search once the parameters field has a weight, and not before."""

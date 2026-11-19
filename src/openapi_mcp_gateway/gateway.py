@@ -29,6 +29,7 @@ from .exposure import (
     SemanticSearchOptions,
     ToolGenerator,
     UpstreamConnection,
+    build_embedder,
     embeddings_available,
 )
 from .fastapi import (
@@ -814,7 +815,7 @@ def _cache_hints(scope_registry: ScopeRegistry) -> dict[CacheableMethod, CacheHi
 
 
 def _semantic_search_options(server_name: str, config: SemanticSearchConfig | None) -> SemanticSearchOptions | None:
-    """The semantic search a server's config asks for, refused when the ``embeddings`` extra is missing."""
+    """The semantic search a server's config asks for, refused without the ``embeddings`` extra or a usable model."""
     if config is None:
         return None
     if not embeddings_available():
@@ -822,10 +823,18 @@ def _semantic_search_options(server_name: str, config: SemanticSearchConfig | No
             f'Server "{server_name}": exposure.search.semantic needs the embeddings extra. '
             'Install openapi-mcp-gateway[embeddings].'
         )
+    try:
+        embedder = build_embedder(config.model)
+    except Exception as error:
+        raise ValueError(
+            f'Server "{server_name}": exposure.search.semantic cannot use {config.model!r}: {error}'
+        ) from error
     return SemanticSearchOptions(
         model=config.model,
+        embedder=embedder,
         dimensions=config.dimensions,
-        cache_directory=config.cache_directory,
+        # Each server keeps its vectors in its own directory, so servers sharing one never overwrite each other.
+        cache_directory=config.cache_directory.expanduser() / server_name if config.cache_directory else None,
         retrieval=config.retrieval,
     )
 
