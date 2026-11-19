@@ -11,16 +11,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from openapi_mcp_gateway_benchmarks import provenance
 from openapi_mcp_gateway_benchmarks.cli import main
-from openapi_mcp_gateway_benchmarks.search_ranking import (
-    annotation_workflow,
-    annotations,
-    automated_annotation,
-    dataset,
-    markdown,
-    overlap,
-    report,
-    runner,
-)
+from openapi_mcp_gateway_benchmarks.search_ranking import dataset, markdown, overlap, report, runner
+from openapi_mcp_gateway_benchmarks.search_ranking.annotations import automated, merge, workflow
 from openapi_mcp_gateway_benchmarks.search_ranking.gate_scores import GateScores
 from openapi_mcp_gateway_benchmarks.search_ranking.metrics import (
     NormalizedDiscountedCumulativeGain,
@@ -185,8 +177,8 @@ class TestAnnotations:
             _annotation('q1', {'a': 2}, {'b': 2}).judgements()
 
     def test_kappa(self):
-        assert annotations.cohens_kappa([(2, 2), (1, 1), (0, 0)]) == 1.0
-        assert annotations.cohens_kappa([(2, 2), (2, 1), (1, 2), (1, 1)]) == 0.0
+        assert merge.cohens_kappa([(2, 2), (1, 1), (0, 0)]) == 1.0
+        assert merge.cohens_kappa([(2, 2), (2, 1), (1, 2), (1, 1)]) == 0.0
 
     @pytest.mark.parametrize('relevant', [{'a': 3}, {'a': 1}])
     def test_an_adjudication_needs_valid_grades_and_an_answer(self, relevant):
@@ -195,19 +187,19 @@ class TestAnnotations:
 
     def test_splits_are_stratified_and_stable(self):
         annotated = [_annotation(f'q{index:02d}', {'a': 2}, {'a': 2}) for index in range(15)]
-        split_by_query = annotations.assign_splits(annotated)
-        assert split_by_query == annotations.assign_splits(reversed(annotated))
-        assert sum(split == 'dev' for split in split_by_query.values()) == annotations.DEV_QUERIES_PER_STYLE
+        split_by_query = merge.assign_splits(annotated)
+        assert split_by_query == merge.assign_splits(reversed(annotated))
+        assert sum(split == 'dev' for split in split_by_query.values()) == merge.DEV_QUERIES_PER_STYLE
 
     def test_build_reports_the_agreement(self, tmp_path):
-        path = annotations.annotations_path(tmp_path, 'pets')
+        path = merge.annotations_path(tmp_path, 'pets')
         path.parent.mkdir(parents=True)
         annotated = [
             _annotation('q1', {'a': 2}, {'a': 2}),
             _annotation('q2', {'a': 2}, {'b': 2}, adjudication={'relevant': {'b': 2}, 'note': 'b fits'}),
         ]
         path.write_text(''.join(annotation.model_dump_json(exclude_none=True) + '\n' for annotation in annotated))
-        spec_dataset, agreement = annotations.build_spec_dataset(tmp_path, 'pets')
+        spec_dataset, agreement = merge.build_spec_dataset(tmp_path, 'pets')
         assert spec_dataset.judgements['dev'] == {'q1': {'a': 2}, 'q2': {'b': 2}}
         assert (agreement.query_count, agreement.shared_answer_count, agreement.adjudicated_count) == (2, 1, 1)
 
@@ -387,14 +379,14 @@ class TestAnnotationWorkflow:
             main, ['search-ranking', 'annotations', 'prepare-authoring', str(benchmark_directory), str(work_directory)]
         )
         assert stage.exit_code == 0, stage.output
-        operations = (work_directory / 'pets' / annotation_workflow.OPERATIONS_FILE).read_text()
+        operations = (work_directory / 'pets' / workflow.OPERATIONS_FILE).read_text()
         assert operations.splitlines()[0] == 'name\tmethod\tpath\tsummary'
         assert 'list_pets\tGET\t/pets' in operations
-        instructions = (work_directory / 'pets' / annotation_workflow.QUERY_AUTHOR_INSTRUCTIONS_FILE).read_text()
+        instructions = (work_directory / 'pets' / workflow.QUERY_AUTHOR_INSTRUCTIONS_FILE).read_text()
         assert 'operations of the pets API' in instructions
 
         _write_jsonl(
-            work_directory / 'pets' / annotation_workflow.QUERY_AUTHOR_OUTPUT_FILE,
+            work_directory / 'pets' / workflow.QUERY_AUTHOR_OUTPUT_FILE,
             [
                 {'text': 'list my pets', 'style': 'literal', 'relevant': {'list_pets': 2}},
                 {'text': 'I need a new animal on record', 'style': 'paraphrase', 'relevant': {'create_pet': 2}},
@@ -405,12 +397,12 @@ class TestAnnotationWorkflow:
             main, ['search-ranking', 'annotations', 'prepare-assessment', str(benchmark_directory), str(work_directory)]
         )
         assert stage.exit_code == 0, stage.output
-        assessor_queries = (work_directory / 'pets' / annotation_workflow.ASSESSOR_QUERIES_FILE).read_text()
+        assessor_queries = (work_directory / 'pets' / workflow.ASSESSOR_QUERIES_FILE).read_text()
         assert '"id": "pets-q002"' in assessor_queries
         assert 'create_pet' not in assessor_queries
 
         _write_jsonl(
-            work_directory / 'pets' / annotation_workflow.INDEPENDENT_ASSESSOR_OUTPUT_FILE,
+            work_directory / 'pets' / workflow.INDEPENDENT_ASSESSOR_OUTPUT_FILE,
             [
                 {'id': 'pets-q001', 'relevant': {'list_pets': 2}},
                 {'id': 'pets-q002', 'relevant': {'create_pet': 2, 'create_pet_with_owner': 1}},
@@ -433,18 +425,18 @@ class TestAnnotationWorkflow:
         _copy_annotation_templates(benchmark_directory)
         work_directory = tmp_path / 'work'
         manifest = dataset.load_manifest(benchmark_directory)
-        annotation_workflow.prepare_authoring(manifest, benchmark_directory, work_directory)
+        workflow.prepare_authoring(manifest, benchmark_directory, work_directory)
         _write_jsonl(
-            work_directory / 'pets' / annotation_workflow.QUERY_AUTHOR_OUTPUT_FILE,
+            work_directory / 'pets' / workflow.QUERY_AUTHOR_OUTPUT_FILE,
             [{'text': 'adopt this kitten', 'style': 'literal', 'relevant': {'adopt_pet': 2}}],
         )
-        annotation_workflow.prepare_assessment(manifest, benchmark_directory, work_directory)
+        workflow.prepare_assessment(manifest, benchmark_directory, work_directory)
         _write_jsonl(
-            work_directory / 'pets' / annotation_workflow.INDEPENDENT_ASSESSOR_OUTPUT_FILE,
+            work_directory / 'pets' / workflow.INDEPENDENT_ASSESSOR_OUTPUT_FILE,
             [{'id': 'pets-q001', 'relevant': {'create_pet': 2}}],
         )
         with pytest.raises(dataset.DatasetError, match='adopt_pet'):
-            annotation_workflow.collect(manifest, benchmark_directory, work_directory)
+            workflow.collect(manifest, benchmark_directory, work_directory)
 
     def test_a_stage_run_out_of_order_says_which_comes_first(self, tmp_path):
         benchmark_directory = _petstore_benchmark(tmp_path)
@@ -465,28 +457,28 @@ class TestAnnotationWorkflow:
         _copy_annotation_templates(benchmark_directory)
         work_directory = tmp_path / 'work'
         manifest = dataset.load_manifest(benchmark_directory)
-        annotation_workflow.prepare_authoring(manifest, benchmark_directory, work_directory)
+        workflow.prepare_authoring(manifest, benchmark_directory, work_directory)
         _write_jsonl(
-            work_directory / 'pets' / annotation_workflow.QUERY_AUTHOR_OUTPUT_FILE,
+            work_directory / 'pets' / workflow.QUERY_AUTHOR_OUTPUT_FILE,
             [
                 {'text': 'list my pets', 'style': 'literal', 'relevant': {'list_pets': 2}},
                 {'text': 'a new animal arrived', 'style': 'paraphrase', 'relevant': {'create_pet': 2}},
                 {'text': 'the dog moved to a farm', 'style': 'indirect', 'relevant': {'delete_pet': 2}},
             ],
         )
-        annotation_workflow.prepare_assessment(manifest, benchmark_directory, work_directory)
+        workflow.prepare_assessment(manifest, benchmark_directory, work_directory)
         _write_jsonl(
-            work_directory / 'pets' / annotation_workflow.INDEPENDENT_ASSESSOR_OUTPUT_FILE,
+            work_directory / 'pets' / workflow.INDEPENDENT_ASSESSOR_OUTPUT_FILE,
             [
                 {'id': 'pets-q001', 'relevant': {'list_pets': 2}},
                 {'id': 'pets-q002', 'relevant': {'create_pet_with_owner': 2}},
                 {'id': 'pets-q003', 'relevant': {'delete_pet': 2}},
             ],
         )
-        annotation_workflow.collect(manifest, benchmark_directory, work_directory)
-        annotations_file = annotations.annotations_path(benchmark_directory, 'pets')
+        workflow.collect(manifest, benchmark_directory, work_directory)
+        annotations_file = merge.annotations_path(benchmark_directory, 'pets')
         with pytest.raises(dataset.DatasetError, match='pets-q002'):
-            annotations.build_spec_dataset(benchmark_directory, 'pets')
+            merge.build_spec_dataset(benchmark_directory, 'pets')
         queries_before = (dataset.spec_directory(benchmark_directory, 'pets') / dataset.QUERIES_FILE).read_text()
         result = CliRunner().invoke(main, ['search-ranking', 'annotations', 'build', str(benchmark_directory)])
         assert result.exit_code == 1
@@ -496,19 +488,19 @@ class TestAnnotationWorkflow:
 
         adjudicated = [
             annotation.model_copy(
-                update={'adjudication': annotations.Adjudication(relevant={'create_pet': 2}, note='either fits')}
+                update={'adjudication': merge.Adjudication(relevant={'create_pet': 2}, note='either fits')}
             )
             if annotation.id == 'pets-q002'
             else annotation
-            for annotation in annotations.read_annotations(annotations_file)
+            for annotation in merge.read_annotations(annotations_file)
         ]
         annotations_file.write_text(
             ''.join(annotation.model_dump_json(exclude_none=True) + '\n' for annotation in adjudicated)
         )
-        annotation_workflow.collect(manifest, benchmark_directory, work_directory)
-        kept = {annotation.id: annotation for annotation in annotations.read_annotations(annotations_file)}
+        workflow.collect(manifest, benchmark_directory, work_directory)
+        kept = {annotation.id: annotation for annotation in merge.read_annotations(annotations_file)}
         assert kept['pets-q002'].adjudication is not None
-        assert annotations.build_spec_dataset(benchmark_directory, 'pets')[1].adjudicated_count == 1
+        assert merge.build_spec_dataset(benchmark_directory, 'pets')[1].adjudicated_count == 1
 
 
 class TestPydanticAIKeywordSystem:
@@ -550,7 +542,7 @@ class TestAutomatedAnnotation:
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': assessed})])
 
         manifest = dataset.load_manifest(benchmark_directory)
-        runs = await automated_annotation.annotate(
+        runs = await automated.annotate(
             manifest,
             benchmark_directory,
             work_directory,
@@ -558,10 +550,10 @@ class TestAutomatedAnnotation:
             assessor_model=FunctionModel(assessor),
         )
         assert [(run.role, run.model_requests) for run in runs] == [('query author', 2), ('independent assessor', 1)]
-        assert annotation_workflow.collect(manifest, benchmark_directory, work_directory) == {'pets': 3}
-        record = provenance.provenance_path(annotations.annotations_path(benchmark_directory, 'pets'))
+        assert workflow.collect(manifest, benchmark_directory, work_directory) == {'pets': 3}
+        record = provenance.provenance_path(merge.annotations_path(benchmark_directory, 'pets'))
         assert [run['role'] for run in json.loads(record.read_text())] == ['query author', 'independent assessor']
-        assert annotations.build_spec_dataset(benchmark_directory, 'pets')[1].shared_answer_count == 3
+        assert merge.build_spec_dataset(benchmark_directory, 'pets')[1].shared_answer_count == 3
 
 
 def _annotation(
@@ -569,8 +561,8 @@ def _annotation(
     annotator_a: dict[str, int],
     annotator_b: dict[str, int],
     adjudication: dict[str, typing.Any] | None = None,
-) -> annotations.Annotation:
-    return annotations.Annotation.model_validate(
+) -> merge.Annotation:
+    return merge.Annotation.model_validate(
         {
             'id': query_id,
             'text': 'text',
@@ -586,7 +578,7 @@ def _copy_annotation_templates(benchmark_directory: pathlib.Path) -> None:
     templates = REPOSITORY_PROMPTS
     target = benchmark_directory / dataset.PROMPTS_DIRECTORY
     target.mkdir(exist_ok=True)
-    for template in (annotation_workflow.QUERY_AUTHOR_TEMPLATE, annotation_workflow.INDEPENDENT_ASSESSOR_TEMPLATE):
+    for template in (workflow.QUERY_AUTHOR_TEMPLATE, workflow.INDEPENDENT_ASSESSOR_TEMPLATE):
         shutil.copy(templates / template, target / template)
 
 

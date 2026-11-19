@@ -5,8 +5,10 @@ import typing
 import pydantic
 from pydantic_ai import Agent, ModelRetry
 
-from ..provenance import ModelRun, model_run_fields, write_provenance
-from .annotation_workflow import (
+from ...provenance import ModelRun, model_run_fields, write_provenance
+from ..dataset import STYLES, Manifest
+from .merge import ANNOTATIONS_FILE
+from .workflow import (
     INDEPENDENT_ASSESSOR_OUTPUT_FILE,
     QUERY_AUTHOR_OUTPUT_FILE,
     AssessedQuery,
@@ -17,8 +19,6 @@ from .annotation_workflow import (
     write_assessor_queries,
     write_operation_list,
 )
-from .annotations import ANNOTATIONS_FILE
-from .dataset import STYLES, Manifest
 
 
 # Each annotator's raw exchange, kept beside its answers, so a run can be traced after the fact.

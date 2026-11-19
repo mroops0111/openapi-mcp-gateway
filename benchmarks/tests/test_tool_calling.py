@@ -12,7 +12,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from openapi_mcp_gateway_benchmarks.cli import main
-from openapi_mcp_gateway_benchmarks.local_server import serve
 from openapi_mcp_gateway_benchmarks.spec_pins import sha256_of
 from openapi_mcp_gateway_benchmarks.tool_calling import (
     config_generation,
@@ -23,10 +22,11 @@ from openapi_mcp_gateway_benchmarks.tool_calling import (
     runner,
     validation,
 )
+from openapi_mcp_gateway_benchmarks.tool_calling.local_server import serve
 from openapi_mcp_gateway_benchmarks.tool_calling.markdown import to_markdown
 from openapi_mcp_gateway_benchmarks.tool_calling.replay import RecordedRequest, ReplayUpstream, ResponseOverride
 from openapi_mcp_gateway_benchmarks.tool_calling.sampling import SchemaSampler
-from openapi_mcp_gateway_benchmarks.tool_calling.solution import solution_model
+from openapi_mcp_gateway_benchmarks.tool_calling.validation import solution_model
 
 
 FIXTURES_DIR = pathlib.Path(__file__).parent / 'fixtures'
@@ -310,20 +310,20 @@ class TestValidation:
     """Proving every task can pass, calling no model."""
 
     async def test_a_good_benchmark_has_no_problems(self, tmp_path):
-        assert await validation.validate(dataset.load(_petstore_benchmark(tmp_path))) == []
+        assert await _validate(dataset.load(_petstore_benchmark(tmp_path))) == []
 
     async def test_a_solution_that_does_not_pass_is_reported(self, tmp_path):
         root = _petstore_benchmark(tmp_path)
         tasks = root / 'scenarios' / 'pets' / 'tasks.yaml'
         tasks.write_text(tasks.read_text().replace("path_parameters: {petId: '7'}", "path_parameters: {petId: '8'}"))
-        problems = await validation.validate(dataset.load(root))
+        problems = await _validate(dataset.load(root))
         assert [(problem.task_id, problem.variant) for problem in problems] == [('pets-t01', 'baseline')]
 
     async def test_a_variant_hiding_an_operation_a_task_needs_is_reported(self, tmp_path):
         root = _petstore_benchmark(tmp_path)
         variant = root / 'scenarios' / 'pets' / 'variants' / 'no-admin.yaml'
         variant.write_text('servers:\n  pets:\n    policy: {deny: ["DELETE /pets/*"]}\n')
-        problems = await validation.validate(dataset.load(root))
+        problems = await _validate(dataset.load(root))
         assert [(problem.task_id, problem.variant) for problem in problems] == [('pets-t01', 'no-admin')]
 
     async def test_a_generated_variant_hiding_an_operation_is_counted_rather_than_reported(self, tmp_path):
@@ -331,7 +331,7 @@ class TestValidation:
         variant = root / 'scenarios' / 'pets' / 'variants' / 'generated.yaml'
         variant.write_text('servers:\n  pets:\n    policy: {deny: ["DELETE /pets/*"]}\n')
         benchmark = dataset.load(root)
-        assert await validation.validate(benchmark) == []
+        assert await _validate(benchmark) == []
         coverage = {entry.variant: entry for entry in reach.intent_coverage(benchmark)}
         assert coverage['generated'].unreachable_tasks == {'pets-t01': ['DELETE /pets/{petId} on pets']}
         assert coverage['baseline'].reachable_task_count == 2
@@ -357,7 +357,7 @@ class TestValidation:
         )
         variant = root / 'scenarios' / 'pets' / 'variants' / 'no-admin.yaml'
         variant.write_text('servers:\n  pets:\n    policy: {deny: ["DELETE /pets/*"]}\n')
-        assert await validation.validate(dataset.load(root)) == []
+        assert await _validate(dataset.load(root)) == []
 
     def test_the_command_reports_success(self, tmp_path):
         result = CliRunner().invoke(main, ['tool-calling', 'check', str(_petstore_benchmark(tmp_path))])
@@ -443,3 +443,7 @@ def _petstore_benchmark(root: pathlib.Path) -> pathlib.Path:
     for name, content in VARIANTS.items():
         (scenario_directory / 'variants' / f'{name}.yaml').write_text(content)
     return benchmark_directory
+
+
+async def _validate(benchmark: dataset.Benchmark) -> list[validation.ValidationProblem]:
+    return await validation.validate(benchmark, reach.intent_coverage(benchmark))

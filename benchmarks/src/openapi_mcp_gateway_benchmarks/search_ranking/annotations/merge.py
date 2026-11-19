@@ -6,8 +6,8 @@ import typing
 
 import pydantic
 
-from .dataset import GRADES, SPLITS, STYLES, DatasetError, Query, SpecDataset, Split, Style, spec_directory
-from .metrics import ANSWER_GRADE, answers_in
+from ..dataset import GRADES, SPLITS, STYLES, DatasetError, Query, SpecDataset, Split, Style, spec_directory
+from ..metrics import ANSWER_GRADE, answers_in
 
 
 # Each spec's annotations, beside the queries and judgements built from them.

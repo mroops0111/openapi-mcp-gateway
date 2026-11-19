@@ -1,4 +1,5 @@
 import re
+import typing
 
 import pydantic
 
@@ -26,13 +27,19 @@ class IntentCoverage(pydantic.BaseModel):
     unreachable_tasks: dict[str, list[str]]
 
 
-def intent_coverage(benchmark: Benchmark) -> list[IntentCoverage]:
-    """Each scenario's tasks a variant serves, for every variant of every scenario, calling no model."""
+def intent_coverage(
+    benchmark: Benchmark, *, scenarios: typing.Sequence[str] = (), variants: typing.Sequence[str] = ()
+) -> list[IntentCoverage]:
+    """Each scenario's tasks a variant serves, for the named scenarios and variants or else all of them, calling no model."""
     spec_paths = {name: str(pin.fetch(benchmark.root)) for name, pin in benchmark.manifest.specs.items()}
     coverage = []
     for scenario in benchmark.scenarios.values():
+        if scenarios and scenario.name not in scenarios:
+            continue
         scenario_run = ScenarioRun(benchmark, scenario, spec_paths)
         for variant in scenario.variants:
+            if variants and variant not in variants:
+                continue
             unreachable = unreached_steps(scenario_run, variant)
             coverage.append(
                 IntentCoverage(

@@ -14,18 +14,18 @@ benchmarks/
   pyproject.toml                      the workspace member, depending on the gateway, Pydantic AI, and Pydantic Evals
   tests/                              the benchmarks' own tests
 benchmarks/src/openapi_mcp_gateway_benchmarks/
-  cli.py                              the commands, one group per benchmark, which parse and print only
+  cli/
+    __init__.py                       the top command, joining one group per benchmark
+    common.py                         the arguments and error handling every command shares
+    search_ranking.py                 the search ranking commands, which parse and print only
+    tool_calling.py                   the tool calling commands, which parse and print only
   spec_pins.py                        specs pinned by URL and SHA-256, downloaded once into a cache
   gateway_connection.py               a gateway built in-process from a server config, and an MCP client to it
   significance.py                     macro means and the paired bootstrap
-  local_server.py                     an ASGI app served on a loopback port, for a model's framework to reach
   errors.py                           the error every benchmark's bad data raises
   provenance.py                       the record a model's run keeps beside the data it wrote
   search_ranking/
     dataset.py                        the manifest, queries, and judgements, loaded and validated
-    annotations.py                    two annotators' judgements merged into one set, and their agreement
-    annotation_workflow.py            the stages that prepare each annotator's files and collect what they write
-    automated_annotation.py           the first stages with both annotators run through Pydantic AI
     metrics.py                        Metric and its kinds, nDCG, reciprocal rank, and recall
     scoring.py                        the metrics this benchmark reports
     variants.py                       Variant and its kinds: the gateway's search, Pydantic AI's, a random floor
@@ -34,19 +34,24 @@ benchmarks/src/openapi_mcp_gateway_benchmarks/
     markdown.py                       a report as Markdown tables
     gate_scores.py                    the gated scores CI compares against
     overlap.py                        how much of its answer's wording a query repeats
+    annotations/
+      merge.py                        two annotators' judgements merged into one set, and their agreement
+      workflow.py                     the stages that prepare each annotator's files and collect what they write
+      automated.py                    the first stages with both annotators run through Pydantic AI
   tool_calling/
     dataset.py                        the manifest, scenarios, tasks, and variants, loaded and validated
     config_generation.py              each scenario's generated variants, written by a model running the skill
     sampling.py                       a fixed example value for any response schema
     replay.py                         the stand-in upstream, answering every operation and recording each request
     grading.py                        whether a run's requests make the expected calls and none it forbids
+    local_server.py                   an ASGI app served on a loopback port, for a model's framework to reach
     harness.py                        a scenario's gateway and replay on loopback ports, and one Pydantic AI run
-    solution.py                       a scripted model that makes a task's solution calls
     runner.py                         every task under every variant and model, as Pydantic Evals datasets
     report.py                         summaries per scenario, variant, and model, and comparisons with the baseline
     markdown.py                       a report as Markdown tables
     reach.py                          the tasks each variant serves every operation for, as intent coverage
-    validation.py                     every task passing with its solution, and every hand-written variant reaching it
+    validation.py                     every task passing with a scripted model making its solution calls,
+                                      and every hand-written variant reaching it
 ```
 
 Each benchmark's data sits in a folder named after it, laid out the same way, which its README's Layout section lists. A unit of data, a spec or a scenario, keeps all of its files in one directory. Every instruction a model is given sits under `prompts/`, and every file a model wrote keeps the record of that run beside it as `<file>.provenance.json`.

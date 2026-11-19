@@ -7,12 +7,12 @@ import typing
 
 import pydantic
 
-from ..gateway_connection import OperationListing, list_operations
-from ..provenance import provenance_path
-from .annotations import ANNOTATIONS_FILE, Annotation, annotations_path, read_annotations
-from .dataset import GRADES, PROMPTS_DIRECTORY, STYLES, DatasetError, Manifest, Style
-from .metrics import ANSWER_GRADE
-from .runner import corpus_server
+from ...gateway_connection import OperationListing, list_operations
+from ...provenance import provenance_path
+from ..dataset import GRADES, PROMPTS_DIRECTORY, STYLES, DatasetError, Manifest, Style
+from ..metrics import ANSWER_GRADE
+from ..runner import corpus_server
+from .merge import ANNOTATIONS_FILE, Annotation, annotations_path, read_annotations
 
 
 # The instruction templates, kept with the benchmark's data, so a change to them is a change to the data.
