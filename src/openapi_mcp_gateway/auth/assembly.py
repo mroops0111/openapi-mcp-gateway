@@ -16,6 +16,9 @@ from .upstream.oauth_flow import UpstreamOAuthFlow
 from .upstream.resolver import UpstreamAuthResolver
 
 
+# Where each server's MCP endpoint sits under its mount path, the SDK's streamable HTTP default.
+MCP_ENDPOINT_PATH = '/mcp'
+
 # Whose identity the upstream sees on every call.
 # ``gateway`` is one credential of the gateway's own, so every agent looks the same upstream.
 # ``user`` is each signed-in user's own, and ``caller`` is whatever the caller's header carries.
@@ -46,7 +49,7 @@ class AuthTypeContext(typing.NamedTuple):
 
         RFC 8707 has a client name it as ``resource``, and RFC 9728 has the server publish it.
         """
-        return f'{self.gateway_url.rstrip("/")}{self.entry.mount_path}/mcp'
+        return f'{self.gateway_url.rstrip("/")}{self.entry.mount_path}{MCP_ENDPOINT_PATH}'
 
 
 @dataclasses.dataclass

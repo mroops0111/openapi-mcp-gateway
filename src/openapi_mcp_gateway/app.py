@@ -22,6 +22,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from .auth.assembly import MCP_ENDPOINT_PATH
 from .openapi import ExposedTool, OpenAPISpec
 from .scopes import RequestTarget, ScopeChallengeMiddleware, ScopeRegistry
 from .settings import DNSRebindingProtectionConfig, GatewayConfig
@@ -270,19 +271,19 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                 name=route.name,
             )
 
-    # RFC 8414 / 9728 ``.well-known`` discovery endpoints, resolved per server name at request time.
-    server_lookup: dict[str, _ServerBundle] = {bundle.name: bundle for bundle in servers}
+    # RFC 8414 / 9728 ``.well-known`` discovery endpoints, resolved per mount path at request time.
+    # Each document sits at the well-known prefix inserted before the path of the URL it describes,
+    # which is the mount path, since a server's issuer and resource both start with it.
+    servers_by_path: dict[str, _ServerBundle] = {bundle.mount_path.strip('/'): bundle for bundle in servers}
 
-    @app.get('/.well-known/oauth-authorization-server/{server_name}')
-    @app.options('/.well-known/oauth-authorization-server/{server_name}')
-    @app.get('/.well-known/oauth-authorization-server/{server_name}/mcp')
-    @app.options('/.well-known/oauth-authorization-server/{server_name}/mcp')
-    async def oauth_authorization_server_discovery(request: Request, server_name: str):
-        bundle = server_lookup.get(server_name)
+    @app.get('/.well-known/oauth-authorization-server/{server_path:path}')
+    @app.options('/.well-known/oauth-authorization-server/{server_path:path}')
+    async def oauth_authorization_server_discovery(request: Request, server_path: str):
+        bundle = _find_server_by_path(servers_by_path, server_path)
         if not bundle or not bundle.auth_settings:
             return JSONResponse(
                 status_code=404,
-                content={'error': f'Server not found: {server_name}'},
+                content={'error': f'Server not found: {server_path}'},
             )
         if bundle.authorization_server_metadata is None:
             # This server delegates to an external issuer, so the gateway has no metadata to publish.
@@ -290,23 +291,21 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
             return JSONResponse(
                 status_code=404,
                 content={
-                    'error': f'Server "{server_name}" is not an authorization server. '
+                    'error': f'Server "{bundle.name}" is not an authorization server. '
                     'Read its protected resource metadata for the issuer that is.'
                 },
             )
         handler = MetadataHandler(bundle.authorization_server_metadata)
         return await handler.handle(request)
 
-    @app.get('/.well-known/oauth-protected-resource/{server_name}')
-    @app.options('/.well-known/oauth-protected-resource/{server_name}')
-    @app.get('/.well-known/oauth-protected-resource/{server_name}/mcp')
-    @app.options('/.well-known/oauth-protected-resource/{server_name}/mcp')
-    async def oauth_protected_resource_discovery(request: Request, server_name: str):
-        bundle = server_lookup.get(server_name)
+    @app.get('/.well-known/oauth-protected-resource/{server_path:path}')
+    @app.options('/.well-known/oauth-protected-resource/{server_path:path}')
+    async def oauth_protected_resource_discovery(request: Request, server_path: str):
+        bundle = _find_server_by_path(servers_by_path, server_path)
         if not bundle or not bundle.auth_settings:
             return JSONResponse(
                 status_code=404,
-                content={'error': f'Server not found: {server_name}'},
+                content={'error': f'Server not found: {server_path}'},
             )
         handler = ProtectedResourceMetadataHandler(_protected_resource(bundle))
         return await handler.handle(request)
@@ -372,6 +371,16 @@ def _register_health_route(app: FastAPI, servers: list[_ServerBundle]) -> None:
 def _build_metadata_endpoint(metadata: OAuthMetadata) -> typing.Callable[..., typing.Any]:
     """The route serving ``metadata`` as an RFC 8414 document, open to cross-origin reads."""
     return cors_middleware(MetadataHandler(metadata).handle, ['GET', 'OPTIONS'])
+
+
+def _find_server_by_path(servers_by_path: dict[str, _ServerBundle], server_path: str) -> _ServerBundle | None:
+    """The server a well-known document at ``server_path`` describes, or ``None`` for none.
+
+    The path is the server's mount path, or its MCP endpoint under it,
+    since some clients insert the well-known prefix into the endpoint URL rather than the issuer.
+    """
+    path = server_path.strip('/')
+    return servers_by_path.get(path) or servers_by_path.get(path.removesuffix(MCP_ENDPOINT_PATH))
 
 
 def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:

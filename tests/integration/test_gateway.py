@@ -232,6 +232,41 @@ class TestWellKnownOAuth:
         assert response.status_code == 200
 
 
+class TestWellKnownUnderPathPrefix:
+    """A server mounted away from its name is discovered from its endpoint, as a client follows the documents."""
+
+    @pytest.mark.parametrize('path_prefix', ['pets', 'apis/pets'])
+    def test_a_client_finds_the_token_endpoint_from_the_challenge(self, petstore_json_path, path_prefix):
+        server = {
+            'name': 'petstore',
+            'path_prefix': path_prefix,
+            'spec': str(petstore_json_path),
+            'auth': {
+                'upstream': {'type': 'bearer', 'token': 'upstream-pat'},
+                'mcp': {
+                    'clients': {'agent': {'client_secret': 'agent-secret', 'scopes': ['pets:read']}},
+                    'operation_scopes': {'auto': 'tags'},
+                },
+            },
+        }
+        gateway = Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
+        http = TestClient(gateway._build_app(transport='streamable-http'))
+        endpoint = f'{GATEWAY_URL}/{path_prefix}/mcp'
+
+        challenge = http.post(f'/{path_prefix}/mcp', json={}).headers['www-authenticate']
+        resource_metadata = challenge.split('resource_metadata="')[1].split('"')[0]
+        resource = http.get(resource_metadata.removeprefix(GATEWAY_URL)).json()
+        assert resource['resource'] == endpoint
+
+        # RFC 8414 §3.1 inserts the well-known prefix before the issuer's path.
+        issuer = resource['authorization_servers'][0]
+        issuer_path = issuer.removeprefix(GATEWAY_URL)
+        metadata = http.get(f'/.well-known/oauth-authorization-server{issuer_path}')
+        assert metadata.status_code == 200
+        assert metadata.json()['issuer'] == issuer
+        assert metadata.json()['token_endpoint'] == f'{issuer}/token'
+
+
 class TestMountEmbedding:
     """``Gateway.mount`` wires OAuth and ``.well-known`` routes onto a host FastAPI app."""
 
