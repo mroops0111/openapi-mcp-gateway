@@ -40,6 +40,14 @@ class AuthTypeContext(typing.NamedTuple):
     gateway_url: str
     mcp_scope_policy: McpScopePolicy
 
+    @property
+    def mcp_resource_url(self) -> str:
+        """The canonical URI of this server's MCP endpoint, which every token for it must be issued for.
+
+        RFC 8707 has a client name it as ``resource``, and RFC 9728 has the server publish it.
+        """
+        return f'{self.gateway_url.rstrip("/")}{self.entry.mount_path}/mcp'
+
 
 @dataclasses.dataclass
 class ServerAuthSetup:
@@ -170,6 +178,10 @@ class OAuthFlowContext:
     @property
     def mount_path(self) -> str:
         return self.auth_context.entry.mount_path
+
+    @property
+    def mcp_resource_url(self) -> str:
+        return self.auth_context.mcp_resource_url
 
     def require_upstream_oauth_flow(self) -> UpstreamOAuthFlow:
         """The upstream OAuth flow, which every flow but ``token_exchange`` runs."""

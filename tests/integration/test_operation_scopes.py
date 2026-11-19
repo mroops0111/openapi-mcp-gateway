@@ -46,7 +46,7 @@ READ_TOOLS = ['list_pets', 'get_pet_by_id']
 # The challenges a token is answered with when its scopes lack the one named.
 DELETE_CHALLENGE = (
     'Bearer error="insufficient_scope", scope="pets:delete", '
-    f'resource_metadata="{GATEWAY_URL}/.well-known/oauth-protected-resource/petstore", '
+    f'resource_metadata="{GATEWAY_URL}/.well-known/oauth-protected-resource/petstore/mcp", '
     'error_description="This operation needs one of these scopes: pets:delete."'
 )
 READ_CHALLENGE = DELETE_CHALLENGE.replace('pets:delete', 'pets:read')

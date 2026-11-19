@@ -9,6 +9,7 @@ from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
     AuthorizationParams,
+    AuthorizeError,
     IdentityAssertionParams,
     RefreshToken,
     TokenError,
@@ -113,7 +114,12 @@ class McpAuthorizationCodeServer:
         """Record the sign-in and send the browser to the consent page, the first place the gateway sees the browser.
 
         The SDK hands this method no request, so whether the browser already approved the client is decided there.
+        A ``resource`` other than this endpoint is ``invalid_target``, as RFC 8707 §2 has it.
         """
+        if not self.tokens.serves_resource(params.resource):
+            raise AuthorizeError(
+                error='invalid_target', error_description=f'Tokens here are for {self.tokens.resource}'
+            )
         pending = PendingAuthorization(
             request_id=secrets.token_urlsafe(32),
             client_id=require_client_id(client),
@@ -261,7 +267,11 @@ class McpAuthorizationCodeServer:
         if not data:
             return None
         return RefreshToken(
-            token=data['token'], client_id=data['client_id'], scopes=data['scopes'], expires_at=data.get('expires_at')
+            token=data['token'],
+            client_id=data['client_id'],
+            scopes=data['scopes'],
+            expires_at=data.get('expires_at'),
+            resource=data.get('resource'),
         )
 
     async def exchange_refresh_token(

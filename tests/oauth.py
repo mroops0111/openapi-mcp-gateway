@@ -51,6 +51,7 @@ def authorization_code_server(
         policy or McpTokenPolicy(),
         clients or McpDynamicClientRegistry(store, issuer),
         server_name,
+        f'{issuer}/mcp',
     )
     return server
 
@@ -119,10 +120,12 @@ async def authorize(
     client: OAuthClientInformationFull,
     state: str | None = CLIENT_STATE,
     scopes: list[str] | None = None,
+    resource: str | None = None,
 ) -> str:
     """Start a sign-in for ``client`` under its own ``state``, returning the consent page URL the browser is sent to.
 
     ``scopes`` is what the SDK's authorize handler settled on, which is ``None`` when the client asked for none.
+    ``resource`` is the RFC 8707 resource the client names, or ``None`` when it names none.
     """
     params = AuthorizationParams(
         state=state,
@@ -130,6 +133,7 @@ async def authorize(
         redirect_uri=AnyHttpUrl(CLIENT_REDIRECT_URI),
         redirect_uri_provided_explicitly=True,
         code_challenge='challenge-abc',
+        resource=resource,
     )
     return await provider.authorize(client, params)
 

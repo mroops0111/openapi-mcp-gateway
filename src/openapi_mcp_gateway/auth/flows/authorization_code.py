@@ -319,12 +319,14 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             policy,
             clients,
             entry.name,
+            flow_context.mcp_resource_url,
         )
         # One cookie for both pages, since the callback must read what the consent page set.
         cookie = BrowserCookie(secure=issuer.startswith('https://'))
         settings = AuthSettings(
             issuer_url=server_url,
-            resource_server_url=server_url,
+            resource_server_url=pydantic.AnyHttpUrl(flow_context.mcp_resource_url),
+            validate_token_resource=True,
             revocation_options=RevocationOptions(enabled=True),
             client_registration_options=clients.build_registration_options(mcp_endpoint_scopes),
             required_scopes=mcp_endpoint_scopes,
@@ -360,15 +362,18 @@ def build_authorization_code_server(
     policy: McpTokenPolicy,
     clients: McpClientDirectory,
     server_name: str,
+    resource: str,
 ) -> tuple[McpAuthorizationCodeServer, AuthorizationCodeBridge]:
     """Build the gateway's MCP authorization server for one server, joined to ``upstream`` by the returned Bridge.
 
     ``issuer`` is the server's own issuer identifier, and every record is tied to it and to the upstream's server.
+    ``resource`` is the canonical URI of the server's MCP endpoint, which every token is issued for.
     """
     tokens = McpTokenIssuer(
         store=store,
         origin=McpRecordOrigin(issuer=issuer, next_sign_in_server=upstream.authorization_server),
         policy=policy,
+        resource=resource,
     )
     bridge = AuthorizationCodeBridge(tokens, upstream, store)
     return McpAuthorizationCodeServer(tokens, clients, bridge, server_name=server_name), bridge

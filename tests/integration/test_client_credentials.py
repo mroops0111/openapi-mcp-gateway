@@ -142,6 +142,21 @@ class TestMcpEndpoint:
         assert response.status_code == 401
         assert 'resource_metadata=' in response.headers['www-authenticate']
 
+    async def test_a_token_issued_for_another_resource_is_refused(self, make_gateway):
+        """The SDK compares the resource each token records against this endpoint."""
+        gateway = make_gateway()
+        async with (
+            serve(gateway._build_app(transport='streamable-http')) as base_url,
+            httpx.AsyncClient() as http,
+        ):
+            token = await _obtain_token(base_url, READER)
+            record = await gateway._store.get('mcp_access_token', token)
+            await gateway._store.set('mcp_access_token', token, {**record, 'resource': f'{base_url}/other/mcp'})
+            response = await http.post(
+                f'{base_url}/petstore/mcp', json={}, headers={'Authorization': f'Bearer {token}'}
+            )
+        assert response.status_code == 401
+
     async def test_each_agent_lists_only_what_its_scopes_open(self, make_gateway, upstream_requests):
         async with serve(make_gateway()._build_app(transport='streamable-http')) as base_url:
             reader_token = await _obtain_token(base_url, READER)

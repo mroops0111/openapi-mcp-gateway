@@ -9,7 +9,7 @@ from openapi_mcp_gateway.auth.mcp.token_issuer import (
     McpTokenIssuer,
     McpTokenPolicy,
 )
-from tests.constants import GATEWAY_ISSUER
+from tests.constants import GATEWAY_ISSUER, GATEWAY_RESOURCE
 
 
 # A client registered with the scopes its tokens may step up to.
@@ -18,7 +18,9 @@ CLIENT = OAuthClientInformationFull(client_id='agent', redirect_uris=None, scope
 
 @pytest.fixture
 def tokens(memory_store) -> McpTokenIssuer:
-    return McpTokenIssuer(memory_store, McpRecordOrigin(issuer=GATEWAY_ISSUER), McpTokenPolicy(scopes=[]))
+    return McpTokenIssuer(
+        memory_store, McpRecordOrigin(issuer=GATEWAY_ISSUER), McpTokenPolicy(scopes=[]), GATEWAY_RESOURCE
+    )
 
 
 class TestIssuing:

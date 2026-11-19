@@ -13,12 +13,14 @@ from openapi_mcp_gateway.auth.mcp.client_credentials import (
 from openapi_mcp_gateway.auth.mcp.record_origin import McpRecordOrigin
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenIssuer, McpTokenPolicy
 from openapi_mcp_gateway.scopes import McpAccessToken
-from tests.constants import GATEWAY_ISSUER
+from tests.constants import GATEWAY_ISSUER, GATEWAY_RESOURCE
 
 
 @pytest.fixture
 def tokens(memory_store) -> McpTokenIssuer:
-    return McpTokenIssuer(memory_store, McpRecordOrigin(issuer=GATEWAY_ISSUER), McpTokenPolicy(scopes=[]))
+    return McpTokenIssuer(
+        memory_store, McpRecordOrigin(issuer=GATEWAY_ISSUER), McpTokenPolicy(scopes=[]), GATEWAY_RESOURCE
+    )
 
 
 @pytest.fixture

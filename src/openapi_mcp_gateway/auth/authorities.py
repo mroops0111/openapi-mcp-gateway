@@ -81,12 +81,12 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
         issuer = str(server_url)
         base = issuer.rstrip('/')
         policy = build_mcp_token_policy(entry.auth.mcp)
-        tokens = McpTokenIssuer(context.store, McpRecordOrigin(issuer=issuer), policy)
+        resource = context.mcp_resource_url
+        tokens = McpTokenIssuer(context.store, McpRecordOrigin(issuer=issuer), policy, resource)
         clients = build_mcp_client_directory(entry.auth.mcp.clients, policy.scopes)
         grant = McpClientCredentialsGrant(tokens, clients)
-        # The endpoint's canonical URI, published in the protected resource document and enforced at the token endpoint.
         protected_resource = ProtectedResourceMetadata.model_validate(
-            {'resource': f'{base}/mcp', 'authorization_servers': [issuer], 'scopes_supported': policy.scopes or None}
+            {'resource': resource, 'authorization_servers': [issuer], 'scopes_supported': policy.scopes or None}
         )
         metadata = OAuthMetadata.model_validate(
             {
@@ -102,15 +102,14 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
         return dataclasses.replace(
             setup,
             verifier=McpGatewayTokenVerifier(tokens, clients),
-            # The verifier reads only tokens whose origin is this server, so they cannot be for another resource.
             settings=AuthSettings(
                 issuer_url=server_url,
-                resource_server_url=server_url,
+                resource_server_url=pydantic.AnyHttpUrl(resource),
                 required_scopes=policy.scopes,
-                validate_token_resource=False,
+                validate_token_resource=True,
             ),
             protected_resource=protected_resource,
-            routes=[*setup.routes, McpClientCredentialsRoutes(grant, resource=str(protected_resource.resource))],
+            routes=[*setup.routes, McpClientCredentialsRoutes(grant)],
             authorization_server_metadata=metadata,
             extensions=[*setup.extensions, McpClientCredentialsExtension()],
             mcp_summary='gateway (client_credentials)',

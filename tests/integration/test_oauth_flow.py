@@ -5,7 +5,7 @@ import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from mcp.server.auth.provider import TokenError
+from mcp.server.auth.provider import AuthorizeError, TokenError
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata
 from pydantic import AnyHttpUrl
 from starlette.exceptions import HTTPException
@@ -21,6 +21,7 @@ from tests.constants import (
     AUTHORIZE_URL,
     BROWSER_ORIGIN,
     GATEWAY_ISSUER,
+    GATEWAY_RESOURCE,
     GATEWAY_URL,
     ISSUER,
     TOKEN_URL,
@@ -738,6 +739,37 @@ class TestClientRemoval:
 
         assert await before.load_access_token(token.access_token) is not None
         assert await after.load_access_token(token.access_token) is None
+
+
+class TestTokenResource:
+    """Every token names this server's MCP endpoint as its RFC 8707 resource, which the SDK checks on each request."""
+
+    async def test_tokens_are_issued_for_the_endpoint(self, make_provider, mcp_client_info):
+        provider = make_provider()
+        token = await sign_in(provider, mcp_client_info)
+
+        access_token = await provider.load_access_token(token.access_token)
+        assert access_token is not None
+        assert access_token.resource == GATEWAY_RESOURCE
+        assert token.refresh_token is not None
+        refresh_token = await provider.load_refresh_token(mcp_client_info, token.refresh_token)
+        assert refresh_token is not None
+        assert refresh_token.resource == GATEWAY_RESOURCE
+
+    async def test_a_sign_in_for_another_resource_is_refused(self, make_provider, mcp_client_info):
+        provider = make_provider()
+        await provider.register_client(mcp_client_info)
+
+        with pytest.raises(AuthorizeError) as exc_info:
+            await authorize(provider, mcp_client_info, resource=f'{ATTACKER_URL}/mcp')
+        assert exc_info.value.error == 'invalid_target'
+
+    async def test_a_sign_in_naming_the_endpoint_goes_on(self, make_provider, mcp_client_info):
+        """A trailing slash names the same resource."""
+        provider = make_provider()
+        await provider.register_client(mcp_client_info)
+
+        assert request_id_in(await authorize(provider, mcp_client_info, resource=f'{GATEWAY_RESOURCE}/'))
 
 
 class TestTokenOrigin:

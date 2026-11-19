@@ -787,7 +787,7 @@ class TestRejectedTokenResponse:
         payload = {'iss': ISSUER, 'aud': self.RESOURCE, 'sub': 'user-1', 'exp': int(time.time()) + 300, **claims}
         return jwt.encode({k: v for k, v in payload.items() if v is not None}, signing_key, algorithm='RS256')
 
-    def _post(self, client, token: str):
+    def _post(self, client, token: str, body: dict | None = None):
         return client.post(
             '/petstore/mcp',
             headers={
@@ -795,8 +795,25 @@ class TestRejectedTokenResponse:
                 'Accept': 'application/json, text/event-stream',
                 'Content-Type': 'application/json',
             },
-            json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
+            json=body or {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
         )
+
+    def test_a_token_for_this_endpoint_passes(self, delegating_app, signing_key):
+        """The SDK checks each token's resource against this endpoint, which the verifier reports as its audience."""
+        initialize = {
+            'jsonrpc': '2.0',
+            'id': 1,
+            'method': 'initialize',
+            'params': {
+                'protocolVersion': '2025-11-25',
+                'capabilities': {},
+                'clientInfo': {'name': 't', 'version': '1'},
+            },
+        }
+        with delegating_app:
+            response = self._post(delegating_app, self._token(signing_key), initialize)
+
+        assert response.status_code == 200, response.text
 
     def test_expired_token_is_a_challenge_not_a_server_error(self, delegating_app, signing_key):
         """Expiry is the ordinary path here, since the issuer owns the lifetimes.

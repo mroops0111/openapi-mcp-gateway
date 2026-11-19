@@ -391,7 +391,7 @@ def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:
     registration = bundle.auth_settings.client_registration_options
     return ProtectedResourceMetadata.model_validate(
         {
-            'resource': f'{issuer}/mcp',
+            'resource': str(bundle.auth_settings.resource_server_url),
             'authorization_servers': [issuer],
             'scopes_supported': registration.valid_scopes if registration else None,
         }
