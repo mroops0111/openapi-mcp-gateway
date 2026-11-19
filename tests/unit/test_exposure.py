@@ -789,6 +789,26 @@ class TestSearchOperations:
         assert {'type': 'string'} in branches
         assert {'type': 'array', 'items': {'type': 'string'}} in branches
 
+    async def test_parameters_are_searched_when_weighted(self):
+        """An argument's name and description reach search once the parameters field has a weight, and not before."""
+        operation = OperationInfo(
+            operation_id='updateIssue',
+            method='patch',
+            path='/issues/{number}',
+            summary='Update an issue.',
+            parameters=[
+                ParameterInfo(name='state', location='body', description='Set to closed to close the issue.'),
+            ],
+        )
+        generator, mcp = _meta_generator()
+        generator.register([operation])
+        assert await _search(mcp, query='closed') == {'operations': []}
+        mcp = MCPServer('test')
+        MetaToolGenerator(
+            mcp=mcp, connection=UpstreamConnection(base_url=API_URL), field_weight_overrides={'parameters': 1.0}
+        ).register([operation])
+        assert [entry['name'] for entry in (await _search(mcp, query='closed'))['operations']] == ['update_issue']
+
 
 class TestGetOperation:
     """``get_operation`` returns the input schema for one operation, and unknown names raise."""

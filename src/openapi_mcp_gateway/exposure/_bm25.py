@@ -29,7 +29,7 @@ class BM25FIndex:
     A document is a mapping of field name to text, keyed by document name.
     Each field's term frequency is normalised by that field's own average length and scaled by its weight,
     so a long description cannot outweigh a short name merely by being long.
-    A field missing from ``field_weights`` is not searched.
+    A field missing from ``field_weights`` or weighted 0 is not searched, and its words do not count toward rarity.
     Ties keep the order the documents were given in, so results are stable across calls.
     """
 
@@ -37,7 +37,7 @@ class BM25FIndex:
         self, documents: typing.Mapping[str, typing.Mapping[str, str]], field_weights: typing.Mapping[str, float]
     ):
         self._names = list(documents)
-        self._field_weights = dict(field_weights)
+        self._field_weights = {field: weight for field, weight in field_weights.items() if weight > 0}
         self._term_counts = {
             field: [collections.Counter(tokenize(fields.get(field, ''))) for fields in documents.values()]
             for field in self._field_weights

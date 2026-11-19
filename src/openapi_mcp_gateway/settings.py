@@ -440,6 +440,7 @@ class SearchFieldWeights(pydantic.BaseModel):
     """How much a matching term counts in each field ``search_operations`` ranks by.
 
     A field left unset keeps the gateway's default weight, and 0 leaves the field out of search.
+    ``parameters``, each argument's name and description, defaults to 0.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid')
@@ -449,11 +450,14 @@ class SearchFieldWeights(pydantic.BaseModel):
     description: float | None = pydantic.Field(default=None, ge=0)
     path: float | None = pydantic.Field(default=None, ge=0)
     tags: float | None = pydantic.Field(default=None, ge=0)
+    parameters: float | None = pydantic.Field(default=None, ge=0)
 
     @pydantic.model_validator(mode='after')
     def _refuse_all_zero(self) -> typing.Self:
         """Refuse setting every field to 0, since search would then match nothing."""
         weights = self.model_dump()
+        # Parameters are searched only when given a weight, so leaving them unset counts as 0.
+        weights['parameters'] = weights['parameters'] or 0
         if all(weight == 0 for weight in weights.values()):
             raise ValueError('exposure.search.field_weights sets every field to 0, so search would match nothing.')
         return self

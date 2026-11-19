@@ -11,7 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.shared.inbound import MCP_NAME_HEADER, MCP_PARAM_HEADER_PREFIX, X_MCP_HEADER_KEY, decode_header_value
 from mcp.types import CallToolResult
 
-from ..openapi import ExposedTool, OperationInfo
+from ..openapi import ExposedTool, OperationInfo, schema_description
 from ..scopes import McpUnrestrictedScopePolicy, RequestTarget, ScopeRegistry, current_grant
 from ._bm25 import BM25FIndex
 from ._shaping import shape_operation
@@ -30,7 +30,14 @@ OPERATION_PARAM_HEADER = 'Operation'
 
 # How much a matching term counts in each searchable field.
 # A server's exposure.search.field_weights overrides them field by field.
-DEFAULT_FIELD_WEIGHTS = {'name': 2.0, 'summary': 3.0, 'description': 0.5, 'path': 0.5, 'tags': 0.5}
+DEFAULT_FIELD_WEIGHTS = {
+    'name': 2.0,
+    'summary': 3.0,
+    'description': 0.5,
+    'path': 0.5,
+    'tags': 0.5,
+    'parameters': 0.0,
+}
 
 # How strongly reciprocal rank fusion favours the top of each query's ranking, at the value most fusions use.
 _FUSION_RANK_OFFSET = 60
@@ -221,6 +228,7 @@ class _RegisteredOperation:
             'description': self.description,
             'path': self.path,
             'tags': ' '.join(self.tags),
+            'parameters': _parameter_text(self.input_schema),
         }
 
 
@@ -316,6 +324,18 @@ def _fuse(rankings: list[list[str]]) -> list[str]:
         for rank, name in enumerate(ranking, start=1):
             scores[name] = scores.get(name, 0.0) + 1 / (_FUSION_RANK_OFFSET + rank)
     return sorted(scores, key=lambda name: -scores[name])
+
+
+def _parameter_text(input_schema: dict[str, typing.Any]) -> str:
+    """The name and description of each argument ``input_schema`` takes, as search reads them.
+
+    Only the top-level arguments count, since a nested field says more about a payload's shape than about what the
+    operation does.
+    """
+    defs = input_schema.get('$defs', {})
+    return ' '.join(
+        f'{name} {schema_description(schema, defs)}' for name, schema in input_schema.get('properties', {}).items()
+    )
 
 
 def _encode_cursor(offset: int) -> str:
