@@ -85,10 +85,14 @@ class _ServerBundle(typing.NamedTuple):
             'name': self.name,
             'mount_path': self.mount_path,
             'base_url': self.base_url,
+            # Shaped like ``auth`` in the config, with each value as resolved rather than as written.
             'auth': {
-                'type': self.auth_type,
-                'flow': self.auth_flow,
-                'api_key_header': self.auth_api_key_header,
+                'upstream': {
+                    'type': self.auth_type,
+                    'flow': self.auth_flow,
+                    'api_key_header': self.auth_api_key_header,
+                },
+                'mcp': self._describe_mcp_auth(),
             },
             'exposure': self.exposure,
             'instructions': self.instructions,
@@ -104,6 +108,20 @@ class _ServerBundle(typing.NamedTuple):
                 for tool in self.tools
             ],
             'resources': list(self.resource_names),
+        }
+
+    def _describe_mcp_auth(self) -> dict[str, typing.Any]:
+        """Who issues this endpoint's tokens and what they must carry, as its discovery documents state it.
+
+        Every value is ``None`` where nothing checks a token.
+        """
+        if self.auth_settings is None:
+            return {'issuer': None, 'grant_types': None, 'required_scopes': None}
+        metadata = self.authorization_server_metadata
+        return {
+            'issuer': str(_protected_resource(self).authorization_servers[0]),
+            'grant_types': metadata.grant_types_supported if metadata else None,
+            'required_scopes': list(self.auth_settings.required_scopes or []),
         }
 
 
