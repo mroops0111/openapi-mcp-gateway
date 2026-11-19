@@ -1,4 +1,3 @@
-import collections.abc
 import logging
 import secrets
 import time
@@ -321,7 +320,6 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             clients,
             entry.name,
             flow_context.mcp_resource_url,
-            [flow_context.legacy_sse_resource_url],
         )
         # One cookie for both pages, since the callback must read what the consent page set.
         cookie = BrowserCookie(secure=issuer.startswith('https://'))
@@ -365,20 +363,17 @@ def build_authorization_code_server(
     clients: McpClientDirectory,
     server_name: str,
     resource: str,
-    legacy_resources: collections.abc.Sequence[str] = (),
 ) -> tuple[McpAuthorizationCodeServer, AuthorizationCodeBridge]:
     """Build the gateway's MCP authorization server for one server, joined to ``upstream`` by the returned Bridge.
 
     ``issuer`` is the server's own issuer identifier, and every record is tied to it and to the upstream's server.
     ``resource`` is the canonical URI of the server's MCP endpoint, which every token is issued for.
-    ``legacy_resources`` are other URLs a client may name for it, as ``McpTokenIssuer`` takes them.
     """
     tokens = McpTokenIssuer(
         store=store,
         origin=McpRecordOrigin(issuer=issuer, next_sign_in_server=upstream.authorization_server),
         policy=policy,
         resource=resource,
-        legacy_resources=legacy_resources,
     )
     bridge = AuthorizationCodeBridge(tokens, upstream, store)
     return McpAuthorizationCodeServer(tokens, clients, bridge, server_name=server_name), bridge

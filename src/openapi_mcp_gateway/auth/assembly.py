@@ -20,9 +20,6 @@ from .upstream.resolver import UpstreamAuthResolver
 # Where each server's MCP endpoint sits under its mount path, the SDK's streamable HTTP default.
 MCP_ENDPOINT_PATH = '/mcp'
 
-# Where the deprecated HTTP+SSE transport serves each server instead, the SDK's default.
-LEGACY_SSE_ENDPOINT_PATH = '/sse'
-
 # Whose identity the upstream sees on every call.
 # ``gateway`` is one credential of the gateway's own, so every agent looks the same upstream.
 # ``user`` is each signed-in user's own, and ``caller`` is whatever the caller's header carries.
@@ -63,15 +60,6 @@ class AuthTypeContext(typing.NamedTuple):
         RFC 8707 has a client name it as ``resource``, and RFC 9728 has the server publish it.
         """
         return f'{self.issuer_url.rstrip("/")}{MCP_ENDPOINT_PATH}'
-
-    @property
-    def legacy_sse_resource_url(self) -> str:
-        """The URL of this server's endpoint under the deprecated HTTP+SSE transport.
-
-        A client there names it as ``resource``, since the published resource is not a parent of it.
-        Tokens are still issued for ``mcp_resource_url``, the one the SDK checks them against.
-        """
-        return f'{self.issuer_url.rstrip("/")}{LEGACY_SSE_ENDPOINT_PATH}'
 
 
 @dataclasses.dataclass
@@ -211,10 +199,6 @@ class OAuthFlowContext:
     @property
     def mcp_resource_url(self) -> str:
         return self.auth_context.mcp_resource_url
-
-    @property
-    def legacy_sse_resource_url(self) -> str:
-        return self.auth_context.legacy_sse_resource_url
 
     def require_upstream_oauth_flow(self) -> UpstreamOAuthFlow:
         """The upstream OAuth flow, which every flow but ``token_exchange`` runs."""

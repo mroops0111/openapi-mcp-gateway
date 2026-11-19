@@ -781,13 +781,6 @@ class TestTokenResource:
 
         assert request_id_in(await authorize(provider, mcp_client_info, resource=f'{GATEWAY_RESOURCE}/'))
 
-    async def test_a_sign_in_from_the_deprecated_sse_endpoint_goes_on(self, make_provider, mcp_client_info):
-        """Its client names its own endpoint, and still gets tokens for the MCP endpoint the SDK checks."""
-        provider = make_provider()
-        await provider.register_client(mcp_client_info)
-
-        assert request_id_in(await authorize(provider, mcp_client_info, resource=f'{GATEWAY_ISSUER}/sse'))
-
 
 class TestTokenOrigin:
     """MCP codes and tokens are honoured only by the server, and against the upstream, that issued them."""

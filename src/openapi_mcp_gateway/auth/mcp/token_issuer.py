@@ -61,8 +61,6 @@ class McpTokenIssuer:
     ``resource`` is the canonical URI of the server's MCP endpoint.
     Every code and token records it as the RFC 8707 resource it was issued for,
     which the SDK compares against the endpoint on every request.
-    ``legacy_resources`` are other URLs a client may name for the same endpoint, such as its deprecated SSE one.
-    A token requested for one is still issued for ``resource``.
     """
 
     def __init__(
@@ -71,15 +69,13 @@ class McpTokenIssuer:
         origin: McpRecordOrigin,
         policy: McpTokenPolicy,
         resource: str,
-        legacy_resources: collections.abc.Sequence[str] = (),
     ) -> None:
         self.store = store
         self.origin = origin
         self.policy = policy
         self.resource = resource
-        self.legacy_resources = tuple(legacy_resources)
         # Compared on every authorization and client_credentials request, so normalized once.
-        self._served_resources = frozenset(_normalize_resource(url) for url in (resource, *self.legacy_resources))
+        self._normalized_resource = _normalize_resource(resource)
         # Compared on every authenticated request, so serialized once.
         self._origin_fields = origin.model_dump()
 
@@ -100,7 +96,7 @@ class McpTokenIssuer:
         if requested is None:
             return True
         try:
-            return _normalize_resource(requested) in self._served_resources
+            return _normalize_resource(requested) == self._normalized_resource
         except pydantic.ValidationError:
             return False
 
