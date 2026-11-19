@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import typing
+import urllib.parse
 
 from fastapi import FastAPI
 from mcp.server import MCPServer
@@ -140,7 +141,10 @@ def build_mcp_asgi_app(
     # so the empty string standing in for its missing bind is never read.
     if transport == 'sse':
         return mcp.sse_app(transport_security=transport_security, host=host or '')
-    return mcp.streamable_http_app(transport_security=transport_security, host=host or '')
+    # Named rather than left to the SDK default, since every token is bound to this path.
+    return mcp.streamable_http_app(
+        streamable_http_path=MCP_ENDPOINT_PATH, transport_security=transport_security, host=host or ''
+    )
 
 
 def mount_mcp_apps(
@@ -271,15 +275,15 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                 name=route.name,
             )
 
-    # RFC 8414 / 9728 ``.well-known`` discovery endpoints, resolved per mount path at request time.
-    # Each document sits at the well-known prefix inserted before the path of the URL it describes,
-    # which is the mount path, since a server's issuer and resource both start with it.
-    servers_by_path: dict[str, _ServerBundle] = {bundle.mount_path.strip('/'): bundle for bundle in servers}
+    # RFC 8414 / 9728 ``.well-known`` discovery endpoints, resolved per server at request time.
+    servers_by_path = _index_servers_by_path(servers)
 
+    @app.get('/.well-known/oauth-authorization-server')
+    @app.options('/.well-known/oauth-authorization-server')
     @app.get('/.well-known/oauth-authorization-server/{server_path:path}')
     @app.options('/.well-known/oauth-authorization-server/{server_path:path}')
-    async def oauth_authorization_server_discovery(request: Request, server_path: str):
-        bundle = _find_server_by_path(servers_by_path, server_path)
+    async def oauth_authorization_server_discovery(request: Request, server_path: str = ''):
+        bundle = servers_by_path.get(server_path.strip('/'))
         if not bundle or not bundle.auth_settings:
             return JSONResponse(
                 status_code=404,
@@ -298,10 +302,12 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
         handler = MetadataHandler(bundle.authorization_server_metadata)
         return await handler.handle(request)
 
+    @app.get('/.well-known/oauth-protected-resource')
+    @app.options('/.well-known/oauth-protected-resource')
     @app.get('/.well-known/oauth-protected-resource/{server_path:path}')
     @app.options('/.well-known/oauth-protected-resource/{server_path:path}')
-    async def oauth_protected_resource_discovery(request: Request, server_path: str):
-        bundle = _find_server_by_path(servers_by_path, server_path)
+    async def oauth_protected_resource_discovery(request: Request, server_path: str = ''):
+        bundle = servers_by_path.get(server_path.strip('/'))
         if not bundle or not bundle.auth_settings:
             return JSONResponse(
                 status_code=404,
@@ -373,14 +379,26 @@ def _build_metadata_endpoint(metadata: OAuthMetadata) -> typing.Callable[..., ty
     return cors_middleware(MetadataHandler(metadata).handle, ['GET', 'OPTIONS'])
 
 
-def _find_server_by_path(servers_by_path: dict[str, _ServerBundle], server_path: str) -> _ServerBundle | None:
-    """The server a well-known document at ``server_path`` describes, or ``None`` for none.
+def _index_servers_by_path(servers: list[_ServerBundle]) -> dict[str, _ServerBundle]:
+    """Each server under every path its well-known documents may be asked for at, without surrounding slashes.
 
-    The path is the server's mount path, or its MCP endpoint under it,
-    since some clients insert the well-known prefix into the endpoint URL rather than the issuer.
+    RFC 8414 and RFC 9728 insert the well-known prefix before the path of the issuer or resource URL,
+    which carries any path in the gateway's ``url``.
+    Some clients insert it into the MCP endpoint URL rather than the issuer, so each path is also indexed with it.
+    The bare mount path and the server's name follow, for a proxy that strips the gateway's path,
+    and for the URLs served before discovery followed the mount path.
+    An earlier path wins where two servers would share one.
     """
-    path = server_path.strip('/')
-    return servers_by_path.get(path) or servers_by_path.get(path.removesuffix(MCP_ENDPOINT_PATH))
+    index: dict[str, _ServerBundle] = {}
+    for bundle in servers:
+        if bundle.auth_settings is None or bundle.auth_settings.resource_server_url is None:
+            continue
+        resource_path = urllib.parse.urlparse(str(bundle.auth_settings.resource_server_url)).path
+        base = resource_path.removesuffix(MCP_ENDPOINT_PATH)
+        for path in (base, bundle.mount_path, f'/{bundle.name}'):
+            for candidate in (path, f'{path.rstrip("/")}{MCP_ENDPOINT_PATH}'):
+                index.setdefault(candidate.strip('/'), bundle)
+    return index
 
 
 def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:

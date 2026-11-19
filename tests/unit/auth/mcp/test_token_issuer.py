@@ -50,3 +50,23 @@ class TestIssuing:
 
         assert token.expires_in is not None
         assert token.expires_in <= 30
+
+
+class TestServesResource:
+    """A requested RFC 8707 resource matches this endpoint as a URL, not as a string."""
+
+    @pytest.mark.parametrize(
+        'requested',
+        [
+            None,
+            GATEWAY_RESOURCE,
+            f'{GATEWAY_RESOURCE}/',
+            GATEWAY_RESOURCE.replace('mcp.example.com', 'MCP.Example.com:443'),
+        ],
+    )
+    def test_this_endpoint_is_served(self, tokens, requested):
+        assert tokens.serves_resource(requested)
+
+    @pytest.mark.parametrize('requested', ['https://elsewhere.example.com/mcp', f'{GATEWAY_ISSUER}', 'not a url'])
+    def test_anything_else_is_not(self, tokens, requested):
+        assert not tokens.serves_resource(requested)

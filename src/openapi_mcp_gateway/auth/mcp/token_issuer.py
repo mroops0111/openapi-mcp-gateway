@@ -83,8 +83,15 @@ class McpTokenIssuer:
         """Whether a client asking for ``requested`` as its RFC 8707 ``resource`` may get a token here.
 
         A client that names none gets one for this endpoint, the only resource it serves.
+        Both sides are compared as normalized URLs, so a client echoing the published form matches.
         """
-        return requested is None or requested.rstrip('/') == self.resource.rstrip('/')
+        if requested is None:
+            return True
+        try:
+            normalized = str(pydantic.AnyHttpUrl(requested))
+        except pydantic.ValidationError:
+            return False
+        return normalized.rstrip('/') == str(pydantic.AnyHttpUrl(self.resource)).rstrip('/')
 
     async def complete_authorization(self, pending: PendingAuthorization, attachment: McpTokenAttachment) -> str:
         """Mint the MCP authorization code that ends ``pending``, and return the redirect carrying it to the client.

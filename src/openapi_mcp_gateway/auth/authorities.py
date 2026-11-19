@@ -76,9 +76,9 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
 
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
         entry = context.entry
-        server_url = pydantic.AnyHttpUrl(f'{context.gateway_url.rstrip("/")}{entry.mount_path}')
         # The same string the metadata publishes as ``issuer``, since clients compare the two exactly.
-        issuer = str(server_url)
+        issuer = context.issuer_url
+        server_url = pydantic.AnyHttpUrl(issuer)
         base = issuer.rstrip('/')
         policy = build_mcp_token_policy(entry.auth.mcp)
         resource = context.mcp_resource_url

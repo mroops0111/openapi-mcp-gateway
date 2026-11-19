@@ -129,6 +129,16 @@ class TestTokenEndpoint:
     def test_the_canonical_resource_is_accepted(self, http):
         assert _request_token(http, READER, resource=f'{GATEWAY_URL}/petstore/mcp').status_code == 200
 
+    def test_a_foreign_resource_beside_the_canonical_one_is_refused(self, http):
+        """RFC 8707 lets ``resource`` repeat, so every one named is checked."""
+        form = {
+            'grant_type': 'client_credentials',
+            'resource': ['https://elsewhere.example.com/mcp', f'{GATEWAY_URL}/petstore/mcp'],
+        }
+        response = http.post('/petstore/token', data=form, auth=(READER, SECRETS[READER]))
+
+        assert response.json()['error'] == 'invalid_target'
+
 
 class TestMcpEndpoint:
     """Each agent reaches only the operations its scopes open, through the one upstream credential."""

@@ -4,6 +4,7 @@ import pathlib
 import sys
 import time
 import typing
+import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
@@ -233,38 +234,53 @@ class TestWellKnownOAuth:
 
 
 class TestWellKnownUnderPathPrefix:
-    """A server mounted away from its name is discovered from its endpoint, as a client follows the documents."""
+    """A server is discovered from its endpoint wherever it is mounted, as a client follows the documents."""
 
-    @pytest.mark.parametrize('path_prefix', ['pets', 'apis/pets'])
-    def test_a_client_finds_the_token_endpoint_from_the_challenge(self, petstore_json_path, path_prefix):
-        server = {
-            'name': 'petstore',
-            'path_prefix': path_prefix,
-            'spec': str(petstore_json_path),
-            'auth': {
-                'upstream': {'type': 'bearer', 'token': 'upstream-pat'},
-                'mcp': {
-                    'clients': {'agent': {'client_secret': 'agent-secret', 'scopes': ['pets:read']}},
-                    'operation_scopes': {'auto': 'tags'},
-                },
-            },
-        }
-        gateway = Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
-        http = TestClient(gateway._build_app(transport='streamable-http'))
-        endpoint = f'{GATEWAY_URL}/{path_prefix}/mcp'
+    @pytest.mark.parametrize(
+        ('gateway_url', 'path_prefix', 'endpoint'),
+        [
+            (GATEWAY_URL, 'pets', f'{GATEWAY_URL}/pets/mcp'),
+            (GATEWAY_URL, 'apis/pets', f'{GATEWAY_URL}/apis/pets/mcp'),
+            (GATEWAY_URL, '/', f'{GATEWAY_URL}/mcp'),
+            (f'{GATEWAY_URL}/gw', 'pets', f'{GATEWAY_URL}/gw/pets/mcp'),
+            # The published URLs are normalized, so the host is lowercased and the default port dropped.
+            ('https://MCP.Example.com:443', 'pets', f'{GATEWAY_URL}/pets/mcp'),
+        ],
+    )
+    def test_a_client_finds_the_token_endpoint_from_the_challenge(
+        self, petstore_json_path, gateway_url, path_prefix, endpoint
+    ):
+        http = TestClient(_shared_credential_gateway(petstore_json_path, gateway_url, path_prefix))
+        endpoint_path = urllib.parse.urlparse(endpoint).path
+        # A proxy in front of a gateway with a path in its ``url`` strips that path before forwarding.
+        served_path = endpoint_path.removeprefix(urllib.parse.urlparse(gateway_url).path)
 
-        challenge = http.post(f'/{path_prefix}/mcp', json={}).headers['www-authenticate']
+        challenge = http.post(served_path, json={}).headers['www-authenticate']
         resource_metadata = challenge.split('resource_metadata="')[1].split('"')[0]
+        assert resource_metadata == f'{GATEWAY_URL}/.well-known/oauth-protected-resource{endpoint_path}'
         resource = http.get(resource_metadata.removeprefix(GATEWAY_URL)).json()
         assert resource['resource'] == endpoint
 
         # RFC 8414 §3.1 inserts the well-known prefix before the issuer's path.
         issuer = resource['authorization_servers'][0]
-        issuer_path = issuer.removeprefix(GATEWAY_URL)
+        issuer_path = urllib.parse.urlparse(issuer).path.rstrip('/')
         metadata = http.get(f'/.well-known/oauth-authorization-server{issuer_path}')
         assert metadata.status_code == 200
         assert metadata.json()['issuer'] == issuer
-        assert metadata.json()['token_endpoint'] == f'{issuer}/token'
+
+        token = http.post(
+            f'{served_path.removesuffix("/mcp")}/token',
+            data={'grant_type': 'client_credentials', 'resource': endpoint},
+            auth=('agent', 'agent-secret'),
+        )
+        assert token.status_code == 200, token.text
+
+    def test_the_server_name_still_finds_the_documents(self, petstore_json_path):
+        """The URLs served before discovery followed the mount path keep working."""
+        http = TestClient(_shared_credential_gateway(petstore_json_path, GATEWAY_URL, 'pets'))
+
+        assert http.get('/.well-known/oauth-authorization-server/petstore').status_code == 200
+        assert http.get('/.well-known/oauth-protected-resource/petstore/mcp').status_code == 200
 
 
 class TestMountEmbedding:
@@ -977,3 +993,21 @@ async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) ->
         )
         async with Client(target) as mcp_client:
             yield mcp_client
+
+
+def _shared_credential_gateway(spec_path: pathlib.Path, gateway_url: str, path_prefix: str) -> FastAPI:
+    """The app of a gateway at ``gateway_url`` issuing MCP tokens for one bearer-token server under ``path_prefix``."""
+    server = {
+        'name': 'petstore',
+        'path_prefix': path_prefix,
+        'spec': str(spec_path),
+        'auth': {
+            'upstream': {'type': 'bearer', 'token': 'upstream-pat'},
+            'mcp': {
+                'clients': {'agent': {'client_secret': 'agent-secret', 'scopes': ['pets:read']}},
+                'operation_scopes': {'auto': 'tags'},
+            },
+        },
+    }
+    gateway = Gateway.from_config(GatewayConfig.model_validate({'url': gateway_url, 'servers': [server]}))
+    return gateway._build_app(transport='streamable-http')

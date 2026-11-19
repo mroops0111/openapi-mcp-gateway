@@ -307,10 +307,10 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
 
         policy = build_mcp_token_policy(mcp_config)
         mcp_endpoint_scopes = policy.scopes
-        server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')
         # The same string the metadata publishes as ``issuer``,
         # since RFC 9207 compares the two without any normalisation.
-        issuer = str(server_url)
+        issuer = flow_context.issuer_url
+        server_url = pydantic.AnyHttpUrl(issuer)
         clients = _build_client_directory(flow_context, mcp_endpoint_scopes, issuer)
         server, bridge = build_authorization_code_server(
             flow_context.store,

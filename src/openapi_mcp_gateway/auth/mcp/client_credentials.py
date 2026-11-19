@@ -98,9 +98,9 @@ class McpClientCredentialsRoutes(AuthRoutes):
         try:
             if form.get('grant_type') != 'client_credentials':
                 raise McpClientCredentialsError('unsupported_grant_type', 'Only client_credentials is supported')
-            resource = form.get('resource')
+            # RFC 8707 lets ``resource`` repeat, and every one named must be this endpoint.
             tokens = self._grant.tokens
-            if not tokens.serves_resource(str(resource) if resource is not None else None):
+            if not all(tokens.serves_resource(str(resource)) for resource in form.getlist('resource')):
                 raise McpClientCredentialsError('invalid_target', f'Tokens here are for {tokens.resource}')
             client_id, client_secret = _read_client_credentials(request, form)
             client = await self._grant.authenticate(client_id, client_secret)
