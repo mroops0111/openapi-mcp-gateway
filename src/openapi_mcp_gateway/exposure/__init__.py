@@ -1,3 +1,4 @@
+from ._semantic import SemanticSearchOptions, build_embedder, embeddings_available
 from ._shared import (
     build_input_schema,
     derive_description,
@@ -23,8 +24,10 @@ __all__ = [
     'DynamicOperationTarget',
     'MetaToolGenerator',
     'ResourceGenerator',
+    'SemanticSearchOptions',
     'ToolGenerator',
     'UpstreamConnection',
+    'build_embedder',
     'build_input_schema',
     'build_resource_read_function',
     'build_tool_function',
@@ -34,4 +37,5 @@ __all__ = [
     'derive_resource_uri',
     'derive_tool_annotations',
     'derive_tool_title',
+    'embeddings_available',
 ]

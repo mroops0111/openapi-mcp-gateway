@@ -1150,6 +1150,9 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
+embeddings = [
+    { name = "pydantic-ai-slim", extra = ["openai"] },
+]
 oidc = [
     { name = "pyjwt", extra = ["crypto"] },
 ]
@@ -1170,6 +1173,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "mcp", specifier = ">=2.0.0" },
     { name = "pydantic", specifier = ">=2.14.2" },
+    { name = "pydantic-ai-slim", extras = ["openai"], marker = "extra == 'embeddings'", specifier = ">=2.69.0" },
     { name = "pydantic-settings", specifier = ">=2.16.2" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'dev'", specifier = ">=2.15.1" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'oidc'", specifier = ">=2.15.1" },
@@ -1181,7 +1185,7 @@ requires-dist = [
     { name = "snowballstemmer", specifier = ">=3.1.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
-provides-extras = ["redis", "oidc", "dev"]
+provides-extras = ["redis", "oidc", "embeddings", "dev"]
 
 [[package]]
 name = "openapi-mcp-gateway-benchmarks"
@@ -1191,7 +1195,7 @@ dependencies = [
     { name = "click" },
     { name = "httpx" },
     { name = "mcp" },
-    { name = "openapi-mcp-gateway" },
+    { name = "openapi-mcp-gateway", extra = ["embeddings"] },
     { name = "pydantic" },
     { name = "pydantic-ai-harness", extra = ["skills"] },
     { name = "pydantic-ai-slim", extra = ["anthropic", "google", "mcp", "openai"] },
@@ -1207,7 +1211,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.4.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "mcp", specifier = ">=2.0.0" },
-    { name = "openapi-mcp-gateway", editable = "." },
+    { name = "openapi-mcp-gateway", extras = ["embeddings"], editable = "." },
     { name = "pydantic", specifier = ">=2.14.2" },
     { name = "pydantic-ai-harness", extras = ["skills"], specifier = ">=0.69.0" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "openai", "google", "mcp"], specifier = ">=2.68.0" },

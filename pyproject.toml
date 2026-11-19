@@ -38,6 +38,8 @@ dependencies = [
 [project.optional-dependencies]
 redis = ["redis>=7.4.0"]
 oidc = ["pyjwt[crypto]>=2.15.1"]
+# Search by meaning, through any embedding model Pydantic AI reaches over HTTP, such as OpenAI's or Ollama's.
+embeddings = ["pydantic-ai-slim[openai]>=2.69.0"]
 dev = [
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1.post1",
