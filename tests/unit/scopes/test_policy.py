@@ -2,37 +2,101 @@ import logging
 
 import pytest
 
-from openapi_mcp_gateway.auth.upstream.authorization_code import UpstreamTokenResponse
-from openapi_mcp_gateway.openapi import OperationInfo
 from openapi_mcp_gateway.scopes import (
-    McpConfiguredScopePolicy,
     McpUnrestrictedScopePolicy,
-    ScopeRegistry,
-    TokenGrant,
+    UnreachableRequirement,
+    UnrestrictedRequirement,
     UpstreamSpecSecurityScopePolicy,
     UpstreamUnrestrictedScopePolicy,
+    build_mcp_scope_policy,
     build_upstream_scope_policy,
 )
-from openapi_mcp_gateway.settings import OperationScopesConfig
-from tests.operations import operation
+from tests.operations import PETSTORE_OPERATIONS, operation
+from tests.scopes import (
+    DELETE_PET,
+    DELETE_PET_UPSTREAM_REFUSAL,
+    SCHEMES,
+    configured_policy,
+    operation_named,
+    tag_scopes,
+)
 
-
-# The security schemes of a spec that takes an OAuth token, an OpenID Connect token, or HTTP basic.
-SCHEMES = {
-    'oauth': {'type': 'oauth2'},
-    'oidc': {'type': 'openIdConnect'},
-    'basic': {'type': 'http', 'scheme': 'basic'},
-}
 
 # A petstore whose operations declare upstream scopes, with tags for the MCP scopes beside them.
 LIST_PETS = operation('listPets', 'get', '/pets', security=[{'oauth': ['read:pets']}])
-DELETE_PET = operation('deletePet', 'delete', '/pets/{petId}', security=[{'oauth': ['read:pets', 'write:pets']}])
 
-# Why a token whose upstream grant lacks what ``deletePet`` declares is refused.
-DELETE_PET_UPSTREAM_REFUSAL = (
-    'The upstream token lacks the scopes deletePet needs (read:pets write:pets). '
-    'Add them to auth.upstream.scopes and sign in again, or correct its security under operations.deletePet.security.'
-)
+
+class TestConfiguredMcpScopePolicy:
+    """``auth.mcp.operation_scopes`` resolved against a server's operations."""
+
+    def test_derived_and_manual_scopes_add_up(self):
+        """An operation a manual scope also covers opens to either scope."""
+        policy = configured_policy(auto='tags', manual={'admin': {'description': 'Admin', 'operations': ['DELETE *']}})
+        requirement = policy.requirement_for(operation_named('deletePet'))
+        assert requirement.challenge == ('admin', 'pets:delete')
+
+    @pytest.mark.parametrize(
+        ('unscoped', 'expected'), [('deny', UnreachableRequirement), ('allow', UnrestrictedRequirement)]
+    )
+    def test_unscoped_decides_an_operation_no_scope_covers(self, unscoped, expected):
+        """An untagged operation under ``auto: tags`` is unscoped, like any other no scope covers."""
+        policy = configured_policy(auto='tags', unscoped=unscoped)
+        assert isinstance(policy.requirement_for(operation_named('adminListPets')), expected)
+
+    def test_defined_mcp_scopes_carry_descriptions(self):
+        """Every scope is listed with what a person approving it is shown."""
+        policy = configured_policy(
+            auto='tags', manual={'admin': {'description': 'Manage pets', 'operations': ['admin*']}}
+        )
+        assert policy.mcp_defined_scopes == {
+            'pets:read': 'Read pets',
+            'pets:write': 'Create and change pets',
+            'pets:delete': 'Delete pets',
+            'admin': 'Manage pets',
+        }
+
+    def test_a_manual_scope_cannot_reuse_a_derived_name(self):
+        """The two definitions would otherwise merge into one scope without anyone noticing."""
+        with pytest.raises(ValueError, match=r'reuses names .* \(pets:read\)'):
+            configured_policy(auto='tags', manual={'pets:read': {'description': 'Read', 'operations': ['GET *']}})
+
+    def test_a_pattern_matching_nothing_is_warned(self, caplog):
+        """A typo in a pattern only ever shortens what a scope opens, so it is reported at startup."""
+        with caplog.at_level(logging.WARNING):
+            configured_policy(manual={'admin': {'description': 'Admin', 'operations': ['DELETE /pest/*']}})
+        assert 'DELETE /pest/*' in caplog.text
+
+    @pytest.mark.parametrize(('unscoped', 'level'), [('deny', logging.WARNING), ('allow', logging.INFO)])
+    def test_unscoped_operations_are_counted_at_startup(self, caplog, unscoped, level):
+        """Under ``deny`` they vanish from every client, so the count is a warning there."""
+        with caplog.at_level(logging.INFO):
+            configured_policy(auto='tags', unscoped=unscoped)
+        [record] = [record for record in caplog.records if 'no scope covers' in record.message]
+        assert record.levelno == level
+        assert '2 operation(s)' in record.message
+        assert 'createPetWithOwner, adminListPets' in record.message
+
+    def test_lists_vary_by_token(self):
+        """``tools/list`` is cached per token once scopes filter it."""
+        assert configured_policy(auto='tags').list_cache_scope == 'private'
+
+    @pytest.mark.parametrize(('unscoped', 'opens'), [('deny', False), ('allow', True)])
+    def test_unscoped_decides_whether_uncovered_operations_are_open(self, unscoped, opens):
+        assert configured_policy(auto='tags', unscoped=unscoped).opens_unscoped_operations is opens
+
+
+class TestUnrestrictedMcpScopePolicy:
+    """A server without ``auth.mcp.operation_scopes`` restricts nothing."""
+
+    def test_every_operation_is_open(self):
+        policy = build_mcp_scope_policy(None, PETSTORE_OPERATIONS, 'petstore')
+        assert isinstance(policy, McpUnrestrictedScopePolicy)
+        assert all(
+            isinstance(policy.requirement_for(candidate), UnrestrictedRequirement) for candidate in PETSTORE_OPERATIONS
+        )
+        assert policy.mcp_defined_scopes == {}
+        assert policy.list_cache_scope == 'public'
+        assert policy.opens_unscoped_operations is True
 
 
 class TestSpecSecurityUpstreamScopePolicy:
@@ -101,7 +165,7 @@ class TestUnrequestedScopeWarning:
 
     def test_each_client_is_warned_about_what_it_can_reach(self, caplog):
         """A reader never reaches ``deletePet``, so only the deleter hears about the scope it needs."""
-        mcp_policy = _tag_scopes(LIST_PETS, DELETE_PET)
+        mcp_policy = tag_scopes(LIST_PETS, DELETE_PET)
         with caplog.at_level(logging.WARNING):
             UpstreamSpecSecurityScopePolicy(SCHEMES, {}).warn_on_unrequested_scopes(
                 [LIST_PETS, DELETE_PET],
@@ -141,52 +205,3 @@ class TestUpstreamScopePolicy:
             )
         assert isinstance(policy, UpstreamUnrestrictedScopePolicy)
         assert 'the spec declares no OAuth security scheme' in caplog.text
-
-
-class TestScopeRegistryWithUpstreamScopes:
-    """A name needs the MCP scopes and the upstream grant both, and a refusal names the MCP scopes first."""
-
-    @pytest.mark.parametrize(
-        ('mcp_scopes', 'upstream_scopes', 'refused_for'),
-        [
-            (set(), set(), 'This operation needs one of these scopes: pets:delete.'),
-            ({'pets:delete'}, {'read:pets'}, DELETE_PET_UPSTREAM_REFUSAL),
-            ({'pets:delete'}, {'admin'}, None),
-        ],
-    )
-    def test_the_mcp_scopes_are_refused_before_the_upstream_grant(self, mcp_scopes, upstream_scopes, refused_for):
-        """Only the MCP scopes can be stepped up for, so a client hears about them first."""
-        scope_registry = ScopeRegistry(
-            _tag_scopes(DELETE_PET),
-            UpstreamSpecSecurityScopePolicy(SCHEMES, {'admin': ['read:pets', 'write:pets']}),
-        )
-        scope_registry.register('delete_pet', DELETE_PET)
-        grant = TokenGrant(frozenset(mcp_scopes), frozenset(upstream_scopes), frozenset(mcp_scopes))
-        refusal = scope_registry.refusal('delete_pet', grant)
-        assert refusal == refused_for
-
-    def test_the_lists_are_cached_per_token_once_the_grant_is_enforced(self):
-        scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
-        assert scope_registry.list_cache_scope == 'private'
-
-
-class TestGrantedScopes:
-    """The upstream token response's ``scope`` is read as RFC 6749 states it."""
-
-    @pytest.mark.parametrize(
-        ('scope', 'granted'),
-        [
-            pytest.param('read:pets write:pets', ['read:pets', 'write:pets'], id='space-delimited'),
-            pytest.param(None, ['previous'], id='omitted means unchanged'),
-            pytest.param('', [], id='empty grants nothing'),
-            pytest.param('read:user,repo', ['read:user,repo'], id='a comma belongs to the scope'),
-        ],
-    )
-    def test_the_granted_scope_is_parsed_per_rfc_6749(self, scope, granted):
-        response = UpstreamTokenResponse(access_token='token', refresh_token=None, expires_in=3600, scope=scope)
-        assert response.resolve_granted_scopes(['previous']) == granted
-
-
-def _tag_scopes(*operations: OperationInfo) -> McpConfiguredScopePolicy:
-    """MCP scopes derived from the tags of ``operations``, as ``auth.mcp.operation_scopes.auto: tags`` does."""
-    return McpConfiguredScopePolicy(OperationScopesConfig(auto='tags'), operations, 'petstore')
