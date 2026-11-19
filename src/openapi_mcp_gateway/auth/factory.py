@@ -1,8 +1,9 @@
+import dataclasses
 import typing
 
 from .assembly import AuthTypeContext, AuthTypeHandler, ServerAuthSetup
-from .flows import build_oauth_flow
-from .mcp_authority import attach_mcp_token_authority
+from .flows import OAUTH_FLOW_HANDLERS, build_oauth_flow
+from .mcp_authority import MCP_TOKEN_AUTHORITIES, attach_mcp_token_authority
 from .upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
@@ -19,6 +20,8 @@ DEFAULT_AUTHORIZATION_HEADER = 'Authorization'
 class UpstreamNoCredentialHandler(AuthTypeHandler):
     """Send nothing upstream, for a public API."""
 
+    upstream_principal = 'gateway'
+
     def build(self, context: AuthTypeContext) -> ServerAuthSetup:
         return ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver())
 
@@ -34,6 +37,7 @@ class UpstreamStaticCredentialHandler(AuthTypeHandler):
     which keeps a half-filled config serving a public API rather than failing at startup.
     """
 
+    upstream_principal = 'gateway'
     header_name: typing.ClassVar[str] = DEFAULT_AUTHORIZATION_HEADER
     value_prefix: typing.ClassVar[str] = ''
 
@@ -74,12 +78,16 @@ class UpstreamPassthroughHandler(AuthTypeHandler):
     which in practice means the in-process FastAPI integration.
     """
 
+    upstream_principal = 'caller'
+
     def build(self, context: AuthTypeContext) -> ServerAuthSetup:
         return ServerAuthSetup(resolver=UpstreamPassthroughAuthResolver())
 
 
 class OAuth2Handler(AuthTypeHandler):
-    """Defer to ``auth.upstream.flow``, which selects among the OAuth grants in turn."""
+    """Defer to ``auth.upstream.flow``, which selects among the OAuth grants in turn and decides the principal."""
+
+    upstream_principal = None
 
     def build(self, context: AuthTypeContext) -> ServerAuthSetup:
         return build_oauth_flow(context)
@@ -101,6 +109,7 @@ def build_auth(context: AuthTypeContext) -> ServerAuthSetup:
     """Assemble the auth components for one server, dispatching on ``auth.upstream.type``.
 
     An upstream strategy that leaves the MCP half open gets one from ``MCP_TOKEN_AUTHORITIES``.
+    An ``auth.mcp`` field the resulting MCP half never reads is refused.
     """
     auth_type = context.entry.auth.upstream.type
     handler_class = AUTH_TYPE_HANDLERS.get(auth_type)
@@ -109,4 +118,28 @@ def build_auth(context: AuthTypeContext) -> ServerAuthSetup:
             f'Server "{context.entry.name}": unsupported auth type "{auth_type}". '
             f'Supported types: {sorted(AUTH_TYPE_HANDLERS)}'
         )
-    return attach_mcp_token_authority(handler_class().build(context), context)
+    setup = handler_class().build(context)
+    # ``oauth2`` leaves the principal to its flow, whose factory has already set it.
+    setup = dataclasses.replace(setup, upstream_principal=handler_class.upstream_principal or setup.upstream_principal)
+    setup = attach_mcp_token_authority(setup, context)
+    _refuse_unread_mcp_settings(setup, context)
+    return setup
+
+
+def _refuse_unread_mcp_settings(setup: ServerAuthSetup, context: AuthTypeContext) -> None:
+    """Refuse an ``auth.mcp`` field the MCP half never reads, naming what would read it.
+
+    Only explicitly-set fields are checked, so defaults never trip this.
+    The suggestion prefers strategies for an upstream that sees the same identity, since those need no other change.
+    """
+    entry = context.entry
+    unread = sorted(entry.auth.mcp.model_fields_set - setup.mcp_settings_read)
+    if not unread:
+        return
+    field = unread[0]
+    readers = [
+        reader for reader in (*OAUTH_FLOW_HANDLERS.values(), *MCP_TOKEN_AUTHORITIES) if field in reader.mcp_settings
+    ]
+    nearest = [reader for reader in readers if reader.upstream_principal == setup.upstream_principal] or readers
+    requirement = ', or '.join(reader.mcp_settings_requirement for reader in nearest)
+    raise ValueError(f'Server "{entry.name}": auth.mcp.{field} needs {requirement}, so it would have no effect here.')

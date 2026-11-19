@@ -1,10 +1,14 @@
 import typing
+from unittest.mock import patch
 
 import pydantic
 import pytest
 
 from openapi_mcp_gateway.auth.assembly import AuthTypeContext
 from openapi_mcp_gateway.auth.factory import AUTH_TYPE_HANDLERS, build_auth
+from openapi_mcp_gateway.auth.flows import OAUTH_FLOW_HANDLERS
+from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
+from openapi_mcp_gateway.auth.mcp_authority import MCP_TOKEN_AUTHORITIES
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
@@ -13,13 +17,41 @@ from openapi_mcp_gateway.auth.upstream.resolver import (
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy
-from openapi_mcp_gateway.settings import AuthConfig, GatewayConfig, ServerConfig, UpstreamAuthConfig
+from openapi_mcp_gateway.settings import (
+    AuthConfig,
+    GatewayConfig,
+    McpAuthConfig,
+    ServerConfig,
+    UpstreamAuthConfig,
+)
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
-from tests.constants import API_URL, GATEWAY_URL
+from tests.constants import API_URL, GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
 from tests.flows import (
+    auth_context,
     build_spec,
     server_entry,
+    spec_with_authorization_code,
+    spec_with_client_credentials,
 )
+
+
+# The upstream of each kind, with what it needs to build, and the spec it builds against.
+BEARER = {'type': 'bearer', 'token': 't'}
+CLIENT_CREDENTIALS = {'type': 'oauth2', 'flow': 'client_credentials', 'client_id': 'cid', 'client_secret': 'sec'}
+AUTHORIZATION_CODE = {'type': 'oauth2', 'flow': 'authorization_code', 'client_id': 'cid', 'client_secret': 'sec'}
+TOKEN_EXCHANGE = {
+    'type': 'oauth2',
+    'flow': 'token_exchange',
+    'audience': API_URL,
+    'client_id': 'cid',
+    'client_secret': 'sec',
+}
+# What ``token_exchange`` needs on the MCP side to build.
+TOKEN_EXCHANGE_MCP = {'issuer': ISSUER}
+SPEC_BY_FLOW = {
+    'client_credentials': spec_with_client_credentials,
+    'authorization_code': spec_with_authorization_code,
+}
 
 
 def _context(auth: AuthConfig) -> AuthTypeContext:
@@ -136,3 +168,107 @@ class TestPassthroughAuthType:
         assert setup.provider is None
         assert setup.verifier is None
         assert setup.settings is None
+
+
+class TestUpstreamPrincipal:
+    """Each strategy declares whose identity the upstream sees, which selects who issues the MCP tokens."""
+
+    @pytest.mark.parametrize(
+        ('auth', 'principal'),
+        [
+            ({'upstream': {'type': 'none'}}, 'gateway'),
+            ({'upstream': BEARER}, 'gateway'),
+            ({'upstream': {'type': 'api_key', 'token': 'k'}}, 'gateway'),
+            ({'upstream': CLIENT_CREDENTIALS}, 'gateway'),
+            ({'upstream': {**CLIENT_CREDENTIALS, 'flow': None}}, 'gateway'),
+            ({'upstream': AUTHORIZATION_CODE}, 'user'),
+            ({'upstream': TOKEN_EXCHANGE, 'mcp': TOKEN_EXCHANGE_MCP}, 'user'),
+            ({'upstream': {'type': 'passthrough'}}, 'caller'),
+        ],
+    )
+    def test_each_upstream_names_its_principal(self, auth, principal):
+        """An unset flow takes the principal of the flow the spec resolves it to."""
+        assert _build(auth).upstream_principal == principal
+
+
+class TestMcpSettingsWithoutEffect:
+    """An ``auth.mcp`` field the assembled MCP half never reads is refused, naming what would read it."""
+
+    def test_every_named_setting_is_an_mcp_field(self):
+        """A misspelt name would refuse a field the strategy actually reads."""
+        named = {
+            field for reader in (*OAUTH_FLOW_HANDLERS.values(), *MCP_TOKEN_AUTHORITIES) for field in reader.mcp_settings
+        }
+
+        assert named <= set(McpAuthConfig.model_fields)
+
+    @pytest.mark.parametrize(
+        ('auth', 'refusal'),
+        [
+            ({'upstream': BEARER, 'mcp': {'required_scopes': ['x']}}, r'required_scopes needs auth\.mcp\.clients,'),
+            ({'upstream': BEARER, 'mcp': {'access_token_ttl': 60}}, r'access_token_ttl needs auth\.mcp\.clients,'),
+            (
+                {'upstream': CLIENT_CREDENTIALS, 'mcp': {'access_token_ttl': 60}},
+                r'access_token_ttl needs auth\.mcp\.clients,',
+            ),
+            (
+                {'upstream': AUTHORIZATION_CODE, 'mcp': {'issuer': ISSUER}},
+                r'issuer needs auth\.upstream\.flow token_exchange',
+            ),
+            (
+                {'upstream': {**CLIENT_CREDENTIALS, 'flow': None}, 'mcp': {'issuer': ISSUER}},
+                r'issuer needs auth\.upstream\.flow token_exchange',
+            ),
+            (
+                {'upstream': TOKEN_EXCHANGE, 'mcp': {**TOKEN_EXCHANGE_MCP, 'clients': {'agent': {}}}},
+                r'clients needs auth\.upstream\.flow authorization_code, where',
+            ),
+            (
+                {'upstream': {'type': 'passthrough'}, 'mcp': {'clients': {'agent': {'client_secret': 's'}}}},
+                r'clients needs auth\.upstream\.flow authorization_code.*, or auth\.mcp\.clients',
+            ),
+        ],
+    )
+    def test_a_setting_nothing_reads_is_refused(self, auth, refusal):
+        """The suggestion keeps to the same upstream identity where a strategy there reads the field."""
+        with pytest.raises(ValueError, match=rf'Server "srv": auth\.mcp\.{refusal}'):
+            _build(auth)
+
+    @pytest.mark.parametrize(
+        'auth',
+        [
+            {'upstream': AUTHORIZATION_CODE, 'mcp': {'access_token_ttl': 60, 'refresh_token_ttl': 600}},
+            {'upstream': TOKEN_EXCHANGE, 'mcp': {**TOKEN_EXCHANGE_MCP, 'required_scopes': ['x']}},
+            {
+                'upstream': BEARER,
+                'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'access_token_ttl': 600},
+            },
+            {
+                'upstream': {**CLIENT_CREDENTIALS, 'flow': None},
+                'mcp': {
+                    'operation_scopes': {'auto': 'tags'},
+                    'clients': {'agent': {'client_secret': 's', 'scopes': ['api']}},
+                },
+            },
+        ],
+    )
+    def test_a_setting_the_mcp_half_reads_is_accepted(self, auth):
+        assert _build(auth)
+
+
+def _build(auth: dict):
+    """Build the auth of a server carrying ``auth``, against a spec declaring its flow.
+
+    Issuer discovery is stubbed, so ``token_exchange`` builds offline.
+    """
+    upstream = auth['upstream']
+    flow = upstream.get('flow') or ('client_credentials' if upstream['type'] == 'oauth2' else None)
+    spec = SPEC_BY_FLOW[flow]() if flow in SPEC_BY_FLOW else build_spec()
+    metadata = McpExternalIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
+    with (
+        patch(
+            'openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata', return_value=metadata
+        ),
+        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client'),
+    ):
+        return build_auth(auth_context(server_entry(AuthConfig.model_validate(auth)), spec))

@@ -27,7 +27,7 @@ class TestAuthoritySelection:
 
     def test_declared_clients_select_client_credentials(self):
         auth = AuthConfig.model_validate({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': AGENT}})
-        assert McpClientCredentialsAuthority.applies_to(auth)
+        assert McpClientCredentialsAuthority.applies_to(auth, 'gateway')
 
     @pytest.mark.parametrize(
         'upstream',
@@ -60,6 +60,11 @@ class TestAuthoritySelection:
         assert setup.authorization_server_metadata is None
         assert setup.routes == []
 
+    @pytest.mark.parametrize('principal', ['user', 'caller'])
+    def test_clients_select_nothing_where_the_upstream_sees_someone_else(self, principal):
+        auth = AuthConfig.model_validate({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': AGENT}})
+        assert not McpClientCredentialsAuthority.applies_to(auth, principal)
+
     def test_a_resolved_client_credentials_flow_checks_its_clients(self):
         """An unset flow defers the check to startup, once the spec has resolved it."""
         entry = _build_entry(
@@ -70,6 +75,30 @@ class TestAuthoritySelection:
         )
         with pytest.raises(ValueError, match=r'agent\.client_secret is required'):
             build_auth(auth_context(entry, spec_with_client_credentials()))
+
+
+class TestClientSettingsWithoutSignIn:
+    """Agents in front of one shared upstream credential obtain tokens as themselves, so no user ever signs in."""
+
+    @pytest.mark.parametrize(
+        ('client', 'refusal'),
+        [
+            ({}, r'agent\.client_secret is required'),
+            ({'client_secret': 's', 'redirect_uris': ['http://localhost/cb']}, r'agent\.redirect_uris has no effect'),
+            ({'client_secret': 's', 'default_scopes': []}, r'agent\.default_scopes has no effect'),
+            ({'client_secret': 's', 'consent': False}, r'agent\.consent has no effect'),
+        ],
+    )
+    def test_sign_in_settings_are_refused(self, client, refusal):
+        entry = _build_entry({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': {'agent': client}}})
+        with pytest.raises(ValueError, match=refusal):
+            build_auth(auth_context(entry, build_spec()))
+
+    def test_a_refresh_token_ttl_is_refused(self):
+        """No refresh token is issued, since the agent can always ask for a new token."""
+        entry = _build_entry({'upstream': {'type': 'none'}, 'mcp': {'clients': AGENT, 'refresh_token_ttl': 600}})
+        with pytest.raises(ValueError, match=r'refresh_token_ttl has no effect, since no refresh token is issued'):
+            build_auth(auth_context(entry, build_spec()))
 
 
 def _build_entry(auth: dict):

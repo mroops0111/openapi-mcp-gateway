@@ -17,6 +17,8 @@ class UpstreamClientCredentialsFlowHandler(OAuthFlowHandler):
     The hook closes the underlying token source's HTTP client.
     """
 
+    upstream_principal = 'gateway'
+
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry
         oauth_flow = flow_context.require_upstream_oauth_flow()

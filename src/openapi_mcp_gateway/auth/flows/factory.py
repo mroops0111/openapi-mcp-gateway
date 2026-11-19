@@ -41,7 +41,12 @@ def build_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
         )
 
     flow_context = OAuthFlowContext(context, upstream_oauth_flow)
-    return dataclasses.replace(handler_class().build(flow_context), flow_type=flow_type)
+    return dataclasses.replace(
+        handler_class().build(flow_context),
+        flow_type=flow_type,
+        upstream_principal=handler_class.upstream_principal,
+        mcp_settings_read=handler_class.mcp_settings,
+    )
 
 
 def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> UpstreamOAuthFlow | None:

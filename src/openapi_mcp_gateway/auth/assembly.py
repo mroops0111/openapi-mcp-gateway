@@ -16,6 +16,12 @@ from .upstream.oauth_flow import UpstreamOAuthFlow
 from .upstream.resolver import UpstreamAuthResolver
 
 
+# Whose identity the upstream sees on every call.
+# ``gateway`` is one credential of the gateway's own, so every agent looks the same upstream.
+# ``user`` is each signed-in user's own, and ``caller`` is whatever the caller's header carries.
+UpstreamPrincipal = typing.Literal['gateway', 'user', 'caller']
+
+
 class AuthTypeContext(typing.NamedTuple):
     """Everything an ``AuthTypeHandler`` may need, whether or not it uses all of it.
 
@@ -49,6 +55,7 @@ class ServerAuthSetup:
     set wherever the gateway issues this endpoint's tokens, whether through ``provider`` or its own routes.
     ``extensions`` are the MCP extensions the server advertises, such as how a client may obtain a token.
     ``mcp_summary`` labels who issues this endpoint's tokens, as ``mechanism (detail)``.
+    ``mcp_settings_read`` names the ``auth.mcp`` fields the MCP half reads, so a field set outside it is refused.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
@@ -62,10 +69,12 @@ class ServerAuthSetup:
     authorization_server_metadata: OAuthMetadata | None = None
     extensions: list[Extension] = dataclasses.field(default_factory=list)
     mcp_summary: str = 'open'
+    mcp_settings_read: frozenset[str] = frozenset()
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
-    # The flow that was resolved, which is not always the one the config named.
-    # Set by the factory, so that every handler stays unaware of it.
+    # The flow that was resolved, which is not always the one the config named, and whose identity the upstream sees.
+    # Set by the factories from the handler that built it, so that every handler stays unaware of them.
     flow_type: str | None = None
+    upstream_principal: UpstreamPrincipal | None = None
 
     def __post_init__(self) -> None:
         if self.provider is not None and self.verifier is not None:
@@ -75,7 +84,12 @@ class ServerAuthSetup:
 
 
 class AuthTypeHandler(abc.ABC):
-    """Strategy that turns one ``auth.upstream.type`` into the components the gateway wires up."""
+    """Strategy that turns one ``auth.upstream.type`` into the components the gateway wires up.
+
+    ``upstream_principal`` is whose identity the upstream sees, or ``None`` where the flow it selects decides.
+    """
+
+    upstream_principal: typing.ClassVar[UpstreamPrincipal | None]
 
     @abc.abstractmethod
     def build(self, context: AuthTypeContext) -> ServerAuthSetup:
@@ -132,7 +146,15 @@ class OAuthFlowHandler(abc.ABC):
     A flow whose two directions are independent builds only the upstream half.
     A flow that binds them builds both halves and the Bridge that joins them.
     Subclasses register in ``OAUTH_FLOW_HANDLERS``, so the factory can dispatch by ``flow_type``.
+
+    ``upstream_principal`` is whose identity the upstream sees under this flow.
+    A flow that builds the MCP half names the ``auth.mcp`` fields it reads in ``mcp_settings``,
+    and what selects it in ``mcp_settings_requirement``, for the error refusing such a field elsewhere.
     """
+
+    upstream_principal: typing.ClassVar[UpstreamPrincipal]
+    mcp_settings: typing.ClassVar[frozenset[str]] = frozenset()
+    mcp_settings_requirement: typing.ClassVar[str] = ''
 
     @abc.abstractmethod
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:

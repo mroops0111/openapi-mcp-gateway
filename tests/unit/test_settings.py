@@ -448,28 +448,17 @@ class TestUnknownKeysAreRefused:
 
 
 class TestSettingsThatCannotTakeEffect:
-    """A known key in the wrong place is refused, like an unknown one.
+    """A known ``auth.upstream`` key in the wrong place is refused, like an unknown one.
 
     Both leave an operator believing they configured something.
-    ``required_scopes`` is the sharp one.
-    Setting it where nothing verifies an inbound token reads as a restriction on an endpoint that has none.
+    ``auth.mcp`` is checked once the server is assembled, by ``build_auth``.
     """
 
     @pytest.mark.parametrize(
         ('payload', 'offending'),
         [
-            ({'upstream': {'type': 'oauth2', 'flow': 'authorization_code'}, 'mcp': {'issuer': 'https://kc'}}, 'issuer'),
-            (
-                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials'}, 'mcp': {'required_scopes': ['x']}},
-                'required_scopes',
-            ),
-            ({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'required_scopes': ['x']}}, 'required_scopes'),
             ({'upstream': {'type': 'bearer', 'token': 't', 'api_key_header': 'X-Custom'}}, 'api_key_header'),
             ({'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'token': 'ignored'}}, 'token'),
-            (
-                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials'}, 'mcp': {'access_token_ttl': 60}},
-                'access_token_ttl',
-            ),
             ({'upstream': {'type': 'bearer', 'token': 't', 'audience': 'https://api'}}, 'upstream'),
             (
                 {'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'issuer': ISSUER}},
@@ -478,17 +467,6 @@ class TestSettingsThatCannotTakeEffect:
             (
                 {'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'enforce_scopes': True}},
                 'upstream.enforce_scopes',
-            ),
-            (
-                {
-                    'upstream': {'type': 'oauth2', 'flow': 'token_exchange'},
-                    'mcp': {'issuer': ISSUER, 'clients': {'agent': {}}},
-                },
-                'clients',
-            ),
-            (
-                {'upstream': {'type': 'passthrough'}, 'mcp': {'operation_scopes': {}, 'clients': {'agent': {}}}},
-                'operation_scopes',
             ),
         ],
     )
@@ -502,91 +480,15 @@ class TestSettingsThatCannotTakeEffect:
         [
             {'upstream': {'type': 'bearer', 'token': 't'}},
             {'upstream': {'type': 'api_key', 'token': 'k', 'api_key_header': 'X-Custom'}},
-            {
-                'upstream': {'type': 'oauth2', 'flow': 'token_exchange'},
-                'mcp': {'issuer': 'https://kc', 'required_scopes': ['x']},
-            },
-            {'upstream': {'type': 'oauth2', 'flow': 'authorization_code'}, 'mcp': {'access_token_ttl': 60}},
             {'upstream': {'type': 'oauth2', 'client_id': 'c'}},
             {'upstream': {'type': 'oauth2', 'issuer': ISSUER}},
             {'upstream': {'type': 'oauth2', 'flow': 'authorization_code', 'issuer': ISSUER}},
-            {
-                'upstream': {'type': 'oauth2'},
-                'mcp': {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {'scopes': ['pets:read']}}},
-            },
-            {'upstream': {'type': 'oauth2'}, 'mcp': {'clients': {'agent': {}}}},
             {'upstream': {'type': 'none'}},
-            {
-                'upstream': {'type': 'bearer', 'token': 't'},
-                'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'access_token_ttl': 600},
-            },
-            {
-                'upstream': {'type': 'oauth2', 'flow': 'client_credentials'},
-                'mcp': {
-                    'operation_scopes': {'auto': 'tags'},
-                    'clients': {'agent': {'client_secret': 's', 'scopes': ['pets:read']}},
-                },
-            },
-            {'upstream': {'type': 'none'}, 'mcp': {'clients': {'agent': {'client_secret': 's'}}}},
         ],
     )
     def test_applicable_settings_are_accepted(self, payload):
         """Refusing the inapplicable must not refuse the ordinary."""
         assert AuthConfig.model_validate(payload)
-
-    def test_an_unresolved_flow_leaves_its_fields_plausible(self):
-        """``authorization_code`` can be inferred from a spec, so its fields cannot be ruled out yet.
-
-        ``token_exchange`` is never inferred, so ``issuer`` still is.
-        """
-        assert AuthConfig.model_validate({'upstream': {'type': 'oauth2'}, 'mcp': {'access_token_ttl': 60}})
-
-        with pytest.raises(pydantic.ValidationError, match=r'issuer.*no effect'):
-            AuthConfig.model_validate({'upstream': {'type': 'oauth2'}, 'mcp': {'issuer': 'https://kc'}})
-
-
-class TestClientCredentialsSettings:
-    """Agents in front of one shared upstream credential obtain tokens as themselves, so no user ever signs in."""
-
-    @pytest.mark.parametrize(
-        ('client', 'refusal'),
-        [
-            ({}, r'agent\.client_secret is required'),
-            ({'client_secret': 's', 'redirect_uris': ['http://localhost/cb']}, r'agent\.redirect_uris has no effect'),
-            ({'client_secret': 's', 'default_scopes': []}, r'agent\.default_scopes has no effect'),
-            ({'client_secret': 's', 'consent': False}, r'agent\.consent has no effect'),
-        ],
-    )
-    def test_sign_in_settings_are_refused(self, client, refusal):
-        with pytest.raises(pydantic.ValidationError, match=refusal):
-            AuthConfig.model_validate(
-                {'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': {'agent': client}}}
-            )
-
-    def test_a_refresh_token_ttl_is_refused(self):
-        """No refresh token is issued, since the agent can always ask for a new token."""
-        with pytest.raises(pydantic.ValidationError, match=r'refresh_token_ttl'):
-            AuthConfig.model_validate(
-                {
-                    'upstream': {'type': 'none'},
-                    'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'refresh_token_ttl': 600},
-                }
-            )
-
-    @pytest.mark.parametrize('mcp', [{'access_token_ttl': 600}, {'required_scopes': ['x']}])
-    def test_a_token_setting_without_clients_names_the_clients(self, mcp):
-        """The upstream already shares one credential, so the clients to issue to are what is missing."""
-        with pytest.raises(pydantic.ValidationError, match=r'needs auth\.mcp\.clients'):
-            AuthConfig.model_validate({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': mcp})
-
-    def test_an_unresolved_flow_defers_the_check(self):
-        """``authorization_code`` may still be resolved from the spec, where a public client is fine."""
-        assert AuthConfig.model_validate({'upstream': {'type': 'oauth2'}, 'mcp': {'clients': {'agent': {}}}})
-
-    @pytest.mark.parametrize('upstream', [{'type': 'passthrough'}, {'type': 'oauth2', 'flow': 'token_exchange'}])
-    def test_clients_are_refused_where_the_gateway_issues_no_token(self, upstream):
-        with pytest.raises(pydantic.ValidationError, match=r'auth\.mcp\.clients needs'):
-            AuthConfig.model_validate({'upstream': upstream, 'mcp': {'clients': {'agent': {'client_secret': 's'}}}})
 
 
 class TestScopeSettings:

@@ -249,6 +249,12 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
     and the ``AuthorizationCodeBridge`` that joins them.
     """
 
+    upstream_principal = 'user'
+    mcp_settings = frozenset(
+        {'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl', 'refresh_token_ttl'}
+    )
+    mcp_settings_requirement = 'auth.upstream.flow authorization_code, where users sign in to the gateway'
+
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry
         oauth_flow = flow_context.require_upstream_oauth_flow()

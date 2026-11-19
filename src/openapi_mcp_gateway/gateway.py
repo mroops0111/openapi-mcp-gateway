@@ -472,8 +472,7 @@ class Gateway:
             )
         )
         logger.info(
-            'Registered server "%s": mount=%s base_url=%s tools=%d resources=%d '
-            'upstream_auth=%s mcp_auth=%s',
+            'Registered server "%s": mount=%s base_url=%s tools=%d resources=%d upstream_auth=%s mcp_auth=%s',
             server_config.name,
             server_config.mount_path,
             base_url,

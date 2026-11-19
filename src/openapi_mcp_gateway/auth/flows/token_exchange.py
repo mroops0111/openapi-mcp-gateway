@@ -51,6 +51,10 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
     so revoking a user at the issuer takes effect without waiting for a gateway-minted token to expire.
     """
 
+    upstream_principal = 'user'
+    mcp_settings = frozenset({'issuer', 'required_scopes'})
+    mcp_settings_requirement = 'auth.upstream.flow token_exchange, where another authorization server issues MCP tokens'
+
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry
 

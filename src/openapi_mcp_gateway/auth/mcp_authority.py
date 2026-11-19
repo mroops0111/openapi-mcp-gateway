@@ -1,12 +1,13 @@
 import abc
 import dataclasses
+import typing
 
 import pydantic
 from mcp.server.auth.settings import AuthSettings
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
 from ..settings import AuthConfig
-from .assembly import AuthTypeContext, ServerAuthSetup
+from .assembly import AuthTypeContext, ServerAuthSetup, UpstreamPrincipal
 from .mcp.client import McpPreRegisteredClientDirectory
 from .mcp.client_credentials import (
     AUTHORIZE_PATH,
@@ -27,12 +28,19 @@ class McpTokenAuthority(abc.ABC):
     A flow that binds both directions, such as ``authorization_code``, builds its MCP half itself.
     Every other upstream strategy builds only the upstream half, and ``build_auth`` hands its setup here.
     Adding a way to issue MCP tokens means adding a subclass and an entry in ``MCP_TOKEN_AUTHORITIES``.
+
+    ``upstream_principal`` is the identity an upstream must see for this authority to apply, or ``None`` for any.
+    ``mcp_settings`` and ``mcp_settings_requirement`` mean what they mean on ``OAuthFlowHandler``.
     """
+
+    upstream_principal: typing.ClassVar[UpstreamPrincipal | None] = None
+    mcp_settings: typing.ClassVar[frozenset[str]] = frozenset()
+    mcp_settings_requirement: typing.ClassVar[str] = ''
 
     @classmethod
     @abc.abstractmethod
-    def applies_to(cls, auth: AuthConfig) -> bool:
-        """Whether ``auth`` selects this authority."""
+    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal | None) -> bool:
+        """Whether ``auth`` selects this authority for an upstream that sees ``upstream_principal``."""
 
     @abc.abstractmethod
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
@@ -43,7 +51,7 @@ class McpNoTokenAuthority(McpTokenAuthority):
     """Leave the endpoint open, as for a server on localhost or inside a private network."""
 
     @classmethod
-    def applies_to(cls, auth: AuthConfig) -> bool:
+    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal | None) -> bool:
         return True
 
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
@@ -53,13 +61,17 @@ class McpNoTokenAuthority(McpTokenAuthority):
 class McpClientCredentialsAuthority(McpTokenAuthority):
     """Issue MCP tokens to the agents ``auth.mcp.clients`` declares, through the ``client_credentials`` grant.
 
-    It suits an upstream every caller reaches as one identity, where only the gateway can tell agents apart,
+    It suits an upstream that sees only the gateway's identity, where only the gateway can tell agents apart,
     so each agent is limited to the operations its scopes open.
     """
 
+    upstream_principal = 'gateway'
+    mcp_settings = frozenset({'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl'})
+    mcp_settings_requirement = 'auth.mcp.clients, the agents the gateway issues MCP tokens to'
+
     @classmethod
-    def applies_to(cls, auth: AuthConfig) -> bool:
-        return bool(auth.mcp.clients)
+    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal | None) -> bool:
+        return upstream_principal == cls.upstream_principal and bool(auth.mcp.clients)
 
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
         entry = context.entry
@@ -102,6 +114,7 @@ class McpClientCredentialsAuthority(McpTokenAuthority):
             authorization_server_metadata=metadata,
             extensions=[*setup.extensions, McpClientCredentialsExtension()],
             mcp_summary='gateway (client_credentials)',
+            mcp_settings_read=self.mcp_settings,
         )
 
 
@@ -110,8 +123,15 @@ MCP_TOKEN_AUTHORITIES: tuple[type[McpTokenAuthority], ...] = (McpClientCredentia
 
 
 def attach_mcp_token_authority(setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
-    """Give ``setup`` an MCP half from the first authority the config selects, unless it already has one."""
+    """Give ``setup`` an MCP half from the first authority the config selects, unless it already has one.
+
+    The authorities decide by the upstream's principal.
+    The check for an existing MCP half only keeps one from overwriting a strategy that built both.
+    """
     if setup.provider is not None or setup.verifier is not None:
         return setup
-    authority = next(authority for authority in MCP_TOKEN_AUTHORITIES if authority.applies_to(context.entry.auth))
+    auth = context.entry.auth
+    authority = next(
+        authority for authority in MCP_TOKEN_AUTHORITIES if authority.applies_to(auth, setup.upstream_principal)
+    )
     return authority().attach(setup, context)
