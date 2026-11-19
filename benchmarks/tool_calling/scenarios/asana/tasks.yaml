@@ -1,0 +1,229 @@
+- id: asana-t01
+  prompt: >-
+    Add a task called "Draft launch checklist" to our Website Redesign project, due December 1, 2026.
+  split: dev
+  expected_calls:
+    - server: asana
+      method: POST
+      path: /tasks
+      body: {data: {name: Draft launch checklist, projects: ['1205000000000101'], due_on: '2026-12-01'}}
+  solution:
+    - server: asana
+      operation: create_task
+      arguments: {data: {name: Draft launch checklist, projects: ['1205000000000101'], due_on: '2026-12-01'}}
+  responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1205000000000101', name: Website Redesign, resource_type: project}, {gid: '1205000000000102', name: Mobile App Redesign, resource_type: project}, {gid: '1205000000000103', name: Website Redesign 2025 (old), resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: {data: [{gid: '1205000000000101', name: Website Redesign, resource_type: project}, {gid: '1205000000000102', name: Mobile App Redesign, resource_type: project}, {gid: '1205000000000103', name: Website Redesign 2025 (old), resource_type: project}]}
+
+- id: asana-t02
+  prompt: >-
+    Add a task called "Book venue for offsite" to our Team Offsite project and assign it to Tom Becker.
+  split: dev
+  expected_calls:
+    - server: asana
+      method: POST
+      path: /tasks
+      body: {data: {name: Book venue for offsite, projects: ['1205000000000701'], assignee: '1201000000000071'}}
+  solution:
+    - server: asana
+      operation: create_task
+      arguments: {data: {name: Book venue for offsite, projects: ['1205000000000701'], assignee: '1201000000000071'}}
+  responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1205000000000701', name: Team Offsite, resource_type: project}, {gid: '1205000000000702', name: Team Offsite 2025, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: {data: [{gid: '1205000000000701', name: Team Offsite, resource_type: project}, {gid: '1205000000000702', name: Team Offsite 2025, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /users
+      body: {data: [{gid: '1201000000000071', name: Tom Becker, resource_type: user}, {gid: '1201000000000072', name: Tom Baker, resource_type: user}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/users
+      body: {data: [{gid: '1201000000000071', name: Tom Becker, resource_type: user}, {gid: '1201000000000072', name: Tom Baker, resource_type: user}]}
+
+- id: asana-t03
+  prompt: >-
+    I finished "Update onboarding docs" in the Customer Success Q4 project, can you mark it complete?
+  split: test
+  expected_calls:
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1206000000000311'}
+      body: {data: {completed: true}}
+  solution:
+    - server: asana
+      operation: update_task
+      arguments: {task_gid: '1206000000000311', data: {completed: true}}
+  responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1205000000000301', name: Customer Success Q4, resource_type: project}, {gid: '1205000000000302', name: Customer Success Q3, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: {data: [{gid: '1205000000000301', name: Customer Success Q4, resource_type: project}, {gid: '1205000000000302', name: Customer Success Q3, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000301/tasks
+      body: {data: [{gid: '1206000000000311', name: Update onboarding docs, resource_type: task}, {gid: '1206000000000312', name: Review onboarding survey, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000302/tasks
+      body: {data: [{gid: '1206000000000321', name: Update onboarding docs, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /tasks
+      body: {data: [{gid: '1206000000000311', name: Update onboarding docs, resource_type: task}, {gid: '1206000000000312', name: Review onboarding survey, resource_type: task}]}
+
+- id: asana-t04
+  prompt: >-
+    Priya Shah is taking over "Prepare sprint demo" in the Platform Sprint 42 project. Assign it to her and push the due date to November 20, 2026.
+  split: test
+  expected_calls:
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1206000000000411'}
+      body: {data: {assignee: '1201000000000041', due_on: '2026-11-20'}}
+  solution:
+    - server: asana
+      operation: update_task
+      arguments: {task_gid: '1206000000000411', data: {assignee: '1201000000000041', due_on: '2026-11-20'}}
+  responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1205000000000401', name: Platform Sprint 42, resource_type: project}, {gid: '1205000000000402', name: Platform Sprint 41, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: {data: [{gid: '1205000000000401', name: Platform Sprint 42, resource_type: project}, {gid: '1205000000000402', name: Platform Sprint 41, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000401/tasks
+      body: {data: [{gid: '1206000000000411', name: Prepare sprint demo, resource_type: task}, {gid: '1206000000000412', name: Prepare sprint retro, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /tasks
+      body: {data: [{gid: '1206000000000411', name: Prepare sprint demo, resource_type: task}, {gid: '1206000000000412', name: Prepare sprint retro, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /users
+      body: {data: [{gid: '1201000000000041', name: Priya Shah, resource_type: user}, {gid: '1201000000000042', name: Priya Sharma, resource_type: user}, {gid: '1201000000000043', name: Tom Becker, resource_type: user}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/users
+      body: {data: [{gid: '1201000000000041', name: Priya Shah, resource_type: user}, {gid: '1201000000000042', name: Priya Sharma, resource_type: user}, {gid: '1201000000000043', name: Tom Becker, resource_type: user}]}
+    - server: asana
+      method: GET
+      path: /teams/{team_gid}/users
+      body: {data: [{gid: '1201000000000041', name: Priya Shah, resource_type: user}, {gid: '1201000000000042', name: Priya Sharma, resource_type: user}]}
+
+- id: asana-t05
+  prompt: >-
+    Under the "Vendor contract renewal" task in the Operations project, add a subtask called "Collect legal sign-off".
+  split: test
+  expected_calls:
+    - server: asana
+      method: POST
+      path: /tasks/{task_gid}/subtasks
+      path_parameters: {task_gid: '1206000000000511'}
+      body: {data: {name: Collect legal sign-off}}
+  solution:
+    - server: asana
+      operation: create_subtask_for_task
+      arguments: {task_gid: '1206000000000511', data: {name: Collect legal sign-off}}
+  responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1205000000000501', name: Operations, resource_type: project}, {gid: '1205000000000502', name: IT Operations, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: {data: [{gid: '1205000000000501', name: Operations, resource_type: project}, {gid: '1205000000000502', name: IT Operations, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000501/tasks
+      body: {data: [{gid: '1206000000000511', name: Vendor contract renewal, resource_type: task}, {gid: '1206000000000512', name: Vendor onboarding, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /tasks
+      body: {data: [{gid: '1206000000000511', name: Vendor contract renewal, resource_type: task}, {gid: '1206000000000512', name: Vendor onboarding, resource_type: task}]}
+
+- id: asana-t06
+  prompt: >-
+    "Write API changelog" in the Developer Portal project is ready for review, please move it into the In Review section.
+  split: test
+  expected_calls:
+    - server: asana
+      method: POST
+      path: /sections/{section_gid}/addTask
+      path_parameters: {section_gid: '1207000000000612'}
+      body: {data: {task: '1206000000000611'}}
+  solution:
+    - server: asana
+      operation: add_task_for_section
+      arguments: {section_gid: '1207000000000612', data: {task: '1206000000000611'}}
+  responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1205000000000601', name: Developer Portal, resource_type: project}, {gid: '1205000000000602', name: Partner Portal, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: {data: [{gid: '1205000000000601', name: Developer Portal, resource_type: project}, {gid: '1205000000000602', name: Partner Portal, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000601/tasks
+      body: {data: [{gid: '1206000000000611', name: Write API changelog, resource_type: task}, {gid: '1206000000000613', name: Write SDK quickstart, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /tasks
+      body: {data: [{gid: '1206000000000611', name: Write API changelog, resource_type: task}, {gid: '1206000000000613', name: Write SDK quickstart, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000601/sections
+      body: {data: [{gid: '1207000000000610', name: To Do, resource_type: section}, {gid: '1207000000000611', name: In Progress, resource_type: section}, {gid: '1207000000000612', name: In Review, resource_type: section}, {gid: '1207000000000613', name: Done, resource_type: section}]}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000602/sections
+      body: {data: [{gid: '1207000000000620', name: In Review, resource_type: section}]}

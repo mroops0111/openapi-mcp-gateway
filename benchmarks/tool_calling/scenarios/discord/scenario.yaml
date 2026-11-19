@@ -1,0 +1,4 @@
+# What the user wants these APIs for. The scenario's own config was written from this sentence alone.
+intent: "Moderate a community server: manage members and roles, and keep channels and messages tidy."
+servers:
+  discord: discord

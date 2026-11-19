@@ -1,0 +1,18 @@
+[
+  {
+    "model": "anthropic:claude-sonnet-5-5",
+    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
+    "finished_at": "2026-11-17T10:13:42+00:00",
+    "pydantic_ai_version": "2.69.0",
+    "input_tokens": 288681,
+    "output_tokens": 5681,
+    "model_requests": 12,
+    "scenario": "discord",
+    "variant": "generated-shaped",
+    "skill": "generate-config",
+    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "request": "Moderate a community server: manage members and roles, and keep channels and messages tidy. Also shape the operations, so that each tool is easy for a model to call correctly.",
+    "gateway_version": "0.8.0",
+    "summary": "I wrote `config.yaml`, and `--dry-run` validates it with 29 tools. I kept the `discord` name, the spec and the placeholder `base_url`. Change that `base_url` to `https://discord.com/api/v10` before you run it, or the calls won't reach Discord. Auth is the bot token. The gateway sends it as `Authorization: Bot ${DISCORD_BOT_TOKEN}`, so set that variable. I didn't run any live calls.\n\n- **Members:** list, search, get, edit (nickname, timeout, roles) and kick. Bans can be listed, checked, added and lifted.\n- **Roles:** list, get, create, edit and delete. Roles can also be added to or removed from a member.\n- **Channels:** list, get, create, edit and delete.\n- **Messages:** list, get, post, delete, bulk delete, and list, add or remove pins.\n\nI left out the rest of the 200-plus operations (commands, webhooks, lobbies, stickers, events and so on) because they don't help with moderation. Widening the allow list later is a one-line change.\n\nTo make the tools easier for a model to call:\n- The member and message lists return only the fields moderation needs, such as ids, names, roles, timestamps and content.\n- The member and message lists have sensible default page sizes, and their descriptions explain how to page through results.\n- The ban tool explains that `delete_message_seconds` also deletes the user's recent messages.\n- The server instructions say where to look up ids and warn that deletes, kicks and bans can't be undone.\n\nI haven't tested the response trimming against real Discord replies. Check one member list and one message list on first use."
+  }
+]

@@ -21,9 +21,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --extra dev --extra redis
-      - run: uv run ruff check src/ tests/
-      - run: uv run ruff format --check src/ tests/
+      - run: uv sync --all-packages --extra dev --extra redis
+      - run: uv run ruff check src/ tests/ benchmarks/
+      - run: uv run ruff format --check src/ tests/ benchmarks/
 
   typecheck:
     name: Type Check
@@ -33,8 +33,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --extra dev --extra redis
-      - run: uv run basedpyright src/ tests/
+      - run: uv sync --all-packages --extra dev --extra redis
+      - run: uv run basedpyright src/ tests/ benchmarks/src/ benchmarks/tests/
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -49,8 +49,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-      - run: uv sync --extra dev --extra redis
+      - run: uv sync --all-packages --extra dev --extra redis
       - run: uv run pytest tests/ -v --tb=short
+      - run: uv run pytest benchmarks/tests/ -v --tb=short
 
   smoke:
     name: Smoke (External Deps)
@@ -63,13 +64,13 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --extra dev --extra redis
+      - run: uv sync --all-packages --extra dev --extra redis
       - run: uv run pytest -m smoke -v --tb=short
 
-  search-benchmark:
-    name: Search Benchmark
+  search-ranking-benchmark:
+    name: Search Ranking Benchmark
     runs-on: ubuntu-latest
-    # Checks the committed data, ranks its queries through search_operations, and fails below the baseline.
+    # Checks the committed data, ranks its queries through search_operations, and fails below the gate scores.
     # It calls no model. The pinned specs download once and are cached by their checksums.
     steps:
       - uses: actions/checkout@v4
@@ -80,8 +81,25 @@ jobs:
         with:
           path: ~/.cache/openapi-mcp-gateway/specs
           key: benchmark-specs-${{ hashFiles('benchmarks/**/benchmark.yaml') }}
-      - run: uv sync --extra dev --extra redis
-      - run: uv run python -m openapi_mcp_gateway.benchmarks search check benchmarks/search
+      - run: uv sync --all-packages --extra dev --extra redis
+      - run: uv run openapi-mcp-gateway-benchmarks search-ranking check benchmarks/search_ranking
+
+  tool-calling-benchmark:
+    name: Tool Calling Benchmark
+    runs-on: ubuntu-latest
+    # Proves every tool calling benchmark task passes with its solution and every hand-written variant reaches it.
+    # It calls no model, so it needs no API key. The pinned specs download once and are cached by their checksums.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/openapi-mcp-gateway/specs
+          key: benchmark-specs-${{ hashFiles('benchmarks/**/benchmark.yaml') }}
+      - run: uv sync --all-packages --extra dev --extra redis
+      - run: uv run openapi-mcp-gateway-benchmarks tool-calling check benchmarks/tool_calling
 
   build:
     name: Build

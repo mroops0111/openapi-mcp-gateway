@@ -1,0 +1,318 @@
+- id: github-asana-t01
+  prompt: >-
+    Every open issue in acme/web labelled release-blocker needs a task in our Web Platform project in Asana
+    (Acme Engineering workspace). Create one task per issue, named exactly like the issue title.
+  split: dev
+  expected_calls:
+    - server: asana
+      method: POST
+      path: /tasks
+      body: {data: {name: Checkout page times out on Safari, projects: ['1202000000000011']}}
+    - server: asana
+      method: POST
+      path: /tasks
+      body: {data: {name: Password reset email links expire immediately, projects: ['1202000000000011']}}
+  solution:
+    - server: github
+      operation: issues_list_for_repo
+      arguments: {owner: acme, repo: web, state: open, labels: release-blocker}
+    - server: asana
+      operation: create_task
+      arguments: {data: {name: Checkout page times out on Safari, projects: ['1202000000000011']}}
+    - server: asana
+      operation: create_task
+      arguments: {data: {name: Password reset email links expire immediately, projects: ['1202000000000011']}}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues
+      body:
+        - {number: 412, title: Checkout page times out on Safari, state: open, labels: [{name: release-blocker}]}
+        - {number: 415, title: Password reset email links expire immediately, state: open, labels: [{name: release-blocker}, {name: auth}]}
+        - {number: 418, title: Footer links misaligned on tablet, state: open, labels: [{name: ui}]}
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}, {gid: '1202000000000021', name: API Platform}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}, {gid: '1202000000000021', name: API Platform}]}
+
+- id: github-asana-t02
+  prompt: >-
+    Track acme/api issue #330 in Asana: create a task for it in the API Platform project (Acme Engineering
+    workspace), named exactly like the issue title.
+  split: dev
+  expected_calls:
+    - server: asana
+      method: POST
+      path: /tasks
+      body: {data: {name: Rate limit headers missing on 429 responses, projects: ['1202000000000021']}}
+  solution:
+    - server: github
+      operation: issues_get
+      arguments: {owner: acme, repo: api, issue_number: 330}
+    - server: asana
+      operation: create_task
+      arguments: {data: {name: Rate limit headers missing on 429 responses, projects: ['1202000000000021']}}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/api/issues/330
+      body: {number: 330, title: Rate limit headers missing on 429 responses, state: open}
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000021', name: API Platform}, {gid: '1202000000000022', name: API Docs}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000021', name: API Platform}, {gid: '1202000000000022', name: API Docs}]}
+
+- id: github-asana-t03
+  prompt: >-
+    Clean up the Web Platform project in Asana (Acme Engineering workspace): each task there links its acme/web
+    GitHub issue in the description. Mark complete every task whose GitHub issue has since been closed, and leave
+    the rest alone.
+  split: test
+  expected_calls:
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1203000000000201'}
+      body: {data: {completed: true}}
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1203000000000203'}
+      body: {data: {completed: true}}
+  # The request says to leave the task whose issue is still open alone, and to delete none.
+  forbidden_calls:
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1203000000000202'}
+    - server: asana
+      method: DELETE
+      path: /tasks/{task_gid}
+  solution:
+    - server: github
+      operation: issues_get
+      arguments: {owner: acme, repo: web, issue_number: 501}
+    - server: asana
+      operation: update_task
+      arguments: {task_gid: '1203000000000201', data: {completed: true}}
+    - server: asana
+      operation: update_task
+      arguments: {task_gid: '1203000000000203', data: {completed: true}}
+  responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects/1202000000000011/tasks
+      body:
+        data:
+          - {gid: '1203000000000201', name: Session cookie not cleared on logout, completed: false, notes: 'GitHub: https://github.com/acme/web/issues/501'}
+          - {gid: '1203000000000202', name: Image uploads fail over 10MB, completed: false, notes: 'GitHub: https://github.com/acme/web/issues/502'}
+          - {gid: '1203000000000203', name: Search results ignore locale, completed: false, notes: 'GitHub: https://github.com/acme/web/issues/503'}
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues/501
+      body: {number: 501, title: Session cookie not cleared on logout, state: closed, state_reason: completed}
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues/502
+      body: {number: 502, title: Image uploads fail over 10MB, state: open}
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues/503
+      body: {number: 503, title: Search results ignore locale, state: closed, state_reason: completed}
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues
+      body:
+        - {number: 502, title: Image uploads fail over 10MB, state: open}
+
+- id: github-asana-t04
+  prompt: >-
+    In Asana, under the "Q4 performance work" task in the Web Platform project (Acme Engineering workspace),
+    add a subtask for each open pull request in acme/web labelled perf. Name each subtask after the PR title.
+  split: test
+  # Asana makes a subtask under its parent, or as a new task naming that parent.
+  expected_calls:
+    - any_of:
+        - server: asana
+          method: POST
+          path: /tasks/{task_gid}/subtasks
+          path_parameters: {task_gid: '1203000000000301'}
+          body: {data: {name: Lazy-load product images}}
+        - server: asana
+          method: POST
+          path: /tasks
+          body: {data: {name: Lazy-load product images, parent: '1203000000000301'}}
+    - any_of:
+        - server: asana
+          method: POST
+          path: /tasks/{task_gid}/subtasks
+          path_parameters: {task_gid: '1203000000000301'}
+          body: {data: {name: Cache rendered navigation menu}}
+        - server: asana
+          method: POST
+          path: /tasks
+          body: {data: {name: Cache rendered navigation menu, parent: '1203000000000301'}}
+  solution:
+    - server: github
+      operation: pulls_list
+      arguments: {owner: acme, repo: web, state: open}
+    - server: asana
+      operation: create_subtask_for_task
+      arguments: {task_gid: '1203000000000301', data: {name: Lazy-load product images}}
+    - server: asana
+      operation: create_subtask_for_task
+      arguments: {task_gid: '1203000000000301', data: {name: Cache rendered navigation menu}}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/web/pulls
+      body:
+        - {number: 640, title: Lazy-load product images, state: open, labels: [{name: perf}]}
+        - {number: 641, title: Update copyright year, state: open, labels: [{name: chore}]}
+        - {number: 645, title: Cache rendered navigation menu, state: open, labels: [{name: perf}, {name: frontend}]}
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects/1202000000000011/tasks
+      body: {data: [{gid: '1203000000000301', name: Q4 performance work}, {gid: '1203000000000302', name: Q3 performance work}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/tasks/search
+      body: {data: [{gid: '1203000000000301', name: Q4 performance work}, {gid: '1203000000000302', name: Q3 performance work}]}
+
+- id: github-asana-t05
+  prompt: >-
+    Set the due date of the Asana task "Ship billing v2" in the API Platform project (Acme Engineering workspace)
+    to match the due date of the "Billing v2" milestone in acme/api.
+  split: test
+  expected_calls:
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1203000000000501'}
+      body: {data: {due_on: '2026-12-04'}}
+  solution:
+    - server: github
+      operation: issues_list_milestones
+      arguments: {owner: acme, repo: api, state: open}
+    - server: asana
+      operation: update_task
+      arguments: {task_gid: '1203000000000501', data: {due_on: '2026-12-04'}}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/api/milestones
+      body:
+        - {number: 7, title: Billing v2, state: open, due_on: '2026-12-04T08:00:00Z'}
+        - {number: 8, title: Billing v3, state: open, due_on: '2027-03-12T08:00:00Z'}
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000021', name: API Platform}, {gid: '1202000000000022', name: API Docs}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000021', name: API Platform}, {gid: '1202000000000022', name: API Docs}]}
+    - server: asana
+      method: GET
+      path: /projects/1202000000000021/tasks
+      body: {data: [{gid: '1203000000000501', name: Ship billing v2}, {gid: '1203000000000502', name: Ship billing v2 docs}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/tasks/search
+      body: {data: [{gid: '1203000000000501', name: Ship billing v2}, {gid: '1203000000000502', name: Ship billing v2 docs}]}
+
+- id: github-asana-t06
+  prompt: >-
+    The Asana task "Fix flaky checkout test" in the Web Platform project (Acme Engineering workspace) tracks acme/web
+    issue #520. Assign the Asana task to whoever is assigned to that issue on GitHub.
+  split: test
+  expected_calls:
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1203000000000601'}
+      body: {data: {assignee: '1201000000000061'}}
+  solution:
+    - server: github
+      operation: issues_get
+      arguments: {owner: acme, repo: web, issue_number: 520}
+    - server: asana
+      operation: update_task
+      arguments: {task_gid: '1203000000000601', data: {assignee: '1201000000000061'}}
+  responses:
+    - server: github
+      method: GET
+      path: /repos/acme/web/issues/520
+      body: {number: 520, title: Checkout test fails intermittently on CI, state: open, assignees: [{login: tom-becker}]}
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: {data: [{gid: '1201000000000001', name: Acme Engineering}, {gid: '1201000000000002', name: Acme Marketing}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects
+      body: {data: [{gid: '1202000000000011', name: Web Platform}, {gid: '1202000000000012', name: Web Redesign}]}
+    - server: asana
+      method: GET
+      path: /projects/1202000000000011/tasks
+      body: {data: [{gid: '1203000000000601', name: Fix flaky checkout test}, {gid: '1203000000000602', name: Fix flaky login test}]}
+    - server: asana
+      method: GET
+      path: /workspaces/1201000000000001/tasks/search
+      body: {data: [{gid: '1203000000000601', name: Fix flaky checkout test}, {gid: '1203000000000602', name: Fix flaky login test}]}
+    - server: asana
+      method: GET
+      path: /users
+      body: {data: [{gid: '1201000000000061', name: Tom Becker}, {gid: '1201000000000062', name: Tomas Beck}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/users
+      body: {data: [{gid: '1201000000000061', name: Tom Becker}, {gid: '1201000000000062', name: Tomas Beck}]}

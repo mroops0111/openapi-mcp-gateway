@@ -1,0 +1,18 @@
+[
+  {
+    "model": "anthropic:claude-sonnet-5-5",
+    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
+    "finished_at": "2026-11-17T09:59:49+00:00",
+    "pydantic_ai_version": "2.69.0",
+    "input_tokens": 91537,
+    "output_tokens": 3043,
+    "model_requests": 8,
+    "scenario": "github-asana",
+    "variant": "generated",
+    "skill": "generate-config",
+    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "request": "Turn engineering work on GitHub into tracked tasks in Asana, and keep the two in step.",
+    "gateway_version": "0.8.0",
+    "summary": "`config.yaml` now validates with `--dry-run`: 2 servers and 19 tools. I kept the specs you saved and replaced the placeholder `base_url` values with the real hosts, `https://api.github.com` and `https://app.asana.com/api/1.0`. Both servers use a static bearer token. Set `GITHUB_TOKEN` to a GitHub personal access token and `ASANA_TOKEN` to an Asana personal access token. I used the specs' operations as they are, with no shaping, and I only checked that the config loads. I didn't call either API.\n\n- **GitHub (7 tools, the source of engineering work):**\n  - **Issues:** list, get, update, list comments and comment.\n  - **Pull requests:** list and get.\n  - **Why:** the assistant can read the work and then post the Asana task link back on the issue. Updating an issue lets it close or relabel it when the Asana task changes.\n- **Asana (12 tools, the tracker):**\n  - **Find the target:** list workspaces, projects and sections.\n  - **Check for an existing task:** list tasks for a project, search tasks in a workspace, get a task. This avoids duplicate tasks.\n  - **Create and update:** create a task, update a task, and add a task to a section.\n  - **Notes:** read and add comments on a task.\n- **Left out:** deleting anything on either side, and the rest of both large APIs. You can widen the `policy.allow` lists later.\n\nRun it with `uvx openapi-mcp-gateway --config config.yaml`."
+  }
+]

@@ -1,0 +1,4 @@
+# What the user wants these APIs for. The scenario's own config was written from this sentence alone.
+intent: "Help a team triage issues and review pull requests in its repositories."
+servers:
+  github: github

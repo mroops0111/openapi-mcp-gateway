@@ -1,0 +1,492 @@
+- id: notion-t01
+  prompt: 'In our Meeting Notes database (https://www.notion.so/acme/Meeting-Notes-3f1c2a9b8d7e4f60a1b2c3d4e5f60718),
+    open the notes for "Q3 planning sync" and add a paragraph at the end saying: "Action item: Priya to share the
+    revised hiring plan by Friday."'
+  split: dev
+  expected_calls:
+  - server: notion
+    method: PATCH
+    path: /v1/blocks/{id}/children
+    path_parameters:
+      id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d01
+    body:
+      children:
+      - type: paragraph
+        paragraph:
+          rich_text:
+          - text:
+              content: 'Action item: Priya to share the revised hiring plan by Friday.'
+  solution:
+  - server: notion
+    operation: append_block_children
+    arguments:
+      id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d01
+      children:
+      - object: block
+        type: paragraph
+        paragraph:
+          rich_text:
+          - type: text
+            text:
+              content: 'Action item: Priya to share the revised hiring plan by Friday.'
+  responses:
+  - server: notion
+    method: POST
+    path: /v1/databases/{id}/query
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: page
+        id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d01
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Q3 planning sync
+              text:
+                content: Q3 planning sync
+          Date:
+            type: date
+            date:
+              start: '2026-11-10'
+      - object: page
+        id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d02
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Q2 planning sync
+              text:
+                content: Q2 planning sync
+          Date:
+            type: date
+            date:
+              start: '2026-08-04'
+      - object: page
+        id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d03
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Weekly design review
+              text:
+                content: Weekly design review
+          Date:
+            type: date
+            date:
+              start: '2026-11-12'
+  - server: notion
+    method: PATCH
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d01/children
+    body: &id001
+      object: list
+      results: []
+      has_more: false
+      next_cursor: null
+
+- id: notion-t02
+  prompt: 'I finished "Update onboarding doc" — can you mark it Done in our Tasks database? It''s this one: https://www.notion.so/acme/Tasks-7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f'
+  split: dev
+  expected_calls:
+  - server: notion
+    method: PATCH
+    path: /v1/pages/{id}
+    path_parameters:
+      id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e11
+    body:
+      properties:
+        Status:
+          select:
+            name: Done
+  solution:
+  - server: notion
+    operation: update_page_properties
+    arguments:
+      id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e11
+      properties:
+        Status:
+          select:
+            name: Done
+  responses:
+  - server: notion
+    method: POST
+    path: /v1/databases/{id}/query
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: page
+        id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e10
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Update offboarding checklist
+              text:
+                content: Update offboarding checklist
+          Status:
+            type: select
+            select:
+              name: In progress
+      - object: page
+        id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e11
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Update onboarding doc
+              text:
+                content: Update onboarding doc
+          Status:
+            type: select
+            select:
+              name: In progress
+      - object: page
+        id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e12
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Migrate CI to new runners
+              text:
+                content: Migrate CI to new runners
+          Status:
+            type: select
+            select:
+              name: Not started
+  - server: notion
+    method: PATCH
+    path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e11
+    body:
+      object: page
+      id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e11
+
+- id: notion-t03
+  prompt: Can you move "Migrate CI to new runners" to In progress in the Tasks database? https://www.notion.so/acme/Tasks-7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f
+  split: test
+  expected_calls:
+  - server: notion
+    method: PATCH
+    path: /v1/pages/{id}
+    path_parameters:
+      id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e32
+    body:
+      properties:
+        Status:
+          select:
+            name: In progress
+  solution:
+  - server: notion
+    operation: update_page_properties
+    arguments:
+      id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e32
+      properties:
+        Status:
+          select:
+            name: In progress
+  responses:
+  - server: notion
+    method: POST
+    path: /v1/databases/{id}/query
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: page
+        id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e31
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Migrate CD to new runners
+              text:
+                content: Migrate CD to new runners
+          Status:
+            type: select
+            select:
+              name: Not started
+      - object: page
+        id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e32
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Migrate CI to new runners
+              text:
+                content: Migrate CI to new runners
+          Status:
+            type: select
+            select:
+              name: Not started
+  - server: notion
+    method: PATCH
+    path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e32
+    body:
+      object: page
+      id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e32
+
+- id: notion-t04
+  prompt: 'Add a "Follow-ups" heading to the "Release 2.4 retro" notes in our Meeting Notes database (https://www.notion.so/acme/Meeting-Notes-3f1c2a9b8d7e4f60a1b2c3d4e5f60718),
+    with a paragraph under it: "Write a runbook for rolling back the payments service."'
+  split: test
+  expected_calls:
+  - server: notion
+    method: PATCH
+    path: /v1/blocks/{id}/children
+    path_parameters:
+      id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d42
+    body:
+      children:
+      - type: heading_2
+      - type: paragraph
+        paragraph:
+          rich_text:
+          - text:
+              content: Write a runbook for rolling back the payments service.
+  solution:
+  - server: notion
+    operation: append_block_children
+    arguments:
+      id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d42
+      children:
+      - object: block
+        type: heading_2
+        heading_2:
+          text:
+          - type: text
+            text:
+              content: Follow-ups
+      - object: block
+        type: paragraph
+        paragraph:
+          rich_text:
+          - type: text
+            text:
+              content: Write a runbook for rolling back the payments service.
+  responses:
+  - server: notion
+    method: POST
+    path: /v1/databases/{id}/query
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: page
+        id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d41
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Release 2.3 retro
+              text:
+                content: Release 2.3 retro
+      - object: page
+        id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d42
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Release 2.4 retro
+              text:
+                content: Release 2.4 retro
+      - object: page
+        id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d43
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Release 2.4 kickoff
+              text:
+                content: Release 2.4 kickoff
+  - server: notion
+    method: PATCH
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d42/children
+    body: *id001
+
+- id: notion-t05
+  prompt: 'The "Design review for pricing page" task in our Tasks database (https://www.notion.so/acme/Tasks-7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f)
+    is stuck. Set its status to Blocked and add a note on the task page: "Blocked: waiting on final copy from marketing."'
+  split: test
+  expected_calls:
+  - server: notion
+    method: PATCH
+    path: /v1/pages/{id}
+    path_parameters:
+      id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52
+    body:
+      properties:
+        Status:
+          select:
+            name: Blocked
+  - server: notion
+    method: PATCH
+    path: /v1/blocks/{id}/children
+    path_parameters:
+      id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52
+    body:
+      children:
+      - type: paragraph
+        paragraph:
+          rich_text:
+          - text:
+              content: 'Blocked: waiting on final copy from marketing.'
+  solution:
+  - server: notion
+    operation: update_page_properties
+    arguments:
+      id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52
+      properties:
+        Status:
+          select:
+            name: Blocked
+  - server: notion
+    operation: append_block_children
+    arguments:
+      id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52
+      children:
+      - object: block
+        type: paragraph
+        paragraph:
+          rich_text:
+          - type: text
+            text:
+              content: 'Blocked: waiting on final copy from marketing.'
+  responses:
+  - server: notion
+    method: POST
+    path: /v1/databases/{id}/query
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: page
+        id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e51
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Design review for checkout page
+              text:
+                content: Design review for checkout page
+          Status:
+            type: select
+            select:
+              name: In progress
+      - object: page
+        id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Design review for pricing page
+              text:
+                content: Design review for pricing page
+          Status:
+            type: select
+            select:
+              name: In progress
+  - server: notion
+    method: PATCH
+    path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52
+    body:
+      object: page
+      id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52
+  - server: notion
+    method: PATCH
+    path: /v1/blocks/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52/children
+    body: *id001
+
+- id: notion-t06
+  prompt: 'In our Meeting Notes database (https://www.notion.so/acme/Meeting-Notes-3f1c2a9b8d7e4f60a1b2c3d4e5f60718),
+    find the notes from our most recent team offsite and add a paragraph at the end: "Book a room for the next offsite."'
+  split: test
+  expected_calls:
+  - server: notion
+    method: PATCH
+    path: /v1/blocks/{id}/children
+    path_parameters:
+      id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21
+    body:
+      children:
+      - type: paragraph
+        paragraph:
+          rich_text:
+          - text:
+              content: Book a room for the next offsite.
+  solution:
+  - server: notion
+    operation: append_block_children
+    arguments:
+      id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21
+      children:
+      - object: block
+        type: paragraph
+        paragraph:
+          rich_text:
+          - type: text
+            text:
+              content: Book a room for the next offsite.
+  responses:
+  - server: notion
+    method: POST
+    path: /v1/databases/{id}/query
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: page
+        id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Team offsite, November 2026
+              text:
+                content: Team offsite, November 2026
+          Date:
+            type: date
+            date:
+              start: '2026-11-16'
+      - object: page
+        id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d22
+        properties:
+          Name:
+            type: title
+            title:
+            - type: text
+              plain_text: Team offsite, May 2026
+              text:
+                content: Team offsite, May 2026
+          Date:
+            type: date
+            date:
+              start: '2026-05-21'
+  - server: notion
+    method: PATCH
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21/children
+    body:
+      object: list
+      results: []
+      has_more: false
+      next_cursor: null
