@@ -97,6 +97,22 @@ def authorization_code_gateway(
     return Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
 
 
+def shared_credential_server(spec_path: pathlib.Path, name: str, path_prefix: str) -> dict[str, typing.Any]:
+    """The config of a bearer-token server named ``name`` under ``path_prefix``, issuing MCP tokens to one agent."""
+    return {
+        'name': name,
+        'path_prefix': path_prefix,
+        'spec': str(spec_path),
+        'auth': {
+            'upstream': {'type': 'bearer', 'token': 'upstream-pat'},
+            'mcp': {
+                'clients': {'agent': {'client_secret': 'agent-secret', 'scopes': ['pets:read']}},
+                'operation_scopes': {'auto': 'tags'},
+            },
+        },
+    }
+
+
 def upstream_token_response(
     granted: str = 'upstream-access-token', scope: str | None = None, expires_in: int = 3600
 ) -> MagicMock:

@@ -424,7 +424,8 @@ def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:
         return bundle.protected_resource
 
     assert bundle.auth_settings is not None  # noqa: S101
-    issuer = str(bundle.auth_settings.issuer_url).rstrip('/')
+    # Exactly the metadata's ``issuer``, which a client compares with this as a plain string (RFC 8414 §3.3).
+    issuer = str(bundle.auth_settings.issuer_url)
     registration = bundle.auth_settings.client_registration_options
     return ProtectedResourceMetadata.model_validate(
         {

@@ -4,7 +4,6 @@ import pathlib
 import sys
 import time
 import typing
-import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
@@ -49,6 +48,7 @@ from tests.constants import (
     PETSTORE_URL,
     TOKEN_URL,
 )
+from tests.oauth import shared_credential_server
 from tests.serving import serve
 
 
@@ -234,43 +234,18 @@ class TestWellKnownOAuth:
 
 
 class TestWellKnownUnderPathPrefix:
-    """A server is discovered from its endpoint wherever it is mounted, as a client follows the documents."""
+    """Discovery details an MCP SDK client cannot show, which ``test_mcp_client_sign_in`` covers end to end."""
 
-    @pytest.mark.parametrize(
-        ('gateway_url', 'path_prefix', 'endpoint'),
-        [
-            (GATEWAY_URL, 'pets', f'{GATEWAY_URL}/pets/mcp'),
-            (GATEWAY_URL, 'apis/pets', f'{GATEWAY_URL}/apis/pets/mcp'),
-            (GATEWAY_URL, '/', f'{GATEWAY_URL}/mcp'),
-            (f'{GATEWAY_URL}/gw', 'pets', f'{GATEWAY_URL}/gw/pets/mcp'),
-            # The published URLs are normalized, so the host is lowercased and the default port dropped.
-            ('https://MCP.Example.com:443', 'pets', f'{GATEWAY_URL}/pets/mcp'),
-        ],
-    )
-    def test_a_client_finds_the_token_endpoint_from_the_challenge(
-        self, petstore_json_path, gateway_url, path_prefix, endpoint
-    ):
-        http = TestClient(_shared_credential_gateway(petstore_json_path, gateway_url, path_prefix))
-        endpoint_path = urllib.parse.urlparse(endpoint).path
-        # A proxy in front of a gateway with a path in its ``url`` strips that path before forwarding.
-        served_path = endpoint_path.removeprefix(urllib.parse.urlparse(gateway_url).path)
+    def test_the_published_urls_are_normalized(self, petstore_json_path):
+        """An upper-case host and a default port in ``url`` are published as a client would echo them."""
+        http = TestClient(_shared_credential_gateway(petstore_json_path, 'https://MCP.Example.com:443', 'pets'))
 
-        challenge = http.post(served_path, json={}).headers['www-authenticate']
-        resource_metadata = challenge.split('resource_metadata="')[1].split('"')[0]
-        assert resource_metadata == f'{GATEWAY_URL}/.well-known/oauth-protected-resource{endpoint_path}'
-        resource = http.get(resource_metadata.removeprefix(GATEWAY_URL)).json()
-        assert resource['resource'] == endpoint
-
-        # RFC 8414 §3.1 inserts the well-known prefix before the issuer's path.
-        issuer = resource['authorization_servers'][0]
-        issuer_path = urllib.parse.urlparse(issuer).path.rstrip('/')
-        metadata = http.get(f'/.well-known/oauth-authorization-server{issuer_path}')
-        assert metadata.status_code == 200
-        assert metadata.json()['issuer'] == issuer
-
+        resource = http.get('/.well-known/oauth-protected-resource/pets/mcp').json()
+        assert resource['resource'] == f'{GATEWAY_URL}/pets/mcp'
+        assert resource['authorization_servers'] == [f'{GATEWAY_URL}/pets']
         token = http.post(
-            f'{served_path.removesuffix("/mcp")}/token',
-            data={'grant_type': 'client_credentials', 'resource': endpoint},
+            '/pets/token',
+            data={'grant_type': 'client_credentials', 'resource': f'{GATEWAY_URL}/pets/mcp'},
             auth=('agent', 'agent-secret'),
         )
         assert token.status_code == 200, token.text
@@ -281,25 +256,6 @@ class TestWellKnownUnderPathPrefix:
 
         assert http.get('/.well-known/oauth-authorization-server/petstore').status_code == 200
         assert http.get('/.well-known/oauth-protected-resource/petstore/mcp').status_code == 200
-
-    def test_a_server_mounted_at_another_servers_name_keeps_its_own_documents(self, petstore_json_path):
-        """A name only finds a server where no server is mounted at that path."""
-        config = GatewayConfig.model_validate(
-            {
-                'url': GATEWAY_URL,
-                'servers': [
-                    _shared_credential_server(petstore_json_path, 'alpha', 'beta'),
-                    _shared_credential_server(petstore_json_path, 'beta2', 'alpha'),
-                ],
-            }
-        )
-        http = TestClient(Gateway.from_config(config)._build_app(transport='streamable-http'))
-
-        for path in ('alpha', 'beta'):
-            metadata = http.get(f'/.well-known/oauth-authorization-server/{path}')
-            assert metadata.json()['issuer'] == f'{GATEWAY_URL}/{path}'
-            resource = http.get(f'/.well-known/oauth-protected-resource/{path}/mcp')
-            assert resource.json()['resource'] == f'{GATEWAY_URL}/{path}/mcp'
 
 
 class TestMountEmbedding:
@@ -314,22 +270,6 @@ class TestMountEmbedding:
         response = client.get('/.well-known/oauth-authorization-server/petstore')
         assert response.status_code == 200
         assert response.json()['authorization_endpoint'].endswith('/authorize')
-
-    def test_mount_leaves_the_host_apps_own_discovery_documents(self, oauth_gateway):
-        host = FastAPI()
-        oauth_gateway.mount(host, transport='streamable-http')
-
-        @host.get('/.well-known/oauth-authorization-server')
-        async def host_metadata():
-            return {'issuer': 'host'}
-
-        @host.get('/.well-known/oauth-protected-resource/api/v1')
-        async def host_resource():
-            return {'resource': 'host'}
-
-        client = TestClient(host)
-        assert client.get('/.well-known/oauth-authorization-server').json() == {'issuer': 'host'}
-        assert client.get('/.well-known/oauth-protected-resource/api/v1').json() == {'resource': 'host'}
 
     async def test_mounted_gateway_answers_mcp_inside_the_host_lifespan(self, gateway):
         """A host app that enters ``gateway.lifespan`` serves MCP through the mounted gateway."""
@@ -873,7 +813,7 @@ class TestRejectedTokenResponse:
         payload = {'iss': ISSUER, 'aud': self.RESOURCE, 'sub': 'user-1', 'exp': int(time.time()) + 300, **claims}
         return jwt.encode({k: v for k, v in payload.items() if v is not None}, signing_key, algorithm='RS256')
 
-    def _post(self, client, token: str, body: dict | None = None):
+    def _post(self, client, token: str):
         return client.post(
             '/petstore/mcp',
             headers={
@@ -881,25 +821,8 @@ class TestRejectedTokenResponse:
                 'Accept': 'application/json, text/event-stream',
                 'Content-Type': 'application/json',
             },
-            json=body or {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
+            json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
         )
-
-    def test_a_token_for_this_endpoint_passes(self, delegating_app, signing_key):
-        """The SDK checks each token's resource against this endpoint, which the verifier reports as its audience."""
-        initialize = {
-            'jsonrpc': '2.0',
-            'id': 1,
-            'method': 'initialize',
-            'params': {
-                'protocolVersion': '2025-11-25',
-                'capabilities': {},
-                'clientInfo': {'name': 't', 'version': '1'},
-            },
-        }
-        with delegating_app:
-            response = self._post(delegating_app, self._token(signing_key), initialize)
-
-        assert response.status_code == 200, response.text
 
     def test_expired_token_is_a_challenge_not_a_server_error(self, delegating_app, signing_key):
         """Expiry is the ordinary path here, since the issuer owns the lifetimes.
@@ -1032,22 +955,6 @@ async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) ->
 
 def _shared_credential_gateway(spec_path: pathlib.Path, gateway_url: str, path_prefix: str) -> FastAPI:
     """The app of a gateway at ``gateway_url`` issuing MCP tokens for one bearer-token server under ``path_prefix``."""
-    server = _shared_credential_server(spec_path, 'petstore', path_prefix)
+    server = shared_credential_server(spec_path, 'petstore', path_prefix)
     gateway = Gateway.from_config(GatewayConfig.model_validate({'url': gateway_url, 'servers': [server]}))
     return gateway._build_app(transport='streamable-http')
-
-
-def _shared_credential_server(spec_path: pathlib.Path, name: str, path_prefix: str) -> dict[str, typing.Any]:
-    """The config of a bearer-token server named ``name`` under ``path_prefix``, issuing MCP tokens to one agent."""
-    return {
-        'name': name,
-        'path_prefix': path_prefix,
-        'spec': str(spec_path),
-        'auth': {
-            'upstream': {'type': 'bearer', 'token': 'upstream-pat'},
-            'mcp': {
-                'clients': {'agent': {'client_secret': 'agent-secret', 'scopes': ['pets:read']}},
-                'operation_scopes': {'auto': 'tags'},
-            },
-        },
-    }

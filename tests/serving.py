@@ -4,11 +4,11 @@ import typing
 
 import anyio
 import uvicorn
-from fastapi import FastAPI
+from starlette.types import ASGIApp
 
 
 @contextlib.asynccontextmanager
-async def serve(app: FastAPI, sock: socket.socket | None = None) -> typing.AsyncIterator[str]:
+async def serve(app: ASGIApp, sock: socket.socket | None = None) -> typing.AsyncIterator[str]:
     """Serve ``app`` with uvicorn on ``sock``, or on a free loopback port, and yield its base URL."""
     if sock is None:
         sock = bind_loopback_socket()
