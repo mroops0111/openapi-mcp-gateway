@@ -2,7 +2,6 @@ import abc
 import collections.abc
 import ipaddress
 import logging
-import typing
 
 import pydantic
 from mcp.server.auth.provider import RegistrationError
@@ -10,7 +9,6 @@ from mcp.server.auth.settings import ClientRegistrationOptions
 from mcp.shared.auth import InvalidRedirectUriError, InvalidScopeError, OAuthClientInformationFull
 from pydantic import AnyUrl
 
-from ...settings import ClientConfig
 from ...stores.base import TokenStore
 
 
@@ -112,33 +110,11 @@ class McpPreRegisteredClient(OAuthClientInformationFull):
     Asking only for scopes outside it is ``invalid_scope``, since granting something else instead would be silent.
     Without registered redirect URIs, any loopback redirect is accepted on any port and path,
     since OAuth 2.1 requires that of loopback redirects and a CLI client picks its port at run time.
+    ``consent_required`` is off only where the operator vouches for the client.
     """
 
     default_scopes: list[str] = pydantic.Field(default_factory=list)
-
-    @classmethod
-    def from_config(
-        cls, client_id: str, client: ClientConfig, mcp_endpoint_scopes: collections.abc.Sequence[str]
-    ) -> typing.Self:
-        """The SDK's record of ``client``, granted ``mcp_endpoint_scopes`` beside its own scopes.
-
-        A confidential client authenticates with HTTP Basic,
-        the method RFC 6749 §2.3.1 requires every server to support and the one clients try first.
-        """
-        secret = client.resolve_client_secret()
-        if client.client_secret is not None and not secret:
-            raise ValueError(
-                f'auth.mcp.clients.{client_id}.client_secret resolves to nothing, so the client would turn public. '
-                'Set its environment variable, or remove client_secret to make the client public on purpose.'
-            )
-        return cls(
-            client_id=client_id,
-            client_secret=secret,
-            token_endpoint_auth_method='client_secret_basic' if secret else 'none',
-            redirect_uris=client.redirect_uris,
-            scope=' '.join(dict.fromkeys([*mcp_endpoint_scopes, *client.scopes])),
-            default_scopes=list(dict.fromkeys([*mcp_endpoint_scopes, *client.granted_by_default])),
-        )
+    consent_required: bool = True
 
     def validate_scope(self, requested_scope: str | None) -> list[str]:
         requested = requested_scope.split() if requested_scope else []
@@ -148,10 +124,9 @@ class McpPreRegisteredClient(OAuthClientInformationFull):
         within = [scope for scope in dict.fromkeys(requested) if scope in allowed]
         if not within:
             logger.warning(
-                'Client "%s" asked for scopes %s, none of which auth.mcp.clients.%s.scopes allows (%s).',
+                'Client "%s" asked for scopes %s, none of which it may hold (%s).',
                 self.client_id,
                 requested,
-                self.client_id,
                 allowed,
             )
             raise InvalidScopeError(f'None of the requested scopes is allowed for this client: {" ".join(requested)}')
@@ -177,24 +152,21 @@ class McpPreRegisteredClient(OAuthClientInformationFull):
 
 
 class McpPreRegisteredClientDirectory(McpClientDirectory):
-    """The clients ``auth.mcp.clients`` declares, each granted ``mcp_endpoint_scopes`` plus its own scopes."""
+    """The clients ``auth.mcp.clients`` declares, and no others."""
 
-    def __init__(
-        self,
-        clients: collections.abc.Mapping[str, ClientConfig],
-        mcp_endpoint_scopes: collections.abc.Sequence[str],
-    ) -> None:
-        self._clients = {
-            client_id: McpPreRegisteredClient.from_config(client_id, client, mcp_endpoint_scopes)
-            for client_id, client in clients.items()
-        }
-        self._exempt_from_consent = frozenset(client_id for client_id, client in clients.items() if not client.consent)
+    def __init__(self, clients: collections.abc.Iterable[McpPreRegisteredClient]) -> None:
+        self._clients: dict[str, McpPreRegisteredClient] = {}
+        for client in clients:
+            if client.client_id in self._clients:
+                raise ValueError(f'Client "{client.client_id}" is registered twice.')
+            self._clients[client.client_id] = client
 
-    async def get(self, client_id: str) -> OAuthClientInformationFull | None:
+    async def get(self, client_id: str) -> McpPreRegisteredClient | None:
         return self._clients.get(client_id)
 
     def requires_consent(self, client_id: str) -> bool:
-        return client_id not in self._exempt_from_consent
+        client = self._clients.get(client_id)
+        return client is None or client.consent_required
 
 
 def get_mcp_registered_scopes(client: OAuthClientInformationFull) -> list[str]:

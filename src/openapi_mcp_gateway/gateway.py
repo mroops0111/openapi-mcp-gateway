@@ -10,7 +10,6 @@ import uvicorn
 from fastapi import FastAPI
 from mcp.server import MCPServer
 from mcp.server.auth.provider import OAuthAuthorizationServerProvider
-from mcp.server.auth.settings import AuthSettings
 from mcp.server.caching import CacheableMethod, CacheHint
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
@@ -196,6 +195,13 @@ class Gateway:
         if transport == 'stdio':
             if len(self._servers) != 1:
                 raise ValueError('stdio transport only supports a single server')
+            server = self._servers[0]
+            # A stdio client launches the gateway itself and presents no token, so a check on one would refuse it.
+            if server.auth_provider is not None or server.token_verifier is not None:
+                raise ValueError(
+                    f'Server "{server.name}" checks MCP tokens, which a stdio client never presents. '
+                    'Serve it over streamable-http, or drop the auth.mcp settings and auth.upstream.flow that need them.'
+                )
             logger.info('Starting MCP server "%s" over stdio', self._servers[0].name)
             try:
                 self._servers[0].mcp.run(transport='stdio')
@@ -369,9 +375,7 @@ class Gateway:
             mcp_scope_policy,
             _upstream_scope_policy(server_config, auth, spec_security, operations, mcp_scope_policy),
         )
-        mcp = self._build_mcp_server(
-            server_config.name, auth.provider, auth.settings, auth.verifier, server_config.instructions, scope_registry
-        )
+        mcp = self._build_mcp_server(server_config.name, auth, server_config.instructions, scope_registry)
         for routes in auth.routes:
             routes.register(mcp)
 
@@ -445,13 +449,14 @@ class Gateway:
                 spec=spec,
                 auth_provider=auth.provider,
                 auth_settings=auth.settings,
-                provider_sends_iss=auth.provider_sends_iss,
+                authorization_server_metadata=auth.authorization_server_metadata,
                 token_verifier=auth.verifier,
                 protected_resource=auth.protected_resource,
                 scope_registry=scope_registry,
                 tool_call_target=tool_call_target,
                 base_url=base_url,
-                auth_summary=_auth_summary(server_config.auth),
+                upstream_auth_summary=_summarize_upstream_auth(server_config.auth, auth),
+                mcp_auth_summary=auth.mcp_summary,
                 auth_type=server_config.auth.upstream.type,
                 auth_api_key_header=(
                     server_config.auth.upstream.api_key_header
@@ -467,14 +472,14 @@ class Gateway:
             )
         )
         logger.info(
-            'Registered server "%s": mount=%s base_url=%s tools=%d resources=%d auth=%s resolver=%s',
+            'Registered server "%s": mount=%s base_url=%s tools=%d resources=%d upstream_auth=%s mcp_auth=%s',
             server_config.name,
             server_config.mount_path,
             base_url,
             len(exposed_tools),
             len(resource_names),
-            _auth_summary(server_config.auth),
-            type(auth_resolver).__name__,
+            _format_log_label(_summarize_upstream_auth(server_config.auth, auth)),
+            _format_log_label(auth.mcp_summary),
         )
 
     def _resolve_auth(
@@ -502,13 +507,11 @@ class Gateway:
     @staticmethod
     def _build_mcp_server(
         name: str,
-        auth_provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None,
-        auth_settings: AuthSettings | None,
-        token_verifier: typing.Any | None,
+        auth: ServerAuthSetup,
         instructions: str | None,
         scope_registry: ScopeRegistry,
     ) -> MCPServer:
-        """Build the MCP server, wiring whichever of provider or verifier the flow produced.
+        """Build the MCP server, wiring whichever of provider or verifier ``auth`` holds, and its extensions.
 
         The SDK rejects a server given both,
         since issuing tokens and validating someone else's are alternatives rather than layers.
@@ -516,7 +519,7 @@ class Gateway:
         """
 
         @contextlib.asynccontextmanager
-        async def lifespan(_app: MCPServer, _auth_provider=auth_provider):
+        async def lifespan(_app: MCPServer, _auth_provider=auth.provider):
             try:
                 yield _AppContext(auth_provider=_auth_provider)
             finally:
@@ -524,9 +527,10 @@ class Gateway:
 
         return MCPServer(
             f'{name} (via OpenAPI MCP Gateway)',
-            auth_server_provider=auth_provider,
-            token_verifier=token_verifier,
-            auth=auth_settings,
+            auth_server_provider=auth.provider,
+            token_verifier=auth.verifier,
+            auth=auth.settings,
+            extensions=auth.extensions,
             instructions=instructions,
             lifespan=lifespan,
             cache_hints=_cache_hints(scope_registry),
@@ -805,10 +809,18 @@ def _refuse_undefined_mcp_scopes(server_config: ServerConfig, mcp_scope_policy: 
         )
 
 
-def _auth_summary(auth: AuthConfig) -> str:
-    """A short human label for a server's auth, naming the header for api_key and the OAuth flow."""
+def _summarize_upstream_auth(auth: AuthConfig, setup: ServerAuthSetup) -> str:
+    """A short label of how the upstream is reached, as ``mechanism (detail)`` like ``mcp_summary``.
+
+    It names the header for api_key and the OAuth flow that was resolved, which the config may leave unset.
+    """
     if auth.upstream.type == 'api_key':
-        return f'api_key (header {auth.upstream.api_key_header})'
-    if auth.upstream.type == 'oauth2' and auth.upstream.flow:
-        return f'oauth2 ({auth.upstream.flow})'
+        return f'api_key ({auth.upstream.api_key_header})'
+    if auth.upstream.type == 'oauth2' and setup.flow_type:
+        return f'oauth2 ({setup.flow_type})'
     return auth.upstream.type
+
+
+def _format_log_label(label: str) -> str:
+    """``label`` as one token, so a ``key=value`` log line stays parseable."""
+    return label.replace(' (', '(')

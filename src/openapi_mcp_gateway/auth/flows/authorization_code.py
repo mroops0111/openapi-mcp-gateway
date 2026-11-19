@@ -6,24 +6,35 @@ import pydantic
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import TokenError, construct_redirect_uri
-from mcp.server.auth.settings import AuthSettings, RevocationOptions
+from mcp.server.auth.routes import build_metadata
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
+from mcp.shared.auth import OAuthMetadata
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import Response
 
 from ...stores.base import TokenStore
-from ..assembly import AuthRoutes, OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
+from ..assembly import (
+    AuthRoutes,
+    McpSetting,
+    McpSettingsReader,
+    OAuthFlowContext,
+    OAuthFlowHandler,
+    ServerAuthSetup,
+    UpstreamPrincipal,
+)
 from ..mcp.authorization_code import (
     McpAuthorizationCodeContinuation,
     McpAuthorizationCodeRoutes,
     McpAuthorizationCodeServer,
     McpNextSignIn,
 )
-from ..mcp.client import McpClientDirectory, McpDynamicClientRegistry, McpPreRegisteredClientDirectory
+from ..mcp.client import McpClientDirectory, McpDynamicClientRegistry
 from ..mcp.consent import PENDING_AUTHORIZATION_TTL, BrowserCookie, PendingAuthorization
 from ..mcp.consent_page import redirect_without_cache, render_error_page
 from ..mcp.record_origin import McpRecordOrigin
-from ..mcp.token_issuer import MCP_DEFAULT_SCOPE, McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
+from ..mcp.token_issuer import McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
+from ..settings_mapping import build_mcp_client_directory, build_mcp_token_policy
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamTokenSource
@@ -240,12 +251,24 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
         return redirect_without_cache(redirect_uri, 302)
 
 
-class AuthorizationCodeFlowHandler(OAuthFlowHandler):
+class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     """Assemble the per-user ``authorization_code`` flow, whose two directions are bound.
 
     It builds the gateway's MCP authorization server, the gateway's upstream OAuth client,
     and the ``AuthorizationCodeBridge`` that joins them.
     """
+
+    @property
+    def upstream_principal(self) -> UpstreamPrincipal:
+        return 'user'
+
+    @property
+    def mcp_settings(self) -> frozenset[McpSetting]:
+        return frozenset({'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl', 'refresh_token_ttl'})
+
+    @property
+    def mcp_settings_requirement(self) -> str:
+        return 'auth.upstream.flow authorization_code, where users sign in to the gateway'
 
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry
@@ -282,11 +305,8 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             issuer=upstream_config.resolve_issuer(),
         )
 
-        # The scopes every token carries and every request must hold, granted on top of a client's own scopes.
-        # With auth.mcp.operation_scopes there are none, since each operation names its own scopes instead.
-        mcp_endpoint_scopes = (
-            [] if mcp_config.operation_scopes is not None else list(mcp_config.required_scopes) or [MCP_DEFAULT_SCOPE]
-        )
+        policy = build_mcp_token_policy(mcp_config)
+        mcp_endpoint_scopes = policy.scopes
         server_url = pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}')
         # The same string the metadata publishes as ``issuer``,
         # since RFC 9207 compares the two without any normalisation.
@@ -296,11 +316,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             flow_context.store,
             issuer,
             upstream,
-            McpTokenPolicy(
-                scopes=mcp_endpoint_scopes,
-                access_token_ttl=mcp_config.access_token_ttl,
-                refresh_token_ttl=mcp_config.refresh_token_ttl,
-            ),
+            policy,
             clients,
             entry.name,
         )
@@ -328,11 +344,12 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler):
             provider=server,
             settings=settings,
             mcp_tokens_carry_upstream_grant=True,
-            provider_sends_iss=True,
+            authorization_server_metadata=_build_authorization_server_metadata(settings),
             routes=[
                 McpAuthorizationCodeRoutes(server, flow_context.mcp_scope_policy, cookie),
                 AuthorizationCodeCallbackRoutes(bridge, cookie),
             ],
+            mcp_summary='gateway (authorization_code)',
         )
 
 
@@ -357,13 +374,30 @@ def build_authorization_code_server(
     return McpAuthorizationCodeServer(tokens, clients, bridge, server_name=server_name), bridge
 
 
+def _build_authorization_server_metadata(settings: AuthSettings) -> OAuthMetadata:
+    """The RFC 8414 document of the gateway's authorization server, as the SDK builds it plus what it adds.
+
+    The server sends ``iss`` on its authorization responses,
+    so RFC 9207 §2.3 has the document announce ``authorization_response_iss_parameter_supported``.
+    That flag is what lets a client refuse a response that arrives without one.
+    """
+    metadata = build_metadata(
+        issuer_url=settings.issuer_url,
+        service_documentation_url=settings.service_documentation_url,
+        client_registration_options=settings.client_registration_options or ClientRegistrationOptions(),
+        revocation_options=settings.revocation_options or RevocationOptions(),
+    )
+    metadata.authorization_response_iss_parameter_supported = True
+    return metadata
+
+
 def _build_client_directory(
     flow_context: OAuthFlowContext, mcp_endpoint_scopes: list[str], issuer: str
 ) -> McpClientDirectory:
     """The clients ``auth.mcp.clients`` declares, or Dynamic Client Registration when it declares none."""
     entry = flow_context.entry
     if entry.auth.mcp.clients:
-        return McpPreRegisteredClientDirectory(entry.auth.mcp.clients, mcp_endpoint_scopes)
+        return build_mcp_client_directory(entry.auth.mcp.clients, mcp_endpoint_scopes)
     logger.warning(
         'Server "%s" accepts Dynamic Client Registration, which the MCP 2026-07-28 spec deprecates. '
         'Declare the clients allowed to sign in under auth.mcp.clients instead.',

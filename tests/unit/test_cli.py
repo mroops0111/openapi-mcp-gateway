@@ -1,6 +1,7 @@
 import json
 import logging
 import pathlib
+import re
 import typing
 from unittest import mock
 
@@ -308,8 +309,49 @@ class TestDryRun:
         assert result.exit_code == 0, result.output
         assert 'pets' in result.output
         assert 'mount' in result.output
-        assert 'auth' in result.output
+        assert 'upstream auth' in result.output
+        assert 'mcp auth' in result.output
         assert 'exposure' in result.output
+
+    def test_dry_run_names_who_issues_mcp_tokens(self, tmp_path: pathlib.Path):
+        """Each side reads as ``mechanism (detail)``, the MCP one as the strategy that issues its tokens reports it."""
+        config = tmp_path / 'config.yml'
+        auth = {'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': {'agent': {'client_secret': 's'}}}}
+        config.write_text(yaml.safe_dump({'servers': [{'name': 'pets', 'spec': str(PETSTORE_SPEC), 'auth': auth}]}))
+
+        result, _ = _run('--config', str(config), '--dry-run')
+
+        assert result.exit_code == 0, result.output
+        assert re.search(r'upstream auth\s+bearer\n', click.unstyle(result.output))
+        assert re.search(r'mcp auth\s+gateway \(client_credentials\)\n', click.unstyle(result.output))
+
+    def test_the_json_states_who_issues_mcp_tokens(self, tmp_path: pathlib.Path):
+        """Shaped like ``auth`` in the config, so a check can tell an agent-protected server from an open one."""
+        config = tmp_path / 'config.yml'
+        servers = [
+            {
+                'name': 'pets',
+                'spec': str(PETSTORE_SPEC),
+                'auth': {
+                    'upstream': {'type': 'bearer', 'token': 't'},
+                    'mcp': {'clients': {'agent': {'client_secret': 's'}}},
+                },
+            },
+            {'name': 'open', 'spec': str(PETSTORE_SPEC)},
+        ]
+        config.write_text(yaml.safe_dump({'servers': servers}))
+
+        result, _ = _run('--config', str(config), '--dry-run', '--output', 'json')
+
+        assert result.exit_code == 0, result.output
+        protected, open_server = (server['auth'] for server in json.loads(result.stdout)['servers'])
+        assert protected['upstream']['type'] == 'bearer'
+        assert protected['mcp'] == {
+            'issuer': 'http://localhost:8000/pets',
+            'grant_types': ['client_credentials'],
+            'required_scopes': ['api'],
+        }
+        assert open_server['mcp'] == {'issuer': None, 'grant_types': None, 'required_scopes': None}
 
 
 class TestInstructionsLabel:
@@ -403,7 +445,7 @@ class TestDryRunJsonOutput:
         assert set(server) >= {'name', 'mount_path', 'base_url', 'auth', 'exposure', 'tools', 'resources'}
         assert server['name'] == 'pets'
         assert server['mount_path'] == '/pets'
-        assert server['auth']['type'] == 'none'
+        assert server['auth']['upstream']['type'] == 'none'
 
     def test_tools_carry_what_a_reviewer_decides_from(self):
         """Name, method and path alone cannot answer whether an operation should be exposed."""
@@ -427,8 +469,8 @@ class TestDryRunJsonOutput:
         assert 'valid' not in document, 'a field that can never be false says nothing'
         assert 'policy' not in server, 'the caller holds the config already'
         assert 'summary' not in server['auth']
-        assert server['auth']['type'] == 'none'
-        assert server['auth']['flow'] is None, 'absent, not empty'
+        assert server['auth']['upstream']['type'] == 'none'
+        assert server['auth']['upstream']['flow'] is None, 'absent, not empty'
 
     def test_instructions_are_reported_as_the_client_receives_them(self, tmp_path: pathlib.Path):
         """The full text is what the model reads, like a tool description, and an unset value reads null."""
@@ -502,8 +544,8 @@ class TestDryRunJsonOutput:
         assert result.exit_code == 0, result.output
 
         auth = json.loads(result.stdout)['servers'][0]['auth']
-        assert auth['type'] == 'oauth2'
-        assert auth['flow'] == 'client_credentials'
+        assert auth['upstream']['type'] == 'oauth2'
+        assert auth['upstream']['flow'] == 'client_credentials'
 
     def test_no_credential_reaches_the_document(self, tmp_path: pathlib.Path):
         """This output gets piped, pasted into issues and rendered in a browser.
@@ -537,7 +579,10 @@ class TestDryRunJsonOutput:
 
         assert 'SUPER-SECRET-VALUE' not in result.stdout
         auth = json.loads(result.stdout)['servers'][0]['auth']
-        assert auth == {'type': 'api_key', 'flow': None, 'api_key_header': 'X-Company-Key'}
+        assert auth == {
+            'upstream': {'type': 'api_key', 'flow': None, 'api_key_header': 'X-Company-Key'},
+            'mcp': {'issuer': None, 'grant_types': None, 'required_scopes': None},
+        }
 
     def test_a_spec_without_descriptions_still_describes_every_tool(self):
         """Plenty of internal specs are generated and carry no prose, which must not blank the field."""

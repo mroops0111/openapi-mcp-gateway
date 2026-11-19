@@ -43,6 +43,7 @@ Match features to the user's situation, do not reach for all of them.
 - **Local, Single User, One API (stdio).** A static token is enough, `bearer` or `api_key` with the provider's header, such as a GitHub personal access token. No OAuth. Expose a handful of operations with `policy.allow`.
 - **A Huge Spec of Hundreds of Operations.** Prefer dynamic exposure, which fronts the spec with a few meta-tools, over listing every operation, so the tool list never floods the model. Still scope it with `policy.allow`.
 - **A Messy API That Makes Poor Tools.** Shape it. Hide the knobs the model should not set, and trim the response.
+- **Several Agents Sharing One Credential.** Keep the static token or `client_credentials` upstream and declare each agent under `auth.mcp.clients` with its own `client_secret` and `scopes`, plus `auth.mcp.operation_scopes`. Each agent then obtains a token as itself and reaches only the operations its scopes open, which the shared upstream credential cannot tell apart.
 - **Multiple Users, or a Provider That Mandates It.** Use `oauth2`, so each user signs in with their own credentials. `authorization_code` is the default and fits nearly every case.
 - **An API Behind an Identity Provider You Run.** Point the OAuth URLs at that provider and set `auth.upstream.audience` to the API, so the provider mints a token the API will accept rather than one for its own default audience. Reach for `auth.upstream.flow: token_exchange` only when the provider should also issue for the MCP endpoint itself, which needs RFC 8693 support on its side.
 
@@ -127,17 +128,20 @@ servers:
         # enforce_scopes: true, for authorization_code, an operation also needs the upstream scopes
         #   its OpenAPI security declares, checked against what the upstream granted the user
         # scope_implies: {repo: [public_repo]}, an upstream scope covering narrower ones
-      mcp: # who may call this MCP endpoint, for oauth2 authorization_code and token_exchange only
+      mcp: # who may call this MCP endpoint; leave it out to keep the endpoint open
         # issuer: for token_exchange, the authorization server that mints tokens for this endpoint
-        # required_scopes: for token_exchange, what an inbound token must already carry
-        # operation_scopes: for authorization_code, which MCP scopes open which operations
+        # required_scopes: what every token must carry, checked under token_exchange, granted otherwise
+        # operation_scopes: which MCP scopes open which operations, wherever the gateway issues tokens
         #   {auto: tags, unscoped: deny, manual: {<scope>: {description: ..., operations: ["DELETE *"]}}}
         # clients: the pre-registered clients allowed to sign in, which turns off dynamic registration
         #   {<client_id>: {scopes: [...], default_scopes: [...], client_secret: ${SOME_SECRET}, redirect_uris: [...], consent: false}}
         #   scopes is the most a client may hold; default_scopes (a subset, default all) is what it starts with,
         #   and it steps up for the rest when a tool call is refused
         #   consent: false skips the gateway's consent page for a client the operator trusts (default true)
+        #   behind none, bearer, api_key or client_credentials no user signs in: each agent gets a token with
+        #   its own client_secret (required) at /<server>/token, and default_scopes, redirect_uris and consent are refused
         # access_token_ttl: 3600, refresh_token_ttl: 86400, lifetimes of the MCP tokens the gateway mints
+        #   (no refresh token is issued to an agent, so refresh_token_ttl is for authorization_code only)
     policy: # the selector for which operations become tools
       allow: ["<operation_id>", "..."] # globs matched against operation ids, omit to expose all
     operations: # overrides only, applied to operations the policy kept

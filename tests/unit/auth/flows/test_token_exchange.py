@@ -97,6 +97,7 @@ class TestTokenExchangeFlowHandler:
         assert setup.verifier is not None
         assert isinstance(setup.resolver, UpstreamTokenSourceAuthResolver)
         assert isinstance(setup.resolver._token_source, TokenExchangeBridge)
+        assert setup.mcp_summary == f'issuer ({ISSUER})'
 
     def test_verifier_audience_is_the_gateway_not_the_upstream(self):
         """Inbound tokens must name this endpoint, even though the exchange targets the upstream."""

@@ -201,7 +201,10 @@ async def sign_in(
 
     The upstream states ``upstream_scope`` as the scope it granted, or omits it when ``None``,
     and grants a token lasting ``upstream_expires_in`` seconds.
+    A client the provider does not know yet registers first, as the SDK has it do before signing in.
     """
+    if await provider.get_client(client.client_id) is None:
+        await provider.register_client(client)
     redirect = await complete_upstream(
         provider,
         await begin_upstream(provider, client, scopes=scopes),

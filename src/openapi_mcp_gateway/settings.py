@@ -18,10 +18,6 @@ from .openapi import McpIntegration
 # One RFC 6749 §3.3 scope-token, which excludes spaces, double quotes and backslashes.
 SCOPE_TOKEN = re.compile(r'[\x21\x23-\x5B\x5D-\x7E]+')
 
-
-# What an applicability error names for a setting only the gateway's own token minting reads.
-_MINTING_FLOW = 'auth.upstream.flow authorization_code, the only flow where the gateway mints tokens'
-
 # Keys that left the top of ``auth``, and where each lives now.
 # A config written for the old layout is refused with the new place named, rather than with a bare unknown key.
 _MOVED_AUTH_KEYS = {
@@ -199,6 +195,16 @@ class ClientConfig(pydantic.BaseModel):
             )
         return self
 
+    def find_settings_without_sign_in(self) -> list[tuple[str, str]]:
+        """The fields this client sets, or lacks, that only make sense when a user signs in, each with why."""
+        problems = []
+        if not self.client_secret:
+            problems.append(('client_secret', 'is required, since it is the only proof of who the agent is'))
+        for field in ('redirect_uris', 'default_scopes', 'consent'):
+            if field in self.model_fields_set:
+                problems.append((field, 'has no effect, since no user signs in'))
+        return problems
+
     @property
     def granted_by_default(self) -> list[str]:
         """What the client receives when it asks for no scope."""
@@ -213,9 +219,10 @@ class McpAuthConfig(pydantic.BaseModel):
     """Who may call this MCP endpoint, the inbound half of ``auth``.
 
     ``issuer`` serves ``token_exchange``, where another authorization server mints the tokens.
-    ``required_scopes`` is what every token must carry, checked by that server's tokens under ``token_exchange``
-    and granted on every token the gateway mints under ``authorization_code``.
-    The rest serve ``authorization_code`` only.
+    ``required_scopes`` is what every token must carry.
+    It is checked on that server's tokens under ``token_exchange``, and granted on every token the gateway mints.
+    The rest serve the gateway's own tokens, which users sign in for under ``authorization_code``,
+    and which agents obtain with their own credentials in front of one shared upstream credential.
     """
 
     model_config = pydantic.ConfigDict(coerce_numbers_to_str=True, extra='forbid')
@@ -224,7 +231,7 @@ class McpAuthConfig(pydantic.BaseModel):
     issuer: str | None = None
     required_scopes: list[str] = pydantic.Field(default_factory=list)
 
-    # Which operations each scope opens, and the clients allowed to sign in with the scopes each is granted.
+    # Which operations each scope opens, and the clients the gateway issues tokens to, with the scopes each may hold.
     operation_scopes: OperationScopesConfig | None = None
     clients: dict[str, ClientConfig] = pydantic.Field(default_factory=dict)
 
@@ -263,6 +270,25 @@ class McpAuthConfig(pydantic.BaseModel):
         """External authorization server issuer after env-var substitution."""
         return _resolve_env_var(self.issuer)
 
+    def refuse_client_settings_without_sign_in(self, server_name: str) -> None:
+        """Refuse what only a user signing in reads, for a server where agents obtain tokens as themselves.
+
+        Each client needs a secret, since it is its only proof of identity.
+        A redirect, default scopes and the consent page all belong to a sign-in that never happens.
+        A request with no scope is granted all of ``scopes``, so ``default_scopes`` would have nothing to narrow.
+        """
+        problems = [
+            f'auth.mcp.clients.{client_id}.{field} {reason}'
+            for client_id, client in self.clients.items()
+            for field, reason in client.find_settings_without_sign_in()
+        ]
+        if problems:
+            raise ValueError(
+                f'Server "{server_name}": agents here obtain tokens with their own credentials, and no user signs in. '
+                + '. '.join(problems)
+                + '.'
+            )
+
 
 class AuthConfig(pydantic.BaseModel):
     """Authentication for one server, split by direction.
@@ -294,22 +320,19 @@ class AuthConfig(pydantic.BaseModel):
 
     @pydantic.model_validator(mode='after')
     def _reject_settings_that_cannot_take_effect(self) -> typing.Self:
-        """Refuse a field this combination will never read.
+        """Refuse an ``auth.upstream`` field this combination will never read.
 
         An unknown key is already refused,
         and a known key in the wrong place is the same mistake wearing a better disguise.
         Both leave an operator believing they configured something.
-        ``required_scopes`` is the sharp case.
-        Setting it where nothing verifies an inbound token reads as a restriction on an endpoint that has none.
+        ``auth.mcp`` is checked once the server is assembled, against what its MCP half reads.
 
         Only explicitly-set fields are checked, so defaults never trip this.
         """
         upstream = self.upstream
         oauth = upstream.type == 'oauth2'
-        # ``token_exchange`` is never inferred from a spec, so an unset flow rules it out.
-        # ``authorization_code`` is, so an unset flow leaves its fields plausible.
-        flow_unresolved = oauth and upstream.flow is None
-        mints_tokens = upstream.flow == 'authorization_code' or flow_unresolved
+        # ``authorization_code`` can be inferred from a spec, so an unset flow leaves its fields plausible.
+        receives_grant = upstream.flow == 'authorization_code' or (oauth and upstream.flow is None)
 
         upstream_applicable: dict[str, tuple[bool, str]] = {
             'token': (upstream.type in ('bearer', 'api_key'), 'auth.upstream.type bearer or api_key'),
@@ -330,24 +353,8 @@ class AuthConfig(pydantic.BaseModel):
             'scope_implies': "the only flow that records each user's upstream grant",
         }
         for field, reason in receives_grant_reason.items():
-            upstream_applicable[field] = (mints_tokens, f'auth.upstream.flow authorization_code, {reason}')
+            upstream_applicable[field] = (receives_grant, f'auth.upstream.flow authorization_code, {reason}')
         self._refuse_inapplicable(upstream, 'auth.upstream', upstream_applicable)
-
-        self._refuse_inapplicable(
-            self.mcp,
-            'auth.mcp',
-            {
-                'issuer': (upstream.flow == 'token_exchange', 'auth.upstream.flow token_exchange'),
-                'required_scopes': (
-                    upstream.flow in ('authorization_code', 'token_exchange') or flow_unresolved,
-                    'auth.upstream.flow authorization_code or token_exchange, the flows that verify an inbound token',
-                ),
-                'access_token_ttl': (mints_tokens, _MINTING_FLOW),
-                'refresh_token_ttl': (mints_tokens, _MINTING_FLOW),
-                'operation_scopes': (mints_tokens, _MINTING_FLOW),
-                'clients': (mints_tokens, _MINTING_FLOW),
-            },
-        )
         return self
 
     @staticmethod

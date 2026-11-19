@@ -15,6 +15,10 @@ ALLOWED_AUTH_IMPORTS = {
     'auth.assembly': {'auth.routes', 'auth.upstream'},
 }
 
+# The layers that speak a protocol, which take plain values and never read the config.
+# Turning ``settings`` into those values belongs to the assembling layer, so a renamed key never reaches them.
+PROTOCOL_LAYERS = ['auth.mcp', 'auth.routes', 'auth.upstream']
+
 _PACKAGE_ROOT = pathlib.Path(openapi_mcp_gateway.__file__).parent
 
 
@@ -26,23 +30,30 @@ def test_a_layer_imports_only_what_lies_beneath_it(layer):
         for module, targets in _auth_imports().items()
         if _layer_of(module) == layer
         for target in targets
-        if _layer_of(target) not in ALLOWED_AUTH_IMPORTS[layer]
+        if _is_auth(target) and _layer_of(target) not in ALLOWED_AUTH_IMPORTS[layer]
+    ]
+    assert offending == []
+
+
+@pytest.mark.parametrize('layer', PROTOCOL_LAYERS)
+def test_a_protocol_layer_never_reads_the_config(layer):
+    offending = [
+        f'{module} imports settings'
+        for module, targets in _auth_imports().items()
+        if _layer_of(module) == layer and 'settings' in targets
     ]
     assert offending == []
 
 
 def _auth_imports() -> dict[str, set[str]]:
-    """Each module under ``auth``, as a dotted name below the package, with the ``auth`` modules it imports."""
+    """Each module under ``auth``, as a dotted name below the package, with the modules it imports."""
     imports: dict[str, set[str]] = {}
     for path in (_PACKAGE_ROOT / 'auth').rglob('*.py'):
         parts = list(path.relative_to(_PACKAGE_ROOT).with_suffix('').parts)
         package = parts[:-1]
         module = '.'.join(parts[:-1] if parts[-1] == '__init__' else parts)
         targets = {
-            target
-            for node in ast.walk(ast.parse(path.read_text()))
-            for target in _imported_modules(node, package)
-            if target.startswith('auth.') or target == 'auth'
+            target for node in ast.walk(ast.parse(path.read_text())) for target in _imported_modules(node, package)
         }
         imports[module] = targets
     return imports
@@ -57,17 +68,26 @@ def _imported_modules(node: ast.AST, package: list[str]) -> list[str]:
         return [_below_package(alias.name) for alias in node.names]
     if not isinstance(node, ast.ImportFrom):
         return []
+    root = openapi_mcp_gateway.__name__
     if node.level:
-        base = '.'.join(package[: len(package) - (node.level - 1)])
+        parts = package[: len(package) - (node.level - 1)] + (node.module.split('.') if node.module else [])
+    elif node.module == root or (node.module or '').startswith(f'{root}.'):
+        parts = (node.module or '').split('.')[1:]
     else:
-        base = _below_package(node.module or '')
-        if node.module and base == node.module:
-            return []
-    if node.level and node.module:
-        base = f'{base}.{node.module}'
+        return []
+    names = [alias.name for alias in node.names]
+    # At the package root every imported name is a module of its own, such as ``settings``.
+    if not parts:
+        return names
+    base = '.'.join(parts)
     if node.module is None:
-        return [f'{base}.{alias.name}' for alias in node.names]
+        return [f'{base}.{name}' for name in names]
     return [base]
+
+
+def _is_auth(module: str) -> bool:
+    """Whether ``module``, a dotted name below the package, lies in ``auth``."""
+    return module == 'auth' or module.startswith('auth.')
 
 
 def _below_package(name: str) -> str:

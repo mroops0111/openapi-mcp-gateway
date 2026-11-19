@@ -182,8 +182,9 @@ Every request crosses two boundaries, and one `auth:` block settles both of them
 | `oauth2` + `client_credentials` | open | one service token, shared by every caller |
 | `oauth2` + `authorization_code` | **the gateway is the authorization server** | a per-user token the gateway obtained on their behalf |
 | `oauth2` + `token_exchange` | **an external issuer is the authorization server** | a per-user token exchanged from the caller's |
+| `none`, `bearer`, `api_key` or `oauth2` + `client_credentials`, with `auth.mcp.clients` | **the gateway issues tokens to each agent** | the same shared one, while each agent reaches only what its scopes open |
 
-Only the last two put a check in front of the MCP endpoint. The others suit a gateway on localhost or inside a private network, and leave it open to anyone who can reach the port.
+The last three put a check in front of the MCP endpoint. The others suit a gateway on localhost or inside a private network, and leave it open to anyone who can reach the port.
 
 `token_exchange` verifies JWT signatures, so it needs the `oidc` extra. Run the gateway as `uvx --from "openapi-mcp-gateway[oidc]" openapi-mcp-gateway`. Without it the gateway refuses to start and says so.
 
@@ -273,11 +274,50 @@ And because the issuer is the authorization server for this endpoint, MCP client
 </details>
 
 <details>
+<summary><b>Several Agents behind One Credential</b></summary>
+
+A shared upstream credential sees every agent as one identity. Declare each agent under `auth.mcp.clients`, and the gateway issues it an MCP token through `client_credentials`:
+
+```yaml
+servers:
+  - name: github
+    spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
+    policy:
+      allow: [issues/list-for-repo, issues/get, issues/create]
+    auth:
+      upstream:
+        type: bearer
+        token: ${GITHUB_TOKEN}
+      mcp:
+        operation_scopes:
+          manual:
+            issues:read:
+              description: Read issues
+              operations: [issues/list-for-repo, issues/get]
+            issues:write:
+              description: Open issues
+              operations: [issues/create]
+        clients:
+          reader:
+            client_secret: ${READER_SECRET}
+            scopes: [issues:read]
+          writer:
+            client_secret: ${WRITER_SECRET}
+            scopes: [issues:read, issues:write]
+```
+
+Each agent posts its own `client_id` and `client_secret` to `{url}{mount_path}/token` and sees only the operations its scopes open, while every call still reaches GitHub with `${GITHUB_TOKEN}`. This suits agent frameworks and the MCP SDK's `ClientCredentialsOAuthProvider`, since Claude Code supports only the browser sign-in.
+
+</details>
+
+<details>
 <summary><b>Token Lifetimes</b></summary>
 
 Under `authorization_code` the gateway's own access token lives 1 hour and its refresh token 24 hours. Each refresh issues a fresh refresh token, so the refresh TTL is the practical re-authorization cadence. A client refreshing within it never signs in again, while one idle past it must re-authorize. Tune both with `auth.mcp.access_token_ttl` and `auth.mcp.refresh_token_ttl`.
 
 `token_exchange` mints nothing, so neither applies. Lifetimes are the issuer's to set.
+
+Removing a client from `auth.mcp.clients` revokes its tokens once the gateway restarts. Rotating its secret does not, so its access token lasts until it expires.
 
 </details>
 
@@ -332,7 +372,9 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `auth.upstream.issuer` | string |  | For `authorization_code`. The upstream authorization server's issuer identifier, exactly as its metadata publishes it. Enables the [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207) `iss` check on its authorization responses |
 | `auth.mcp.issuer` | string |  | Required for `token_exchange`. The authorization server that mints tokens for this MCP endpoint |
 | `auth.mcp.required_scopes` | list |  | What every token for this endpoint must carry. Under `token_exchange` an inbound token must already hold them. Under `authorization_code` the gateway grants them on every token it mints, `api` when unset. Advertised as `scopes_supported`, so a client doing dynamic registration knows what to ask for |
-| `auth.mcp.access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints for `authorization_code` |
+| `auth.mcp.clients` | map |  | Pre-registered MCP clients by `client_id`, each with the `scopes` it may hold |
+| `auth.mcp.operation_scopes` | map |  | The scopes that open each operation, from spec tags (`auto: tags`) or listed under `manual` |
+| `auth.mcp.access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints, under `authorization_code` or for agents under `auth.mcp.clients` |
 | `auth.mcp.refresh_token_ttl` | int | `86400` | Lifetime in seconds of the MCP refresh token. This is the practical re-authorization cadence, since each refresh slides the window forward |
 | `policy.allow` | list |  | Only expose matching operations |
 | `policy.deny` | list |  | Exclude matching operations |

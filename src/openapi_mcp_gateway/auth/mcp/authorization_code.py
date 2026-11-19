@@ -247,7 +247,14 @@ class McpAuthorizationCodeServer:
         return await self.tokens.issue_tokens(client, authorization_code.scopes, attachment)
 
     async def load_access_token(self, token: str) -> McpAccessToken | None:
-        return await self.tokens.load_access_token(token)
+        """The token, unless its client is gone, so removing a client revokes what it already holds.
+
+        A refresh needs no such check, since the SDK authenticates the client before it loads the refresh token.
+        """
+        access_token = await self.tokens.load_access_token(token)
+        if access_token is None or await self.clients.get(access_token.client_id) is None:
+            return None
+        return access_token
 
     async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
         data = await self._load_record('mcp_refresh_token', refresh_token, client)

@@ -8,6 +8,7 @@ import yaml
 
 from openapi_mcp_gateway.settings import (
     AuthConfig,
+    ClientConfig,
     GatewayConfig,
     ServerConfig,
     UpstreamAuthConfig,
@@ -448,28 +449,17 @@ class TestUnknownKeysAreRefused:
 
 
 class TestSettingsThatCannotTakeEffect:
-    """A known key in the wrong place is refused, like an unknown one.
+    """A known ``auth.upstream`` key in the wrong place is refused, like an unknown one.
 
     Both leave an operator believing they configured something.
-    ``required_scopes`` is the sharp one.
-    Setting it where nothing verifies an inbound token reads as a restriction on an endpoint that has none.
+    ``auth.mcp`` is checked once the server is assembled, by ``build_auth``.
     """
 
     @pytest.mark.parametrize(
         ('payload', 'offending'),
         [
-            ({'upstream': {'type': 'oauth2', 'flow': 'authorization_code'}, 'mcp': {'issuer': 'https://kc'}}, 'issuer'),
-            (
-                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials'}, 'mcp': {'required_scopes': ['x']}},
-                'required_scopes',
-            ),
-            ({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'required_scopes': ['x']}}, 'required_scopes'),
             ({'upstream': {'type': 'bearer', 'token': 't', 'api_key_header': 'X-Custom'}}, 'api_key_header'),
             ({'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'token': 'ignored'}}, 'token'),
-            (
-                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials'}, 'mcp': {'access_token_ttl': 60}},
-                'access_token_ttl',
-            ),
             ({'upstream': {'type': 'bearer', 'token': 't', 'audience': 'https://api'}}, 'upstream'),
             (
                 {'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'issuer': ISSUER}},
@@ -478,20 +468,6 @@ class TestSettingsThatCannotTakeEffect:
             (
                 {'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'enforce_scopes': True}},
                 'upstream.enforce_scopes',
-            ),
-            (
-                {
-                    'upstream': {'type': 'oauth2', 'flow': 'token_exchange'},
-                    'mcp': {'issuer': ISSUER, 'clients': {'agent': {}}},
-                },
-                'clients',
-            ),
-            (
-                {
-                    'upstream': {'type': 'oauth2', 'flow': 'client_credentials'},
-                    'mcp': {'operation_scopes': {}, 'clients': {'agent': {}}},
-                },
-                'operation_scopes',
             ),
         ],
     )
@@ -505,19 +481,9 @@ class TestSettingsThatCannotTakeEffect:
         [
             {'upstream': {'type': 'bearer', 'token': 't'}},
             {'upstream': {'type': 'api_key', 'token': 'k', 'api_key_header': 'X-Custom'}},
-            {
-                'upstream': {'type': 'oauth2', 'flow': 'token_exchange'},
-                'mcp': {'issuer': 'https://kc', 'required_scopes': ['x']},
-            },
-            {'upstream': {'type': 'oauth2', 'flow': 'authorization_code'}, 'mcp': {'access_token_ttl': 60}},
             {'upstream': {'type': 'oauth2', 'client_id': 'c'}},
             {'upstream': {'type': 'oauth2', 'issuer': ISSUER}},
             {'upstream': {'type': 'oauth2', 'flow': 'authorization_code', 'issuer': ISSUER}},
-            {
-                'upstream': {'type': 'oauth2'},
-                'mcp': {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {'scopes': ['pets:read']}}},
-            },
-            {'upstream': {'type': 'oauth2'}, 'mcp': {'clients': {'agent': {}}}},
             {'upstream': {'type': 'none'}},
         ],
     )
@@ -525,15 +491,13 @@ class TestSettingsThatCannotTakeEffect:
         """Refusing the inapplicable must not refuse the ordinary."""
         assert AuthConfig.model_validate(payload)
 
-    def test_an_unresolved_flow_leaves_its_fields_plausible(self):
-        """``authorization_code`` can be inferred from a spec, so its fields cannot be ruled out yet.
 
-        ``token_exchange`` is never inferred, so ``issuer`` still is.
-        """
-        assert AuthConfig.model_validate({'upstream': {'type': 'oauth2'}, 'mcp': {'access_token_ttl': 60}})
+class TestClientConfig:
+    """A client declared under ``auth.mcp.clients`` refuses a default it could never be granted."""
 
-        with pytest.raises(pydantic.ValidationError, match=r'issuer.*no effect'):
-            AuthConfig.model_validate({'upstream': {'type': 'oauth2'}, 'mcp': {'issuer': 'https://kc'}})
+    def test_defaults_beyond_the_set_are_refused(self):
+        with pytest.raises(ValueError, match=r"default_scopes names \['issues:write'\]"):
+            ClientConfig(scopes=['issues:read'], default_scopes=['issues:write'])
 
 
 class TestScopeSettings:

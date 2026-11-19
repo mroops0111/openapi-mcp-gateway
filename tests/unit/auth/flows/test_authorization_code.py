@@ -49,6 +49,7 @@ class TestAuthorizationCodeFlowHandler:
         # The provider's issuer is the string the metadata publishes, which RFC 9207 compares exactly.
         assert setup.settings is not None
         assert server_of(setup.provider).issuer == str(setup.settings.issuer_url) == 'http://localhost:8000/srv'
+        assert setup.mcp_summary == 'gateway (authorization_code)'
 
 
 class TestUpstreamAudienceWiring:

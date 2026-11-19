@@ -5,7 +5,14 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings
 from mcp.shared.auth import ProtectedResourceMetadata
 
-from ..assembly import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
+from ..assembly import (
+    McpSetting,
+    McpSettingsReader,
+    OAuthFlowContext,
+    OAuthFlowHandler,
+    ServerAuthSetup,
+    UpstreamPrincipal,
+)
 from ..mcp.external_issuer import McpExternalIssuerTokenVerifier, fetch_mcp_external_issuer_metadata
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_exchange import UpstreamTokenExchangeClient
@@ -37,7 +44,7 @@ class TokenExchangeBridge(UpstreamTokenSource):
         await self.upstream.aclose()
 
 
-class TokenExchangeFlowHandler(OAuthFlowHandler):
+class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     """Delegate this MCP endpoint's authorization to an issuer the gateway does not own.
 
     The gateway issues no credentials here.
@@ -50,6 +57,18 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
     Unlike ``authorization_code`` the gateway is not a second credential issuer,
     so revoking a user at the issuer takes effect without waiting for a gateway-minted token to expire.
     """
+
+    @property
+    def upstream_principal(self) -> UpstreamPrincipal:
+        return 'user'
+
+    @property
+    def mcp_settings(self) -> frozenset[McpSetting]:
+        return frozenset({'issuer', 'required_scopes'})
+
+    @property
+    def mcp_settings_requirement(self) -> str:
+        return 'auth.upstream.flow token_exchange, where another authorization server issues MCP tokens'
 
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry
@@ -143,5 +162,6 @@ class TokenExchangeFlowHandler(OAuthFlowHandler):
                     'scopes_supported': mcp_endpoint_scopes or None,
                 }
             ),
+            mcp_summary=f'issuer ({metadata.issuer})',
             on_shutdown=bridge.aclose,
         )
