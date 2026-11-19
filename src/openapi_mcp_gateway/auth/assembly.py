@@ -1,6 +1,5 @@
 import abc
 import dataclasses
-import inspect
 import typing
 
 from mcp.server.auth.provider import OAuthAuthorizationServerProvider, TokenVerifier
@@ -10,7 +9,7 @@ from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
 from ..openapi import OpenAPISpec
 from ..scopes import McpScopePolicy
-from ..settings import ServerConfig
+from ..settings import AuthConfig, ServerConfig
 from ..stores.base import TokenStore
 from .routes import AuthRoutes
 from .upstream.oauth_flow import UpstreamOAuthFlow
@@ -21,6 +20,11 @@ from .upstream.resolver import UpstreamAuthResolver
 # ``gateway`` is one credential of the gateway's own, so every agent looks the same upstream.
 # ``user`` is each signed-in user's own, and ``caller`` is whatever the caller's header carries.
 UpstreamPrincipal = typing.Literal['gateway', 'user', 'caller']
+
+# The ``auth.mcp`` fields, which a strategy building the MCP half names as the ones it reads.
+McpSetting = typing.Literal[
+    'issuer', 'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl', 'refresh_token_ttl'
+]
 
 
 class AuthTypeContext(typing.NamedTuple):
@@ -81,37 +85,51 @@ class ServerAuthSetup:
             raise ValueError('A server publishing authorization server metadata needs the auth settings it describes.')
 
 
+class McpSettingsReader(abc.ABC):
+    """A strategy that builds the MCP half, and so reads ``auth.mcp``, a capability only some strategies have.
+
+    An ``auth.mcp`` field that the reader selected for a server does not read is refused before anything is built.
+    """
+
+    @property
+    @abc.abstractmethod
+    def upstream_principal(self) -> UpstreamPrincipal:
+        """Whose identity the upstream sees where this strategy applies."""
+
+    @property
+    @abc.abstractmethod
+    def mcp_settings(self) -> frozenset[McpSetting]:
+        """The ``auth.mcp`` fields this strategy reads."""
+
+    @property
+    @abc.abstractmethod
+    def mcp_settings_requirement(self) -> str:
+        """What selects this strategy, named by the error that refuses one of its fields elsewhere."""
+
+    def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
+        """Refuse ``auth`` settings this strategy cannot honour, before anything is built. Nothing, by default."""
+        return None
+
+
 @dataclasses.dataclass(frozen=True)
 class UpstreamSelection:
     """What an upstream strategy settles before it builds anything, so a config mistake is refused first.
 
     ``upstream_principal`` is whose identity the upstream sees.
-    ``builds_mcp_half`` says the strategy builds the MCP half itself, and ``mcp_settings`` names what that reads.
+    ``mcp_settings_reader`` is set where the strategy builds the MCP half itself.
     Otherwise an ``McpTokenAuthority`` builds it.
     """
 
     upstream_principal: UpstreamPrincipal
-    builds_mcp_half: bool = False
-    mcp_settings: frozenset[str] = frozenset()
+    mcp_settings_reader: McpSettingsReader | None = None
 
 
 class AuthTypeHandler(abc.ABC):
-    """Strategy that turns one ``auth.upstream.type`` into the components the gateway wires up.
+    """Strategy that turns one ``auth.upstream.type`` into the components the gateway wires up."""
 
-    ``upstream_principal`` is whose identity the upstream sees.
-    A handler whose identity something else decides, such as the flow ``oauth2`` resolves, overrides ``select``.
-    """
-
-    upstream_principal: typing.ClassVar[UpstreamPrincipal]
-
-    def __init_subclass__(cls, **kwargs: typing.Any) -> None:
-        super().__init_subclass__(**kwargs)
-        if cls.select is AuthTypeHandler.select:
-            _require_upstream_principal(cls)
-
+    @abc.abstractmethod
     def select(self, context: AuthTypeContext) -> UpstreamSelection:
         """Settle what this handler would build, without any I/O."""
-        return UpstreamSelection(upstream_principal=self.upstream_principal)
 
     @abc.abstractmethod
     def build(self, context: AuthTypeContext) -> ServerAuthSetup:
@@ -168,28 +186,14 @@ class OAuthFlowHandler(abc.ABC):
     A flow whose two directions are independent builds only the upstream half.
     A flow that binds them builds both halves and the Bridge that joins them.
     Subclasses register in ``OAUTH_FLOW_HANDLERS``, so the factory can dispatch by ``flow_type``.
-
-    ``upstream_principal`` is whose identity the upstream sees under this flow.
-    A flow that builds the MCP half sets ``builds_mcp_half``.
-    It names the ``auth.mcp`` fields it reads in ``mcp_settings``.
-    ``mcp_settings_requirement`` says what selects the flow, for the error refusing such a field elsewhere.
+    A flow that builds the MCP half is also an ``McpSettingsReader``.
     """
 
-    upstream_principal: typing.ClassVar[UpstreamPrincipal]
-    builds_mcp_half: typing.ClassVar[bool] = False
-    mcp_settings: typing.ClassVar[frozenset[str]] = frozenset()
-    mcp_settings_requirement: typing.ClassVar[str] = ''
-
-    def __init_subclass__(cls, **kwargs: typing.Any) -> None:
-        super().__init_subclass__(**kwargs)
-        _require_upstream_principal(cls)
+    @property
+    @abc.abstractmethod
+    def upstream_principal(self) -> UpstreamPrincipal:
+        """Whose identity the upstream sees under this flow."""
 
     @abc.abstractmethod
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         """Return the upstream resolver and whatever MCP-side pieces and shutdown hook this flow brings."""
-
-
-def _require_upstream_principal(handler_class: type) -> None:
-    """Refuse a concrete handler that leaves ``upstream_principal`` undeclared, when its module is imported."""
-    if not inspect.isabstract(handler_class) and not hasattr(handler_class, 'upstream_principal'):
-        raise TypeError(f'{handler_class.__name__} must declare upstream_principal.')

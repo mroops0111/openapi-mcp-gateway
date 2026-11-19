@@ -4,10 +4,8 @@ from unittest.mock import patch
 import pydantic
 import pytest
 
-from openapi_mcp_gateway.auth.assembly import AuthTypeContext
-from openapi_mcp_gateway.auth.authorities import MCP_TOKEN_AUTHORITIES
+from openapi_mcp_gateway.auth.assembly import AuthTypeContext, McpSetting
 from openapi_mcp_gateway.auth.factory import AUTH_TYPE_HANDLERS, build_auth
-from openapi_mcp_gateway.auth.flows import OAUTH_FLOW_HANDLERS
 from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
@@ -196,13 +194,9 @@ class TestUpstreamPrincipal:
 class TestMcpSettingsWithoutEffect:
     """An ``auth.mcp`` field the assembled MCP half never reads is refused, naming what would read it."""
 
-    def test_every_named_setting_is_an_mcp_field(self):
-        """A misspelt name would refuse a field the strategy actually reads."""
-        named = {
-            field for reader in (*OAUTH_FLOW_HANDLERS.values(), *MCP_TOKEN_AUTHORITIES) for field in reader.mcp_settings
-        }
-
-        assert named <= set(McpAuthConfig.model_fields)
+    def test_every_mcp_setting_is_an_mcp_field(self):
+        """``McpSetting`` and ``auth.mcp`` must not drift apart, or a strategy could name a missing field."""
+        assert set(typing.get_args(McpSetting)) == set(McpAuthConfig.model_fields)
 
     @pytest.mark.parametrize(
         ('auth', 'refusal'),

@@ -27,7 +27,7 @@ class TestAuthoritySelection:
 
     def test_declared_clients_select_client_credentials(self):
         auth = AuthConfig.model_validate({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': AGENT}})
-        assert McpClientCredentialsAuthority.applies_to(auth, 'gateway')
+        assert McpClientCredentialsAuthority().applies_to(auth, 'gateway')
 
     @pytest.mark.parametrize(
         'upstream',
@@ -75,7 +75,7 @@ class TestAuthoritySelection:
     @pytest.mark.parametrize('principal', ['user', 'caller'])
     def test_clients_select_nothing_where_the_upstream_sees_someone_else(self, principal):
         auth = AuthConfig.model_validate({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': AGENT}})
-        assert not McpClientCredentialsAuthority.applies_to(auth, principal)
+        assert not McpClientCredentialsAuthority().applies_to(auth, principal)
 
     def test_a_resolved_client_credentials_flow_checks_its_clients(self):
         """An unset flow defers the check to startup, once the spec has resolved it."""

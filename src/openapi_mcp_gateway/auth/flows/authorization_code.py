@@ -14,7 +14,15 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from ...stores.base import TokenStore
-from ..assembly import AuthRoutes, OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
+from ..assembly import (
+    AuthRoutes,
+    McpSetting,
+    McpSettingsReader,
+    OAuthFlowContext,
+    OAuthFlowHandler,
+    ServerAuthSetup,
+    UpstreamPrincipal,
+)
 from ..mcp.authorization_code import (
     McpAuthorizationCodeContinuation,
     McpAuthorizationCodeRoutes,
@@ -243,19 +251,24 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
         return redirect_without_cache(redirect_uri, 302)
 
 
-class AuthorizationCodeFlowHandler(OAuthFlowHandler):
+class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     """Assemble the per-user ``authorization_code`` flow, whose two directions are bound.
 
     It builds the gateway's MCP authorization server, the gateway's upstream OAuth client,
     and the ``AuthorizationCodeBridge`` that joins them.
     """
 
-    upstream_principal = 'user'
-    builds_mcp_half = True
-    mcp_settings = frozenset(
-        {'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl', 'refresh_token_ttl'}
-    )
-    mcp_settings_requirement = 'auth.upstream.flow authorization_code, where users sign in to the gateway'
+    @property
+    def upstream_principal(self) -> UpstreamPrincipal:
+        return 'user'
+
+    @property
+    def mcp_settings(self) -> frozenset[McpSetting]:
+        return frozenset({'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl', 'refresh_token_ttl'})
+
+    @property
+    def mcp_settings_requirement(self) -> str:
+        return 'auth.upstream.flow authorization_code, where users sign in to the gateway'
 
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry

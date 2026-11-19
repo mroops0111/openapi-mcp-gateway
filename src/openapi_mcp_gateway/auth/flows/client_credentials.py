@@ -1,6 +1,6 @@
 import logging
 
-from ..assembly import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
+from ..assembly import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup, UpstreamPrincipal
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamClientCredentialsTokenSource
 
@@ -17,7 +17,9 @@ class UpstreamClientCredentialsFlowHandler(OAuthFlowHandler):
     The hook closes the underlying token source's HTTP client.
     """
 
-    upstream_principal = 'gateway'
+    @property
+    def upstream_principal(self) -> UpstreamPrincipal:
+        return 'gateway'
 
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry

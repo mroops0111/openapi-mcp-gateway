@@ -1,13 +1,12 @@
 import abc
 import dataclasses
-import typing
 
 import pydantic
 from mcp.server.auth.settings import AuthSettings
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
 from ..settings import AuthConfig
-from .assembly import AuthTypeContext, ServerAuthSetup, UpstreamPrincipal
+from .assembly import AuthTypeContext, McpSetting, McpSettingsReader, ServerAuthSetup, UpstreamPrincipal
 from .mcp.client_credentials import (
     AUTHORIZE_PATH,
     TOKEN_ENDPOINT_AUTH_METHODS,
@@ -28,24 +27,12 @@ class McpTokenAuthority(abc.ABC):
     A flow that binds both directions, such as ``authorization_code``, builds its MCP half itself.
     Every other upstream strategy builds only the upstream half, and ``build_auth`` hands its setup here.
     Adding a way to issue MCP tokens means adding a subclass and an entry in ``MCP_TOKEN_AUTHORITIES``.
-
-    ``upstream_principal`` is the identity an upstream must see for this authority to apply, or ``None`` for any.
-    ``mcp_settings`` and ``mcp_settings_requirement`` mean what they mean on ``OAuthFlowHandler``.
+    An authority that reads ``auth.mcp`` is also an ``McpSettingsReader``.
     """
 
-    upstream_principal: typing.ClassVar[UpstreamPrincipal | None] = None
-    mcp_settings: typing.ClassVar[frozenset[str]] = frozenset()
-    mcp_settings_requirement: typing.ClassVar[str] = ''
-
-    @classmethod
     @abc.abstractmethod
-    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
+    def applies_to(self, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
         """Whether ``auth`` selects this authority for an upstream that sees ``upstream_principal``."""
-
-    @classmethod
-    def refuse_unusable_settings(cls, auth: AuthConfig, server_name: str) -> None:
-        """Refuse ``auth`` settings this authority cannot honour, before anything is built. Nothing, by default."""
-        return None
 
     @abc.abstractmethod
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
@@ -55,31 +42,36 @@ class McpTokenAuthority(abc.ABC):
 class McpNoTokenAuthority(McpTokenAuthority):
     """Leave the endpoint open, as for a server on localhost or inside a private network."""
 
-    @classmethod
-    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
+    def applies_to(self, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
         return True
 
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
         return setup
 
 
-class McpClientCredentialsAuthority(McpTokenAuthority):
+class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
     """Issue MCP tokens to the agents ``auth.mcp.clients`` declares, through the ``client_credentials`` grant.
 
     It suits an upstream that sees only the gateway's identity, where only the gateway can tell agents apart,
     so each agent is limited to the operations its scopes open.
     """
 
-    upstream_principal = 'gateway'
-    mcp_settings = frozenset({'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl'})
-    mcp_settings_requirement = "auth.mcp.clients on an upstream that sees only the gateway's identity"
+    @property
+    def upstream_principal(self) -> UpstreamPrincipal:
+        return 'gateway'
 
-    @classmethod
-    def applies_to(cls, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
-        return upstream_principal == cls.upstream_principal and bool(auth.mcp.clients)
+    @property
+    def mcp_settings(self) -> frozenset[McpSetting]:
+        return frozenset({'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl'})
 
-    @classmethod
-    def refuse_unusable_settings(cls, auth: AuthConfig, server_name: str) -> None:
+    @property
+    def mcp_settings_requirement(self) -> str:
+        return "auth.mcp.clients on an upstream that sees only the gateway's identity"
+
+    def applies_to(self, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
+        return upstream_principal == self.upstream_principal and bool(auth.mcp.clients)
+
+    def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
         auth.mcp.refuse_client_settings_without_sign_in(server_name)
 
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
@@ -129,6 +121,7 @@ class McpClientCredentialsAuthority(McpTokenAuthority):
 MCP_TOKEN_AUTHORITIES: tuple[type[McpTokenAuthority], ...] = (McpClientCredentialsAuthority, McpNoTokenAuthority)
 
 
-def select_mcp_token_authority(auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> type[McpTokenAuthority]:
+def select_mcp_token_authority(auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> McpTokenAuthority:
     """The first authority ``auth`` selects for an upstream that sees ``upstream_principal``."""
-    return next(authority for authority in MCP_TOKEN_AUTHORITIES if authority.applies_to(auth, upstream_principal))
+    authorities = (authority_class() for authority_class in MCP_TOKEN_AUTHORITIES)
+    return next(authority for authority in authorities if authority.applies_to(auth, upstream_principal))
