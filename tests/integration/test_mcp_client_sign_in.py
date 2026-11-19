@@ -15,15 +15,15 @@ from fastapi import FastAPI, Form
 from fastapi.responses import JSONResponse
 from jwt.algorithms import RSAAlgorithm
 from mcp import Client
-from mcp.client.auth import OAuthClientProvider, TokenStorage
+from mcp.client.auth import OAuthClientProvider
 from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuthProvider
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared.auth import AuthorizationCodeResult, OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from mcp.shared.auth import AuthorizationCodeResult, OAuthClientMetadata
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
-from tests.oauth import query_value, shared_credential_server, upstream_token_response
+from tests.oauth import MemoryTokenStorage, query_value, shared_credential_server, upstream_token_response
 from tests.serving import bind_loopback_socket, build_socket_url, serve
 
 
@@ -116,7 +116,7 @@ class TestAuthorizationCode:
         auth = OAuthClientProvider(
             server_url=endpoint,
             client_metadata=OAuthClientMetadata(redirect_uris=[CLIENT_CALLBACK], client_name='agent'),  # type: ignore[list-item]
-            storage=_MemoryTokenStorage(),
+            storage=MemoryTokenStorage(),
             redirect_handler=browser.sign_in,
             callback_handler=browser.return_to_client,
         )
@@ -157,32 +157,12 @@ class TestTokenExchange:
             async with serve(gateway._build_app(transport='streamable-http'), sock):
                 auth = ClientCredentialsOAuthProvider(
                     server_url=endpoint,
-                    storage=_MemoryTokenStorage(),
+                    storage=MemoryTokenStorage(),
                     client_id='agent',
                     client_secret='agent-secret',
                     issuer=issuer_url,
                 )
                 assert await _list_tools(endpoint, auth)
-
-
-class _MemoryTokenStorage(TokenStorage):
-    """What one MCP client remembers between requests, which starts empty."""
-
-    def __init__(self) -> None:
-        self.tokens: OAuthToken | None = None
-        self.client_info: OAuthClientInformationFull | None = None
-
-    async def get_tokens(self) -> OAuthToken | None:
-        return self.tokens
-
-    async def set_tokens(self, tokens: OAuthToken) -> None:
-        self.tokens = tokens
-
-    async def get_client_info(self) -> OAuthClientInformationFull | None:
-        return self.client_info
-
-    async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
-        self.client_info = client_info
 
 
 class _Browser:
@@ -225,7 +205,7 @@ def _client_credentials(endpoint: str) -> ClientCredentialsOAuthProvider:
     issuer = endpoint.removesuffix('/mcp')
     return ClientCredentialsOAuthProvider(
         server_url=endpoint,
-        storage=_MemoryTokenStorage(),
+        storage=MemoryTokenStorage(),
         client_id='agent',
         client_secret='agent-secret',
         scope='pets:read',

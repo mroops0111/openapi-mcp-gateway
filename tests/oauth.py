@@ -3,6 +3,7 @@ import typing
 import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from mcp.client.auth import TokenStorage
 from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
@@ -234,3 +235,23 @@ async def sign_in(
     auth_code = await provider.load_authorization_code(client, code_in(redirect))
     assert auth_code is not None
     return await provider.exchange_authorization_code(client, auth_code)
+
+
+class MemoryTokenStorage(TokenStorage):
+    """Where the SDK client keeps the token it obtained, read back by the test."""
+
+    def __init__(self) -> None:
+        self.tokens: OAuthToken | None = None
+        self.client_info: OAuthClientInformationFull | None = None
+
+    async def get_tokens(self) -> OAuthToken | None:
+        return self.tokens
+
+    async def set_tokens(self, tokens: OAuthToken) -> None:
+        self.tokens = tokens
+
+    async def get_client_info(self) -> OAuthClientInformationFull | None:
+        return self.client_info
+
+    async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
+        self.client_info = client_info
