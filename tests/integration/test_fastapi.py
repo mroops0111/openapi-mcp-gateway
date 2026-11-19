@@ -4,31 +4,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.security import APIKeyHeader, HTTPBasic, HTTPBasicCredentials, OAuth2AuthorizationCodeBearer
-from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway import Gateway, mcp_tool
 from openapi_mcp_gateway.auth.upstream import token_source as token_source_module
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
 from openapi_mcp_gateway.upstream_http import UpstreamSharedHttpClient
 from tests.constants import AUTHORIZE_URL, TOKEN_URL
-
-
-class _StubRequestContext:
-    """Mimic FastMCP's request_context with a Starlette-like ``request.headers``."""
-
-    def __init__(self, headers: dict[str, str]) -> None:
-        self.request = type('_Req', (), {'headers': headers})()
-
-
-class _StubContext:
-    """No-op MCP context exposing ``report_progress`` and ``request_context``."""
-
-    def __init__(self, headers: dict[str, str] | None = None) -> None:
-        self.request_context = _StubRequestContext(headers or {})
-
-    async def report_progress(self, *_args, **_kwargs):
-        """Match the ``Context`` protocol, doing nothing."""
-        return None
+from tests.context import stub_context
 
 
 def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Awaitable[None]]]:
@@ -38,11 +20,6 @@ def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Aw
         for hook in gateway._shutdown_hooks
         if not isinstance(getattr(hook, '__self__', None), UpstreamSharedHttpClient)
     ]
-
-
-def _stub_context(headers: dict[str, str] | None = None) -> Context:
-    """Return a ``Context``-typed stub carrying optional incoming headers."""
-    return typing.cast(Context, _StubContext(headers))
 
 
 class TestGatewayFromFastapiAssembly:
@@ -178,7 +155,7 @@ class TestGatewayFromFastapiToolCall:
         mcp = gateway._servers[0].mcp
         tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'lookup_user')
 
-        result = await tool.run({'user_id': '42'}, context=_stub_context())
+        result = await tool.run({'user_id': '42'}, context=stub_context())
         assert result.is_error is False
         assert result.structured_content == {'user_id': '42', 'echo': 'ok'}
 
@@ -202,7 +179,7 @@ class TestGatewayFromFastapiToolCall:
         mcp = gateway._servers[0].mcp
         tool = next(iter(mcp._tool_manager.list_tools()))
 
-        ctx = _stub_context({'authorization': 'Bearer client-token'})
+        ctx = stub_context({'authorization': 'Bearer client-token'})
         result = await tool.run({}, context=ctx)
         assert result.structured_content == {'authorization': 'Bearer client-token'}
 
@@ -222,7 +199,7 @@ class TestGatewayFromFastapiToolCall:
         mcp = gateway._servers[0].mcp
         tool = next(iter(mcp._tool_manager.list_tools()))
 
-        ctx = _stub_context({'authorization': 'Basic Zm9vOmJhcg=='})
+        ctx = stub_context({'authorization': 'Basic Zm9vOmJhcg=='})
         result = await tool.run({}, context=ctx)
         assert result.structured_content == {'username': 'foo'}
 
@@ -242,7 +219,7 @@ class TestGatewayFromFastapiToolCall:
         mcp = gateway._servers[0].mcp
         tool = next(iter(mcp._tool_manager.list_tools()))
 
-        ctx = _stub_context({'x-api-key': 'top-secret'})
+        ctx = stub_context({'x-api-key': 'top-secret'})
         result = await tool.run({}, context=ctx)
         assert result.structured_content == {'api_key': 'top-secret'}
 
@@ -293,7 +270,7 @@ class TestGatewayFromFastapiToolCall:
         tool = next(iter(mcp._tool_manager.list_tools()))
 
         # MCP client tries to send its own Authorization, but gateway must use gateway-token instead.
-        ctx = _stub_context({'authorization': 'Bearer client-token'})
+        ctx = stub_context({'authorization': 'Bearer client-token'})
         result = await tool.run({}, context=ctx)
         assert result.structured_content == {'authorization': 'Bearer gateway-token'}
 
@@ -314,7 +291,7 @@ class TestGatewayFromFastapiToolCall:
         mcp = gateway._servers[0].mcp
         tool = next(iter(mcp._tool_manager.list_tools()))
 
-        ctx = _stub_context({'x-tenant': 'acme-co'})
+        ctx = stub_context({'x-tenant': 'acme-co'})
         result = await tool.run({}, context=ctx)
         assert result.structured_content == {'tenant': 'acme-co'}
 

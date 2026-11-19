@@ -8,7 +8,6 @@ import httpx
 import pytest
 from mcp import Client
 from mcp.server import MCPServer
-from mcp.server.mcpserver import Context
 from mcp.types import AudioContent, BlobResourceContents, CallToolResult, EmbeddedResource, ImageContent, TextContent
 
 from openapi_mcp_gateway import Gateway
@@ -39,20 +38,8 @@ from openapi_mcp_gateway.openapi import (
     parse_spec,
 )
 from tests.constants import API_URL
+from tests.context import stub_context
 from tests.specs import operation_spec
-
-
-class _StubContext:
-    """No-op MCP context used when invoking generated tools in tests."""
-
-    async def report_progress(self, *_args, **_kwargs):
-        """Match the ``Context`` protocol, doing nothing."""
-        return None
-
-
-def _stub_context() -> Context:
-    """Return a ``Context``-typed stub suitable for tool invocation."""
-    return typing.cast(Context, _StubContext())
 
 
 class TestSanitizeName:
@@ -242,7 +229,7 @@ class TestToolGeneration:
         )
         generator.register([operation])
         tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'get_thing')
-        await tool.run({'enterprise_team': 'foo'}, context=_stub_context())
+        await tool.run({'enterprise_team': 'foo'}, context=stub_context())
         assert 'enterprise-team=foo' in captured['url']
 
     async def test_path_param_with_dash_substituted(self, mock_upstream):
@@ -266,7 +253,7 @@ class TestToolGeneration:
         )
         generator.register([operation])
         tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'get_team')
-        await tool.run({'enterprise_team': 'acme'}, context=_stub_context())
+        await tool.run({'enterprise_team': 'acme'}, context=stub_context())
         assert captured['path'] == '/teams/acme'
 
 
@@ -285,7 +272,7 @@ class TestBinaryResponses:
             ]
         )
         tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'download')
-        return await tool.run({}, context=_stub_context())
+        return await tool.run({}, context=stub_context())
 
     @pytest.mark.parametrize(
         ('content_type', 'block_type'), [('image/png', ImageContent), ('audio/mpeg', AudioContent)]
@@ -339,7 +326,7 @@ class TestMediaFields:
         )
         ToolGenerator(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([operation])
         registered = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'get_contract')
-        return await registered.run({}, context=_stub_context())
+        return await registered.run({}, context=stub_context())
 
     @staticmethod
     def _encode(data: bytes) -> str:
@@ -605,7 +592,7 @@ class TestMetaToolRegistration:
 async def _search(mcp: MCPServer, **arguments: typing.Any) -> dict[str, typing.Any]:
     """Call ``search_operations`` with ``arguments`` and return its structured payload."""
     tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'search_operations')
-    return (await tool.fn(ctx=_stub_context(), **arguments)).structured_content
+    return (await tool.fn(ctx=stub_context(), **arguments)).structured_content
 
 
 def _tagged_ops() -> list[OperationInfo]:
@@ -767,7 +754,7 @@ class TestGetOperation:
         generator, mcp = _meta_generator()
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = (await tool.fn(name='get_pet_by_id', ctx=_stub_context())).structured_content
+        payload = (await tool.fn(name='get_pet_by_id', ctx=stub_context())).structured_content
         assert payload['name'] == 'get_pet_by_id'
         assert payload['description'] == 'Get one pet.'
         schema = payload['input_schema']
@@ -781,14 +768,14 @@ class TestGetOperation:
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
         with pytest.raises(ValueError, match='Unknown operation'):
-            await tool.fn(name='no_such_op', ctx=_stub_context())
+            await tool.fn(name='no_such_op', ctx=stub_context())
 
     async def test_no_required_key_when_all_optional(self):
         """When no parameter is required, the schema omits the ``required`` array entirely."""
         generator, mcp = _meta_generator()
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = (await tool.fn(name='list_pets', ctx=_stub_context())).structured_content
+        payload = (await tool.fn(name='list_pets', ctx=stub_context())).structured_content
         assert 'required' not in payload['input_schema']
 
     async def test_param_description_propagates(self):
@@ -813,7 +800,7 @@ class TestGetOperation:
             ]
         )
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = (await tool.fn(name='list_pets', ctx=_stub_context())).structured_content
+        payload = (await tool.fn(name='list_pets', ctx=stub_context())).structured_content
         assert payload['input_schema']['properties']['limit']['description'] == 'Max items.'
 
 
@@ -835,7 +822,7 @@ class TestCallOperation:
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'call_operation')
 
-        result = await tool.fn(name='get_pet_by_id', arguments={'petId': 7}, ctx=_stub_context())
+        result = await tool.fn(name='get_pet_by_id', arguments={'petId': 7}, ctx=stub_context())
         assert captured['method'] == 'GET'
         assert captured['url'].endswith('/pets/7')
         assert result.is_error is False
@@ -848,7 +835,7 @@ class TestCallOperation:
         generator.register(_ops())
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'call_operation')
         with pytest.raises(ValueError, match='Unknown operation'):
-            await tool.fn(name='no_such_op', arguments={}, ctx=_stub_context())
+            await tool.fn(name='no_such_op', arguments={}, ctx=stub_context())
 
     async def test_sanitised_arg_name_reaches_upstream(self, mock_upstream):
         """Dashed query params are exposed with sanitised keys, while upstream sees the original name."""
@@ -879,7 +866,7 @@ class TestCallOperation:
             ]
         )
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'call_operation')
-        await tool.fn(name='get_thing', arguments={'enterprise_team': 'acme'}, ctx=_stub_context())
+        await tool.fn(name='get_thing', arguments={'enterprise_team': 'acme'}, ctx=stub_context())
         assert 'enterprise-team=acme' in captured['url']
 
 
@@ -994,7 +981,7 @@ class TestStructuredContent:
         generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/7')])
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
 
-        result = await tool.run({}, context=_stub_context())
+        result = await tool.run({}, context=stub_context())
         assert result.is_error is False
         assert result.structured_content == {'id': 7, 'name': 'rex'}
         assert json.loads(result.content[0].text) == {'id': 7, 'name': 'rex'}
@@ -1006,7 +993,7 @@ class TestStructuredContent:
         generator.register([OperationInfo(operation_id='list_pets', method='get', path='/pets')])
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'list_pets')
 
-        result = await tool.run({}, context=_stub_context())
+        result = await tool.run({}, context=stub_context())
         assert result.is_error is False
         assert result.structured_content is None
         assert json.loads(result.content[0].text) == [{'id': 1}]
@@ -1061,7 +1048,7 @@ class TestBodySerialization:
         generator.register([operation])
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'create_order')
 
-        result = await tool.run({'line_items': [{'id': 1, 'name': 'rex'}]}, context=_stub_context())
+        result = await tool.run({'line_items': [{'id': 1, 'name': 'rex'}]}, context=stub_context())
         assert result.is_error is False
         assert captured['body'] == {'line_items': [{'id': 1, 'name': 'rex'}]}
 
@@ -1098,7 +1085,7 @@ class TestBodySerialization:
         generator.register([operation])
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'create_doc')
 
-        result = await tool.run({'meta': {'title': 'hello'}}, context=_stub_context())
+        result = await tool.run({'meta': {'title': 'hello'}}, context=stub_context())
         assert result.is_error is False
         assert captured['body'] == {'meta': {'title': 'hello'}}
 
@@ -1123,7 +1110,7 @@ class TestErrorResult:
         generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/9')])
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
 
-        result = await tool.run({}, context=_stub_context())
+        result = await tool.run({}, context=stub_context())
         assert result.is_error is True
         assert result.structured_content == {
             'message': 'Not Found',
@@ -1141,7 +1128,7 @@ class TestErrorResult:
         generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/9')])
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
 
-        result = await tool.run({}, context=_stub_context())
+        result = await tool.run({}, context=stub_context())
         assert result.is_error is True
         assert result.structured_content is None
         assert 'internal boom' in result.content[0].text
@@ -1157,7 +1144,7 @@ class TestErrorResult:
         generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/9')])
         tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
 
-        result = await tool.run({}, context=_stub_context())
+        result = await tool.run({}, context=stub_context())
         assert result.is_error is True
         assert result.structured_content is None
         assert 'ConnectError' in result.content[0].text
@@ -1585,7 +1572,7 @@ class TestHiddenParameterInjection:
             params_strategy='merge',
             path='/issues.{format}',
         )
-        await _register(operation).run({}, context=_stub_context())
+        await _register(operation).run({}, context=stub_context())
         assert captured_request['path'] == '/issues.json'
 
     def test_hidden_required_path_parameter_without_default_raises(self):
@@ -1643,7 +1630,7 @@ class TestRequestTransform:
 
         mock_upstream(handler)
         op = _shaped_op([], request='{"include_adult": false, "language": "en-US"}')
-        await _register(op).run({}, context=_stub_context())
+        await _register(op).run({}, context=stub_context())
         assert captured['params']['include_adult'] == 'false'
         assert captured['params']['language'] == 'en-US'
 
@@ -1660,7 +1647,7 @@ class TestRequestTransform:
             [ParameterInfo(name='query', location='query', required=True, schema={'type': 'string'})],
             request='{"v[any_searchable][]": query}',
         )
-        await _register(op).run({'query': 'hello'}, context=_stub_context())
+        await _register(op).run({'query': 'hello'}, context=stub_context())
         assert captured['params']['v[any_searchable][]'] == 'hello'
         assert 'query' not in captured['params']
 
@@ -1684,7 +1671,7 @@ class TestRequestTransform:
             ],
             request='{"op[status_id]": $lookup({"open": "o", "closed": "c", "any": "*"}, status)}',
         )
-        await _register(op).run({'status': 'open'}, context=_stub_context())
+        await _register(op).run({'status': 'open'}, context=stub_context())
         assert captured['params']['op[status_id]'] == 'o'
 
     async def test_routes_key_to_path(self, mock_upstream):
@@ -1701,7 +1688,7 @@ class TestRequestTransform:
             request='{"movie_id": movie_id, "language": "en-US"}',
             path='/movie/{movie_id}',
         )
-        await _register(op).run({'movie_id': 42}, context=_stub_context())
+        await _register(op).run({'movie_id': 42}, context=stub_context())
         assert captured['path'] == '/movie/42'
 
     async def test_routes_to_body_for_post(self, mock_upstream):
@@ -1719,7 +1706,7 @@ class TestRequestTransform:
             method='post',
             path='/docs',
         )
-        await _register(op).run({'title': 'hello'}, context=_stub_context())
+        await _register(op).run({'title': 'hello'}, context=stub_context())
         assert captured['body'] == {'name': 'hello', 'source': 'gateway'}
 
     async def test_null_value_dropped(self, mock_upstream):
@@ -1732,7 +1719,7 @@ class TestRequestTransform:
 
         mock_upstream(handler)
         op = _shaped_op([], request='{"kept": "yes", "dropped": null}')
-        await _register(op).run({}, context=_stub_context())
+        await _register(op).run({}, context=stub_context())
         assert captured['params']['kept'] == 'yes'
         assert 'dropped' not in captured['params']
 
@@ -1749,7 +1736,7 @@ class TestRequestTransform:
             [ParameterInfo(name='query', location='query', required=True, schema={'type': 'string'})],
             request='{"f[]": ["any_searchable", "status_id"], "v[any_searchable][]": query}',
         )
-        await _register(op).run({'query': 'bug'}, context=_stub_context())
+        await _register(op).run({'query': 'bug'}, context=stub_context())
         assert ('f[]', 'any_searchable') in captured['multi']
         assert ('f[]', 'status_id') in captured['multi']
         assert ('v[any_searchable][]', 'bug') in captured['multi']
@@ -1767,7 +1754,7 @@ class TestRequestTransform:
             [ParameterInfo(name='page', location='query', required=False, schema={'type': 'integer'})],
             request='{"page": page, "language": "en-US"}',
         )
-        await _register(op).run({}, context=_stub_context())
+        await _register(op).run({}, context=stub_context())
         assert 'page' not in captured['params']
         assert captured['params']['language'] == 'en-US'
 
@@ -1792,7 +1779,7 @@ class TestRequestTransform:
             params={'sort': {'default': 'popular'}},
             request='{"sort_by": $lookup({"popular": "popularity.desc", "newest": "primary_release_date.desc"}, sort)}',
         )
-        await _register(op).run({}, context=_stub_context())
+        await _register(op).run({}, context=stub_context())
         assert captured['params']['sort_by'] == 'popularity.desc'
 
     async def test_evaluation_error_returns_is_error(self, mock_upstream):
@@ -1808,7 +1795,7 @@ class TestRequestTransform:
             [ParameterInfo(name='name', location='query', required=True, schema={'type': 'string'})],
             request='{"n": name + 1}',
         )
-        result = await _register(op).run({'name': 'x'}, context=_stub_context())
+        result = await _register(op).run({'name': 'x'}, context=stub_context())
         assert result.is_error is True
         message = result.content[0]
         assert isinstance(message, TextContent)
@@ -1831,14 +1818,14 @@ class TestResponseTransform:
             lambda _request: httpx.Response(200, json={'data': {'items': [1, 2]}, 'pagination': {'total': 100}})
         )
         op = _shaped_op([], response='{"items": data.items, "count": pagination.total}')
-        result = await _register(op).run({}, context=_stub_context())
+        result = await _register(op).run({}, context=stub_context())
         assert result.structured_content == {'items': [1, 2], 'count': 100}
 
     async def test_unwrap_via_path(self, mock_upstream):
         """A bare path expression unwraps an envelope down to the inner object."""
         mock_upstream(lambda _request: httpx.Response(200, json={'issue': {'id': 1, 'subject': 's'}}))
         op = _shaped_op([], response='issue')
-        result = await _register(op).run({}, context=_stub_context())
+        result = await _register(op).run({}, context=stub_context())
         assert result.structured_content == {'id': 1, 'subject': 's'}
 
     async def test_array_projection(self, mock_upstream):
@@ -1850,7 +1837,7 @@ class TestResponseTransform:
             )
         )
         op = _shaped_op([], response='results.{"title": title, "rating": vote_average}')
-        result = await _register(op).run({}, context=_stub_context())
+        result = await _register(op).run({}, context=stub_context())
         content = result.content[0]
         assert isinstance(content, TextContent)
         assert json.loads(content.text) == [{'title': 'A', 'rating': 7}, {'title': 'B', 'rating': 8}]
@@ -1859,7 +1846,7 @@ class TestResponseTransform:
         """A failing response expression returns an ``isError`` result."""
         mock_upstream(lambda _request: httpx.Response(200, json={'total': 'not-a-number'}))
         op = _shaped_op([], response='{"n": total + 1}')
-        result = await _register(op).run({}, context=_stub_context())
+        result = await _register(op).run({}, context=stub_context())
         assert result.is_error is True
         message = result.content[0]
         assert isinstance(message, TextContent)
@@ -1888,7 +1875,7 @@ class TestSendDefault:
             [ParameterInfo(name='limit', location='query', required=False, schema={'type': 'integer'})],
             params={'limit': {'default': 10}},
         )
-        await _register(op).run({}, context=_stub_context())
+        await _register(op).run({}, context=stub_context())
         assert captured['params']['limit'] == '10'
 
     async def test_llm_value_overrides_default(self, mock_upstream):
@@ -1904,7 +1891,7 @@ class TestSendDefault:
             [ParameterInfo(name='limit', location='query', required=False, schema={'type': 'integer'})],
             params={'limit': {'default': 10}},
         )
-        await _register(op).run({'limit': 99}, context=_stub_context())
+        await _register(op).run({'limit': 99}, context=stub_context())
         assert captured['params']['limit'] == '99'
 
 
@@ -1949,7 +1936,7 @@ class TestDynamicParamShaping:
         mcp = MCPServer('test')
         MetaToolGenerator(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([op])
         get_operation = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'get_operation')
-        payload = (await get_operation.fn(name='do_thing', ctx=_stub_context())).structured_content
+        payload = (await get_operation.fn(name='do_thing', ctx=stub_context())).structured_content
         schema = payload['input_schema']
         assert 'secret' not in schema['properties']
         assert 'visible' in schema['properties']
@@ -1974,7 +1961,7 @@ class TestDynamicParamShaping:
         mcp = MCPServer('test')
         MetaToolGenerator(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([op])
         call_operation = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'call_operation')
-        await call_operation.fn(name='do_thing', arguments={'status': 'open'}, ctx=_stub_context())
+        await call_operation.fn(name='do_thing', arguments={'status': 'open'}, ctx=stub_context())
         assert captured['params']['op[status_id]'] == 'o'
 
 
@@ -2033,7 +2020,7 @@ class TestParamDeclaration:
             params={'sort': {'type': 'string', 'enum': ['popular'], 'default': 'popular'}},
             request='{"sort_by": $lookup({"popular": "popularity.desc"}, sort)}',
         )
-        await _register(op).run({}, context=_stub_context())
+        await _register(op).run({}, context=stub_context())
         assert captured['params']['sort_by'] == 'popularity.desc'
         assert 'sort' not in captured['params']
 
@@ -2063,7 +2050,7 @@ class TestHeaders:
         params = {'Api-Version': {'hidden': True, 'default': '2026-03-11'}}
         for request in ('{"q": $uppercase(q)}', '$merge([$, {"q": $uppercase(q)}])'):
             op = _shaped_op(parameters, params=params, params_strategy='merge', request=request)
-            await _register(op).run({'q': 'abc'}, context=_stub_context())
+            await _register(op).run({'q': 'abc'}, context=stub_context())
         dropped, carried = captured
         assert 'api-version' not in dropped['headers']
         assert carried['headers']['api-version'] == '2026-03-11'
@@ -2089,7 +2076,7 @@ class TestHeaders:
             request='$merge([$, {"Api_Version": "2026-03-11"}])',
             method='post',
         )
-        await _register(op).run({'name': 'x'}, context=_stub_context())
+        await _register(op).run({'name': 'x'}, context=stub_context())
         assert captured['headers']['api-version'] == '2026-03-11'
         assert captured['body'] == {'name': 'x'}
 
@@ -2118,7 +2105,7 @@ class TestHeaders:
         )
         tool = _register(op)
         assert list(tool.parameters['properties']) == ['doc']
-        await tool.run({'doc': 'home'}, context=_stub_context())
+        await tool.run({'doc': 'home'}, context=stub_context())
         assert captured['headers']['api-version'] == '2026-03-11'
         assert captured['path'] == '/pages/abc123'
 
@@ -2140,7 +2127,7 @@ class TestHeaders:
         connection = UpstreamConnection(base_url=API_URL, headers={'Api-Version': '2025-01-01', 'X-Team': 'wren'})
         ToolGenerator(mcp=mcp, connection=connection).register([op])
         tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'do_thing')
-        await tool.run({}, context=_stub_context())
+        await tool.run({}, context=stub_context())
         assert captured['headers']['x-team'] == 'wren'
         assert captured['headers']['api-version'] == '2026-03-11'
 

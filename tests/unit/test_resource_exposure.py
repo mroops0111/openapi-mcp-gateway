@@ -1,10 +1,8 @@
 import inspect
-import typing
 
 import httpx
 import pytest
 from mcp.server import MCPServer
-from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway.exposure import (
     ResourceGenerator,
@@ -28,19 +26,7 @@ from openapi_mcp_gateway.openapi import (
     ToolOverride,
 )
 from tests.constants import API_URL
-
-
-class _StubContext:
-    """No-op MCP context for direct invocation of template-resource read functions in tests."""
-
-    async def report_progress(self, *_args, **_kwargs):
-        """Match the ``Context`` protocol, doing nothing."""
-        return None
-
-
-def _stub_context() -> Context:
-    """Return a ``Context``-typed stub suitable for invoking resource read functions directly."""
-    return typing.cast(Context, _StubContext())
+from tests.context import stub_context
 
 
 def _expose_resource(**kwargs) -> McpIntegration:
@@ -321,7 +307,7 @@ class TestResourceRead:
             x_mcp_integration=_expose_resource(),
         )
         read_fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
-        text = await read_fn(petId='123', ctx=_stub_context())
+        text = await read_fn(petId='123', ctx=stub_context())
         assert captured['path'] == '/pets/123'
         assert '"id": 123' in text
 
@@ -380,7 +366,7 @@ class TestResourceRead:
             x_mcp_integration=_expose_resource(),
         )
         read_fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
-        await read_fn(enterprise_team='acme', ctx=_stub_context())
+        await read_fn(enterprise_team='acme', ctx=stub_context())
         assert captured['path'] == '/teams/acme'
 
     async def test_upstream_error_raises(self, mock_upstream):
@@ -400,7 +386,7 @@ class TestResourceRead:
         )
         read_fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
         with pytest.raises(RuntimeError, match='404'):
-            await read_fn(petId='nope', ctx=_stub_context())
+            await read_fn(petId='nope', ctx=stub_context())
 
 
 class TestResourceEligibilityValidation:

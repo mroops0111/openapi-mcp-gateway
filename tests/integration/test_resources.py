@@ -1,28 +1,14 @@
 import json
-import typing
 
 import httpx
 import pytest
-from mcp.server.mcpserver import Context
 from mcp.types import InputRequiredResult
 
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import ResourceOverride
 from openapi_mcp_gateway.settings import ExposureConfig, GatewayConfig, OperationOverride, ServerConfig
 from tests.constants import PETSTORE_URL
-
-
-class _StubContext:
-    """No-op MCP context used when invoking generated resource read functions end-to-end."""
-
-    async def report_progress(self, *_args, **_kwargs):
-        """Match the ``Context`` protocol, doing nothing."""
-        return None
-
-
-def _stub_context() -> Context:
-    """Return a ``Context``-typed stub suitable for invoking resource read functions directly."""
-    return typing.cast(Context, _StubContext())
+from tests.context import stub_context
 
 
 def _spec_with_resource_optin() -> dict:
@@ -290,7 +276,7 @@ class TestResourceUpstreamCall:
         template = mcp._resource_manager._templates['petstore://pets/{petId}']
         raw_fn = template.fn.raw_function
 
-        text = await raw_fn(petId='42', ctx=_stub_context())
+        text = await raw_fn(petId='42', ctx=stub_context())
         assert captured['method'] == 'GET'
         assert captured['url'].startswith(f'{PETSTORE_URL}/pets/42')
         assert '"id": 42' in text

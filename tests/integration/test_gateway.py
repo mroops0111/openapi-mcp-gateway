@@ -14,7 +14,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from mcp import Client, StdioServerParameters
 from mcp.client.sse import sse_client
-from mcp.server.mcpserver import Context
 from mcp.types import RequestParamsMeta, TextContent
 from starlette.testclient import TestClient
 
@@ -48,6 +47,7 @@ from tests.constants import (
     PETSTORE_URL,
     TOKEN_URL,
 )
+from tests.context import stub_context
 from tests.oauth import shared_credential_server
 from tests.serving import serve
 
@@ -412,7 +412,7 @@ class TestEndToEndToolInvocation:
         mock_upstream(handler)
 
         tool = _tool(gateway, 'list_pets')
-        result = await tool.run({'limit': 5}, context=_stub_context())
+        result = await tool.run({'limit': 5}, context=stub_context())
 
         assert captured['method'] == 'GET'
         assert 'limit=5' in captured['url']
@@ -459,8 +459,8 @@ class TestDynamicExposureEndToEnd:
         )
         mcp = Gateway.from_config(config)._servers[0].mcp
         search = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'search_operations')
-        by_path = (await search.fn(ctx=_stub_context(), query='pets')).structured_content
-        by_summary_word = (await search.fn(ctx=_stub_context(), query='list')).structured_content
+        by_path = (await search.fn(ctx=stub_context(), query='pets')).structured_content
+        by_summary_word = (await search.fn(ctx=stub_context(), query='list')).structured_content
         assert by_path['operations']
         assert by_summary_word['operations'] == []
 
@@ -478,13 +478,13 @@ class TestDynamicExposureEndToEnd:
         mcp = dynamic_gateway._servers[0].mcp
         tools = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
 
-        listing = (await tools['search_operations'].fn(ctx=_stub_context(), query='list pets')).structured_content
+        listing = (await tools['search_operations'].fn(ctx=stub_context(), query='list pets')).structured_content
         assert listing['operations'][0]['name'] == 'list_pets'
 
-        described = (await tools['get_operation'].fn(name='list_pets', ctx=_stub_context())).structured_content
+        described = (await tools['get_operation'].fn(name='list_pets', ctx=stub_context())).structured_content
         assert described['input_schema']['properties']['limit']['type'] == 'integer'
 
-        result = await tools['call_operation'].fn(name='list_pets', arguments={'limit': 5}, ctx=_stub_context())
+        result = await tools['call_operation'].fn(name='list_pets', arguments={'limit': 5}, ctx=stub_context())
         assert captured['method'] == 'GET'
         assert 'limit=5' in captured['url']
         assert result.is_error is False
@@ -540,7 +540,7 @@ class TestClientCredentialsFlowEndToEnd:
 
         mock_upstream(handler)
 
-        await _tool(cc_gateway, 'list_pets').run({}, context=_stub_context())
+        await _tool(cc_gateway, 'list_pets').run({}, context=stub_context())
 
         assert captured['authorization'] == 'Bearer cc-bearer-xyz'
         token_post.assert_awaited_once()
@@ -556,7 +556,7 @@ class TestClientCredentialsFlowEndToEnd:
 
         tool = _tool(cc_gateway, 'list_pets')
         for _ in range(3):
-            await tool.run({}, context=_stub_context())
+            await tool.run({}, context=stub_context())
 
         assert token_post.await_count == 1
 
@@ -861,14 +861,6 @@ class TestRejectedTokenResponse:
         assert response.status_code == 401
 
 
-class _StubContext:
-    """No-op MCP context used when invoking generated tools end-to-end."""
-
-    async def report_progress(self, *_args, **_kwargs):
-        """Match the ``Context`` protocol, doing nothing."""
-        return None
-
-
 def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Awaitable[None]]]:
     """The shutdown hooks an auth flow registered, leaving out the one closing each server's upstream client."""
     return [
@@ -876,11 +868,6 @@ def _auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Aw
         for hook in gateway._shutdown_hooks
         if not isinstance(getattr(hook, '__self__', None), UpstreamSharedHttpClient)
     ]
-
-
-def _stub_context() -> Context:
-    """Return a ``Context``-typed stub suitable for tool invocation."""
-    return typing.cast(Context, _StubContext())
 
 
 def _tool(gateway: Gateway, name: str):
