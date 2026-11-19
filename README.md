@@ -29,6 +29,7 @@ uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 ```bash
 uv add openapi-mcp-gateway
 uv add "openapi-mcp-gateway[redis]"  # optional, Redis token store for multi-replica OAuth
+uv add "openapi-mcp-gateway[embeddings]"  # optional, search by meaning under dynamic exposure
 ```
 
 Requires Python 3.11+. To skip the install entirely, `uvx openapi-mcp-gateway` runs the published package directly.
@@ -384,6 +385,7 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `exposure.style` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`search_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand, and ignores `promote_resources`. |
 | `exposure.promote_resources` | bool | `false` | Promotes eligible GETs (no required non-path parameter) to MCP resources. A per-operation `resource` declaration applies either way. |
 | `exposure.search.field_weights` | map |  | Per-field search weights for `dynamic` exposure, over `name`, `summary`, `description`, `path`, `tags`, and `parameters`. Unset fields keep their defaults, listed under [Search Ranking](#dynamic-exposure). Refused under `static` exposure |
+| `exposure.search.semantic` | map |  | Search by meaning through an embedding model, with `model` (such as `openai:text-embedding-3-small` or `ollama:bge-m3`), and optionally `dimensions`, `cache_directory`, and `retrieval` (`semantic` or `hybrid`). Needs the `embeddings` extra, see [Search Ranking](#dynamic-exposure) |
 | `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation. Useful when you do not control the upstream spec. |
 
 </details>
@@ -581,6 +583,8 @@ servers:
 ```
 
 Raise a field when it describes operations well in your spec, and lower it when it repeats boilerplate. To fix a single operation that ranks poorly, rewrite its `description` through `operations` instead, since search reads the overridden text.
+
+Words alone miss a request phrased differently from the spec. `exposure.search.semantic` ranks by meaning instead, through any embedding model Pydantic AI reaches over HTTP, such as OpenAI's or a local Ollama's. Install `openapi-mcp-gateway[embeddings]`, and the provider reads its key from its usual environment variable, such as `OPENAI_API_KEY`. Operations are embedded on the first search and kept in `cache_directory` when set, so a restart embeds only what changed. On the search ranking benchmark, `openai:text-embedding-3-small` raised nDCG@10 from 0.38 to 0.51, mostly on requests that do not repeat the operation's words.
 
 </details>
 

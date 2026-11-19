@@ -32,6 +32,18 @@ variants:
         style: dynamic
         search:
           field_weights: {name: 1, summary: 1, description: 1, path: 1, tags: 1}
+  openai-embeddings:
+    type: gateway
+    server:
+      exposure:
+        style: dynamic
+        search: {semantic: {model: 'openai:text-embedding-3-small'}}
+  openai-embeddings-hybrid:
+    type: gateway
+    server:
+      exposure:
+        style: dynamic
+        search: {semantic: {model: 'openai:text-embedding-3-small', retrieval: hybrid}}
   pydantic-ai-keywords:
     type: pydantic-ai-keywords
   random:

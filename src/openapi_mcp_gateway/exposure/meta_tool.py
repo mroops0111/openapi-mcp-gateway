@@ -14,6 +14,7 @@ from mcp.types import CallToolResult
 from ..openapi import ExposedTool, OperationInfo, schema_description
 from ..scopes import McpUnrestrictedScopePolicy, RequestTarget, ScopeRegistry, current_grant
 from ._bm25 import BM25FIndex
+from ._semantic import SemanticIndex, SemanticSearchOptions
 from ._shaping import shape_operation
 from ._shared import _get_override, build_input_schema, derive_description, derive_name
 from ._upstream import UpstreamConnection, _build_success_result
@@ -102,12 +103,14 @@ class MetaToolGenerator:
         connection: UpstreamConnection,
         field_weight_overrides: typing.Mapping[str, float] | None = None,
         scope_registry: ScopeRegistry | None = None,
+        semantic_search: SemanticSearchOptions | None = None,
     ):
         self.mcp = mcp
         self.connection = connection
         self.scope_registry = scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy())
         # Overrides replace the default weight of the fields they name and leave the rest as they are.
         self.field_weights = {**DEFAULT_FIELD_WEIGHTS, **(field_weight_overrides or {})}
+        self.semantic_search = semantic_search
 
     def register(self, operations: list[OperationInfo]) -> list[ExposedTool]:
         """Build the operation registry from ``operations`` and bind the three meta-tools, returning them."""
@@ -142,7 +145,7 @@ class MetaToolGenerator:
                 shaped_operation.method.upper(),
                 shaped_operation.path,
             )
-        registry = _OperationRegistry(registered, self.field_weights)
+        registry = _OperationRegistry(registered, self.field_weights, self.semantic_search)
         self._bind_meta_tools(registry)
         logger.info(
             'Registered %d operation(s) behind dynamic meta-tools on server "%s"',
@@ -172,7 +175,7 @@ class MetaToolGenerator:
                 str | None, pydantic.Field(description='The `nextCursor` of the previous page.')
             ] = None,
         ) -> CallToolResult:
-            return _build_success_result(registry.search(query, tags, cursor, self._visibility()))
+            return _build_success_result(await registry.search(query, tags, cursor, self._visibility()))
 
         @self.mcp.tool(name='get_operation', description=_GET_OPERATION_DESCRIPTION)
         async def get_operation(name: str, ctx: Context) -> CallToolResult:
@@ -231,6 +234,10 @@ class _RegisteredOperation:
             'parameters': _parameter_text(self.input_schema),
         }
 
+    def embedding_text(self) -> str:
+        """Return the text an embedding model reads for this operation, what it does before how it is reached."""
+        return '\n'.join(part for part in (self.name, self.summary, self.description, self.path) if part)
+
 
 class _OperationRegistry:
     """The operations of one dynamically exposed server, looked up by name or searched by query and tag.
@@ -240,10 +247,26 @@ class _OperationRegistry:
     Tags match without regard to case, and each is shown in the spelling it first appears in.
     """
 
-    def __init__(self, operations: typing.Iterable[_RegisteredOperation], field_weights: typing.Mapping[str, float]):
+    def __init__(
+        self,
+        operations: typing.Iterable[_RegisteredOperation],
+        field_weights: typing.Mapping[str, float],
+        semantic_search: SemanticSearchOptions | None = None,
+    ):
         self._operations = {operation.name: operation for operation in operations}
         self._index = BM25FIndex(
             {name: operation.search_fields() for name, operation in self._operations.items()}, field_weights
+        )
+        self._semantic_search = semantic_search
+        self._semantic_index = (
+            SemanticIndex(
+                {name: operation.embedding_text() for name, operation in self._operations.items()},
+                semantic_search.model,
+                dimensions=semantic_search.dimensions,
+                cache_directory=semantic_search.cache_directory,
+            )
+            if semantic_search
+            else None
         )
         # Keyed by casefolded tag. The inner dict is an ordered set of operation names.
         self._names_by_tag: dict[str, dict[str, None]] = {}
@@ -260,7 +283,7 @@ class _OperationRegistry:
     def get(self, name: str) -> _RegisteredOperation | None:
         return self._operations.get(name)
 
-    def search(
+    async def search(
         self,
         query: str | list[str] | None,
         tags: list[str] | None,
@@ -278,7 +301,7 @@ class _OperationRegistry:
         queries = [text.strip() for text in ([query] if isinstance(query, str) else query or [])]
         queries = [text for text in dict.fromkeys(queries) if text]
         tags = tags or []
-        names = [name for name in self._matching(queries, tags) if visible(name)]
+        names = [name for name in await self._matching(queries, tags) if visible(name)]
         offset = _decode_cursor(cursor, len(names)) if cursor else 0
         page = names[offset : offset + _PAGE_SIZE]
         payload: dict[str, typing.Any] = {
@@ -292,6 +315,23 @@ class _OperationRegistry:
                 payload['tags'] = tag_counts
         return payload
 
+    async def _rank(self, query: str, candidates: set[str] | None) -> list[str]:
+        """Rank ``candidates``, or every operation, against one query, by words, by meaning, or by both.
+
+        When the embedding model cannot be reached, the query is ranked by words alone, so search keeps working.
+        """
+        by_words = self._index.search(query, candidates)
+        if self._semantic_index is None or self._semantic_search is None:
+            return by_words
+        try:
+            by_meaning = await self._semantic_index.search(query, candidates)
+        except Exception as error:
+            logger.warning('Searching by meaning failed, so this search ranks by words alone: %s', error)
+            return by_words
+        if self._semantic_search.retrieval == 'semantic':
+            return by_meaning
+        return _fuse([by_words, by_meaning])
+
     def _tag_counts(self, names: set[str]) -> list[dict[str, typing.Any]]:
         """Each tag carried by any of ``names``, with how many of them carry it, in tag order."""
         counts = {key: len(names.intersection(tagged)) for key, tagged in self._names_by_tag.items()}
@@ -301,10 +341,10 @@ class _OperationRegistry:
             if counts[key]
         ]
 
-    def _matching(self, queries: list[str], tags: list[str]) -> list[str]:
+    async def _matching(self, queries: list[str], tags: list[str]) -> list[str]:
         candidates = {name for tag in tags for name in self._names_by_tag.get(tag.casefold(), {})} if tags else None
         if queries:
-            return _fuse([self._index.search(query, candidates) for query in queries])
+            return _fuse([await self._rank(query, candidates) for query in queries])
         if candidates is None:
             return list(self._operations)
         return [name for name in self._operations if name in candidates]

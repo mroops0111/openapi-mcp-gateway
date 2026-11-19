@@ -463,12 +463,32 @@ class SearchFieldWeights(pydantic.BaseModel):
         return self
 
 
+class SemanticSearchConfig(pydantic.BaseModel):
+    """Search by meaning as well as by words, through an embedding model the ``embeddings`` extra reaches.
+
+    ``model`` names it as Pydantic AI does, such as ``openai:text-embedding-3-small`` or ``ollama:bge-m3``,
+    and the provider reads its key and address from its usual environment variables.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid')
+
+    model: str = pydantic.Field(min_length=1)
+    # Shorter vectors, for a model that can return them, such as OpenAI's text-embedding-3 models.
+    dimensions: int | None = pydantic.Field(default=None, gt=0)
+    # Where the operations' vectors are kept between restarts, so only a changed operation is embedded again.
+    cache_directory: pathlib.Path | None = None
+    # semantic ranks by the embedding alone, and hybrid merges that ranking with the word ranking.
+    # semantic is the default, since on the search benchmark's dev split it ranked better than hybrid.
+    retrieval: typing.Literal['semantic', 'hybrid'] = 'semantic'
+
+
 class SearchConfig(pydantic.BaseModel):
     """How ``search_operations`` ranks operations under dynamic exposure."""
 
     model_config = pydantic.ConfigDict(extra='forbid')
 
     field_weights: SearchFieldWeights = SearchFieldWeights()
+    semantic: SemanticSearchConfig | None = None
 
 
 class ExposureConfig(pydantic.BaseModel):

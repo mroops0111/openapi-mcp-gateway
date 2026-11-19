@@ -22,7 +22,15 @@ from .auth.upstream.resolver import (
     UpstreamCompositeAuthResolver,
     UpstreamPassthroughAuthResolver,
 )
-from .exposure import DynamicOperationTarget, MetaToolGenerator, ResourceGenerator, ToolGenerator, UpstreamConnection
+from .exposure import (
+    DynamicOperationTarget,
+    MetaToolGenerator,
+    ResourceGenerator,
+    SemanticSearchOptions,
+    ToolGenerator,
+    UpstreamConnection,
+    embeddings_available,
+)
 from .fastapi import (
     collect_marked_routes,
     filter_marked_operations,
@@ -43,7 +51,15 @@ from .scopes import (
     build_mcp_scope_policy,
     build_upstream_scope_policy,
 )
-from .settings import AuthConfig, ExposureConfig, GatewayConfig, OperationOverride, PolicyConfig, ServerConfig
+from .settings import (
+    AuthConfig,
+    ExposureConfig,
+    GatewayConfig,
+    OperationOverride,
+    PolicyConfig,
+    SemanticSearchConfig,
+    ServerConfig,
+)
 from .stores import create_store
 
 
@@ -426,6 +442,7 @@ class Gateway:
                 connection=connection,
                 field_weight_overrides=search.field_weights.model_dump(exclude_none=True) if search else None,
                 scope_registry=scope_registry,
+                semantic_search=_semantic_search_options(server_config.name, search.semantic if search else None),
             ).register(operations)
             tool_call_target = DynamicOperationTarget()
         else:
@@ -794,6 +811,23 @@ def _cache_hints(scope_registry: ScopeRegistry) -> dict[CacheableMethod, CacheHi
         'resources/templates/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=list_cache_scope),
         'server/discover': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope='public'),
     }
+
+
+def _semantic_search_options(server_name: str, config: SemanticSearchConfig | None) -> SemanticSearchOptions | None:
+    """The semantic search a server's config asks for, refused when the ``embeddings`` extra is missing."""
+    if config is None:
+        return None
+    if not embeddings_available():
+        raise ValueError(
+            f'Server "{server_name}": exposure.search.semantic needs the embeddings extra. '
+            'Install openapi-mcp-gateway[embeddings].'
+        )
+    return SemanticSearchOptions(
+        model=config.model,
+        dimensions=config.dimensions,
+        cache_directory=config.cache_directory,
+        retrieval=config.retrieval,
+    )
 
 
 def _refuse_undefined_mcp_scopes(server_config: ServerConfig, mcp_scope_policy: McpScopePolicy) -> None:
