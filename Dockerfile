@@ -11,14 +11,16 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=0
 
-# The redis, oidc, and embeddings extras ship in the one image,
-# so every auth mode, the shared store, and search by meaning work without a rebuild.
+# The redis and oidc extras ship in the one image,
+# so every auth mode and the shared store work without a rebuild.
+# The embeddings extra is left out, since search ranks by words unless exposure.search.semantic is set.
+# To search by meaning, install "${wheels}[redis,oidc,embeddings]" instead.
 RUN --mount=type=bind,source=dist,target=/dist \
     set -eu; \
     wheels=$(ls /dist/openapi_mcp_gateway-*.whl); \
     [ "$(echo "$wheels" | wc -l)" -eq 1 ] || { echo "expected exactly one wheel in dist/, found: $wheels" >&2; exit 1; }; \
     uv venv /opt/venv; \
-    uv pip install --python /opt/venv/bin/python --no-cache "${wheels}[redis,oidc,embeddings]"
+    uv pip install --python /opt/venv/bin/python --no-cache "${wheels}[redis,oidc]"
 
 # The runtime stage carries the venv alone, without uv.
 FROM python:3.13-slim
