@@ -11,10 +11,11 @@ API_URL = 'https://api.example.com'
 PETSTORE_URL = 'https://petstore.example.com/v1'
 
 # The gateway's own public address, which MCP clients reach and tokens are issued for,
-# and the issuer it publishes for a server mounted at ``/petstore``.
+# and the issuer it publishes for a server mounted at ``/petstore``, with that server's MCP endpoint.
 GATEWAY_HOST = 'mcp.example.com'
 GATEWAY_URL = f'https://{GATEWAY_HOST}'
 GATEWAY_ISSUER = f'{GATEWAY_URL}/petstore'
+GATEWAY_RESOURCE = f'{GATEWAY_ISSUER}/mcp'
 
 # A web page allowed to call the gateway from a browser.
 BROWSER_ORIGIN = 'https://app.example.com'

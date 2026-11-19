@@ -6,16 +6,15 @@ import httpx
 import httpx2
 import pytest
 from mcp import Client, MCPError
-from mcp.client.auth import TokenStorage
 from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuthProvider
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.auth.mcp.client_credentials import CLIENT_CREDENTIALS_EXTENSION
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
+from tests.oauth import MemoryTokenStorage
 from tests.serving import bind_loopback_socket, build_socket_url, serve
 
 
@@ -129,6 +128,16 @@ class TestTokenEndpoint:
     def test_the_canonical_resource_is_accepted(self, http):
         assert _request_token(http, READER, resource=f'{GATEWAY_URL}/petstore/mcp').status_code == 200
 
+    def test_a_foreign_resource_beside_the_canonical_one_is_refused(self, http):
+        """RFC 8707 lets ``resource`` repeat, so every one named is checked."""
+        form = {
+            'grant_type': 'client_credentials',
+            'resource': ['https://elsewhere.example.com/mcp', f'{GATEWAY_URL}/petstore/mcp'],
+        }
+        response = http.post('/petstore/token', data=form, auth=(READER, SECRETS[READER]))
+
+        assert response.json()['error'] == 'invalid_target'
+
 
 class TestMcpEndpoint:
     """Each agent reaches only the operations its scopes open, through the one upstream credential."""
@@ -141,6 +150,21 @@ class TestMcpEndpoint:
             response = await http.post(f'{base_url}/petstore/mcp', json={})
         assert response.status_code == 401
         assert 'resource_metadata=' in response.headers['www-authenticate']
+
+    async def test_a_token_issued_for_another_resource_is_refused(self, make_gateway):
+        """The SDK compares the resource each token records against this endpoint."""
+        gateway = make_gateway()
+        async with (
+            serve(gateway._build_app(transport='streamable-http')) as base_url,
+            httpx.AsyncClient() as http,
+        ):
+            token = await _obtain_token(base_url, READER)
+            record = await gateway._store.get('mcp_access_token', token)
+            await gateway._store.set('mcp_access_token', token, {**record, 'resource': f'{base_url}/other/mcp'})
+            response = await http.post(
+                f'{base_url}/petstore/mcp', json={}, headers={'Authorization': f'Bearer {token}'}
+            )
+        assert response.status_code == 401
 
     async def test_each_agent_lists_only_what_its_scopes_open(self, make_gateway, upstream_requests):
         async with serve(make_gateway()._build_app(transport='streamable-http')) as base_url:
@@ -170,7 +194,7 @@ class TestSdkClient:
         gateway = make_gateway(url=build_socket_url(sock))
         async with serve(gateway._build_app(transport='streamable-http'), sock) as base_url:
             server_url = f'{base_url}/petstore/mcp'
-            storage = _MemoryStorage()
+            storage = MemoryTokenStorage()
             auth = ClientCredentialsOAuthProvider(
                 server_url,
                 storage,
@@ -189,26 +213,6 @@ class TestSdkClient:
         assert storage.tokens is not None
         assert set((storage.tokens.scope or '').split()) == {'pets:read', 'pets:write'}
         assert [request.method for request in upstream_requests] == ['POST']
-
-
-class _MemoryStorage(TokenStorage):
-    """Where the SDK client keeps the token it obtained, read back by the test."""
-
-    def __init__(self) -> None:
-        self.tokens: OAuthToken | None = None
-        self.client_info: OAuthClientInformationFull | None = None
-
-    async def get_tokens(self) -> OAuthToken | None:
-        return self.tokens
-
-    async def set_tokens(self, tokens: OAuthToken) -> None:
-        self.tokens = tokens
-
-    async def get_client_info(self) -> OAuthClientInformationFull | None:
-        return self.client_info
-
-    async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
-        self.client_info = client_info
 
 
 def _request_token(

@@ -21,6 +21,7 @@ from tests.constants import (
     AUTHORIZE_URL,
     BROWSER_ORIGIN,
     GATEWAY_ISSUER,
+    GATEWAY_RESOURCE,
     GATEWAY_URL,
     ISSUER,
     TOKEN_URL,
@@ -158,6 +159,13 @@ class TestAuthorize:
         """``authorize`` has no request to read a cookie from, so the consent page decides what happens next."""
         url = await authorize(provider, mcp_client_info)
         assert url.startswith(f'{GATEWAY_ISSUER}/auth/consent?request=')
+
+    async def test_a_root_issuer_joins_the_consent_url_with_one_slash(self, make_provider, mcp_client_info):
+        provider = make_provider(issuer=f'{GATEWAY_URL}/')
+        await provider.register_client(mcp_client_info)
+
+        url = await authorize(provider, mcp_client_info)
+        assert url.startswith(f'{GATEWAY_URL}/auth/consent?request=')
 
     async def test_the_upstream_url_carries_the_gateway_client_and_scopes(self, provider, mcp_client_info):
         url = await begin_upstream(provider, mcp_client_info)
@@ -738,6 +746,40 @@ class TestClientRemoval:
 
         assert await before.load_access_token(token.access_token) is not None
         assert await after.load_access_token(token.access_token) is None
+
+
+class TestTokenResource:
+    """Every token names this server's MCP endpoint as its RFC 8707 resource, which the SDK checks on each request."""
+
+    async def test_tokens_are_issued_for_the_endpoint(self, make_provider, mcp_client_info):
+        provider = make_provider()
+        token = await sign_in(provider, mcp_client_info)
+
+        access_token = await provider.load_access_token(token.access_token)
+        assert access_token is not None
+        assert access_token.resource == GATEWAY_RESOURCE
+        assert token.refresh_token is not None
+        refresh_token = await provider.load_refresh_token(mcp_client_info, token.refresh_token)
+        assert refresh_token is not None
+        assert refresh_token.resource == GATEWAY_RESOURCE
+
+    async def test_a_sign_in_for_another_resource_is_refused(self, make_provider, mcp_client_info):
+        provider = make_provider()
+        await provider.register_client(mcp_client_info)
+
+        redirect = await authorize(provider, mcp_client_info, resource=f'{ATTACKER_URL}/mcp')
+
+        assert redirect.startswith(CLIENT_REDIRECT_URI)
+        assert query_value(redirect, 'error') == 'invalid_target'
+        assert query_value(redirect, 'state') == CLIENT_STATE
+        assert query_value(redirect, 'iss') == GATEWAY_ISSUER
+
+    async def test_a_sign_in_naming_the_endpoint_goes_on(self, make_provider, mcp_client_info):
+        """A trailing slash names the same resource."""
+        provider = make_provider()
+        await provider.register_client(mcp_client_info)
+
+        assert request_id_in(await authorize(provider, mcp_client_info, resource=f'{GATEWAY_RESOURCE}/'))
 
 
 class TestTokenOrigin:

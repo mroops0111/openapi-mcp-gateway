@@ -58,12 +58,24 @@ class McpTokenIssuer:
     ``origin.issuer`` is the gateway's own issuer identifier for this server, the one its metadata publishes.
     Every record is stored with ``origin``, and one read elsewhere is treated as absent,
     so the client re-registers or re-authorizes rather than failing outright.
+    ``resource`` is the canonical URI of the server's MCP endpoint.
+    Every code and token records it as the RFC 8707 resource it was issued for,
+    which the SDK compares against the endpoint on every request.
     """
 
-    def __init__(self, store: TokenStore, origin: McpRecordOrigin, policy: McpTokenPolicy) -> None:
+    def __init__(
+        self,
+        store: TokenStore,
+        origin: McpRecordOrigin,
+        policy: McpTokenPolicy,
+        resource: str,
+    ) -> None:
         self.store = store
         self.origin = origin
         self.policy = policy
+        self.resource = resource
+        # Compared on every authorization and client_credentials request, so normalized once.
+        self._normalized_resource = _normalize_resource(resource)
         # Compared on every authenticated request, so serialized once.
         self._origin_fields = origin.model_dump()
 
@@ -74,6 +86,19 @@ class McpTokenIssuer:
     def is_from_here(self, data: dict[str, typing.Any] | None) -> typing.TypeGuard[dict[str, typing.Any]]:
         """Whether a stored record was written by this server against its current upstream."""
         return bool(data) and data.get('origin') == self._origin_fields
+
+    def serves_resource(self, requested: str | None) -> bool:
+        """Whether a client asking for ``requested`` as its RFC 8707 ``resource`` may get a token here.
+
+        A client that names none gets one for this endpoint, the only resource it serves.
+        Both sides are compared as normalized URLs, so a client echoing the published form matches.
+        """
+        if requested is None:
+            return True
+        try:
+            return _normalize_resource(requested) == self._normalized_resource
+        except pydantic.ValidationError:
+            return False
 
     async def complete_authorization(self, pending: PendingAuthorization, attachment: McpTokenAttachment) -> str:
         """Mint the MCP authorization code that ends ``pending``, and return the redirect carrying it to the client.
@@ -192,6 +217,7 @@ class McpTokenIssuer:
             client_id=data['client_id'],
             scopes=data['scopes'],
             expires_at=data.get('expires_at'),
+            resource=data.get('resource'),
             upstream_scopes=data.get('upstream_scopes', []),
             mcp_grantable_scopes=data.get('mcp_grantable_scopes'),
         )
@@ -261,6 +287,7 @@ class McpTokenIssuer:
             'upstream_scopes': list(attachment.upstream_scopes),
             'links': sorted(attachment.links),
             'links_expire_at': attachment.links_expire_at,
+            'resource': self.resource,
             'origin': self._origin_fields,
         }
 
@@ -275,3 +302,8 @@ def require_client_id(client: OAuthClientInformationFull) -> str:
     if not client.client_id:
         raise ValueError('client_id is required')
     return client.client_id
+
+
+def _normalize_resource(url: str) -> str:
+    """``url`` as ``pydantic.AnyHttpUrl`` normalizes it, without a trailing slash, so equal resources compare equal."""
+    return str(pydantic.AnyHttpUrl(url)).rstrip('/')

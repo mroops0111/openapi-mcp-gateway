@@ -3,6 +3,7 @@ import typing
 import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from mcp.client.auth import TokenStorage
 from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
@@ -51,6 +52,7 @@ def authorization_code_server(
         policy or McpTokenPolicy(),
         clients or McpDynamicClientRegistry(store, issuer),
         server_name,
+        f'{issuer}/mcp',
     )
     return server
 
@@ -96,6 +98,22 @@ def authorization_code_gateway(
     return Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
 
 
+def shared_credential_server(spec_path: pathlib.Path, name: str, path_prefix: str) -> dict[str, typing.Any]:
+    """The config of a bearer-token server named ``name`` under ``path_prefix``, issuing MCP tokens to one agent."""
+    return {
+        'name': name,
+        'path_prefix': path_prefix,
+        'spec': str(spec_path),
+        'auth': {
+            'upstream': {'type': 'bearer', 'token': 'upstream-pat'},
+            'mcp': {
+                'clients': {'agent': {'client_secret': 'agent-secret', 'scopes': ['pets:read']}},
+                'operation_scopes': {'auto': 'tags'},
+            },
+        },
+    }
+
+
 def upstream_token_response(
     granted: str = 'upstream-access-token', scope: str | None = None, expires_in: int = 3600
 ) -> MagicMock:
@@ -119,10 +137,12 @@ async def authorize(
     client: OAuthClientInformationFull,
     state: str | None = CLIENT_STATE,
     scopes: list[str] | None = None,
+    resource: str | None = None,
 ) -> str:
     """Start a sign-in for ``client`` under its own ``state``, returning the consent page URL the browser is sent to.
 
     ``scopes`` is what the SDK's authorize handler settled on, which is ``None`` when the client asked for none.
+    ``resource`` is the RFC 8707 resource the client names, or ``None`` when it names none.
     """
     params = AuthorizationParams(
         state=state,
@@ -130,6 +150,7 @@ async def authorize(
         redirect_uri=AnyHttpUrl(CLIENT_REDIRECT_URI),
         redirect_uri_provided_explicitly=True,
         code_challenge='challenge-abc',
+        resource=resource,
     )
     return await provider.authorize(client, params)
 
@@ -214,3 +235,23 @@ async def sign_in(
     auth_code = await provider.load_authorization_code(client, code_in(redirect))
     assert auth_code is not None
     return await provider.exchange_authorization_code(client, auth_code)
+
+
+class MemoryTokenStorage(TokenStorage):
+    """Where the SDK client keeps the token it obtained, read back by the test."""
+
+    def __init__(self) -> None:
+        self.tokens: OAuthToken | None = None
+        self.client_info: OAuthClientInformationFull | None = None
+
+    async def get_tokens(self) -> OAuthToken | None:
+        return self.tokens
+
+    async def set_tokens(self, tokens: OAuthToken) -> None:
+        self.tokens = tokens
+
+    async def get_client_info(self) -> OAuthClientInformationFull | None:
+        return self.client_info
+
+    async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
+        self.client_info = client_info

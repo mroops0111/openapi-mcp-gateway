@@ -2,6 +2,7 @@ import abc
 import dataclasses
 import typing
 
+import pydantic
 from mcp.server.auth.provider import OAuthAuthorizationServerProvider, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.extension import Extension
@@ -15,6 +16,9 @@ from .routes import AuthRoutes
 from .upstream.oauth_flow import UpstreamOAuthFlow
 from .upstream.resolver import UpstreamAuthResolver
 
+
+# Where each server's MCP endpoint sits under its mount path, the SDK's streamable HTTP default.
+MCP_ENDPOINT_PATH = '/mcp'
 
 # Whose identity the upstream sees on every call.
 # ``gateway`` is one credential of the gateway's own, so every agent looks the same upstream.
@@ -39,6 +43,23 @@ class AuthTypeContext(typing.NamedTuple):
     store: TokenStore
     gateway_url: str
     mcp_scope_policy: McpScopePolicy
+
+    @property
+    def issuer_url(self) -> str:
+        """This server's URL, which is its issuer wherever the gateway issues its tokens.
+
+        Normalized as ``pydantic.AnyHttpUrl`` has it, the form every document publishes.
+        Every other URL of this server appends a path to it, and so stays normalized without parsing it again.
+        """
+        return str(pydantic.AnyHttpUrl(f'{self.gateway_url.rstrip("/")}{self.entry.mount_path}'))
+
+    @property
+    def mcp_resource_url(self) -> str:
+        """The canonical URI of this server's MCP endpoint, which every token for it must be issued for.
+
+        RFC 8707 has a client name it as ``resource``, and RFC 9728 has the server publish it.
+        """
+        return f'{self.issuer_url.rstrip("/")}{MCP_ENDPOINT_PATH}'
 
 
 @dataclasses.dataclass
@@ -170,6 +191,14 @@ class OAuthFlowContext:
     @property
     def mount_path(self) -> str:
         return self.auth_context.entry.mount_path
+
+    @property
+    def issuer_url(self) -> str:
+        return self.auth_context.issuer_url
+
+    @property
+    def mcp_resource_url(self) -> str:
+        return self.auth_context.mcp_resource_url
 
     def require_upstream_oauth_flow(self) -> UpstreamOAuthFlow:
         """The upstream OAuth flow, which every flow but ``token_exchange`` runs."""

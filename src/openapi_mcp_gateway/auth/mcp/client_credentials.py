@@ -80,14 +80,13 @@ class McpClientCredentialsGrant:
 class McpClientCredentialsRoutes(AuthRoutes):
     """The token endpoint of the gateway's ``client_credentials`` grant, under the server's own path.
 
-    ``resource`` is the endpoint's canonical URI, the one RFC 8707 ``resource`` parameter must name when sent.
+    A ``resource`` other than this endpoint is ``invalid_target``, as RFC 8707 §2 has it.
     ``/authorize`` answers ``unauthorized_client``, since the SDK's metadata model requires one,
     but no user signs in here.
     """
 
-    def __init__(self, grant: McpClientCredentialsGrant, resource: str) -> None:
+    def __init__(self, grant: McpClientCredentialsGrant) -> None:
         self._grant = grant
-        self._resource = resource
 
     def register(self, mcp: MCPServer) -> None:
         mcp.custom_route(TOKEN_PATH, methods=['POST'])(self.issue_token)
@@ -99,9 +98,10 @@ class McpClientCredentialsRoutes(AuthRoutes):
         try:
             if form.get('grant_type') != 'client_credentials':
                 raise McpClientCredentialsError('unsupported_grant_type', 'Only client_credentials is supported')
-            resource = form.get('resource')
-            if resource is not None and str(resource).rstrip('/') != self._resource:
-                raise McpClientCredentialsError('invalid_target', f'Tokens here are for {self._resource}')
+            # RFC 8707 lets ``resource`` repeat, and every one named must be this endpoint.
+            tokens = self._grant.tokens
+            if not all(tokens.serves_resource(str(resource)) for resource in form.getlist('resource')):
+                raise McpClientCredentialsError('invalid_target', f'Tokens here are for {tokens.resource}')
             client_id, client_secret = _read_client_credentials(request, form)
             client = await self._grant.authenticate(client_id, client_secret)
             scope = form.get('scope')

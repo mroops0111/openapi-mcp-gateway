@@ -9,7 +9,7 @@ from openapi_mcp_gateway.auth.mcp.token_issuer import (
     McpTokenIssuer,
     McpTokenPolicy,
 )
-from tests.constants import GATEWAY_ISSUER
+from tests.constants import GATEWAY_ISSUER, GATEWAY_RESOURCE
 
 
 # A client registered with the scopes its tokens may step up to.
@@ -18,7 +18,9 @@ CLIENT = OAuthClientInformationFull(client_id='agent', redirect_uris=None, scope
 
 @pytest.fixture
 def tokens(memory_store) -> McpTokenIssuer:
-    return McpTokenIssuer(memory_store, McpRecordOrigin(issuer=GATEWAY_ISSUER), McpTokenPolicy(scopes=[]))
+    return McpTokenIssuer(
+        memory_store, McpRecordOrigin(issuer=GATEWAY_ISSUER), McpTokenPolicy(scopes=[]), GATEWAY_RESOURCE
+    )
 
 
 class TestIssuing:
@@ -48,3 +50,23 @@ class TestIssuing:
 
         assert token.expires_in is not None
         assert token.expires_in <= 30
+
+
+class TestServesResource:
+    """A requested RFC 8707 resource matches this endpoint as a URL, not as a string."""
+
+    @pytest.mark.parametrize(
+        'requested',
+        [
+            None,
+            GATEWAY_RESOURCE,
+            f'{GATEWAY_RESOURCE}/',
+            GATEWAY_RESOURCE.replace('mcp.example.com', 'MCP.Example.com:443'),
+        ],
+    )
+    def test_this_endpoint_is_served(self, tokens, requested):
+        assert tokens.serves_resource(requested)
+
+    @pytest.mark.parametrize('requested', ['https://elsewhere.example.com/mcp', f'{GATEWAY_ISSUER}', 'not a url'])
+    def test_anything_else_is_not(self, tokens, requested):
+        assert not tokens.serves_resource(requested)

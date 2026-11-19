@@ -113,7 +113,17 @@ class McpAuthorizationCodeServer:
         """Record the sign-in and send the browser to the consent page, the first place the gateway sees the browser.
 
         The SDK hands this method no request, so whether the browser already approved the client is decided there.
+        A ``resource`` other than this endpoint is ``invalid_target``, as RFC 8707 §2 has it.
+        That redirect names this authorization server per RFC 9207, as every other one from here does.
         """
+        if not self.tokens.serves_resource(params.resource):
+            return construct_redirect_uri(
+                str(params.redirect_uri),
+                error='invalid_target',
+                error_description=f'Tokens here are for {self.tokens.resource}',
+                state=params.state,
+                iss=self.issuer,
+            )
         pending = PendingAuthorization(
             request_id=secrets.token_urlsafe(32),
             client_id=require_client_id(client),
@@ -127,7 +137,7 @@ class McpAuthorizationCodeServer:
             origin=self.tokens.origin,
         )
         await self._store_pending(pending)
-        return f'{self.issuer}{CONSENT_PATH}?{urllib.parse.urlencode({"request": pending.request_id})}'
+        return f'{self.issuer.rstrip("/")}{CONSENT_PATH}?{urllib.parse.urlencode({"request": pending.request_id})}'
 
     async def claim_authorization(self, request_id: str, browser_id: str) -> PendingAuthorization | None:
         """The sign-in waiting under ``request_id``, bound to ``browser_id`` by the first browser to open it.
@@ -261,7 +271,11 @@ class McpAuthorizationCodeServer:
         if not data:
             return None
         return RefreshToken(
-            token=data['token'], client_id=data['client_id'], scopes=data['scopes'], expires_at=data.get('expires_at')
+            token=data['token'],
+            client_id=data['client_id'],
+            scopes=data['scopes'],
+            expires_at=data.get('expires_at'),
+            resource=data.get('resource'),
         )
 
     async def exchange_refresh_token(

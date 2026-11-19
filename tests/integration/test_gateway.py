@@ -48,6 +48,7 @@ from tests.constants import (
     PETSTORE_URL,
     TOKEN_URL,
 )
+from tests.oauth import shared_credential_server
 from tests.serving import serve
 
 
@@ -230,6 +231,31 @@ class TestWellKnownOAuth:
         """``OPTIONS`` on the metadata endpoint returns 200 for CORS preflight."""
         response = oauth_client.options('/.well-known/oauth-authorization-server/petstore')
         assert response.status_code == 200
+
+
+class TestWellKnownUnderPathPrefix:
+    """Discovery details an MCP SDK client cannot show, which ``test_mcp_client_sign_in`` covers end to end."""
+
+    def test_the_published_urls_are_normalized(self, petstore_json_path):
+        """An upper-case host and a default port in ``url`` are published as a client would echo them."""
+        http = TestClient(_shared_credential_gateway(petstore_json_path, 'https://MCP.Example.com:443', 'pets'))
+
+        resource = http.get('/.well-known/oauth-protected-resource/pets/mcp').json()
+        assert resource['resource'] == f'{GATEWAY_URL}/pets/mcp'
+        assert resource['authorization_servers'] == [f'{GATEWAY_URL}/pets']
+        token = http.post(
+            '/pets/token',
+            data={'grant_type': 'client_credentials', 'resource': f'{GATEWAY_URL}/pets/mcp'},
+            auth=('agent', 'agent-secret'),
+        )
+        assert token.status_code == 200, token.text
+
+    def test_the_server_name_still_finds_the_documents(self, petstore_json_path):
+        """The URLs served before discovery followed the mount path keep working."""
+        http = TestClient(_shared_credential_gateway(petstore_json_path, GATEWAY_URL, 'pets'))
+
+        assert http.get('/.well-known/oauth-authorization-server/petstore').status_code == 200
+        assert http.get('/.well-known/oauth-protected-resource/petstore/mcp').status_code == 200
 
 
 class TestMountEmbedding:
@@ -925,3 +951,10 @@ async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) ->
         )
         async with Client(target) as mcp_client:
             yield mcp_client
+
+
+def _shared_credential_gateway(spec_path: pathlib.Path, gateway_url: str, path_prefix: str) -> FastAPI:
+    """The app of a gateway at ``gateway_url`` issuing MCP tokens for one bearer-token server under ``path_prefix``."""
+    server = shared_credential_server(spec_path, 'petstore', path_prefix)
+    gateway = Gateway.from_config(GatewayConfig.model_validate({'url': gateway_url, 'servers': [server]}))
+    return gateway._build_app(transport='streamable-http')

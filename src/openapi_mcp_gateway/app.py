@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import typing
+import urllib.parse
 
 from fastapi import FastAPI
 from mcp.server import MCPServer
@@ -22,6 +23,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from .auth.assembly import MCP_ENDPOINT_PATH
 from .openapi import ExposedTool, OpenAPISpec
 from .scopes import RequestTarget, ScopeChallengeMiddleware, ScopeRegistry
 from .settings import DNSRebindingProtectionConfig, GatewayConfig
@@ -139,7 +141,10 @@ def build_mcp_asgi_app(
     # so the empty string standing in for its missing bind is never read.
     if transport == 'sse':
         return mcp.sse_app(transport_security=transport_security, host=host or '')
-    return mcp.streamable_http_app(transport_security=transport_security, host=host or '')
+    # Named rather than left to the SDK default, since every token is bound to this path.
+    return mcp.streamable_http_app(
+        streamable_http_path=MCP_ENDPOINT_PATH, transport_security=transport_security, host=host or ''
+    )
 
 
 def mount_mcp_apps(
@@ -270,46 +275,20 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
                 name=route.name,
             )
 
-    # RFC 8414 / 9728 ``.well-known`` discovery endpoints, resolved per server name at request time.
-    server_lookup: dict[str, _ServerBundle] = {bundle.name: bundle for bundle in servers}
-
-    @app.get('/.well-known/oauth-authorization-server/{server_name}')
-    @app.options('/.well-known/oauth-authorization-server/{server_name}')
-    @app.get('/.well-known/oauth-authorization-server/{server_name}/mcp')
-    @app.options('/.well-known/oauth-authorization-server/{server_name}/mcp')
-    async def oauth_authorization_server_discovery(request: Request, server_name: str):
-        bundle = server_lookup.get(server_name)
-        if not bundle or not bundle.auth_settings:
-            return JSONResponse(
-                status_code=404,
-                content={'error': f'Server not found: {server_name}'},
-            )
-        if bundle.authorization_server_metadata is None:
-            # This server delegates to an external issuer, so the gateway has no metadata to publish.
-            # The protected-resource document names that issuer, and the client discovers it there.
-            return JSONResponse(
-                status_code=404,
-                content={
-                    'error': f'Server "{server_name}" is not an authorization server. '
-                    'Read its protected resource metadata for the issuer that is.'
-                },
-            )
-        handler = MetadataHandler(bundle.authorization_server_metadata)
-        return await handler.handle(request)
-
-    @app.get('/.well-known/oauth-protected-resource/{server_name}')
-    @app.options('/.well-known/oauth-protected-resource/{server_name}')
-    @app.get('/.well-known/oauth-protected-resource/{server_name}/mcp')
-    @app.options('/.well-known/oauth-protected-resource/{server_name}/mcp')
-    async def oauth_protected_resource_discovery(request: Request, server_name: str):
-        bundle = server_lookup.get(server_name)
-        if not bundle or not bundle.auth_settings:
-            return JSONResponse(
-                status_code=404,
-                content={'error': f'Server not found: {server_name}'},
-            )
-        handler = ProtectedResourceMetadataHandler(_protected_resource(bundle))
-        return await handler.handle(request)
+    # RFC 8414 / 9728 ``.well-known`` discovery endpoints, one route for each path a server may be asked for at.
+    # Explicit paths rather than a catch-all, so an app embedding the gateway keeps its own discovery documents.
+    for path, bundle in _index_servers_by_path(servers).items():
+        suffix = f'/{path}' if path else ''
+        app.router.add_route(
+            path=f'/.well-known/oauth-authorization-server{suffix}',
+            endpoint=_build_authorization_server_discovery(bundle),
+            methods=['GET', 'OPTIONS'],
+        )
+        app.router.add_route(
+            path=f'/.well-known/oauth-protected-resource{suffix}',
+            endpoint=_build_protected_resource_endpoint(_protected_resource(bundle)),
+            methods=['GET', 'OPTIONS'],
+        )
 
 
 def _transport_security(protection: DNSRebindingProtectionConfig, host: str | None) -> TransportSecuritySettings | None:
@@ -374,6 +353,64 @@ def _build_metadata_endpoint(metadata: OAuthMetadata) -> typing.Callable[..., ty
     return cors_middleware(MetadataHandler(metadata).handle, ['GET', 'OPTIONS'])
 
 
+def _build_protected_resource_endpoint(document: ProtectedResourceMetadata) -> typing.Callable[..., typing.Any]:
+    """The route serving ``document`` as an RFC 9728 document, open to cross-origin reads."""
+    return cors_middleware(ProtectedResourceMetadataHandler(document).handle, ['GET', 'OPTIONS'])
+
+
+def _build_authorization_server_discovery(bundle: _ServerBundle) -> typing.Callable[..., typing.Any]:
+    """The route serving ``bundle``'s RFC 8414 document, or explaining why a delegating server has none."""
+    if bundle.authorization_server_metadata is not None:
+        return _build_metadata_endpoint(bundle.authorization_server_metadata)
+
+    async def explain_external_issuer(_request: Request) -> JSONResponse:
+        # This server delegates to an external issuer, so the gateway has no metadata to publish.
+        # The protected-resource document names that issuer, and the client discovers it there.
+        return JSONResponse(
+            status_code=404,
+            content={
+                'error': f'Server "{bundle.name}" is not an authorization server. '
+                'Read its protected resource metadata for the issuer that is.'
+            },
+        )
+
+    return explain_external_issuer
+
+
+def _index_servers_by_path(servers: list[_ServerBundle]) -> dict[str, _ServerBundle]:
+    """Each server under every path its well-known documents may be asked for at, without surrounding slashes.
+
+    RFC 8414 and RFC 9728 insert the well-known prefix before the path of the issuer or resource URL,
+    which carries any path in the gateway's ``url``.
+    Some clients insert it into the MCP endpoint URL rather than the issuer, so each path is also indexed with it.
+    The bare mount path and the server's name follow, for a proxy that strips the gateway's path,
+    and for the URLs served before discovery followed the mount path.
+    Every server's issuer and resource paths are indexed before any fallback,
+    so a fallback never takes another server's real path.
+    Otherwise an earlier server wins where two would share one.
+    """
+    discoverable = [
+        bundle
+        for bundle in servers
+        if bundle.auth_settings is not None and bundle.auth_settings.resource_server_url is not None
+    ]
+    published = [(bundle, (_find_issuer_path(bundle),)) for bundle in discoverable]
+    fallbacks = [(bundle, (bundle.mount_path, f'/{bundle.name}')) for bundle in discoverable]
+    index: dict[str, _ServerBundle] = {}
+    for bundle, paths in [*published, *fallbacks]:
+        for path in paths:
+            for candidate in (path, f'{path.rstrip("/")}{MCP_ENDPOINT_PATH}'):
+                index.setdefault(candidate.strip('/'), bundle)
+    return index
+
+
+def _find_issuer_path(bundle: _ServerBundle) -> str:
+    """The path of ``bundle``'s issuer URL, which its resource URL extends with the MCP endpoint path."""
+    assert bundle.auth_settings is not None and bundle.auth_settings.resource_server_url is not None  # noqa: S101
+    resource_path = urllib.parse.urlparse(str(bundle.auth_settings.resource_server_url)).path
+    return resource_path.removesuffix(MCP_ENDPOINT_PATH)
+
+
 def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:
     """Return the RFC 9728 document this server publishes.
 
@@ -387,11 +424,12 @@ def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:
         return bundle.protected_resource
 
     assert bundle.auth_settings is not None  # noqa: S101
-    issuer = str(bundle.auth_settings.issuer_url).rstrip('/')
+    # Exactly the metadata's ``issuer``, which a client compares with this as a plain string (RFC 8414 §3.3).
+    issuer = str(bundle.auth_settings.issuer_url)
     registration = bundle.auth_settings.client_registration_options
     return ProtectedResourceMetadata.model_validate(
         {
-            'resource': f'{issuer}/mcp',
+            'resource': str(bundle.auth_settings.resource_server_url),
             'authorization_servers': [issuer],
             'scopes_supported': registration.valid_scopes if registration else None,
         }

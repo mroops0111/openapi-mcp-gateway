@@ -51,6 +51,30 @@ class TestAuthorizationCodeFlowHandler:
         assert server_of(setup.provider).issuer == str(setup.settings.issuer_url) == 'http://localhost:8000/srv'
         assert setup.mcp_summary == 'gateway (authorization_code)'
 
+    def test_a_root_mount_joins_the_callback_url_with_one_slash(self):
+        entry = server_entry(
+            AuthConfig(
+                upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec', scopes=['api'])
+            ),
+        ).model_copy(update={'path_prefix': '/'})
+        spec = spec_with_authorization_code()
+
+        setup = AuthorizationCodeFlowHandler().build(
+            OAuthFlowContext(
+                AuthTypeContext(
+                    entry=entry,
+                    spec=spec,
+                    store=MemoryTokenStore(),
+                    gateway_url='http://localhost:8000',
+                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                ),
+                upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
+            )
+        )
+
+        assert setup.provider is not None
+        assert bridge_of(setup.provider).upstream.callback_url == 'http://localhost:8000/auth/callback'
+
 
 class TestUpstreamAudienceWiring:
     """Config-level ``resource`` / ``audience`` reach the component that talks to the upstream."""

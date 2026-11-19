@@ -107,8 +107,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
 
         # RFC 8707 §2: the canonical URI of this MCP server.
         # A client asks the issuer for this, so it is what the issuer stamps into the token's audience.
-        gateway_url = flow_context.gateway_url.rstrip('/')
-        canonical_uri = f'{gateway_url}{flow_context.mount_path}/mcp'
+        canonical_uri = flow_context.mcp_resource_url
 
         # The two scope lists point in opposite directions and must not be conflated.
         # Demanding the upstream scopes of the caller would lock out every client that did not match,
@@ -132,7 +131,8 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
 
         settings = AuthSettings(
             issuer_url=pydantic.AnyHttpUrl(metadata.issuer),
-            resource_server_url=pydantic.AnyHttpUrl(f'{gateway_url}{flow_context.mount_path}'),
+            resource_server_url=pydantic.AnyHttpUrl(canonical_uri),
+            validate_token_resource=True,
             required_scopes=mcp_endpoint_scopes or None,
         )
 
