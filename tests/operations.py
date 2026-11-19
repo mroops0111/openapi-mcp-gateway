@@ -12,6 +12,7 @@ from openapi_mcp_gateway.openapi import (
     OperationInfo,
     ParameterInfo,
     ParamOverride,
+    ResourceOverride,
     ToolOverride,
 )
 from tests.constants import API_URL
@@ -70,6 +71,11 @@ def register_tool(operation: OperationInfo):
     mcp = MCPServer('test')
     ToolGenerator(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([operation])
     return next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'do_thing')
+
+
+def expose_resource(**kwargs) -> McpIntegration:
+    """Build an ``x-mcp-integration`` payload that opts an operation into resource exposure only."""
+    return McpIntegration(resource=ResourceOverride(**kwargs))
 
 
 # The petstore fixture's operations as scopes see them, tagged and untagged alike.
