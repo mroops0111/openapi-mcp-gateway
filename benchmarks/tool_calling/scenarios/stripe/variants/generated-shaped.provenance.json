@@ -1,0 +1,18 @@
+[
+  {
+    "model": "anthropic:claude-sonnet-5-5",
+    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
+    "finished_at": "2026-11-17T10:15:00+00:00",
+    "pydantic_ai_version": "2.69.0",
+    "input_tokens": 97440,
+    "output_tokens": 5041,
+    "model_requests": 8,
+    "scenario": "stripe",
+    "variant": "generated-shaped",
+    "skill": "generate-config",
+    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "request": "Handle a shop's billing: customers, their subscriptions and invoices, and refunds. Also shape the operations, so that each tool is easy for a model to call correctly.",
+    "gateway_version": "0.8.0",
+    "summary": "`config.yaml` now passes `--dry-run`, with 20 tools. The `base_url` is still the `https://upstream.invalid` placeholder, as you asked me to keep it. Before you run it, change it to `https://api.stripe.com`, which is the server the spec names. Also set `STRIPE_SECRET_KEY` to a Stripe secret or restricted key. It's sent as a bearer token.\n\n- **Customers:** list, get, create and update. I left out delete.\n- **Subscriptions:** list, get, create, update and cancel.\n- **Invoices:** list, get, create, finalize, send, pay and void.\n- **Refunds:** list, get, create and cancel.\n\nI picked these from the 8 MB spec with `policy.allow` so the model isn't offered hundreds of unrelated Stripe operations.\n\nI shaped the operations in two ways:\n- **List responses:** the four list tools (customers, subscriptions, invoices, refunds) now return only the key fields plus `has_more`, instead of full Stripe objects.\n- **Refund creation:** it takes only `charge` or `payment_intent`, an optional `amount` (in the smallest currency unit) and an optional `reason`. I hid the marketplace and advanced options so the model can't set them by mistake.\n\nI also added server instructions telling the model to look up the customer first and to confirm before any refund, payment, void or cancellation. The `--dry-run` only checks that the config loads and the shaping compiles. I haven't tested any call against Stripe."
+  }
+]

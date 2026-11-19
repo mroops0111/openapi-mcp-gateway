@@ -1,0 +1,45 @@
+# The search ranking benchmark. See README.md for what it holds and ../README.md for how to run it.
+# Each spec is pinned to one revision and checked by SHA-256.
+# A change to a pin, a query, or a judgement makes a new version.
+version: 1
+
+specs:
+  github:
+    source: https://raw.githubusercontent.com/github/rest-api-description/2a33d9cc5d1dc6ca603b908e0796454af88c1999/descriptions/api.github.com/api.github.com.json
+    sha256: f7a3de68869181d34b232d88840d31f8157ade45cad1746eaab90cd3c801b31c
+  stripe:
+    source: https://raw.githubusercontent.com/stripe/openapi/a045100cf4af0acb548cb9c6f236bb117f83458f/openapi/spec3.json
+    sha256: 7cff4cc46d0654101a36a3302f7544640f5f73e4f3cad6f264f0e23c19fa1776
+  asana:
+    source: https://raw.githubusercontent.com/Asana/openapi/65bd6e77a6692a62c03fefa6a340dd401795e5bc/defs/asana_oas.yaml
+    sha256: bb9128f33708de453e1443c3631df21428b21a458c12b9587597566e9761620a
+  discord:
+    source: https://raw.githubusercontent.com/discord/discord-api-spec/3a21a01249a763cd47f1dfec3da91c5ba71bb974/specs/openapi.json
+    sha256: ef338088f4c6a73fdb9840acd1ce2bf8f16c1870f4437bfc563418c7e0de7278
+
+# The variants compared. Each one's type picks its kind.
+# A gateway variant's server is the part of a server config that differs, applied to every spec.
+variants:
+  default:
+    type: gateway
+    server:
+      exposure:
+        style: dynamic
+  equal-weights:
+    type: gateway
+    server:
+      exposure:
+        style: dynamic
+        search:
+          field_weights: {name: 1, summary: 1, description: 1, path: 1, tags: 1}
+  pydantic-ai-keywords:
+    type: pydantic-ai-keywords
+  random:
+    type: random
+
+# CI fails when a gated metric of this variant falls more than `tolerance` below gate_scores.json.
+gate:
+  variant: default
+  split: test
+  metrics: [ndcg@10, recall@20]
+  tolerance: 0.01

@@ -1,0 +1,3 @@
+# One tool per operation, as the baseline, with each tool deferred until Pydantic AI's own tool search finds it.
+# The third-party way to keep a large tool list out of the context, which the gateway's dynamic exposure competes with.
+tool_search: true

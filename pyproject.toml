@@ -66,7 +66,7 @@ packages = ["src/openapi_mcp_gateway"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-src = ["src"]
+src = ["src", "benchmarks/src"]
 
 [tool.ruff.lint]
 select = [
@@ -111,14 +111,19 @@ line-ending = "auto"
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S105", "S106", "S603", "S607"]
 "__init__.py" = ["F401"]
+"benchmarks/tests/**/*.py" = ["S101", "S105", "S106", "S603", "S607"]
 # Benchmarks draw seeded samples so a run can be repeated, which is what the standard generator is for.
-"src/openapi_mcp_gateway/benchmarks/**/*.py" = ["S311"]
+"benchmarks/src/**/*.py" = ["S311"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["openapi_mcp_gateway"]
+known-first-party = ["openapi_mcp_gateway", "openapi_mcp_gateway_benchmarks"]
 force-single-line = false
 lines-after-imports = 2
 split-on-trailing-comma = true
+
+# The benchmarks live in their own package, so the gateway's wheel and dependencies carry none of them.
+[tool.uv.workspace]
+members = ["benchmarks"]
 
 [tool.subedit]
 line-width = 120
