@@ -3,7 +3,7 @@ from openapi_mcp_gateway.scopes import (
     McpConfiguredScopePolicy,
 )
 from openapi_mcp_gateway.settings import OperationScopesConfig
-from tests.operations import PETSTORE_OPERATIONS, operation
+from tests.operation import PETSTORE_OPERATIONS, operation
 
 
 # The security schemes of a spec that takes an OAuth token, an OpenID Connect token, or HTTP basic.

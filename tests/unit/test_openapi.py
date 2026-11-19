@@ -13,7 +13,7 @@ from openapi_mcp_gateway.openapi import (
     parse_spec,
 )
 from tests.constants import API_URL, PETSTORE_URL
-from tests.specs import component_ref, defs_ref, operation_spec
+from tests.spec import component_ref, defs_ref, operation_spec
 
 
 class TestResolveRef:

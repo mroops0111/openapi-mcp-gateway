@@ -10,7 +10,7 @@ from openapi_mcp_gateway.auth.upstream.resolver import (
 )
 from openapi_mcp_gateway.settings import AuthConfig, McpAuthConfig, UpstreamAuthConfig
 from tests.constants import AUTHORIZE_URL, TOKEN_URL
-from tests.flows import (
+from tests.flow import (
     auth_context,
     build_spec,
     server_entry,

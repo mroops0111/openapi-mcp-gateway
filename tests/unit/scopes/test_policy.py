@@ -11,8 +11,8 @@ from openapi_mcp_gateway.scopes import (
     build_mcp_scope_policy,
     build_upstream_scope_policy,
 )
-from tests.operations import PETSTORE_OPERATIONS, operation
-from tests.scopes import (
+from tests.operation import PETSTORE_OPERATIONS, operation
+from tests.scope import (
     DELETE_PET,
     DELETE_PET_UPSTREAM_REFUSAL,
     SCHEMES,

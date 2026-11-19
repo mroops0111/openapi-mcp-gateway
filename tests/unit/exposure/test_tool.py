@@ -18,7 +18,7 @@ from openapi_mcp_gateway.openapi import (
 )
 from tests.constants import API_URL
 from tests.context import stub_context
-from tests.operations import shaped_operation
+from tests.operation import shaped_operation
 
 
 class TestToolGeneration:

@@ -17,7 +17,7 @@ from openapi_mcp_gateway.openapi import (
 )
 from tests.constants import API_URL
 from tests.context import stub_context
-from tests.operations import expose_resource
+from tests.operation import expose_resource
 
 
 class TestResourceUriDerivation:

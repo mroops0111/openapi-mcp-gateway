@@ -24,7 +24,7 @@ from openapi_mcp_gateway.openapi import (
 )
 from tests.constants import API_URL
 from tests.context import stub_context
-from tests.operations import register_tool, shaped_operation
+from tests.operation import register_tool, shaped_operation
 
 
 class TestStructuredContent:

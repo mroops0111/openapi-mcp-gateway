@@ -24,7 +24,7 @@ from openapi_mcp_gateway.settings import (
 )
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.constants import API_URL, GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
-from tests.flows import (
+from tests.flow import (
     auth_context,
     build_spec,
     server_entry,

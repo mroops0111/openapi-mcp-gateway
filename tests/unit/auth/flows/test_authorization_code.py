@@ -23,7 +23,7 @@ from tests.constants import (
     ISSUER,
     TOKEN_URL,
 )
-from tests.flows import (
+from tests.flow import (
     server_entry,
     spec_with_authorization_code,
 )

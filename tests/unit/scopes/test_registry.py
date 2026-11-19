@@ -6,7 +6,7 @@ from openapi_mcp_gateway.scopes import (
     TokenGrant,
     UpstreamSpecSecurityScopePolicy,
 )
-from tests.scopes import (
+from tests.scope import (
     DELETE_PET,
     DELETE_PET_UPSTREAM_REFUSAL,
     SCHEMES,

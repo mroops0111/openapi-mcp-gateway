@@ -31,8 +31,8 @@ from openapi_mcp_gateway.exposure._shared import (
 from openapi_mcp_gateway.exposure.tool import _build_tool_signature
 from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ParamOverride, ToolOverride, parse_spec
 from tests.constants import API_URL
-from tests.operations import expose_resource
-from tests.specs import component_ref, defs_ref, operation_spec
+from tests.operation import expose_resource
+from tests.spec import component_ref, defs_ref, operation_spec
 
 
 # The ``$defs`` key grammar Anthropic's API accepts in a tool input schema,

@@ -12,7 +12,7 @@ from openapi_mcp_gateway.openapi import (
     ToolOverride,
 )
 from tests.context import stub_context
-from tests.operations import register_tool, shaped_operation
+from tests.operation import register_tool, shaped_operation
 
 
 class TestShapeOperation:

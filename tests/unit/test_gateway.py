@@ -20,7 +20,7 @@ from openapi_mcp_gateway.openapi import (
 )
 from openapi_mcp_gateway.settings import OperationOverride
 from tests.constants import API_URL
-from tests.operations import expose_resource
+from tests.operation import expose_resource
 
 
 # The securitySchemes of a spec that takes one OAuth token.

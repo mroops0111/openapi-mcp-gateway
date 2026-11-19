@@ -12,7 +12,7 @@ from openapi_mcp_gateway.auth.mcp.client_credentials import (
     McpGatewayTokenVerifier,
 )
 from openapi_mcp_gateway.settings import AuthConfig
-from tests.flows import auth_context, build_spec, server_entry, spec_with_client_credentials
+from tests.flow import auth_context, build_spec, server_entry, spec_with_client_credentials
 
 
 # One agent declared with a secret, as a shared-credential server needs.

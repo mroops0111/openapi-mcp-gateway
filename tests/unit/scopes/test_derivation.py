@@ -5,7 +5,7 @@ import pytest
 from openapi_mcp_gateway.scopes import (
     TagMethodDerivation,
 )
-from tests.operations import operation
+from tests.operation import operation
 
 
 class TestTagMethodDerivation:

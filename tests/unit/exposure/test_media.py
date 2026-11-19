@@ -18,7 +18,7 @@ from openapi_mcp_gateway.openapi import (
 )
 from tests.constants import API_URL
 from tests.context import stub_context
-from tests.specs import operation_spec
+from tests.spec import operation_spec
 
 
 class TestMediaFields:
