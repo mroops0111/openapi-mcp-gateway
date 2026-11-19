@@ -32,6 +32,9 @@ OPERATION_PARAM_HEADER = 'Operation'
 # A server's exposure.search.field_weights overrides them field by field.
 DEFAULT_FIELD_WEIGHTS = {'name': 2.0, 'summary': 3.0, 'description': 0.5, 'path': 0.5, 'tags': 0.5}
 
+# How strongly reciprocal rank fusion favours the top of each query's ranking, at the value most fusions use.
+_FUSION_RANK_OFFSET = 60
+
 # How many operations one search page carries.
 _PAGE_SIZE = 20
 
@@ -42,7 +45,10 @@ _BRIEF_DESCRIPTION_LIMIT = 200
 # What each meta-tool tells the model about itself.
 _SEARCH_OPERATIONS_DESCRIPTION = (
     'Search the operations available on this server. '
-    "Search with the words of the user's request first, such as `merge a pull request`. "
+    "Search with words the API's own documentation would use, such as `merge pull request`, "
+    'rather than the way the user put it. '
+    'Matching is by shared words, so pass several phrasings in `query` to try synonyms in one call, '
+    'such as `["close issue", "update issue state"]`, and their matches are merged. '
     'Returns `{operations: [{name, description}, ...]}`, best match first, '
     'with `nextCursor` when more matches exist; pass it back as `cursor` for the next page. '
     '`tags` limits the result to operations carrying any of those tags, and an omitted argument filters nothing. '
@@ -147,7 +153,10 @@ class MetaToolGenerator:
         async def search_operations(
             ctx: Context,
             query: typing.Annotated[
-                str | None, pydantic.Field(description="Free text describing what to do, in the user's words.")
+                str | list[str] | None,
+                pydantic.Field(
+                    description="What to do, in the API's own words, or a list of phrasings whose matches are merged."
+                ),
             ] = None,
             tags: typing.Annotated[
                 list[str] | None, pydantic.Field(description='Only operations carrying any of these tags.')
@@ -245,7 +254,7 @@ class _OperationRegistry:
 
     def search(
         self,
-        query: str | None,
+        query: str | list[str] | None,
         tags: list[str] | None,
         cursor: str | None,
         visible: typing.Callable[[str], bool],
@@ -253,13 +262,15 @@ class _OperationRegistry:
         """Return one page of the ``visible`` operations matching ``query`` and carrying any of ``tags``.
 
         An omitted or blank ``query``, and omitted or empty ``tags``, filter nothing.
+        A list of queries ranks each one, and merges the rankings, see ``_fuse``.
         Listing everything, the first page also carries the tag counts,
         so the model can narrow down rather than page through all of them.
         Raises ``ValueError`` for a cursor that is malformed or past the end.
         """
-        query = (query or '').strip()
+        queries = [text.strip() for text in ([query] if isinstance(query, str) else query or [])]
+        queries = [text for text in dict.fromkeys(queries) if text]
         tags = tags or []
-        names = [name for name in self._matching(query, tags) if visible(name)]
+        names = [name for name in self._matching(queries, tags) if visible(name)]
         offset = _decode_cursor(cursor, len(names)) if cursor else 0
         page = names[offset : offset + _PAGE_SIZE]
         payload: dict[str, typing.Any] = {
@@ -267,7 +278,7 @@ class _OperationRegistry:
         }
         if offset + _PAGE_SIZE < len(names):
             payload['nextCursor'] = _encode_cursor(offset + _PAGE_SIZE)
-        if not query and not tags and offset == 0:
+        if not queries and not tags and offset == 0:
             tag_counts = self._tag_counts(set(names))
             if tag_counts:
                 payload['tags'] = tag_counts
@@ -282,13 +293,29 @@ class _OperationRegistry:
             if counts[key]
         ]
 
-    def _matching(self, query: str, tags: list[str]) -> list[str]:
+    def _matching(self, queries: list[str], tags: list[str]) -> list[str]:
         candidates = {name for tag in tags for name in self._names_by_tag.get(tag.casefold(), {})} if tags else None
-        if query:
-            return self._index.search(query, candidates)
+        if queries:
+            return _fuse([self._index.search(query, candidates) for query in queries])
         if candidates is None:
             return list(self._operations)
         return [name for name in self._operations if name in candidates]
+
+
+def _fuse(rankings: list[list[str]]) -> list[str]:
+    """Merge ``rankings`` by reciprocal rank fusion, best first.
+
+    Each name scores the sum of ``1 / (offset + rank)`` over the rankings it appears in,
+    so a name near the top of one ranking, or found by several, rises without comparing scores across queries.
+    One ranking comes back as it was, and ties keep the order of first appearance.
+    """
+    if len(rankings) == 1:
+        return rankings[0]
+    scores: dict[str, float] = {}
+    for ranking in rankings:
+        for rank, name in enumerate(ranking, start=1):
+            scores[name] = scores.get(name, 0.0) + 1 / (_FUSION_RANK_OFFSET + rank)
+    return sorted(scores, key=lambda name: -scores[name])
 
 
 def _encode_cursor(offset: int) -> str:

@@ -758,6 +758,37 @@ class TestSearchOperations:
         assert len(descriptions['pulls_merge_long']) == 200
         assert descriptions['pulls_merge_long'].endswith('…')
 
+    async def test_several_queries_merge_their_matches(self):
+        """Each phrasing finds its own match, and an operation both find ranks first."""
+        generator, mcp = _meta_generator()
+        generator.register(_tagged_ops())
+        payload = await _search(mcp, query=['adopt', 'orders'])
+        assert [entry['name'] for entry in payload['operations']] == ['adopt_pet', 'list_orders']
+        payload = await _search(mcp, query=['list pets', 'pets'])
+        assert payload['operations'][0]['name'] == 'list_pets'
+
+    async def test_one_query_in_a_list_ranks_as_a_string(self):
+        """A list holding one query, repeated or padded with blanks, ranks exactly as that query alone."""
+        generator, mcp = _meta_generator()
+        generator.register(_tagged_ops())
+        assert await _search(mcp, query=['adopt a pet', ' ', 'adopt a pet']) == await _search(mcp, query='adopt a pet')
+
+    async def test_blank_queries_filter_nothing(self):
+        """A list of only blank queries is treated as omitted and lists everything."""
+        generator, mcp = _meta_generator()
+        generator.register(_tagged_ops())
+        assert await _search(mcp, query=['', '  ']) == await _search(mcp)
+        assert await _search(mcp, query=[]) == await _search(mcp)
+
+    async def test_query_schema_takes_a_string_or_a_list(self):
+        """The advertised schema lets a model pass one query or several."""
+        generator, mcp = _meta_generator()
+        generator.register(_tagged_ops())
+        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'search_operations')
+        branches = tool.parameters['properties']['query']['anyOf']
+        assert {'type': 'string'} in branches
+        assert {'type': 'array', 'items': {'type': 'string'}} in branches
+
 
 class TestGetOperation:
     """``get_operation`` returns the input schema for one operation, and unknown names raise."""
