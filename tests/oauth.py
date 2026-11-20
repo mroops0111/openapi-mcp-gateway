@@ -1,9 +1,9 @@
 import pathlib
+import re
 import typing
 import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from mcp.client.auth import TokenStorage
 from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
@@ -76,8 +76,9 @@ def authorization_code_gateway(
     operation_scopes: dict[str, typing.Any] | None = None,
     upstream: dict[str, typing.Any] | None = None,
     exposure: dict[str, typing.Any] | None = None,
+    url: str = GATEWAY_URL,
 ) -> Gateway:
-    """A gateway serving ``spec`` as ``petstore`` behind an ``authorization_code`` server declaring ``clients``.
+    """A gateway at ``url`` serving ``spec`` as ``petstore`` behind an ``authorization_code`` server for ``clients``.
 
     ``upstream`` is merged into ``auth.upstream``, which otherwise requests ``read``.
     """
@@ -95,7 +96,7 @@ def authorization_code_gateway(
         },
     }
     server = {'name': 'petstore', 'spec': str(spec), 'auth': auth, 'exposure': exposure or {}}
-    return Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
+    return Gateway.from_config(GatewayConfig.model_validate({'url': url, 'servers': [server]}))
 
 
 def shared_credential_server(spec_path: pathlib.Path, name: str, path_prefix: str) -> dict[str, typing.Any]:
@@ -191,6 +192,13 @@ async def deliver_callback(provider: McpAuthorizationCodeServer, upstream_url: s
     return await bridge_of(provider).handle_upstream_callback('upstream-code', state_in(upstream_url), BROWSER_ID, iss)
 
 
+def csrf_token_in(consent_page: str) -> str:
+    """The CSRF token the consent page's form carries."""
+    sent = re.search(r'name="csrf_token" value="([^"]+)"', consent_page)
+    assert sent is not None
+    return sent.group(1)
+
+
 def query_value(url: str, name: str) -> str:
     """The one value of query parameter ``name`` in ``url``."""
     return urllib.parse.parse_qs(urllib.parse.urlparse(url).query)[name][0]
@@ -235,23 +243,3 @@ async def sign_in(
     auth_code = await provider.load_authorization_code(client, code_in(redirect))
     assert auth_code is not None
     return await provider.exchange_authorization_code(client, auth_code)
-
-
-class MemoryTokenStorage(TokenStorage):
-    """Where the SDK client keeps the token it obtained, read back by the test."""
-
-    def __init__(self) -> None:
-        self.tokens: OAuthToken | None = None
-        self.client_info: OAuthClientInformationFull | None = None
-
-    async def get_tokens(self) -> OAuthToken | None:
-        return self.tokens
-
-    async def set_tokens(self, tokens: OAuthToken) -> None:
-        self.tokens = tokens
-
-    async def get_client_info(self) -> OAuthClientInformationFull | None:
-        return self.client_info
-
-    async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
-        self.client_info = client_info

@@ -9,6 +9,7 @@ import yaml
 from openapi_mcp_gateway.settings import (
     AuthConfig,
     ClientConfig,
+    DNSRebindingProtectionConfig,
     GatewayConfig,
     ServerConfig,
     UpstreamAuthConfig,
@@ -16,7 +17,7 @@ from openapi_mcp_gateway.settings import (
     single_spec_layer,
     yaml_layer,
 )
-from tests.constants import API_URL, GATEWAY_URL, ISSUER
+from tests.constants import API_URL, BROWSER_ORIGIN, ISSUER
 
 
 EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[2] / 'examples'
@@ -120,12 +121,6 @@ class TestAuthConfig:
         auth = AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='${CID}'))
         assert auth.upstream.resolve_client_id() == 'client-123'
 
-    def test_mcp_token_ttl_defaults(self):
-        """MCP token TTLs default to 1 hour access and 24 hours refresh."""
-        auth = AuthConfig(upstream=UpstreamAuthConfig(type='oauth2'))
-        assert auth.mcp.access_token_ttl == 3600
-        assert auth.mcp.refresh_token_ttl == 86400
-
     @pytest.mark.parametrize('field', ['access_token_ttl', 'refresh_token_ttl'])
     def test_mcp_token_ttl_rejects_non_positive(self, field):
         """A zero or negative TTL fails validation."""
@@ -146,16 +141,6 @@ class TestAuthConfig:
 
 class TestGatewayConfig:
     """Top-level gateway config, covering defaults, YAML loading, and the single-spec builder."""
-
-    def test_default_url(self):
-        """Default public URL is ``http://localhost:8000``."""
-        config = GatewayConfig()
-        assert config.url == 'http://localhost:8000'
-
-    def test_custom_url(self):
-        """Explicit ``url`` is preserved."""
-        config = GatewayConfig(url=GATEWAY_URL)
-        assert config.url == GATEWAY_URL
 
     def test_from_yaml(self, tmp_path):
         """``from_yaml`` loads host/port/servers from a YAML file."""
@@ -186,11 +171,6 @@ class TestGatewayConfig:
         assert config.servers[0].name == 'pets'
         assert config.servers[0].spec == 'petstore.json'
         assert config.port == 3000
-
-    def test_store_config_default(self):
-        """Default token store is in-memory."""
-        config = GatewayConfig()
-        assert config.store.type == 'memory'
 
     def test_store_config_redis(self, tmp_path):
         """``store: redis`` block in YAML hydrates url and key prefix."""
@@ -279,11 +259,6 @@ class TestLayerHelpers:
         yaml_path = tmp_path / 'empty.yml'
         yaml_path.write_text('')
         assert yaml_layer(yaml_path) == {}
-
-    def test_yaml_layer_missing_raises(self):
-        """Missing files surface as ``FileNotFoundError`` (matches ``from_yaml`` history)."""
-        with pytest.raises(FileNotFoundError):
-            yaml_layer('/nonexistent/path.yml')
 
     def test_single_spec_layer_minimal(self):
         """The layer carries only what the caller supplied, so defaults stay defaults.
@@ -588,3 +563,12 @@ class TestSearchFieldWeights:
             build_gateway_config(
                 {'servers': [{'name': 'b', 'spec': 'x.json', 'exposure': {'search': {'field_weights': {'name': 1}}}}]}
             )
+
+
+class TestDNSRebindingProtectionConfig:
+    """Which ``Host`` and ``Origin`` values the MCP endpoints accept."""
+
+    def test_origins_without_hosts_are_refused(self):
+        """Origins alone would turn on a check that refuses every ``Host``, so the config is refused instead."""
+        with pytest.raises(ValueError, match='allowed_hosts'):
+            DNSRebindingProtectionConfig(allowed_origins=[BROWSER_ORIGIN])

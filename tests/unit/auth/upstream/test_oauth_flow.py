@@ -7,11 +7,6 @@ from openapi_mcp_gateway.openapi import OpenAPISpec
 from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
 
-def _spec(security_schemes: dict) -> OpenAPISpec:
-    """Build a minimal ``OpenAPISpec`` carrying the given security schemes."""
-    return OpenAPISpec(security_schemes=security_schemes)
-
-
 AUTH_CODE_SCHEME = {
     'type': 'oauth2',
     'flows': {
@@ -128,3 +123,8 @@ class TestDetectUnsupportedUpstreamOAuthFlows:
         """Non-oauth2 schemes are ignored when looking for unsupported flows."""
         spec = _spec({'apiKey': {'type': 'apiKey', 'in': 'header', 'name': 'X-API-Key'}})
         assert detect_unsupported_upstream_oauth_flows(spec) == []
+
+
+def _spec(security_schemes: dict) -> OpenAPISpec:
+    """Build a minimal ``OpenAPISpec`` carrying the given security schemes."""
+    return OpenAPISpec(security_schemes=security_schemes)

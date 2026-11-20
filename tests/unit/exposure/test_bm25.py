@@ -5,11 +5,6 @@ from openapi_mcp_gateway.exposure._bm25 import BM25FIndex, tokenize
 _TEXT_ONLY = {'text': 1.0}
 
 
-def _index(documents: dict[str, str]) -> BM25FIndex:
-    """Index each document as a single ``text`` field."""
-    return BM25FIndex({name: {'text': text} for name, text in documents.items()}, _TEXT_ONLY)
-
-
 class TestTokenize:
     """Splitting operation text and queries into comparable terms."""
 
@@ -94,3 +89,8 @@ class TestBM25FIndex:
     def test_empty_index(self):
         """An index without documents answers every query with nothing."""
         assert _index({}).search('anything') == []
+
+
+def _index(documents: dict[str, str]) -> BM25FIndex:
+    """Index each document as a single ``text`` field."""
+    return BM25FIndex({name: {'text': text} for name, text in documents.items()}, _TEXT_ONLY)

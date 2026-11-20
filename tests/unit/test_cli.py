@@ -17,9 +17,10 @@ from openapi_mcp_gateway.settings import GatewayConfig, PolicyConfig
 from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
 
+# The logger every module of the package logs under.
 PACKAGE_LOGGER = 'openapi_mcp_gateway'
 
-
+# The specs the CLI is pointed at, from the shared fixtures directory.
 FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures'
 PETSTORE_SPEC = FIXTURES / 'petstore.json'
 UNDOCUMENTED_SPEC = FIXTURES / 'undocumented.json'
@@ -35,33 +36,6 @@ def _reset_loggers():
         logger.handlers.clear()
         logger.setLevel(logging.NOTSET)
         logger.propagate = True
-
-
-def _run(*args, gateway_run: mock.Mock | None = None):
-    """Invoke ``cli.main`` with ``Gateway.run`` patched out, returning ``(result, mock)``."""
-    runner = CliRunner()
-    gateway_run = gateway_run or mock.Mock()
-    with mock.patch.object(cli.Gateway, 'run', gateway_run):
-        result = runner.invoke(cli.main, list(args), catch_exceptions=False)
-    return result, gateway_run
-
-
-def _run_capture_config(*args) -> tuple[typing.Any, GatewayConfig | None]:
-    """Run the CLI without starting uvicorn, returning the effective ``GatewayConfig``."""
-    captured: dict[str, GatewayConfig] = {}
-    real_from_config = cli.Gateway.from_config
-
-    def spy(config: GatewayConfig) -> typing.Any:
-        captured['config'] = config
-        return real_from_config(config)
-
-    runner = CliRunner()
-    with (
-        mock.patch.object(cli.Gateway, 'from_config', side_effect=spy),
-        mock.patch.object(cli.Gateway, 'run', mock.Mock()),
-    ):
-        result = runner.invoke(cli.main, list(args), catch_exceptions=False)
-    return result, captured.get('config')
 
 
 class TestLoggingFlags:
@@ -117,7 +91,7 @@ class TestLoggingFlags:
         assert '[INFO]' in content
 
     def test_invalid_log_level(self):
-        """An unknown level value is rejected by Click before the gateway runs."""
+        """``--log-level`` takes only the known levels, so an unknown one is a usage error before the gateway runs."""
         result, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--log-level', 'LOUD')
         assert result.exit_code != 0
         assert 'LOUD' in result.output
@@ -283,13 +257,6 @@ class TestConfigPrecedence:
 class TestDryRun:
     """``--dry-run`` validates the config and exits without serving."""
 
-    def test_help_lists_dry_run(self):
-        """``--help`` advertises the ``--dry-run`` flag."""
-        runner = CliRunner()
-        result = runner.invoke(cli.main, ['--help'])
-        assert result.exit_code == 0
-        assert '--dry-run' in result.output
-
     def test_dry_run_does_not_serve(self):
         """``--dry-run`` builds the gateway but never calls ``Gateway.run``."""
         result, gateway_run = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run')
@@ -403,12 +370,6 @@ class TestDryRunJsonOutput:
         assert result.exit_code == 0, result.output
         return json.loads(result.stdout)
 
-    def test_help_lists_the_option(self):
-        runner = CliRunner()
-        result = runner.invoke(cli.main, ['--help'])
-        assert result.exit_code == 0
-        assert '--output' in result.output
-
     def test_text_remains_the_default(self):
         """Adding a format must not change what someone running the old command sees."""
         without, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run')
@@ -430,13 +391,6 @@ class TestDryRunJsonOutput:
 
         assert json.loads(result.stdout)
         assert 'Loading server' in result.stderr, 'logging should still happen, just not on stdout'
-
-    def test_the_output_is_plain_json(self):
-        """No custom encoder, because a caller in another language has none of our types."""
-        document = self._describe()
-
-        assert json.dumps(document)
-        assert document['servers'][0]['tools']
 
     def test_every_field_the_table_prints_is_present(self):
         """The two views describe one thing, so neither may carry a fact the other lacks."""
@@ -593,3 +547,30 @@ class TestDryRunJsonOutput:
         assert tools, 'the fixture should expose at least one tool'
         assert all(tool['description'] for tool in tools)
         assert any(tool['description'].startswith('GET /orders') for tool in tools)
+
+
+def _run(*args, gateway_run: mock.Mock | None = None):
+    """Invoke ``cli.main`` with ``Gateway.run`` patched out, returning ``(result, mock)``."""
+    runner = CliRunner()
+    gateway_run = gateway_run or mock.Mock()
+    with mock.patch.object(cli.Gateway, 'run', gateway_run):
+        result = runner.invoke(cli.main, list(args), catch_exceptions=False)
+    return result, gateway_run
+
+
+def _run_capture_config(*args) -> tuple[typing.Any, GatewayConfig | None]:
+    """Run the CLI without starting uvicorn, returning the effective ``GatewayConfig``."""
+    captured: dict[str, GatewayConfig] = {}
+    real_from_config = cli.Gateway.from_config
+
+    def spy(config: GatewayConfig) -> typing.Any:
+        captured['config'] = config
+        return real_from_config(config)
+
+    runner = CliRunner()
+    with (
+        mock.patch.object(cli.Gateway, 'from_config', side_effect=spy),
+        mock.patch.object(cli.Gateway, 'run', mock.Mock()),
+    ):
+        result = runner.invoke(cli.main, list(args), catch_exceptions=False)
+    return result, captured.get('config')

@@ -6,6 +6,8 @@ import anyio
 import uvicorn
 from starlette.types import ASGIApp
 
+from openapi_mcp_gateway.gateway import Gateway
+
 
 @contextlib.asynccontextmanager
 async def serve(app: ASGIApp, sock: socket.socket | None = None) -> typing.AsyncIterator[str]:
@@ -30,6 +32,23 @@ async def serve(app: ASGIApp, sock: socket.socket | None = None) -> typing.Async
             yield build_socket_url(sock)
         finally:
             server.should_exit = True
+
+
+@contextlib.asynccontextmanager
+async def serve_gateway(
+    build: typing.Callable[[str], Gateway], app_of: typing.Callable[[Gateway], ASGIApp] | None = None
+) -> typing.AsyncIterator[str]:
+    """Serve the gateway ``build`` makes for the address it is served at, and yield that address.
+
+    The address is settled before the gateway is built, since the gateway publishes it in its documents.
+    ``app_of`` turns the gateway into the app that is served, its own streamable HTTP app by default.
+    """
+    sock = bind_loopback_socket()
+    base_url = build_socket_url(sock)
+    gateway = build(base_url)
+    app = app_of(gateway) if app_of is not None else gateway._build_app(transport='streamable-http')
+    async with serve(app, sock):
+        yield base_url
 
 
 def bind_loopback_socket() -> socket.socket:
