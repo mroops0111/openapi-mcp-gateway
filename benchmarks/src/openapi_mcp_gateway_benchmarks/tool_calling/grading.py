@@ -37,7 +37,7 @@ def grade(
     """Grade the requests one run sent upstream against what its task expected and forbade.
 
     Each expected call needs a request of its own that matches it, in any order.
-    An ``any_of`` step needs a request that matches one of its calls.
+    An ``any_of`` step needs one of its ways done, a call or an ``all_of`` group with a request for each of its calls.
     A run passes when every expected call is matched and no request is one the task forbids.
     A write no expected call accounts for is reported as an extra write without failing the run,
     since a harmless one, such as setting a field after creating a record, says little about the task.
@@ -46,16 +46,17 @@ def grade(
     unused = list(requests)
     missing_calls = []
     for step in expected_calls:
-        match = next((request for request in unused if any(matches(call, request) for call in step.alternatives)), None)
-        if match is None:
-            missing_calls.append(' or '.join(_describe(call) for call in step.alternatives))
+        found = next(
+            (found for alternative in step.alternatives if (found := _match_all(alternative, unused)) is not None), None
+        )
+        if found is None:
+            missing_calls.append(' or '.join(_describe_all(alternative) for alternative in step.alternatives))
         else:
-            unused.remove(match)
-    forbidden = [
-        _describe_request(request) for request in requests if any(matches(call, request) for call in forbidden_calls)
-    ]
+            for request in found:
+                unused.remove(request)
+    forbidden = [request.describe() for request in requests if any(matches(call, request) for call in forbidden_calls)]
     extra_writes = [
-        _describe_request(request)
+        request.describe()
         for request in unused
         if request.method not in READ_METHODS and not _reads(request, read_only_operations.get(request.server, ()))
     ]
@@ -79,6 +80,21 @@ def matches(expected: ExpectedCall, request: RecordedRequest) -> bool:
     if any(str(value) not in request.query.get(name, []) for name, value in expected.query.items()):
         return False
     return _contains(request.body, expected.body)
+
+
+def _match_all(
+    calls: typing.Sequence[ExpectedCall], requests: typing.Sequence[RecordedRequest]
+) -> list[RecordedRequest] | None:
+    """A distinct request among ``requests`` for each of ``calls``, or None when one has none."""
+    available = list(requests)
+    found = []
+    for call in calls:
+        request = next((request for request in available if matches(call, request)), None)
+        if request is None:
+            return None
+        available.remove(request)
+        found.append(request)
+    return found
 
 
 def _reads(request: RecordedRequest, read_only_operations: typing.Sequence[str]) -> bool:
@@ -133,8 +149,8 @@ def _text(value: typing.Any) -> str:
     return str(value)
 
 
-def _describe_request(request: RecordedRequest) -> str:
-    return f'{request.method} {request.path} on {request.server}'
+def _describe_all(calls: typing.Sequence[ExpectedCall]) -> str:
+    return ' and '.join(_describe(call) for call in calls)
 
 
 def _describe(expected: ExpectedCall) -> str:

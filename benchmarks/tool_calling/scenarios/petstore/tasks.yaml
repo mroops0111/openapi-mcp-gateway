@@ -11,6 +11,18 @@
     - server: petstore
       operation: add_pet
       arguments: {name: Biscuit, photoUrls: [], category: {name: Dogs}, status: available}
+  responses:
+    # The listings before Biscuit joins them, which a model may check first.
+    - server: petstore
+      method: GET
+      path: /pet/findByStatus
+      body:
+        - {id: 33, name: Rex, category: {id: 1, name: Dogs}, photoUrls: [], tags: [], status: available}
+        - {id: 32, name: Mittens, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: available}
+    - server: petstore
+      method: GET
+      path: /pet/findByTags
+      body: []
 
 - id: petstore-t02
   prompt: >-
@@ -33,17 +45,60 @@
       operation: update_pet_with_form
       arguments: {petId: 31, status: sold}
   responses:
+    # The shop's pets by status, which a model may list one status or several at a time.
     - server: petstore
       method: GET
       path: /pet/findByStatus
+      body: &t02_available
+        - &whiskers {id: 31, name: Whiskers, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: available}
+        - &mittens {id: 32, name: Mittens, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: available}
+        - &rex {id: 33, name: Rex, category: {id: 1, name: Dogs}, photoUrls: [], tags: [], status: available}
+    - server: petstore
+      method: GET
+      path: /pet/findByStatus
+      query: {status: available}
+      body: *t02_available
+    - server: petstore
+      method: GET
+      path: /pet/findByStatus
+      query: {status: pending}
       body:
-        - {id: 31, name: Whiskers, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: available}
-        - {id: 32, name: Mittens, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: available}
-        - {id: 33, name: Rex, category: {id: 1, name: Dogs}, photoUrls: [], tags: [], status: available}
+        - &shadow {id: 34, name: Shadow, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: pending}
+    - server: petstore
+      method: GET
+      path: /pet/findByStatus
+      query: {status: sold}
+      body:
+        - &bella {id: 30, name: Bella, category: {id: 1, name: Dogs}, photoUrls: [], tags: [], status: sold}
+    # No pet carries a tag, so a search by tag finds none.
+    - server: petstore
+      method: GET
+      path: /pet/findByTags
+      body: []
     - server: petstore
       method: GET
       path: /pet/31
-      body: {id: 31, name: Whiskers, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: available}
+      body: *whiskers
+    - server: petstore
+      method: GET
+      path: /pet/32
+      body: *mittens
+    - server: petstore
+      method: GET
+      path: /pet/33
+      body: *rex
+    - server: petstore
+      method: GET
+      path: /pet/34
+      body: *shadow
+    - server: petstore
+      method: GET
+      path: /pet/30
+      body: *bella
+    - server: petstore
+      method: GET
+      path: /store/inventory
+      body: {available: 3, pending: 1, sold: 1}
 
 - id: petstore-t03
   prompt: >-
@@ -58,6 +113,12 @@
     - server: petstore
       operation: delete_order
       arguments: {orderId: 5}
+  responses:
+    # The order itself, which a model may look up before cancelling it.
+    - server: petstore
+      method: GET
+      path: /store/order/5
+      body: {id: 5, petId: 12, quantity: 1, shipDate: '2026-11-22T10:00:00Z', status: placed, complete: false}
 
 - id: petstore-t04
   prompt: >-
@@ -87,17 +148,60 @@
       operation: update_pet_with_form
       arguments: {petId: 52, status: pending}
   responses:
+    # The shop's pets by status, which a model may list one status or several at a time.
     - server: petstore
       method: GET
       path: /pet/findByStatus
+      body: &t04_available
+        - &rio {id: 51, name: Rio, category: {id: 4, name: Birds}, photoUrls: [], tags: [], status: available}
+        - &kiwi {id: 52, name: Kiwi, category: {id: 4, name: Birds}, photoUrls: [], tags: [], status: available}
+        - &goldie {id: 53, name: Goldie, category: {id: 5, name: Fish}, photoUrls: [], tags: [], status: available}
+    - server: petstore
+      method: GET
+      path: /pet/findByStatus
+      query: {status: available}
+      body: *t04_available
+    - server: petstore
+      method: GET
+      path: /pet/findByStatus
+      query: {status: pending}
       body:
-        - {id: 51, name: Rio, category: {id: 4, name: Birds}, photoUrls: [], tags: [], status: available}
-        - {id: 52, name: Kiwi, category: {id: 4, name: Birds}, photoUrls: [], tags: [], status: available}
-        - {id: 53, name: Goldie, category: {id: 5, name: Fish}, photoUrls: [], tags: [], status: available}
+        - &sunny {id: 54, name: Sunny, category: {id: 4, name: Birds}, photoUrls: [], tags: [], status: pending}
+    - server: petstore
+      method: GET
+      path: /pet/findByStatus
+      query: {status: sold}
+      body:
+        - &bubbles {id: 50, name: Bubbles, category: {id: 5, name: Fish}, photoUrls: [], tags: [], status: sold}
+    # No pet carries a tag, so a search by tag finds none.
+    - server: petstore
+      method: GET
+      path: /pet/findByTags
+      body: []
+    - server: petstore
+      method: GET
+      path: /pet/51
+      body: *rio
     - server: petstore
       method: GET
       path: /pet/52
-      body: {id: 52, name: Kiwi, category: {id: 4, name: Birds}, photoUrls: [], tags: [], status: available}
+      body: *kiwi
+    - server: petstore
+      method: GET
+      path: /pet/53
+      body: *goldie
+    - server: petstore
+      method: GET
+      path: /pet/54
+      body: *sunny
+    - server: petstore
+      method: GET
+      path: /pet/50
+      body: *bubbles
+    - server: petstore
+      method: GET
+      path: /store/inventory
+      body: {available: 3, pending: 1, sold: 1}
 
 - id: petstore-t05
   prompt: >-
@@ -139,6 +243,10 @@
       method: GET
       path: /pet/88
       body: {id: 88, name: Pepper, category: {id: 1, name: Dogs}, photoUrls: [], tags: [], status: pending}
+    - server: petstore
+      method: GET
+      path: /pet/89
+      body: {id: 89, name: Coco, category: {id: 1, name: Dogs}, photoUrls: [], tags: [], status: pending}
 
 - id: petstore-t06
   prompt: >-
@@ -187,3 +295,7 @@
       method: GET
       path: /pet/64
       body: {id: 64, name: Mochi, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: pending}
+    - server: petstore
+      method: GET
+      path: /pet/65
+      body: {id: 65, name: Luna, category: {id: 2, name: Cats}, photoUrls: [], tags: [], status: pending}

@@ -20,6 +20,9 @@ NOT_FOUND_BODY = {'message': 'Not Found'}
 
 PATH_PARAMETER = re.compile(r'\{[^}/]+\}')
 
+# Where the replay took a response from, the task's own data, the spec's sample, or nowhere for a 404.
+Answer = typing.Literal['task', 'spec', 'not_found']
+
 
 class RecordedRequest(pydantic.BaseModel):
     """One request the gateway sent upstream, as the replay server received it."""
@@ -33,12 +36,19 @@ class RecordedRequest(pydantic.BaseModel):
     body: typing.Any = None
     # The spec operation the request matched, as ``METHOD /template``, or None when it matched none.
     operation: str | None
+    # A read the spec answered got a sample the task never set, which tells why a model lost its way after it.
+    answer: Answer = 'spec'
+
+    def describe(self) -> str:
+        return f'{self.method} {self.path} on {self.server}'
 
 
 class ResponseOverride(pydantic.BaseModel):
     """A response a task sets for one request, where the spec's own sample would not carry what the task needs.
 
     ``path`` is a concrete path, such as ``/repos/acme/api/pulls/42``, or a spec template with placeholders.
+    ``query`` names values the request's query must carry, so one search endpoint can answer each kind it is asked for.
+    When several match, the one naming the most query values answers.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
@@ -46,6 +56,7 @@ class ResponseOverride(pydantic.BaseModel):
     server: str
     method: str
     path: str
+    query: dict[str, str] = pydantic.Field(default_factory=dict)
     status: int = 200
     body: typing.Any = None
 
@@ -87,18 +98,20 @@ class ReplayUpstream:
         path = '/' + request.path_params['path']
         method = request.method.lower()
         route = _match(self._routes.get(server, []), method, path)
+        query = urllib.parse.parse_qs(request.url.query, keep_blank_values=True)
+        matching = [candidate for candidate in self._overrides if _overrides(candidate, server, method, path, query)]
+        override = max(matching, key=lambda candidate: len(candidate.query), default=None)
+        answer: Answer = 'task' if override is not None else 'spec' if route is not None else 'not_found'
         self.requests.append(
             RecordedRequest(
                 server=server,
                 method=method.upper(),
                 path=path,
-                query=urllib.parse.parse_qs(request.url.query, keep_blank_values=True),
+                query=query,
                 body=_parse_body(await request.body(), request.headers.get('content-type', '')),
                 operation=f'{route.method.upper()} {route.template}' if route else None,
+                answer=answer,
             )
-        )
-        override = next(
-            (candidate for candidate in self._overrides if _overrides(candidate, server, method, path)), None
         )
         if override is not None:
             return _json_response(override.status, override.body)
@@ -135,8 +148,12 @@ def _match(routes: typing.Sequence[_OperationRoute], method: str, path: str) -> 
     return next((route for route in routes if route.method == method and route.pattern.match(path)), None)
 
 
-def _overrides(override: ResponseOverride, server: str, method: str, path: str) -> bool:
+def _overrides(
+    override: ResponseOverride, server: str, method: str, path: str, query: typing.Mapping[str, list[str]]
+) -> bool:
     if override.server != server or override.method.lower() != method:
+        return False
+    if any(value not in query.get(name, []) for name, value in override.query.items()):
         return False
     return override.path == path or bool(_template_pattern(override.path).match(path))
 

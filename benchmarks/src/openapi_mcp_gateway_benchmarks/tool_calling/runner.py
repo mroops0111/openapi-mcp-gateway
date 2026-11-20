@@ -1,7 +1,9 @@
 import dataclasses
+import json
 import logging
 import re
 import typing
+import urllib.parse
 
 import pydantic
 import tenacity
@@ -12,7 +14,9 @@ from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 from pydantic_evals.reporting import EvaluationReport
 
 from .dataset import Benchmark, DatasetError, Split, Task
+from .grading import READ_METHODS
 from .harness import TRANSIENT_ERRORS, RunOutcome, ScenarioRun
+from .replay import RecordedRequest
 
 
 logger = logging.getLogger(__name__)
@@ -48,10 +52,19 @@ class RunRecord(pydantic.BaseModel):
     forbidden_calls: list[str]
     extra_writes: list[str]
     input_tokens: int
+    # The part of input_tokens read from or written to the provider's prompt cache.
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     output_tokens: int
+    # In US dollars, None for a model with no known price.
+    cost: float | None = None
     model_requests: int
     tool_calls: int
     tool_errors: int
+    # Each request the upstream received, in order, with where its response came from.
+    requests: list[str] = pydantic.Field(default_factory=list)
+    # Reads the spec's sample answered, data the task never set, which can mislead a model on a correct route.
+    unset_reads: list[str] = pydantic.Field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -155,10 +168,21 @@ def _records(
                 forbidden_calls=outcome.grade.forbidden_calls,
                 extra_writes=outcome.grade.extra_writes,
                 input_tokens=outcome.input_tokens,
+                cache_read_tokens=outcome.cache_read_tokens,
+                cache_write_tokens=outcome.cache_write_tokens,
                 output_tokens=outcome.output_tokens,
+                cost=outcome.cost,
                 model_requests=outcome.model_requests,
                 tool_calls=outcome.tool_calls,
                 tool_errors=outcome.tool_errors,
+                requests=[_request_line(request) for request in outcome.requests],
+                unset_reads=sorted(
+                    {
+                        request.describe()
+                        for request in outcome.requests
+                        if request.answer == 'spec' and request.method in READ_METHODS
+                    }
+                ),
             )
         )
     for failure in report.failures:
@@ -184,6 +208,12 @@ def _records(
             )
         )
     return records
+
+
+def _request_line(request: RecordedRequest) -> str:
+    query = f'?{urllib.parse.urlencode(request.query, doseq=True)}' if request.query else ''
+    body = f' with {json.dumps(request.body, default=str)}' if request.body is not None else ''
+    return f'{request.method} {request.path}{query} on {request.server}{body}, answered by {request.answer}'
 
 
 def _repetition(case_name: str) -> int:

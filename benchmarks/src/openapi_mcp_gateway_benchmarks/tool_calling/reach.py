@@ -4,7 +4,8 @@ import typing
 import pydantic
 
 from ..gateway_connection import list_operations
-from .dataset import Benchmark, ExpectedCall
+from .dataset import BASELINE_VARIANT, Benchmark, ExpectedCall
+from .grading import READ_METHODS
 from .harness import ScenarioRun
 
 
@@ -25,6 +26,9 @@ class IntentCoverage(pydantic.BaseModel):
     reachable_task_count: int
     # Each task out of reach, by id, to the steps the variant serves no operation for.
     unreachable_tasks: dict[str, list[str]]
+    # Each task, by id, to the reads its solution makes that the variant does not serve, such as looking up an id.
+    # A model may reach the same fact another way, so these leave the task within reach.
+    hidden_lookups: dict[str, list[str]] = pydantic.Field(default_factory=dict)
 
 
 def intent_coverage(
@@ -48,6 +52,7 @@ def intent_coverage(
                     task_count=len(scenario.tasks),
                     reachable_task_count=len(scenario.tasks) - len(unreachable),
                     unreachable_tasks=unreachable,
+                    hidden_lookups=hidden_lookups(scenario_run, variant),
                 )
             )
     return coverage
@@ -56,25 +61,61 @@ def intent_coverage(
 def unreached_steps(scenario_run: ScenarioRun, variant: str) -> dict[str, list[str]]:
     """Each task with a step ``variant`` serves no operation for, by id, to those steps.
 
-    A step with alternatives is reached when the variant serves any one of them.
+    A step with alternatives is reached when the variant serves every call of any one of them.
     """
-    config = scenario_run.gateway_config(variant)
-    served = {
-        server.name: [(listing.method, listing.path) for listing in list_operations(server)]
-        for server in config.servers
-    }
+    served = _served(scenario_run, variant)
     unreached: dict[str, list[str]] = {}
     for task in scenario_run.scenario.tasks:
         for step in task.expected_calls:
             if not any(
-                _same_operation(call, method, path)
-                for call in step.alternatives
-                for method, path in served[call.server]
+                all(
+                    any(_same_operation(call, method, path) for method, path in served[call.server])
+                    for call in alternative
+                )
+                for alternative in step.alternatives
             ):
                 unreached.setdefault(task.id, []).append(
-                    ' or '.join(f'{call.method} {call.path} on {call.server}' for call in step.alternatives)
+                    ' or '.join(
+                        ' and '.join(f'{call.method} {call.path} on {call.server}' for call in alternative)
+                        for alternative in step.alternatives
+                    )
                 )
     return unreached
+
+
+def hidden_lookups(scenario_run: ScenarioRun, variant: str) -> dict[str, list[str]]:
+    """Each task whose solution reads through an operation ``variant`` does not serve, by id, to those reads.
+
+    Only the reads the task does not grade count, such as looking up the id that the graded write needs.
+
+    The solution names each operation as the baseline lists it, so the baseline maps the name to its method and path.
+    """
+    served = _served(scenario_run, variant)
+    baseline = {
+        (server.name, listing.name): (listing.method, listing.path)
+        for server in scenario_run.gateway_config(BASELINE_VARIANT).servers
+        for listing in list_operations(server)
+    }
+    hidden: dict[str, list[str]] = {}
+    for task in scenario_run.scenario.tasks:
+        graded = [call for step in task.expected_calls for alternative in step.alternatives for call in alternative]
+        for call in task.solution:
+            method, path = baseline[(call.server, call.operation)]
+            if method not in READ_METHODS or (method, path) in served[call.server]:
+                continue
+            # A read the task grades is already counted as out of reach.
+            if any(expected.server == call.server and _same_operation(expected, method, path) for expected in graded):
+                continue
+            hidden.setdefault(task.id, []).append(f'{method} {path} on {call.server}')
+    return hidden
+
+
+def _served(scenario_run: ScenarioRun, variant: str) -> dict[str, list[tuple[str, str]]]:
+    """Each server's operations ``variant`` serves, by server name, as method and path template."""
+    return {
+        server.name: [(listing.method, listing.path) for listing in list_operations(server)]
+        for server in scenario_run.gateway_config(variant).servers
+    }
 
 
 def _same_operation(expected: ExpectedCall, method: str, template: str) -> bool:

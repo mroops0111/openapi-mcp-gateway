@@ -6,8 +6,9 @@ from .report import AgentReport
 def to_markdown(report: AgentReport) -> str:
     """Render ``report`` as the Markdown tables a results page or a PR description quotes.
 
-    One table holds every scenario, variant, and model, and a second compares each variant with the baseline.
-    A third lists each variant leaving tasks out of reach, which caps its success rate under every model.
+    One table holds every scenario, variant, and model with what it cost, and a second compares each with the baseline.
+    Then come the variants leaving tasks out of reach, which caps their success rate under every model.
+    After them come the variants hiding a read a solution makes, and the failed runs that read data never set.
     """
     sections = [
         f'Tool calling benchmark v{report.benchmark_version}, openapi-mcp-gateway {report.gateway_version}, '
@@ -23,6 +24,9 @@ def to_markdown(report: AgentReport) -> str:
                 'Success',
                 'Spread',
                 'Input Tokens',
+                'Cached',
+                'Output Tokens',
+                'Cost',
                 'Tool Calls',
                 'Tool Errors',
                 'Extra Writes',
@@ -36,6 +40,9 @@ def to_markdown(report: AgentReport) -> str:
                     _percent(cell.success_rate),
                     _percent(cell.success_rate_spread),
                     f'{cell.mean_input_tokens:,.0f}',
+                    _percent(cell.mean_cache_read_tokens / cell.mean_input_tokens if cell.mean_input_tokens else 0.0),
+                    f'{cell.mean_output_tokens:,.0f}',
+                    _dollars(cell.total_cost),
                     f'{cell.mean_tool_calls:.1f}',
                     f'{cell.mean_tool_errors:.1f}',
                     f'{cell.mean_extra_writes:.1f}',
@@ -43,6 +50,10 @@ def to_markdown(report: AgentReport) -> str:
                 for cell in report.cells
             ],
         ),
+        'Tokens are means per run, Cached is the share of input tokens read from the prompt cache, '
+        "and Cost is the cell's total in US dollars. In all, "
+        + ', '.join(f'`{model}` cost {_dollars(cost)}' for model, cost in _model_costs(report).items())
+        + '.',
     ]
     if report.comparisons:
         sections += [
@@ -83,6 +94,36 @@ def to_markdown(report: AgentReport) -> str:
                 ],
             ),
         ]
+    lookups = [entry for entry in report.coverage if entry.hidden_lookups]
+    if lookups:
+        sections += [
+            "Variants that hide a read a task's solution makes, which a model has to reach another way:",
+            _table(
+                ['Scenario', 'Variant', 'Hidden Reads'],
+                [
+                    [
+                        entry.scenario,
+                        entry.variant,
+                        '<br>'.join(
+                            f'{task_id}: {", ".join(reads)}' for task_id, reads in entry.hidden_lookups.items()
+                        ),
+                    ]
+                    for entry in lookups
+                ],
+            ),
+        ]
+    misled = [record for record in report.records if not record.passed and not record.errored and record.unset_reads]
+    if misled:
+        sections += [
+            'Failed runs that read data their task never set, where a gap in the data may have misled the model:',
+            _table(
+                ['Scenario', 'Variant', 'Model', 'Task', 'Unset Reads'],
+                [
+                    [record.scenario, record.variant, record.model, record.task_id, '<br>'.join(record.unset_reads)]
+                    for record in misled
+                ],
+            ),
+        ]
     return '\n\n'.join(sections) + '\n'
 
 
@@ -93,6 +134,18 @@ def _measure(measure: str, value: float, *, signed: bool = False) -> str:
     if measure == 'extra_writes':
         return f'{value:{sign}.2f}'
     return f'{value:{sign},.0f}'
+
+
+def _model_costs(report: AgentReport) -> dict[str, float | None]:
+    costs: dict[str, float | None] = {}
+    for cell in report.cells:
+        known = costs.get(cell.model, 0.0)
+        costs[cell.model] = None if known is None or cell.total_cost is None else known + cell.total_cost
+    return costs
+
+
+def _dollars(value: float | None) -> str:
+    return 'unknown' if value is None else f'${value:,.2f}'
 
 
 def _percent(value: float) -> str:

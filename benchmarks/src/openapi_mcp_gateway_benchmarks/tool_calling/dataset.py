@@ -109,8 +109,8 @@ class ExpectedCall(pydantic.BaseModel):
     body: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
 
     @property
-    def alternatives(self) -> list['ExpectedCall']:
-        return [self]
+    def alternatives(self) -> list[list['ExpectedCall']]:
+        return [[self]]
 
     @pydantic.field_validator('method')
     @classmethod
@@ -118,19 +118,30 @@ class ExpectedCall(pydantic.BaseModel):
         return method.upper()
 
 
+class AllOf(pydantic.BaseModel):
+    """Calls that together do one step of a task, each needing a request of its own.
+
+    A model may split one change across requests, as Notion appends a heading and a paragraph in one request or two.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
+
+    all_of: list[ExpectedCall] = pydantic.Field(min_length=2)
+
+
 class AnyOf(pydantic.BaseModel):
-    """Calls that each do what one step of a task asks, any one of which counts.
+    """Ways to do one step of a task, any one of which counts, each a call or a group of calls.
 
     Some APIs do one thing by more than one endpoint, as Stripe refunds a charge by its own endpoint or a new refund.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
 
-    any_of: list[ExpectedCall] = pydantic.Field(min_length=2)
+    any_of: list[ExpectedCall | AllOf] = pydantic.Field(min_length=2)
 
     @property
-    def alternatives(self) -> list[ExpectedCall]:
-        return list(self.any_of)
+    def alternatives(self) -> list[list[ExpectedCall]]:
+        return [[way] if isinstance(way, ExpectedCall) else list(way.all_of) for way in self.any_of]
 
 
 class SolutionCall(pydantic.BaseModel):
@@ -210,7 +221,9 @@ class Scenario(pydantic.BaseModel):
         if duplicates:
             raise ValueError(f'{self.name} repeats task ids {duplicates}')
         for task in self.tasks:
-            named = {call.server for step in task.expected_calls for call in step.alternatives}
+            named = {
+                call.server for step in task.expected_calls for alternative in step.alternatives for call in alternative
+            }
             named |= {call.server for call in task.forbidden_calls}
             named |= {call.server for call in task.solution}
             named |= {response.server for response in task.responses}

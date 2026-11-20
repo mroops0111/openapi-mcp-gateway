@@ -42,7 +42,12 @@ class RunOutcome(pydantic.BaseModel):
     grade: Grade
     requests: list[RecordedRequest]
     input_tokens: int
+    # The part of input_tokens read from or written to the provider's prompt cache.
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     output_tokens: int
+    # What the run's model requests cost in US dollars, priced one by one, or None for a model with no known price.
+    cost: float | None = None
     model_requests: int
     tool_calls: int
     tool_errors: int
@@ -157,13 +162,24 @@ class ScenarioRun:
         return {server: listed.get(spec, []) for server, spec in self.scenario.servers.items()}
 
 
-def _costs(messages: typing.Sequence[ModelMessage]) -> dict[str, int]:
+def _costs(messages: typing.Sequence[ModelMessage]) -> dict[str, typing.Any]:
     responses = [message for message in messages if isinstance(message, ModelResponse)]
     parts = [part for message in messages for part in message.parts]
     return {
+        'cost': _price(responses),
         'input_tokens': sum(response.usage.input_tokens for response in responses),
+        'cache_read_tokens': sum(response.usage.cache_read_tokens for response in responses),
+        'cache_write_tokens': sum(response.usage.cache_write_tokens for response in responses),
         'output_tokens': sum(response.usage.output_tokens for response in responses),
         'model_requests': len(responses),
         'tool_calls': sum(isinstance(part, ToolCallPart) for part in parts),
         'tool_errors': sum(isinstance(part, ToolReturnPart) and part.outcome in FAILED_TOOL_OUTCOMES for part in parts),
     }
+
+
+def _price(responses: typing.Sequence[ModelResponse]) -> float | None:
+    """What ``responses`` cost, each priced on its own, since a long request can cost more per token."""
+    try:
+        return float(sum(response.cost().total_price for response in responses))
+    except LookupError:
+        return None

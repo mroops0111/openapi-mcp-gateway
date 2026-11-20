@@ -152,11 +152,27 @@ class TestReplay:
         assert overridden.json() == {'name': 'Rex'}
         assert deleted.status_code == 204
         assert unknown.status_code == 404
-        assert [(request.method, request.operation) for request in replay.requests] == [
-            ('GET', 'GET /pets/{petId}'),
-            ('DELETE', 'DELETE /pets/{petId}'),
-            ('GET', None),
+        assert [(request.method, request.operation, request.answer) for request in replay.requests] == [
+            ('GET', 'GET /pets/{petId}', 'task'),
+            ('DELETE', 'DELETE /pets/{petId}', 'spec'),
+            ('GET', None, 'not_found'),
         ]
+
+    async def test_the_override_naming_the_query_answers_it(self):
+        """One search endpoint answers each kind it is asked for, and anything else from the general override."""
+        replay = ReplayUpstream({'pets': json.loads(PETSTORE.read_text())})
+        replay.start_task(
+            [
+                ResponseOverride(server='pets', method='GET', path='/pet/findByStatus', body=['any']),
+                ResponseOverride(
+                    server='pets', method='GET', path='/pet/findByStatus', query={'status': 'sold'}, body=['sold']
+                ),
+            ]
+        )
+        async with serve(replay.app) as url, httpx.AsyncClient() as client:
+            sold = await client.get(f'{url}/pets/pet/findByStatus', params={'status': 'sold', 'limit': 5})
+            pending = await client.get(f'{url}/pets/pet/findByStatus', params={'status': 'pending'})
+        assert (sold.json(), pending.json()) == (['sold'], ['any'])
 
     async def test_answers_a_date_a_yaml_spec_loaded_as_text(self):
         replay = ReplayUpstream({'pets': json.loads(PETSTORE.read_text())})
@@ -224,6 +240,35 @@ class TestGrading:
         assert missed.missing_calls == [
             "POST /v1/charges/{charge}/refund on stripe with {'charge': 'ch_1'} or POST /v1/refunds on stripe with {'charge': 'ch_1'}"
         ]
+
+    def test_all_of_takes_one_request_or_one_each(self):
+        """A step done in one request or split across two passes, and half of the split does not."""
+        heading = {'children': [{'type': 'heading_2'}]}
+        paragraph = {'children': [{'type': 'paragraph'}]}
+        append = dataset.AnyOf(
+            any_of=[
+                _expected(
+                    'PATCH',
+                    '/v1/blocks/{id}/children',
+                    {'id': 'b1'},
+                    body={'children': [{'type': 'heading_2'}, {'type': 'paragraph'}]},
+                ),
+                dataset.AllOf(
+                    all_of=[
+                        _expected('PATCH', '/v1/blocks/{id}/children', {'id': 'b1'}, body=heading),
+                        _expected('PATCH', '/v1/blocks/{id}/children', {'id': 'b1'}, body=paragraph),
+                    ]
+                ),
+            ]
+        )
+        both = {'children': [{'type': 'heading_2'}, {'type': 'paragraph'}]}
+        assert grading.grade([append], [], [_request('PATCH', '/v1/blocks/b1/children', both)], {}).passed
+        split = [
+            _request('PATCH', '/v1/blocks/b1/children', heading),
+            _request('PATCH', '/v1/blocks/b1/children', paragraph),
+        ]
+        assert grading.grade([append], [], split, {}).passed
+        assert not grading.grade([append], [], split[:1], {}).passed
 
 
 class TestDataset:
@@ -294,6 +339,18 @@ class TestRun:
         assert '| pets | no-admin | scripted |' in to_markdown(built)
         assert 'Out of Reach' not in to_markdown(built)
 
+    def test_the_report_shows_the_cache_the_cost_and_reads_the_task_never_set(self, tmp_path):
+        """Each cell shows its cached share and cost, and a failed run lists the reads the spec's sample answered."""
+        benchmark = dataset.load(_petstore_benchmark(tmp_path))
+        records = [
+            _run_record('pets-t01', passed=True, cost=0.25),
+            _run_record('pets-t02', passed=False, cost=0.5, unset_reads=['GET /pet/findByTags on pets']),
+        ]
+        markdown = to_markdown(report.build_report(benchmark, records, []))
+        assert '| pets | baseline | scripted | 2/2 | 50% | 0% | 1,000 | 80% | 10 | $0.75 |' in markdown
+        assert '`scripted` cost $0.75' in markdown
+        assert '| pets | baseline | scripted | pets-t02 | GET /pet/findByTags on pets |' in markdown
+
     async def test_the_report_lists_tasks_a_variant_leaves_out_of_reach(self, tmp_path):
         root = _petstore_benchmark(tmp_path)
         variant = root / 'scenarios' / 'pets' / 'variants' / 'no-admin.yaml'
@@ -335,6 +392,24 @@ class TestValidation:
         coverage = {entry.variant: entry for entry in reach.intent_coverage(benchmark)}
         assert coverage['generated'].unreachable_tasks == {'pets-t01': ['DELETE /pets/{petId} on pets']}
         assert coverage['baseline'].reachable_task_count == 2
+
+    def test_a_hidden_lookup_is_listed_without_leaving_the_task_out_of_reach(self, tmp_path):
+        """A read the solution makes before its change is listed, while the task it serves stays within reach."""
+        root = _petstore_benchmark(tmp_path)
+        tasks = root / 'scenarios' / 'pets' / 'tasks.yaml'
+        tasks.write_text(
+            tasks.read_text().replace(
+                '    - {server: pets, operation: delete_pet, arguments: {petId: 7}}\n',
+                '    - {server: pets, operation: get_pet_by_id, arguments: {petId: 7}}\n'
+                '    - {server: pets, operation: delete_pet, arguments: {petId: 7}}\n',
+            )
+        )
+        variant = root / 'scenarios' / 'pets' / 'variants' / 'generated.yaml'
+        variant.write_text('servers:\n  pets:\n    policy: {deny: ["GET /pets/*"]}\n')
+        coverage = {entry.variant: entry for entry in reach.intent_coverage(dataset.load(root))}
+        assert coverage['generated'].hidden_lookups == {'pets-t01': ['GET /pets/{petId} on pets']}
+        assert coverage['generated'].unreachable_tasks == {'pets-t02': ['GET /pets/{petId} on pets']}
+        assert coverage['baseline'].hidden_lookups == {}
 
     def test_the_command_lists_what_a_generated_variant_leaves_out_of_reach(self, tmp_path):
         root = _petstore_benchmark(tmp_path)
@@ -405,6 +480,31 @@ class TestConfigGeneration:
 
 def _scripted(_model_name: str, task: dataset.Task) -> typing.Any:
     return solution_model(task, {'pets': ''})
+
+
+def _run_record(task_id: str, *, passed: bool, cost: float, unset_reads: list[str] | None = None) -> runner.RunRecord:
+    return runner.RunRecord(
+        scenario='pets',
+        variant='baseline',
+        model='scripted',
+        task_id=task_id,
+        split='test',
+        repetition=1,
+        passed=passed,
+        errored=False,
+        failure=None,
+        missing_calls=[],
+        forbidden_calls=[],
+        extra_writes=[],
+        input_tokens=1000,
+        cache_read_tokens=800,
+        output_tokens=10,
+        cost=cost,
+        model_requests=1,
+        tool_calls=1,
+        tool_errors=0,
+        unset_reads=unset_reads or [],
+    )
 
 
 def _expected(

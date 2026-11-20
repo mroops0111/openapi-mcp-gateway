@@ -57,7 +57,8 @@ def tool_calling_run(
 def tool_calling_check(benchmark_directory: pathlib.Path) -> None:
     """Prove every task of BENCHMARK_DIRECTORY can pass and every hand-written variant reaches it, for CI.
 
-    It calls no model, and lists the tasks each generated variant leaves out of reach without failing.
+    It calls no model, and lists without failing the tasks each generated variant leaves out of reach,
+    and those whose solution reads through an operation it hides.
     """
     benchmark = dataset.load(benchmark_directory)
     coverage = reach.intent_coverage(benchmark)
@@ -74,6 +75,11 @@ def tool_calling_check(benchmark_directory: pathlib.Path) -> None:
             click.echo(
                 f'{entry.scenario} under {entry.variant} reaches {entry.reachable_task_count} of {entry.task_count} '
                 f'tasks, missing {", ".join(entry.unreachable_tasks)}.'
+            )
+        if entry.variant in generated and entry.hidden_lookups:
+            click.echo(
+                f'{entry.scenario} under {entry.variant} hides a read the solution makes in '
+                f'{", ".join(entry.hidden_lookups)}.'
             )
 
 

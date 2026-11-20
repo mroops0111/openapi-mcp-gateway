@@ -52,9 +52,9 @@ Every task is one the intent's own words name, such as cancelling an order for "
 
 Every task carries three things, and some a fourth:
 
-- **Expected Calls**: the requests the upstream must receive, by method, path template, and the values the user's request decides. A step that the API does by more than one endpoint lists them under `any_of`, and any one counts.
+- **Expected Calls**: the requests the upstream must receive, by method, path template, and the values the user's request decides. A step that the API does by more than one endpoint lists them under `any_of`, and any one counts. A way that takes several requests lists them under `all_of`.
 - **A Solution**: the calls an ideal model would make, with arguments as each tool's schema wants them.
-- **Responses**: what the upstream answers for the requests a task needs particular data from, with a decoy beside the answer.
+- **Responses**: what the upstream answers for the requests a task needs particular data from, with a decoy beside the answer. Every route a model could find the data by, such as a list, a search, or a single read, answers with the same data, and a response may name the query values it answers, as a typeahead answers projects and users apart.
 - **Forbidden Calls**: requests that fail the task, only where the request says what to leave alone.
 
 A run passes when every expected call reaches the upstream and no forbidden call does.
@@ -66,6 +66,10 @@ A model may fix a tool call the gateway refused up to `tool_retries` times, thre
 ## Upstream
 
 No real API is called. A replay server stands in for every upstream, answering each request from the task's responses, else from the spec's own example, else from a fixed sample of the response schema, so a model may call any operation, not only the expected ones. It records every request for the grader.
+
+## Report
+
+`tool-calling run` reports each scenario, variant, and model with its success rate, its tokens and the share of them read from the prompt cache, and what its runs cost, each model request priced on its own from Pydantic AI's price data. Each run keeps the requests the upstream received and where each answer came from, so a run that failed after reading data its task never set shows as a gap in the data rather than the model's miss.
 
 ## Variants
 
