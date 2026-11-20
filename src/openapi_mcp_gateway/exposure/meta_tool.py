@@ -11,9 +11,10 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.shared.inbound import MCP_NAME_HEADER, MCP_PARAM_HEADER_PREFIX, X_MCP_HEADER_KEY, decode_header_value
 from mcp.types import CallToolResult
 
-from ..openapi import ExposedTool, OperationInfo
+from ..openapi import ExposedTool, OperationInfo, schema_description
 from ..scopes import McpUnrestrictedScopePolicy, RequestTarget, ScopeRegistry, current_grant
 from ._bm25 import BM25FIndex
+from ._semantic import SemanticIndex, SemanticSearchOptions
 from ._shaping import shape_operation
 from ._shared import _get_override, build_input_schema, derive_description, derive_name
 from ._upstream import UpstreamConnection, _build_success_result
@@ -30,7 +31,17 @@ OPERATION_PARAM_HEADER = 'Operation'
 
 # How much a matching term counts in each searchable field.
 # A server's exposure.search.field_weights overrides them field by field.
-DEFAULT_FIELD_WEIGHTS = {'name': 2.0, 'summary': 3.0, 'description': 0.5, 'path': 0.5, 'tags': 0.5}
+DEFAULT_FIELD_WEIGHTS = {
+    'name': 2.0,
+    'summary': 3.0,
+    'description': 0.5,
+    'path': 0.5,
+    'tags': 0.5,
+    'parameters': 0.0,
+}
+
+# How strongly reciprocal rank fusion favours the top of each query's ranking, at the value most fusions use.
+_FUSION_RANK_OFFSET = 60
 
 # How many operations one search page carries.
 _PAGE_SIZE = 20
@@ -39,10 +50,23 @@ _PAGE_SIZE = 20
 # The full text stays one get_operation call away.
 _BRIEF_DESCRIPTION_LIMIT = 200
 
+# The most phrasings one search takes, since each costs a ranking pass, and an embedding when searching by meaning.
+_QUERY_LIMIT = 10
+
 # What each meta-tool tells the model about itself.
-_SEARCH_OPERATIONS_DESCRIPTION = (
-    'Search the operations available on this server. '
-    "Search with the words of the user's request first, such as `merge a pull request`. "
+# search_operations says how to phrase a query by how the server matches, by shared words or by meaning.
+_SEARCH_BY_WORDS_GUIDANCE = (
+    "Search with words the API's own documentation would use, such as `merge pull request`, "
+    'rather than the way the user put it. '
+    'Matching is by shared words, so pass several phrasings in `query` to try synonyms in one call, '
+    'such as `["close issue", "update issue state"]`, and their matches are merged. '
+)
+_SEARCH_BY_MEANING_GUIDANCE = (
+    'Describe what to do in plain words, such as `close out ticket 318`. '
+    "Matching is by meaning, so a request in the user's own words works too. "
+    'To look for several things in one call, pass a list of requests in `query`, and their matches are merged. '
+)
+_SEARCH_OPERATIONS_RESULTS = (
     'Returns `{operations: [{name, description}, ...]}`, best match first, '
     'with `nextCursor` when more matches exist; pass it back as `cursor` for the next page. '
     '`tags` limits the result to operations carrying any of those tags, and an omitted argument filters nothing. '
@@ -89,12 +113,14 @@ class MetaToolGenerator:
         connection: UpstreamConnection,
         field_weight_overrides: typing.Mapping[str, float] | None = None,
         scope_registry: ScopeRegistry | None = None,
+        semantic_search: SemanticSearchOptions | None = None,
     ):
         self.mcp = mcp
         self.connection = connection
         self.scope_registry = scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy())
         # Overrides replace the default weight of the fields they name and leave the rest as they are.
         self.field_weights = {**DEFAULT_FIELD_WEIGHTS, **(field_weight_overrides or {})}
+        self.semantic_search = semantic_search
 
     def register(self, operations: list[OperationInfo]) -> list[ExposedTool]:
         """Build the operation registry from ``operations`` and bind the three meta-tools, returning them."""
@@ -129,7 +155,7 @@ class MetaToolGenerator:
                 shaped_operation.method.upper(),
                 shaped_operation.path,
             )
-        registry = _OperationRegistry(registered, self.field_weights)
+        registry = _OperationRegistry(registered, self.field_weights, self.semantic_search)
         self._bind_meta_tools(registry)
         logger.info(
             'Registered %d operation(s) behind dynamic meta-tools on server "%s"',
@@ -143,11 +169,15 @@ class MetaToolGenerator:
         ]
 
     def _bind_meta_tools(self, registry: '_OperationRegistry') -> None:
-        @self.mcp.tool(name='search_operations', description=_SEARCH_OPERATIONS_DESCRIPTION)
+        guidance = _SEARCH_BY_MEANING_GUIDANCE if self.semantic_search else _SEARCH_BY_WORDS_GUIDANCE
+        description = f'Search the operations available on this server. {guidance}{_SEARCH_OPERATIONS_RESULTS}'
+
+        @self.mcp.tool(name='search_operations', description=description)
         async def search_operations(
             ctx: Context,
             query: typing.Annotated[
-                str | None, pydantic.Field(description="Free text describing what to do, in the user's words.")
+                str | typing.Annotated[list[str], pydantic.Field(max_length=_QUERY_LIMIT)] | None,
+                pydantic.Field(description='What to do, or a list of phrasings whose matches are merged.'),
             ] = None,
             tags: typing.Annotated[
                 list[str] | None, pydantic.Field(description='Only operations carrying any of these tags.')
@@ -156,7 +186,7 @@ class MetaToolGenerator:
                 str | None, pydantic.Field(description='The `nextCursor` of the previous page.')
             ] = None,
         ) -> CallToolResult:
-            return _build_success_result(registry.search(query, tags, cursor, self._visibility()))
+            return _build_success_result(await registry.search(query, tags, cursor, self._visibility()))
 
         @self.mcp.tool(name='get_operation', description=_GET_OPERATION_DESCRIPTION)
         async def get_operation(name: str, ctx: Context) -> CallToolResult:
@@ -212,7 +242,16 @@ class _RegisteredOperation:
             'description': self.description,
             'path': self.path,
             'tags': ' '.join(self.tags),
+            'parameters': _parameter_text(self.input_schema),
         }
+
+    def embedding_text(self) -> str:
+        """Return the text an embedding model reads for this operation, what it does before how it is reached.
+
+        The description falls back to the summary, or to the method and path, so a repeated part is read once.
+        """
+        parts = (self.name, self.summary, self.description, self.path)
+        return '\n'.join(part for part in dict.fromkeys(parts) if part)
 
 
 class _OperationRegistry:
@@ -223,11 +262,24 @@ class _OperationRegistry:
     Tags match without regard to case, and each is shown in the spelling it first appears in.
     """
 
-    def __init__(self, operations: typing.Iterable[_RegisteredOperation], field_weights: typing.Mapping[str, float]):
+    def __init__(
+        self,
+        operations: typing.Iterable[_RegisteredOperation],
+        field_weights: typing.Mapping[str, float],
+        semantic_search: SemanticSearchOptions | None = None,
+    ):
         self._operations = {operation.name: operation for operation in operations}
         self._index = BM25FIndex(
             {name: operation.search_fields() for name, operation in self._operations.items()}, field_weights
         )
+        self._semantic_index: SemanticIndex | None = None
+        self._merge_with_words = False
+        if semantic_search:
+            self._semantic_index = SemanticIndex(
+                {name: operation.embedding_text() for name, operation in self._operations.items()}, semantic_search
+            )
+            self._merge_with_words = semantic_search.retrieval == 'hybrid'
+
         # Keyed by casefolded tag. The inner dict is an ordered set of operation names.
         self._names_by_tag: dict[str, dict[str, None]] = {}
         self._tag_spellings: dict[str, str] = {}
@@ -243,9 +295,9 @@ class _OperationRegistry:
     def get(self, name: str) -> _RegisteredOperation | None:
         return self._operations.get(name)
 
-    def search(
+    async def search(
         self,
-        query: str | None,
+        query: str | list[str] | None,
         tags: list[str] | None,
         cursor: str | None,
         visible: typing.Callable[[str], bool],
@@ -253,13 +305,15 @@ class _OperationRegistry:
         """Return one page of the ``visible`` operations matching ``query`` and carrying any of ``tags``.
 
         An omitted or blank ``query``, and omitted or empty ``tags``, filter nothing.
+        A list of queries ranks each one, and merges the rankings, see ``_fuse``.
         Listing everything, the first page also carries the tag counts,
         so the model can narrow down rather than page through all of them.
         Raises ``ValueError`` for a cursor that is malformed or past the end.
         """
-        query = (query or '').strip()
+        queries = [text.strip() for text in ([query] if isinstance(query, str) else query or [])]
+        queries = [text for text in dict.fromkeys(queries) if text]
         tags = tags or []
-        names = [name for name in self._matching(query, tags) if visible(name)]
+        names = await self._matching(queries, tags, visible)
         offset = _decode_cursor(cursor, len(names)) if cursor else 0
         page = names[offset : offset + _PAGE_SIZE]
         payload: dict[str, typing.Any] = {
@@ -267,11 +321,30 @@ class _OperationRegistry:
         }
         if offset + _PAGE_SIZE < len(names):
             payload['nextCursor'] = _encode_cursor(offset + _PAGE_SIZE)
-        if not query and not tags and offset == 0:
+        if not queries and not tags and offset == 0:
             tag_counts = self._tag_counts(set(names))
             if tag_counts:
                 payload['tags'] = tag_counts
         return payload
+
+    async def _rankings(self, queries: list[str], candidates: set[str]) -> list[list[str]]:
+        """Rank ``candidates`` against each query, by words, by meaning, or by both.
+
+        When the embedding model cannot be reached, the queries are ranked by words alone, so search keeps working.
+        """
+        if self._semantic_index is not None:
+            try:
+                by_meaning = await self._semantic_index.search(queries, candidates)
+            except Exception as error:
+                logger.warning('Searching by meaning failed, so this search ranks by words alone: %s', error)
+            else:
+                if not self._merge_with_words:
+                    return by_meaning
+                return [
+                    _fuse([self._index.search(query, candidates), ranking])
+                    for query, ranking in zip(queries, by_meaning, strict=True)
+                ]
+        return [self._index.search(query, candidates) for query in queries]
 
     def _tag_counts(self, names: set[str]) -> list[dict[str, typing.Any]]:
         """Each tag carried by any of ``names``, with how many of them carry it, in tag order."""
@@ -282,13 +355,44 @@ class _OperationRegistry:
             if counts[key]
         ]
 
-    def _matching(self, query: str, tags: list[str]) -> list[str]:
-        candidates = {name for tag in tags for name in self._names_by_tag.get(tag.casefold(), {})} if tags else None
-        if query:
-            return self._index.search(query, candidates)
-        if candidates is None:
-            return list(self._operations)
+    async def _matching(self, queries: list[str], tags: list[str], visible: typing.Callable[[str], bool]) -> list[str]:
+        """The ``visible`` operations carrying any of ``tags`` and matching ``queries``, best first.
+
+        Hidden operations are dropped before ranking, since a ranking by meaning keeps only its top names.
+        """
+        tagged = {name for tag in tags for name in self._names_by_tag.get(tag.casefold(), {})} if tags else None
+        candidates = {name for name in self._operations if (tagged is None or name in tagged) and visible(name)}
+        if queries:
+            return _fuse(await self._rankings(queries, candidates))
         return [name for name in self._operations if name in candidates]
+
+
+def _fuse(rankings: list[list[str]]) -> list[str]:
+    """Merge ``rankings`` by reciprocal rank fusion, best first.
+
+    Each name scores the sum of ``1 / (offset + rank)`` over the rankings it appears in,
+    so a name near the top of one ranking, or found by several, rises without comparing scores across queries.
+    One ranking comes back as it was, and ties keep the order of first appearance.
+    """
+    if len(rankings) == 1:
+        return rankings[0]
+    scores: dict[str, float] = {}
+    for ranking in rankings:
+        for rank, name in enumerate(ranking, start=1):
+            scores[name] = scores.get(name, 0.0) + 1 / (_FUSION_RANK_OFFSET + rank)
+    return sorted(scores, key=lambda name: -scores[name])
+
+
+def _parameter_text(input_schema: dict[str, typing.Any]) -> str:
+    """The name and description of each argument ``input_schema`` takes, as search reads them.
+
+    Only the top-level arguments count,
+    since a nested field says more about a payload's shape than about what the operation does.
+    """
+    defs = input_schema.get('$defs', {})
+    return ' '.join(
+        f'{name} {schema_description(schema, defs)}' for name, schema in input_schema.get('properties', {}).items()
+    )
 
 
 def _encode_cursor(offset: int) -> str:

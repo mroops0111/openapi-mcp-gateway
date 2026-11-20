@@ -92,6 +92,14 @@ class TestDynamicExposureEndToEnd:
         assert by_path is not None and by_path['operations']
         assert by_summary_word is not None and by_summary_word['operations'] == []
 
+    async def test_several_queries_pass_through_an_mcp_client(self, dynamic_gateway):
+        """A list of queries passes the advertised schema over MCP, and finds what each phrasing finds."""
+        async with Client(dynamic_gateway._servers[0].mcp, raise_exceptions=True) as client:
+            single = await client.call_tool('search_operations', {'query': 'pets'})
+            several = await client.call_tool('search_operations', {'query': ['pets', 'xyzzy']})
+        assert several.structured_content == single.structured_content
+        assert single.structured_content is not None and single.structured_content['operations']
+
     async def test_list_then_get_then_call_roundtrip(self, dynamic_gateway, mock_upstream):
         """An LLM-style search, get, and call sequence drives an upstream call with correct query."""
         captured: dict = {}

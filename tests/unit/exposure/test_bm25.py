@@ -62,6 +62,14 @@ class TestBM25FIndex:
         index = BM25FIndex({'only_path': {'path': '/merge'}}, {'name': 1.0})
         assert index.search('merge') == []
 
+    def test_zero_weight_field_is_not_searched(self):
+        """A field weighted 0 matches nothing, and its words leave every other field's ranking as it was."""
+        documents = {'merge_pull': {'name': 'merge pull', 'body': 'merge'}, 'list_pulls': {'name': 'list pulls'}}
+        without = BM25FIndex(documents, {'name': 1.0})
+        with_zero = BM25FIndex(documents, {'name': 1.0, 'body': 0.0})
+        assert with_zero.search('merge pulls') == without.search('merge pulls')
+        assert BM25FIndex({'only_body': {'body': 'merge'}}, {'body': 0.0}).search('merge') == []
+
     def test_no_shared_term_returns_nothing(self):
         """A query sharing no term with any document finds nothing."""
         index = _index({'list_issues': 'list issues'})

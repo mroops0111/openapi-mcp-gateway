@@ -73,10 +73,12 @@ Each variant is a way of ranking a spec's operations, declared in the manifest, 
 | --- | --- | --- |
 | `default` | the gateway's `search_operations` under its default weights | |
 | `equal-weights` | the same search with every field weighted alike | `default` |
+| `openai-embeddings` | the same search ranking by meaning through OpenAI's `text-embedding-3-small` | `default` |
+| `openai-embeddings-hybrid` | that embedding's ranking merged with the default's | `openai-embeddings` |
 | `pydantic-ai-keywords` | Pydantic AI's keyword tool search, over the same operations | `default` |
 | `random` | a fixed shuffle, as a floor | `default` |
 
-A gateway variant's `server` is a fragment of a server config, such as an `exposure` block, so comparing two configurations needs no code. `default` is the gated variant, and every other is compared with it.
+The two OpenAI variants need `OPENAI_API_KEY`, and the others call no model. A gateway variant's `server` is a fragment of a server config, such as an `exposure` block, so comparing two configurations needs no code. `default` is the gated variant, and every other is compared with it.
 
 ## Splits
 

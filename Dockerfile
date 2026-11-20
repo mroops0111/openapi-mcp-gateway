@@ -13,6 +13,8 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # The redis and oidc extras ship in the one image,
 # so every auth mode and the shared store work without a rebuild.
+# The embeddings extra is left out, since search ranks by words unless exposure.search.semantic is set.
+# To search by meaning, install "${wheels}[redis,oidc,embeddings]" instead.
 RUN --mount=type=bind,source=dist,target=/dist \
     set -eu; \
     wheels=$(ls /dist/openapi_mcp_gateway-*.whl); \

@@ -440,6 +440,7 @@ class SearchFieldWeights(pydantic.BaseModel):
     """How much a matching term counts in each field ``search_operations`` ranks by.
 
     A field left unset keeps the gateway's default weight, and 0 leaves the field out of search.
+    ``parameters``, each argument's name and description, defaults to 0.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid')
@@ -449,14 +450,36 @@ class SearchFieldWeights(pydantic.BaseModel):
     description: float | None = pydantic.Field(default=None, ge=0)
     path: float | None = pydantic.Field(default=None, ge=0)
     tags: float | None = pydantic.Field(default=None, ge=0)
+    parameters: float | None = pydantic.Field(default=None, ge=0)
 
     @pydantic.model_validator(mode='after')
     def _refuse_all_zero(self) -> typing.Self:
         """Refuse setting every field to 0, since search would then match nothing."""
         weights = self.model_dump()
+        # Parameters are searched only when given a weight, so leaving them unset counts as 0.
+        weights['parameters'] = weights['parameters'] or 0
         if all(weight == 0 for weight in weights.values()):
             raise ValueError('exposure.search.field_weights sets every field to 0, so search would match nothing.')
         return self
+
+
+class SemanticSearchConfig(pydantic.BaseModel):
+    """Search by meaning as well as by words, through an embedding model the ``embeddings`` extra reaches.
+
+    ``model`` names it as Pydantic AI does, such as ``openai:text-embedding-3-small`` or ``ollama:bge-m3``,
+    and the provider reads its key and address from its usual environment variables.
+    """
+
+    model_config = pydantic.ConfigDict(extra='forbid')
+
+    model: str = pydantic.Field(min_length=1)
+    # Shorter vectors, for a model that can return them, such as OpenAI's text-embedding-3 models.
+    dimensions: int | None = pydantic.Field(default=None, gt=0)
+    # Where the operations' vectors are kept between restarts, so only a changed operation is embedded again.
+    cache_directory: pathlib.Path | None = None
+    # semantic ranks by the embedding alone, and hybrid merges that ranking with the word ranking.
+    # semantic is the default, since on the search benchmark's dev split it ranked better than hybrid.
+    retrieval: typing.Literal['semantic', 'hybrid'] = 'semantic'
 
 
 class SearchConfig(pydantic.BaseModel):
@@ -465,6 +488,7 @@ class SearchConfig(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra='forbid')
 
     field_weights: SearchFieldWeights = SearchFieldWeights()
+    semantic: SemanticSearchConfig | None = None
 
 
 class ExposureConfig(pydantic.BaseModel):
