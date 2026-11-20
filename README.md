@@ -275,6 +275,29 @@ And because the issuer is the authorization server for this endpoint, MCP client
 </details>
 
 <details>
+<summary><b>Which MCP Clients May Sign In</b></summary>
+
+Under `authorization_code`, clients such as Claude Code and VS Code sign in with a [Client ID Metadata Document](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#client-id-metadata-documents) and need no registration step. Their `client_id` is an `https` URL, where the gateway reads the client's name and redirect URIs.
+
+```yaml
+auth:
+  mcp:
+    clients:
+      https://claude.ai/oauth/claude-code-client-metadata:
+        scopes: [issues:read, issues:write]
+    other_clients:
+      trusted_hosts: [vscode.dev]
+      scopes: [issues:read]
+```
+
+- **`clients`**: a key may be such a URL, given `scopes` like any other client.
+- **`other_clients`**: admits the clients `clients` does not list, only from `trusted_hosts` when set. `false` admits none.
+- **Default**: left out, `other_clients` is open when `clients` lists none and closed otherwise.
+- **Dynamic Client Registration**: still offered, deprecated, to a config that sets neither.
+
+</details>
+
+<details>
 <summary><b>Several Agents behind One Credential</b></summary>
 
 A shared upstream credential sees every agent as one identity. Declare each agent under `auth.mcp.clients`, and the gateway issues it an MCP token through `client_credentials`:
@@ -373,7 +396,8 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `auth.upstream.issuer` | string |  | For `authorization_code`. The upstream authorization server's issuer identifier, exactly as its metadata publishes it. Enables the [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207) `iss` check on its authorization responses |
 | `auth.mcp.issuer` | string |  | Required for `token_exchange`. The authorization server that mints tokens for this MCP endpoint |
 | `auth.mcp.required_scopes` | list |  | What every token for this endpoint must carry. Under `token_exchange` an inbound token must already hold them. Under `authorization_code` the gateway grants them on every token it mints, `api` when unset. Advertised as `scopes_supported`, so a client doing dynamic registration knows what to ask for |
-| `auth.mcp.clients` | map |  | Pre-registered MCP clients by `client_id`, each with the `scopes` it may hold |
+| `auth.mcp.clients` | map |  | Pre-registered MCP clients by `client_id`, each with the `scopes` it may hold. A key may be a Client ID Metadata Document URL |
+| `auth.mcp.other_clients` | map or `false` | open when `clients` is empty | Under `authorization_code`, admits metadata document clients that `clients` does not list, with optional `trusted_hosts`, `scopes` and `default_scopes` |
 | `auth.mcp.operation_scopes` | map |  | The scopes that open each operation, from spec tags (`auto: tags`) or listed under `manual` |
 | `auth.mcp.access_token_ttl` | int | `3600` | Lifetime in seconds of the MCP access token the gateway mints, under `authorization_code` or for agents under `auth.mcp.clients` |
 | `auth.mcp.refresh_token_ttl` | int | `86400` | Lifetime in seconds of the MCP refresh token. This is the practical re-authorization cadence, since each refresh slides the window forward |
