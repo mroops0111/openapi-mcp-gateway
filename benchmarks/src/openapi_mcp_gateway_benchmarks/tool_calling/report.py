@@ -39,7 +39,12 @@ class CellSummary(pydantic.BaseModel):
     # The standard deviation of the success rate across repetitions, how much a rerun moves it.
     success_rate_spread: RoundedValue
     mean_input_tokens: RoundedValue
+    # The part of the input read from the provider's prompt cache, and written to it, which cost less and more.
+    mean_cache_read_tokens: RoundedValue
+    mean_cache_write_tokens: RoundedValue
     mean_output_tokens: RoundedValue
+    # What the cell's runs cost in US dollars, errored ones and retried attempts included, or None with no known price.
+    total_cost: RoundedValue | None
     mean_tool_calls: RoundedValue
     mean_tool_errors: RoundedValue
     # Writes no expected call accounts for, which do not fail a run but change more upstream than asked.
@@ -116,7 +121,10 @@ def _cell_summary(key: tuple[str, str, str], records: typing.Sequence[RunRecord]
         success_rate=_mean(float(record.passed) for record in scored),
         success_rate_spread=statistics.pstdev(repetition_rates) if len(repetition_rates) > 1 else 0.0,
         mean_input_tokens=_mean(record.input_tokens for record in scored),
+        mean_cache_read_tokens=_mean(record.cache_read_tokens for record in scored),
+        mean_cache_write_tokens=_mean(record.cache_write_tokens for record in scored),
         mean_output_tokens=_mean(record.output_tokens for record in scored),
+        total_cost=_total_cost(records),
         mean_tool_calls=_mean(record.tool_calls for record in scored),
         mean_tool_errors=_mean(record.tool_errors for record in scored),
         mean_extra_writes=_mean(len(record.extra_writes) for record in scored),
@@ -186,16 +194,23 @@ def _run_coverage(
         if not task_ids:
             continue
         unreachable = {task_id: steps for task_id, steps in entry.unreachable_tasks.items() if task_id in task_ids}
+        lookups = {task_id: reads for task_id, reads in entry.hidden_lookups.items() if task_id in task_ids}
         narrowed.append(
             entry.model_copy(
                 update={
                     'task_count': len(task_ids),
                     'reachable_task_count': len(task_ids) - len(unreachable),
                     'unreachable_tasks': unreachable,
+                    'hidden_lookups': lookups,
                 }
             )
         )
     return narrowed
+
+
+def _total_cost(records: typing.Sequence[RunRecord]) -> float | None:
+    costs = [record.cost for record in records]
+    return None if None in costs else sum(typing.cast(list[float], costs))
 
 
 def _mean(values: typing.Iterable[float]) -> float:

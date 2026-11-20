@@ -4,10 +4,17 @@
     questions in support for weeks.
   split: dev
   expected_calls:
-    - server: discord
-      method: PUT
-      path: /guilds/{guild_id}/members/{user_id}/roles/{role_id}
-      path_parameters: {guild_id: '81384788765712384', user_id: '200000000000000011', role_id: '300000000000000021'}
+    # quietfox has no roles yet, so setting their roles to Helper alone adds it as well.
+    - any_of:
+        - server: discord
+          method: PUT
+          path: /guilds/{guild_id}/members/{user_id}/roles/{role_id}
+          path_parameters: {guild_id: '81384788765712384', user_id: '200000000000000011', role_id: '300000000000000021'}
+        - server: discord
+          method: PATCH
+          path: /guilds/{guild_id}/members/{user_id}
+          path_parameters: {guild_id: '81384788765712384', user_id: '200000000000000011'}
+          body: {roles: ['300000000000000021']}
   solution:
     - server: discord
       operation: add_guild_member_role
@@ -17,23 +24,77 @@
       method: GET
       path: /guilds/81384788765712384/members/search
       body:
-        - {user: {id: '200000000000000011', username: quietfox, global_name: Quiet Fox}, nick: null, roles: []}
-        - {user: {id: '200000000000000012', username: quietfox_alt, global_name: Not Quiet}, nick: null, roles: []}
+        - &discord-t01-member11 {user: &discord-t01-user11 {id: '200000000000000011', username: quietfox, global_name: Quiet Fox}, nick: null, roles: []}
+        - &discord-t01-member12 {user: &discord-t01-user12 {id: '200000000000000012', username: quietfox_alt, global_name: Not Quiet}, nick: null, roles: []}
     - server: discord
       method: GET
       path: /guilds/81384788765712384/members
       body:
-        - {user: {id: '200000000000000011', username: quietfox, global_name: Quiet Fox}, nick: null, roles: []}
-        - {user: {id: '200000000000000012', username: quietfox_alt, global_name: Not Quiet}, nick: null, roles: []}
-        - {user: {id: '200000000000000013', username: brightowl, global_name: Bright Owl}, nick: null, roles: []}
+        - *discord-t01-member11
+        - *discord-t01-member12
+        - &discord-t01-member13 {user: &discord-t01-user13 {id: '200000000000000013', username: brightowl, global_name: Bright Owl}, nick: null, roles: []}
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members/200000000000000011
+      body: *discord-t01-member11
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members/200000000000000012
+      body: *discord-t01-member12
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members/200000000000000013
+      body: *discord-t01-member13
+    - server: discord
+      method: GET
+      path: /users/200000000000000011
+      body: *discord-t01-user11
+    - server: discord
+      method: GET
+      path: /users/200000000000000012
+      body: *discord-t01-user12
+    - server: discord
+      method: GET
+      path: /users/200000000000000013
+      body: *discord-t01-user13
+    - server: discord
+      method: PATCH
+      path: /guilds/81384788765712384/members/200000000000000011
+      body: {<<: *discord-t01-member11, roles: ['300000000000000021']}
     - server: discord
       method: GET
       path: /guilds/81384788765712384/roles
-      body:
-        - {id: '81384788765712384', name: '@everyone', position: 0, permissions: '0'}
-        - {id: '300000000000000021', name: Helper, position: 2, permissions: '0'}
-        - {id: '300000000000000022', name: Helper Trainee, position: 1, permissions: '0'}
-        - {id: '300000000000000023', name: Moderator, position: 3, permissions: '0'}
+      body: &discord-roles
+        - &discord-role-everyone {id: '81384788765712384', name: '@everyone', position: 0, permissions: '0'}
+        - &discord-role-helper {id: '300000000000000021', name: Helper, position: 2, permissions: '0'}
+        - &discord-role-trainee {id: '300000000000000022', name: Helper Trainee, position: 1, permissions: '0'}
+        - &discord-role-moderator {id: '300000000000000023', name: Moderator, position: 3, permissions: '0'}
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/roles/81384788765712384
+      body: *discord-role-everyone
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/roles/300000000000000021
+      body: *discord-role-helper
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/roles/300000000000000022
+      body: *discord-role-trainee
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/roles/300000000000000023
+      body: *discord-role-moderator
+    # The guild every task works in, which later tasks share.
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384
+      body: &discord-guild {id: '81384788765712384', name: Night Owls, owner_id: '200000000000000090', roles: *discord-roles}
+    - server: discord
+      method: GET
+      path: /users/@me/guilds
+      body: &discord-my-guilds
+        - {id: '81384788765712384', name: Night Owls, owner: false, permissions: '268435462'}
 
 - id: discord-t02
   prompt: >-
@@ -41,11 +102,33 @@
     their messages from the last 24 hours.
   split: dev
   expected_calls:
+    # A ban may wipe a day of messages in seconds or in the older days field, or come from a bulk ban of them alone.
+    - any_of:
+        - server: discord
+          method: PUT
+          path: /guilds/{guild_id}/bans/{user_id}
+          path_parameters: {guild_id: '81384788765712384', user_id: '200000000000000031'}
+          body: {delete_message_seconds: 86400}
+        - server: discord
+          method: PUT
+          path: /guilds/{guild_id}/bans/{user_id}
+          path_parameters: {guild_id: '81384788765712384', user_id: '200000000000000031'}
+          body: {delete_message_days: 1}
+        - server: discord
+          method: POST
+          path: /guilds/{guild_id}/bulk-ban
+          path_parameters: {guild_id: '81384788765712384'}
+          body: {user_ids: ['200000000000000031'], delete_message_seconds: 86400}
+  # spambot_hunter only shares the name, so banning them too is wrong, by either endpoint.
+  forbidden_calls:
     - server: discord
       method: PUT
       path: /guilds/{guild_id}/bans/{user_id}
-      path_parameters: {guild_id: '81384788765712384', user_id: '200000000000000031'}
-      body: {delete_message_seconds: 86400}
+      path_parameters: {user_id: '200000000000000032'}
+    - server: discord
+      method: POST
+      path: /guilds/{guild_id}/bulk-ban
+      body: {user_ids: ['200000000000000032']}
   solution:
     - server: discord
       operation: ban_user_from_guild
@@ -54,15 +137,51 @@
     - server: discord
       method: GET
       path: /guilds/81384788765712384/members/search
-      body:
-        - {user: {id: '200000000000000031', username: spambot_9000, global_name: Free Nitro}, nick: null, roles: []}
-        - {user: {id: '200000000000000032', username: spambot_hunter, global_name: Spam Hunter}, nick: null, roles: []}
+      body: &discord-t02-members
+        - &discord-t02-member31 {user: &discord-t02-user31 {id: '200000000000000031', username: spambot_9000, global_name: Free Nitro}, nick: null, roles: []}
+        - &discord-t02-member32 {user: &discord-t02-user32 {id: '200000000000000032', username: spambot_hunter, global_name: Spam Hunter}, nick: null, roles: []}
     - server: discord
       method: GET
       path: /guilds/81384788765712384/members
-      body:
-        - {user: {id: '200000000000000031', username: spambot_9000, global_name: Free Nitro}, nick: null, roles: []}
-        - {user: {id: '200000000000000032', username: spambot_hunter, global_name: Spam Hunter}, nick: null, roles: []}
+      body: *discord-t02-members
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members/200000000000000031
+      body: *discord-t02-member31
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members/200000000000000032
+      body: *discord-t02-member32
+    - server: discord
+      method: GET
+      path: /users/200000000000000031
+      body: *discord-t02-user31
+    - server: discord
+      method: GET
+      path: /users/200000000000000032
+      body: *discord-t02-user32
+    # Nobody is banned yet.
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/bans
+      body: []
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/bans/{user_id}
+      status: 404
+      body: {message: Unknown Ban, code: 10026}
+    - server: discord
+      method: POST
+      path: /guilds/81384788765712384/bulk-ban
+      body: {banned_users: ['200000000000000031'], failed_users: []}
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384
+      body: *discord-guild
+    - server: discord
+      method: GET
+      path: /users/@me/guilds
+      body: *discord-my-guilds
 
 - id: discord-t03
   prompt: >-
@@ -83,15 +202,41 @@
     - server: discord
       method: GET
       path: /guilds/81384788765712384/members/search
-      body:
-        - {user: {id: '200000000000000041', username: xX_Gamer_Xx, global_name: null}, nick: "~*~xX_GAMER_Xx~*~ (pro) !!!", roles: []}
-        - {user: {id: '200000000000000042', username: xX_Gamer_Xx2, global_name: null}, nick: null, roles: []}
+      body: &discord-t03-members
+        - &discord-t03-member41 {user: &discord-t03-user41 {id: '200000000000000041', username: xX_Gamer_Xx, global_name: null}, nick: "~*~xX_GAMER_Xx~*~ (pro) !!!", roles: []}
+        - &discord-t03-member42 {user: &discord-t03-user42 {id: '200000000000000042', username: xX_Gamer_Xx2, global_name: null}, nick: null, roles: []}
     - server: discord
       method: GET
       path: /guilds/81384788765712384/members
-      body:
-        - {user: {id: '200000000000000041', username: xX_Gamer_Xx, global_name: null}, nick: "~*~xX_GAMER_Xx~*~ (pro) !!!", roles: []}
-        - {user: {id: '200000000000000042', username: xX_Gamer_Xx2, global_name: null}, nick: null, roles: []}
+      body: *discord-t03-members
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members/200000000000000041
+      body: *discord-t03-member41
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/members/200000000000000042
+      body: *discord-t03-member42
+    - server: discord
+      method: GET
+      path: /users/200000000000000041
+      body: *discord-t03-user41
+    - server: discord
+      method: GET
+      path: /users/200000000000000042
+      body: *discord-t03-user42
+    - server: discord
+      method: PATCH
+      path: /guilds/81384788765712384/members/200000000000000041
+      body: {<<: *discord-t03-member41, nick: Gamer}
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384
+      body: *discord-guild
+    - server: discord
+      method: GET
+      path: /users/@me/guilds
+      body: *discord-my-guilds
 
 - id: discord-t04
   prompt: >-
@@ -125,16 +270,58 @@
       method: GET
       path: /guilds/81384788765712384/channels
       body:
-        - {id: '400000000000000050', name: announcements, type: 0, guild_id: '81384788765712384'}
-        - {id: '400000000000000051', name: general, type: 0, guild_id: '81384788765712384'}
-        - {id: '400000000000000052', name: general-offtopic, type: 0, guild_id: '81384788765712384'}
+        - &discord-t04-channel50 {id: '400000000000000050', name: announcements, type: 0, guild_id: '81384788765712384'}
+        - &discord-t04-channel51 {id: '400000000000000051', name: general, type: 0, guild_id: '81384788765712384'}
+        - &discord-t04-channel52 {id: '400000000000000052', name: general-offtopic, type: 0, guild_id: '81384788765712384'}
+    - server: discord
+      method: GET
+      path: /channels/400000000000000050
+      body: *discord-t04-channel50
+    - server: discord
+      method: GET
+      path: /channels/400000000000000051
+      body: *discord-t04-channel51
+    - server: discord
+      method: GET
+      path: /channels/400000000000000052
+      body: *discord-t04-channel52
     - server: discord
       method: GET
       path: /channels/400000000000000051/messages
       body:
-        - {id: '500000000000000061', channel_id: '400000000000000051', content: "anyone up for a game tonight?", author: {id: '200000000000000013', username: brightowl}}
-        - {id: '500000000000000062', channel_id: '400000000000000051', content: "FREE NITRO click here https://dlscord-gift.example/claim", author: {id: '200000000000000077', username: giftbot}}
-        - {id: '500000000000000063', channel_id: '400000000000000051', content: "is the free nitro link real? looks sketchy", author: {id: '200000000000000011', username: quietfox}}
+        - &discord-t04-message61 {id: '500000000000000061', channel_id: '400000000000000051', content: "anyone up for a game tonight?", author: {id: '200000000000000013', username: brightowl}}
+        - &discord-t04-message62 {id: '500000000000000062', channel_id: '400000000000000051', content: "FREE NITRO click here https://dlscord-gift.example/claim", author: {id: '200000000000000077', username: giftbot}}
+        - &discord-t04-message63 {id: '500000000000000063', channel_id: '400000000000000051', content: "is the free nitro link real? looks sketchy", author: {id: '200000000000000011', username: quietfox}}
+    - server: discord
+      method: GET
+      path: /channels/400000000000000051/messages/500000000000000061
+      body: *discord-t04-message61
+    - server: discord
+      method: GET
+      path: /channels/400000000000000051/messages/500000000000000062
+      body: *discord-t04-message62
+    - server: discord
+      method: GET
+      path: /channels/400000000000000051/messages/500000000000000063
+      body: *discord-t04-message63
+    # One search answers whatever query the model writes, with the same messages, each in a list of its own.
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/messages/search
+      body:
+        messages: [[*discord-t04-message61], [*discord-t04-message62], [*discord-t04-message63]]
+        total_results: 3
+        doing_deep_historical_index: false
+        threads: []
+        members: []
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384
+      body: *discord-guild
+    - server: discord
+      method: GET
+      path: /users/@me/guilds
+      body: *discord-my-guilds
 
 - id: discord-t05
   prompt: >-
@@ -142,25 +329,112 @@
     and people should be able to @mention it.
   split: test
   expected_calls:
-    - server: discord
-      method: POST
-      path: /guilds/{guild_id}/roles
-      path_parameters: {guild_id: '81384788765712384'}
-      body: {name: Event Staff, hoist: true, mentionable: true}
+    # The role may be created with every setting, or created and then given the settings it lacks.
+    - any_of:
+        - server: discord
+          method: POST
+          path: /guilds/{guild_id}/roles
+          path_parameters: {guild_id: '81384788765712384'}
+          body: {name: Event Staff, hoist: true, mentionable: true}
+        - all_of:
+            - server: discord
+              method: POST
+              path: /guilds/{guild_id}/roles
+              path_parameters: {guild_id: '81384788765712384'}
+              body: {name: Event Staff}
+            - server: discord
+              method: PATCH
+              path: /guilds/{guild_id}/roles/{role_id}
+              path_parameters: {guild_id: '81384788765712384', role_id: '300000000000000025'}
+              body: {hoist: true, mentionable: true}
+        - all_of:
+            - server: discord
+              method: POST
+              path: /guilds/{guild_id}/roles
+              path_parameters: {guild_id: '81384788765712384'}
+              body: {name: Event Staff, hoist: true}
+            - server: discord
+              method: PATCH
+              path: /guilds/{guild_id}/roles/{role_id}
+              path_parameters: {guild_id: '81384788765712384', role_id: '300000000000000025'}
+              body: {mentionable: true}
+        - all_of:
+            - server: discord
+              method: POST
+              path: /guilds/{guild_id}/roles
+              path_parameters: {guild_id: '81384788765712384'}
+              body: {name: Event Staff, mentionable: true}
+            - server: discord
+              method: PATCH
+              path: /guilds/{guild_id}/roles/{role_id}
+              path_parameters: {guild_id: '81384788765712384', role_id: '300000000000000025'}
+              body: {hoist: true}
+        - all_of:
+            - server: discord
+              method: POST
+              path: /guilds/{guild_id}/roles
+              path_parameters: {guild_id: '81384788765712384'}
+              body: {name: Event Staff}
+            - server: discord
+              method: PATCH
+              path: /guilds/{guild_id}/roles/{role_id}
+              path_parameters: {guild_id: '81384788765712384', role_id: '300000000000000025'}
+              body: {hoist: true}
+            - server: discord
+              method: PATCH
+              path: /guilds/{guild_id}/roles/{role_id}
+              path_parameters: {guild_id: '81384788765712384', role_id: '300000000000000025'}
+              body: {mentionable: true}
   solution:
     - server: discord
       operation: create_guild_role
       arguments: {guild_id: '81384788765712384', name: Event Staff, hoist: true, mentionable: true}
+  responses:
+    # No Event Staff role exists yet.
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/roles
+      body: *discord-roles
+    # The new role gets this id, which a follow-up update names.
+    # One reply cannot follow the request's settings, so a new role answers with neither set.
+    # A model that set both at once has already passed, and one that did not still has to update the role.
+    - server: discord
+      method: POST
+      path: /guilds/81384788765712384/roles
+      body: {id: '300000000000000025', name: Event Staff, position: 1, permissions: '0', color: 0, hoist: false, mentionable: false, managed: false}
+    # An update or a read shows the role as the task leaves it.
+    - server: discord
+      method: PATCH
+      path: /guilds/81384788765712384/roles/300000000000000025
+      body: &discord-t05-role {id: '300000000000000025', name: Event Staff, position: 1, permissions: '0', color: 0, hoist: true, mentionable: true, managed: false}
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/roles/300000000000000025
+      body: *discord-t05-role
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384
+      body: *discord-guild
+    - server: discord
+      method: GET
+      path: /users/@me/guilds
+      body: *discord-my-guilds
 
 - id: discord-t06
   prompt: >-
     Pin the "Server rules updated" post in #announcements on guild 81384788765712384 so new folks see it first.
   split: test
   expected_calls:
-    - server: discord
-      method: PUT
-      path: /channels/{channel_id}/messages/pins/{message_id}
-      path_parameters: {channel_id: '400000000000000050', message_id: '500000000000000072'}
+    # The newer pins endpoint and the deprecated one both pin a message.
+    - any_of:
+        - server: discord
+          method: PUT
+          path: /channels/{channel_id}/messages/pins/{message_id}
+          path_parameters: {channel_id: '400000000000000050', message_id: '500000000000000072'}
+        - server: discord
+          method: PUT
+          path: /channels/{channel_id}/pins/{message_id}
+          path_parameters: {channel_id: '400000000000000050', message_id: '500000000000000072'}
   solution:
     - server: discord
       operation: create_pin
@@ -170,17 +444,68 @@
       method: GET
       path: /guilds/81384788765712384/channels
       body:
-        - {id: '400000000000000049', name: announcements-archive, type: 0, guild_id: '81384788765712384'}
-        - {id: '400000000000000050', name: announcements, type: 5, guild_id: '81384788765712384'}
-        - {id: '400000000000000051', name: general, type: 0, guild_id: '81384788765712384'}
+        - &discord-t06-channel49 {id: '400000000000000049', name: announcements-archive, type: 0, guild_id: '81384788765712384'}
+        - &discord-t06-channel50 {id: '400000000000000050', name: announcements, type: 5, guild_id: '81384788765712384'}
+        - &discord-t06-channel51 {id: '400000000000000051', name: general, type: 0, guild_id: '81384788765712384'}
+    - server: discord
+      method: GET
+      path: /channels/400000000000000049
+      body: *discord-t06-channel49
+    - server: discord
+      method: GET
+      path: /channels/400000000000000050
+      body: *discord-t06-channel50
+    - server: discord
+      method: GET
+      path: /channels/400000000000000051
+      body: *discord-t06-channel51
     - server: discord
       method: GET
       path: /channels/400000000000000050/messages
       body:
-        - {id: '500000000000000071', channel_id: '400000000000000050', content: "Movie night moved to Saturday!", author: {id: '200000000000000090', username: modlead}, pinned: false}
-        - {id: '500000000000000072', channel_id: '400000000000000050', content: "Server rules updated: please re-read #rules, especially the section on self-promo.", author: {id: '200000000000000090', username: modlead}, pinned: false}
+        - &discord-t06-message71 {id: '500000000000000071', channel_id: '400000000000000050', content: "Movie night moved to Saturday!", author: {id: '200000000000000090', username: modlead}, pinned: false}
+        - &discord-t06-message72 {id: '500000000000000072', channel_id: '400000000000000050', content: "Server rules updated: please re-read #rules, especially the section on self-promo.", author: {id: '200000000000000090', username: modlead}, pinned: false}
     - server: discord
       method: GET
       path: /channels/400000000000000049/messages
       body:
-        - {id: '500000000000000081', channel_id: '400000000000000049', content: "Server rules updated (2024 edition)", author: {id: '200000000000000090', username: modlead}, pinned: false}
+        - &discord-t06-message81 {id: '500000000000000081', channel_id: '400000000000000049', content: "Server rules updated (2024 edition)", author: {id: '200000000000000090', username: modlead}, pinned: false}
+    - server: discord
+      method: GET
+      path: /channels/400000000000000050/messages/500000000000000071
+      body: *discord-t06-message71
+    - server: discord
+      method: GET
+      path: /channels/400000000000000050/messages/500000000000000072
+      body: *discord-t06-message72
+    - server: discord
+      method: GET
+      path: /channels/400000000000000049/messages/500000000000000081
+      body: *discord-t06-message81
+    # One search answers whatever query the model writes, with the messages of both announcement channels.
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384/messages/search
+      body:
+        messages: [[*discord-t06-message71], [*discord-t06-message72], [*discord-t06-message81]]
+        total_results: 3
+        doing_deep_historical_index: false
+        threads: []
+        members: []
+    # Nothing is pinned yet, by either pins listing.
+    - server: discord
+      method: GET
+      path: /channels/{channel_id}/messages/pins
+      body: {items: [], has_more: false}
+    - server: discord
+      method: GET
+      path: /channels/{channel_id}/pins
+      body: []
+    - server: discord
+      method: GET
+      path: /guilds/81384788765712384
+      body: *discord-guild
+    - server: discord
+      method: GET
+      path: /users/@me/guilds
+      body: *discord-my-guilds

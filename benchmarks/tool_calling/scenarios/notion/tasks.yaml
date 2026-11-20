@@ -30,6 +30,29 @@
             text:
               content: 'Action item: Priya to share the revised hiring plan by Friday.'
   responses:
+  # The database itself, which a model may read for its properties before querying it.
+  - server: notion
+    method: GET
+    path: /v1/databases/{id}
+    body: &meeting_notes_database
+      object: database
+      id: 3f1c2a9b-8d7e-4f60-a1b2-c3d4e5f60718
+      title:
+      - type: text
+        plain_text: Meeting Notes
+        text:
+          content: Meeting Notes
+      properties:
+        Name:
+          id: title
+          name: Name
+          type: title
+          title: {}
+        Date:
+          id: Dt%3Aq
+          name: Date
+          type: date
+          date: {}
   - server: notion
     method: POST
     path: /v1/databases/{id}/query
@@ -38,8 +61,12 @@
       has_more: false
       next_cursor: null
       results:
-      - object: page
+      - &q3_planning_sync
+        object: page
         id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d01
+        parent:
+          type: database_id
+          database_id: 3f1c2a9b-8d7e-4f60-a1b2-c3d4e5f60718
         properties:
           Name:
             type: title
@@ -52,8 +79,12 @@
             type: date
             date:
               start: '2026-11-10'
-      - object: page
+      - &q2_planning_sync
+        object: page
         id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d02
+        parent:
+          type: database_id
+          database_id: 3f1c2a9b-8d7e-4f60-a1b2-c3d4e5f60718
         properties:
           Name:
             type: title
@@ -66,8 +97,12 @@
             type: date
             date:
               start: '2026-08-04'
-      - object: page
+      - &weekly_design_review
+        object: page
         id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d03
+        parent:
+          type: database_id
+          database_id: 3f1c2a9b-8d7e-4f60-a1b2-c3d4e5f60718
         properties:
           Name:
             type: title
@@ -80,10 +115,78 @@
             type: date
             date:
               start: '2026-11-12'
+  # Each page of the query, retrieved by its id.
+  - server: notion
+    method: GET
+    path: /v1/pages/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d01
+    body: *q3_planning_sync
+  - server: notion
+    method: GET
+    path: /v1/pages/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d02
+    body: *q2_planning_sync
+  - server: notion
+    method: GET
+    path: /v1/pages/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d03
+    body: *weekly_design_review
+  # What each page already holds, which a model may read to find its end.
+  - server: notion
+    method: GET
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d01/children
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: block
+        id: 5b0e1f2a-3c4d-4e5f-8a6b-7c8d9e0f1a01
+        type: paragraph
+        has_children: false
+        paragraph:
+          rich_text:
+          - type: text
+            plain_text: We agreed to open two backend roles in Q3.
+            text:
+              content: We agreed to open two backend roles in Q3.
+  - server: notion
+    method: GET
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d02/children
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: block
+        id: 5b0e1f2a-3c4d-4e5f-8a6b-7c8d9e0f1a02
+        type: paragraph
+        has_children: false
+        paragraph:
+          rich_text:
+          - type: text
+            plain_text: Q2 hiring is on track.
+            text:
+              content: Q2 hiring is on track.
+  - server: notion
+    method: GET
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d03/children
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: block
+        id: 5b0e1f2a-3c4d-4e5f-8a6b-7c8d9e0f1a03
+        type: paragraph
+        has_children: false
+        paragraph:
+          rich_text:
+          - type: text
+            plain_text: Reviewed the new settings page mockups.
+            text:
+              content: Reviewed the new settings page mockups.
   - server: notion
     method: PATCH
     path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d01/children
-    body: &id001
+    body: &appended_children
       object: list
       results: []
       has_more: false
@@ -113,6 +216,39 @@
           select:
             name: Done
   responses:
+  # The database itself, which names the options Status takes.
+  # Its options carry no id, so a model sets one by name as the expected call reads.
+  - server: notion
+    method: GET
+    path: /v1/databases/{id}
+    body: &tasks_database
+      object: database
+      id: 7b2d4e6f-8a0c-4b1d-9e3f-5a7c9b1d3e5f
+      title:
+      - type: text
+        plain_text: Tasks
+        text:
+          content: Tasks
+      properties:
+        Name:
+          id: title
+          name: Name
+          type: title
+          title: {}
+        Status:
+          id: St%3Ax
+          name: Status
+          type: select
+          select:
+            options:
+            - name: Not started
+              color: gray
+            - name: In progress
+              color: blue
+            - name: Blocked
+              color: red
+            - name: Done
+              color: green
   - server: notion
     method: POST
     path: /v1/databases/{id}/query
@@ -121,8 +257,12 @@
       has_more: false
       next_cursor: null
       results:
-      - object: page
+      - &update_offboarding_checklist
+        object: page
         id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e10
+        parent:
+          type: database_id
+          database_id: 7b2d4e6f-8a0c-4b1d-9e3f-5a7c9b1d3e5f
         properties:
           Name:
             type: title
@@ -135,8 +275,12 @@
             type: select
             select:
               name: In progress
-      - object: page
+      - &update_onboarding_doc
+        object: page
         id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e11
+        parent:
+          type: database_id
+          database_id: 7b2d4e6f-8a0c-4b1d-9e3f-5a7c9b1d3e5f
         properties:
           Name:
             type: title
@@ -149,8 +293,12 @@
             type: select
             select:
               name: In progress
-      - object: page
+      - &migrate_ci_not_started
+        object: page
         id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e12
+        parent:
+          type: database_id
+          database_id: 7b2d4e6f-8a0c-4b1d-9e3f-5a7c9b1d3e5f
         properties:
           Name:
             type: title
@@ -163,6 +311,19 @@
             type: select
             select:
               name: Not started
+  # Each page of the query, retrieved by its id.
+  - server: notion
+    method: GET
+    path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e10
+    body: *update_offboarding_checklist
+  - server: notion
+    method: GET
+    path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e11
+    body: *update_onboarding_doc
+  - server: notion
+    method: GET
+    path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e12
+    body: *migrate_ci_not_started
   - server: notion
     method: PATCH
     path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e11
@@ -195,6 +356,10 @@
             name: In progress
   responses:
   - server: notion
+    method: GET
+    path: /v1/databases/{id}
+    body: *tasks_database
+  - server: notion
     method: POST
     path: /v1/databases/{id}/query
     body:
@@ -202,8 +367,12 @@
       has_more: false
       next_cursor: null
       results:
-      - object: page
+      - &migrate_cd
+        object: page
         id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e31
+        parent:
+          type: database_id
+          database_id: 7b2d4e6f-8a0c-4b1d-9e3f-5a7c9b1d3e5f
         properties:
           Name:
             type: title
@@ -216,8 +385,12 @@
             type: select
             select:
               name: Not started
-      - object: page
+      - &migrate_ci
+        object: page
         id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e32
+        parent:
+          type: database_id
+          database_id: 7b2d4e6f-8a0c-4b1d-9e3f-5a7c9b1d3e5f
         properties:
           Name:
             type: title
@@ -231,6 +404,14 @@
             select:
               name: Not started
   - server: notion
+    method: GET
+    path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e31
+    body: *migrate_cd
+  - server: notion
+    method: GET
+    path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e32
+    body: *migrate_ci
+  - server: notion
     method: PATCH
     path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e32
     body:
@@ -242,19 +423,72 @@
     with a paragraph under it: "Write a runbook for rolling back the payments service."'
   split: test
   expected_calls:
-  - server: notion
-    method: PATCH
-    path: /v1/blocks/{id}/children
-    path_parameters:
-      id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d42
-    body:
-      children:
-      - type: heading_2
-      - type: paragraph
-        paragraph:
-          rich_text:
-          - text:
-              content: Write a runbook for rolling back the payments service.
+  # The heading may be of any level, and the heading and the paragraph may be appended in one request or one each.
+  - any_of:
+    - server: notion
+      method: PATCH
+      path: /v1/blocks/{id}/children
+      path_parameters: &release_24_retro_id
+        id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d42
+      body:
+        children:
+        - type: heading_2
+        - &runbook_paragraph
+          type: paragraph
+          paragraph:
+            rich_text:
+            - text:
+                content: Write a runbook for rolling back the payments service.
+    - server: notion
+      method: PATCH
+      path: /v1/blocks/{id}/children
+      path_parameters: *release_24_retro_id
+      body:
+        children:
+        - type: heading_1
+        - *runbook_paragraph
+    - server: notion
+      method: PATCH
+      path: /v1/blocks/{id}/children
+      path_parameters: *release_24_retro_id
+      body:
+        children:
+        - type: heading_3
+        - *runbook_paragraph
+    - all_of:
+      - server: notion
+        method: PATCH
+        path: /v1/blocks/{id}/children
+        path_parameters: *release_24_retro_id
+        body:
+          children:
+          - type: heading_2
+      - &runbook_paragraph_call
+        server: notion
+        method: PATCH
+        path: /v1/blocks/{id}/children
+        path_parameters: *release_24_retro_id
+        body:
+          children:
+          - *runbook_paragraph
+    - all_of:
+      - server: notion
+        method: PATCH
+        path: /v1/blocks/{id}/children
+        path_parameters: *release_24_retro_id
+        body:
+          children:
+          - type: heading_1
+      - *runbook_paragraph_call
+    - all_of:
+      - server: notion
+        method: PATCH
+        path: /v1/blocks/{id}/children
+        path_parameters: *release_24_retro_id
+        body:
+          children:
+          - type: heading_3
+      - *runbook_paragraph_call
   solution:
   - server: notion
     operation: append_block_children
@@ -277,6 +511,10 @@
               content: Write a runbook for rolling back the payments service.
   responses:
   - server: notion
+    method: GET
+    path: /v1/databases/{id}
+    body: *meeting_notes_database
+  - server: notion
     method: POST
     path: /v1/databases/{id}/query
     body:
@@ -284,8 +522,12 @@
       has_more: false
       next_cursor: null
       results:
-      - object: page
+      - &release_23_retro
+        object: page
         id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d41
+        parent:
+          type: database_id
+          database_id: 3f1c2a9b-8d7e-4f60-a1b2-c3d4e5f60718
         properties:
           Name:
             type: title
@@ -294,8 +536,16 @@
               plain_text: Release 2.3 retro
               text:
                 content: Release 2.3 retro
-      - object: page
+          Date:
+            type: date
+            date:
+              start: '2026-09-30'
+      - &release_24_retro
+        object: page
         id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d42
+        parent:
+          type: database_id
+          database_id: 3f1c2a9b-8d7e-4f60-a1b2-c3d4e5f60718
         properties:
           Name:
             type: title
@@ -304,8 +554,16 @@
               plain_text: Release 2.4 retro
               text:
                 content: Release 2.4 retro
-      - object: page
+          Date:
+            type: date
+            date:
+              start: '2026-11-18'
+      - &release_24_kickoff
+        object: page
         id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d43
+        parent:
+          type: database_id
+          database_id: 3f1c2a9b-8d7e-4f60-a1b2-c3d4e5f60718
         properties:
           Name:
             type: title
@@ -314,10 +572,80 @@
               plain_text: Release 2.4 kickoff
               text:
                 content: Release 2.4 kickoff
+          Date:
+            type: date
+            date:
+              start: '2026-10-01'
+  - server: notion
+    method: GET
+    path: /v1/pages/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d41
+    body: *release_23_retro
+  - server: notion
+    method: GET
+    path: /v1/pages/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d42
+    body: *release_24_retro
+  - server: notion
+    method: GET
+    path: /v1/pages/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d43
+    body: *release_24_kickoff
+  - server: notion
+    method: GET
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d41/children
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: block
+        id: 5b0e1f2a-3c4d-4e5f-8a6b-7c8d9e0f1a41
+        type: paragraph
+        has_children: false
+        paragraph:
+          rich_text:
+          - type: text
+            plain_text: The 2.3 rollout went out a day late.
+            text:
+              content: The 2.3 rollout went out a day late.
+  - server: notion
+    method: GET
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d42/children
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: block
+        id: 5b0e1f2a-3c4d-4e5f-8a6b-7c8d9e0f1a42
+        type: paragraph
+        has_children: false
+        paragraph:
+          rich_text:
+          - type: text
+            plain_text: The payments rollback took two hours by hand.
+            text:
+              content: The payments rollback took two hours by hand.
+  - server: notion
+    method: GET
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d43/children
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: block
+        id: 5b0e1f2a-3c4d-4e5f-8a6b-7c8d9e0f1a43
+        type: paragraph
+        has_children: false
+        paragraph:
+          rich_text:
+          - type: text
+            plain_text: Scope for 2.4 is the new billing settings.
+            text:
+              content: Scope for 2.4 is the new billing settings.
   - server: notion
     method: PATCH
     path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d42/children
-    body: *id001
+    body: *appended_children
 
 - id: notion-t05
   prompt: 'The "Design review for pricing page" task in our Tasks database (https://www.notion.so/acme/Tasks-7b2d4e6f8a0c4b1d9e3f5a7c9b1d3e5f)
@@ -369,6 +697,10 @@
               content: 'Blocked: waiting on final copy from marketing.'
   responses:
   - server: notion
+    method: GET
+    path: /v1/databases/{id}
+    body: *tasks_database
+  - server: notion
     method: POST
     path: /v1/databases/{id}/query
     body:
@@ -376,8 +708,12 @@
       has_more: false
       next_cursor: null
       results:
-      - object: page
+      - &design_review_checkout
+        object: page
         id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e51
+        parent:
+          type: database_id
+          database_id: 7b2d4e6f-8a0c-4b1d-9e3f-5a7c9b1d3e5f
         properties:
           Name:
             type: title
@@ -390,8 +726,12 @@
             type: select
             select:
               name: In progress
-      - object: page
+      - &design_review_pricing
+        object: page
         id: c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52
+        parent:
+          type: database_id
+          database_id: 7b2d4e6f-8a0c-4b1d-9e3f-5a7c9b1d3e5f
         properties:
           Name:
             type: title
@@ -405,6 +745,32 @@
             select:
               name: In progress
   - server: notion
+    method: GET
+    path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e51
+    body: *design_review_checkout
+  - server: notion
+    method: GET
+    path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52
+    body: *design_review_pricing
+  - server: notion
+    method: GET
+    path: /v1/blocks/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52/children
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: block
+        id: 5b0e1f2a-3c4d-4e5f-8a6b-7c8d9e0f1a52
+        type: paragraph
+        has_children: false
+        paragraph:
+          rich_text:
+          - type: text
+            plain_text: Review the pricing page layout with design and marketing.
+            text:
+              content: Review the pricing page layout with design and marketing.
+  - server: notion
     method: PATCH
     path: /v1/pages/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52
     body:
@@ -413,7 +779,7 @@
   - server: notion
     method: PATCH
     path: /v1/blocks/c4d5e6f7-1a2b-4c3d-9e8f-0a1b2c3d4e52/children
-    body: *id001
+    body: *appended_children
 
 - id: notion-t06
   prompt: 'In our Meeting Notes database (https://www.notion.so/acme/Meeting-Notes-3f1c2a9b8d7e4f60a1b2c3d4e5f60718),
@@ -447,6 +813,10 @@
               content: Book a room for the next offsite.
   responses:
   - server: notion
+    method: GET
+    path: /v1/databases/{id}
+    body: *meeting_notes_database
+  - server: notion
     method: POST
     path: /v1/databases/{id}/query
     body:
@@ -454,8 +824,12 @@
       has_more: false
       next_cursor: null
       results:
-      - object: page
+      - &offsite_november
+        object: page
         id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21
+        parent:
+          type: database_id
+          database_id: 3f1c2a9b-8d7e-4f60-a1b2-c3d4e5f60718
         properties:
           Name:
             type: title
@@ -468,8 +842,12 @@
             type: date
             date:
               start: '2026-11-16'
-      - object: page
+      - &offsite_may
+        object: page
         id: 9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d22
+        parent:
+          type: database_id
+          database_id: 3f1c2a9b-8d7e-4f60-a1b2-c3d4e5f60718
         properties:
           Name:
             type: title
@@ -483,10 +861,50 @@
             date:
               start: '2026-05-21'
   - server: notion
-    method: PATCH
+    method: GET
+    path: /v1/pages/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21
+    body: *offsite_november
+  - server: notion
+    method: GET
+    path: /v1/pages/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d22
+    body: *offsite_may
+  - server: notion
+    method: GET
     path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21/children
     body:
       object: list
-      results: []
       has_more: false
       next_cursor: null
+      results:
+      - object: block
+        id: 5b0e1f2a-3c4d-4e5f-8a6b-7c8d9e0f1a21
+        type: paragraph
+        has_children: false
+        paragraph:
+          rich_text:
+          - type: text
+            plain_text: We set the 2027 product themes.
+            text:
+              content: We set the 2027 product themes.
+  - server: notion
+    method: GET
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d22/children
+    body:
+      object: list
+      has_more: false
+      next_cursor: null
+      results:
+      - object: block
+        id: 5b0e1f2a-3c4d-4e5f-8a6b-7c8d9e0f1a22
+        type: paragraph
+        has_children: false
+        paragraph:
+          rich_text:
+          - type: text
+            plain_text: We reviewed the first half of 2026.
+            text:
+              content: We reviewed the first half of 2026.
+  - server: notion
+    method: PATCH
+    path: /v1/blocks/9a1e5c0d-2b3f-4c6a-8d7e-1f2a3b4c5d21/children
+    body: *appended_children

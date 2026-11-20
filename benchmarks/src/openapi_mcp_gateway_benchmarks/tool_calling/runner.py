@@ -1,24 +1,28 @@
+import asyncio
 import dataclasses
+import json
 import logging
 import re
 import typing
+import urllib.parse
 
 import pydantic
-import tenacity
 from pydantic_ai.models import Model
-from pydantic_ai.retries import RetryConfig
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 from pydantic_evals.reporting import EvaluationReport
 
 from .dataset import Benchmark, DatasetError, Split, Task
-from .harness import TRANSIENT_ERRORS, RunOutcome, ScenarioRun
+from .harness import RunOutcome, ScenarioRun
+from .replay import RecordedRequest
 
 
 logger = logging.getLogger(__name__)
 
-# How often a run that hit a rate limit or an unavailable provider is tried again before it counts as errored.
+# How often a run that hit a rate limit or an unavailable provider is tried before it counts as errored.
+# The wait doubles after each attempt, up to the limit, in seconds.
 TRANSIENT_ATTEMPTS = 4
+RETRY_WAIT_LIMIT_SECONDS = 60
 
 # Pydantic Evals names the repeats of a case like ``tmdb-t01 [2/3]``.
 REPEAT_SUFFIX = re.compile(r' \[(\d+)/\d+\]$')
@@ -48,10 +52,19 @@ class RunRecord(pydantic.BaseModel):
     forbidden_calls: list[str]
     extra_writes: list[str]
     input_tokens: int
+    # The part of input_tokens read from or written to the provider's prompt cache.
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     output_tokens: int
+    # In US dollars, None for a model with no known price.
+    cost: float | None = None
     model_requests: int
     tool_calls: int
     tool_errors: int
+    # Each request the upstream received, in order, with where its response came from.
+    requests: list[str] = pydantic.Field(default_factory=list)
+    # Reads the spec's sample answered, data the task never set, which can mislead a model on a correct route.
+    unset_reads: list[str] = pydantic.Field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -117,21 +130,24 @@ async def _evaluate(
     model_spec = scenario_run.benchmark.manifest.models[model_name]
 
     async def run_case(task: Task) -> RunOutcome:
+        """Run ``task``, trying again after a provider failure, and count what every attempt cost."""
         agent = scenario_run.agent(factory(model_name, task), model_spec, variant, mcp_urls)
-        return await scenario_run.run_task(agent, task)
+        outcome = await scenario_run.run_task(agent, task)
+        spent = outcome.cost
+        for attempt in range(1, TRANSIENT_ATTEMPTS):
+            if not outcome.errored:
+                break
+            await asyncio.sleep(min(RETRY_WAIT_LIMIT_SECONDS, 2 * 2**attempt))
+            outcome = await scenario_run.run_task(agent, task)
+            spent = None if spent is None or outcome.cost is None else spent + outcome.cost
+        return outcome.model_copy(update={'cost': spent})
 
     dataset = Dataset[Task, RunOutcome, None](
         name=f'{scenario_run.scenario.name}/{variant}/{model_name}',
         cases=[Case(name=task.id, inputs=task) for task in tasks],
         evaluators=[ExpectedCallsMade()],
     )
-    retry: RetryConfig = {
-        'stop': tenacity.stop_after_attempt(TRANSIENT_ATTEMPTS),
-        'wait': tenacity.wait_exponential(multiplier=2, max=60),
-        'retry': tenacity.retry_if_exception_type(TRANSIENT_ERRORS),
-        'reraise': True,
-    }
-    return await dataset.evaluate(run_case, repeat=repeat, max_concurrency=1, retry_task=retry, progress=False)
+    return await dataset.evaluate(run_case, repeat=repeat, max_concurrency=1, progress=False)
 
 
 def _records(
@@ -148,17 +164,22 @@ def _records(
                 task_id=case.inputs.id,
                 split=case.inputs.split,
                 repetition=_repetition(case.name),
-                passed=outcome.grade.passed,
-                errored=False,
+                passed=outcome.grade.passed and not outcome.errored,
+                errored=outcome.errored,
                 failure=outcome.failure,
                 missing_calls=outcome.grade.missing_calls,
                 forbidden_calls=outcome.grade.forbidden_calls,
                 extra_writes=outcome.grade.extra_writes,
                 input_tokens=outcome.input_tokens,
+                cache_read_tokens=outcome.cache_read_tokens,
+                cache_write_tokens=outcome.cache_write_tokens,
                 output_tokens=outcome.output_tokens,
+                cost=outcome.cost,
                 model_requests=outcome.model_requests,
                 tool_calls=outcome.tool_calls,
                 tool_errors=outcome.tool_errors,
+                requests=[_request_line(request) for request in outcome.requests],
+                unset_reads=outcome.unset_reads,
             )
         )
     for failure in report.failures:
@@ -184,6 +205,12 @@ def _records(
             )
         )
     return records
+
+
+def _request_line(request: RecordedRequest) -> str:
+    query = f'?{urllib.parse.urlencode(request.query, doseq=True)}' if request.query else ''
+    body = f' with {json.dumps(request.body, default=str)}' if request.body is not None else ''
+    return f'{request.method} {request.path}{query} on {request.server}{body}, answered by {request.answer}'
 
 
 def _repetition(case_name: str) -> int:

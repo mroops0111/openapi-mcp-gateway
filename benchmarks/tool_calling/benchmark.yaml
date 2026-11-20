@@ -1,7 +1,7 @@
 # The tool calling benchmark. See README.md for what it measures and how to run it.
 # Each spec is pinned to one revision and checked by SHA-256.
 # A change to a pin, a task, a variant, or the system prompt makes a new version.
-version: 1
+version: 2
 
 specs:
   petstore:
@@ -23,19 +23,19 @@ specs:
     source: https://raw.githubusercontent.com/stripe/openapi/a045100cf4af0acb548cb9c6f236bb117f83458f/openapi/spec3.json
     sha256: 7cff4cc46d0654101a36a3302f7544640f5f73e4f3cad6f264f0e23c19fa1776
 
-# A small and a mainstream tier from each provider, named as Pydantic AI names them.
-# Caching the tool definitions changes what a run costs, not what it sends or what it counts.
+# The cheapest current model from each provider, named as Pydantic AI names them.
+# Google's is the newest Flash-Lite, since Gemini 4's cheapest costs about 15 times the other two.
+# Each caches its tools, system prompt, and conversation so far, and Gemini does so implicitly.
+# Caching changes what a run costs, not what it sends or what it counts.
 models:
   claude-haiku:
     model: anthropic:claude-haiku-5-5
-    settings: {anthropic_cache_tool_definitions: true, anthropic_cache_instructions: true}
-  claude-sonnet:
-    model: anthropic:claude-sonnet-5-5
-    settings: {anthropic_cache_tool_definitions: true, anthropic_cache_instructions: true}
+    settings: {cache: true}
   gpt-luna:
     model: openai:gpt-6-luna
-  gemini-hydrogen:
-    model: google:gemini-4-hydrogen
+    settings: {cache: true}
+  gemini-flash-lite:
+    model: google:gemini-3.5-flash-lite
 
 scenarios: [petstore, notion, asana, discord, github, stripe, github-asana]
 
