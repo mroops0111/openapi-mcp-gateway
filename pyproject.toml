@@ -48,6 +48,7 @@ dev = [
     "basedpyright>=1.39.0",
     "ruff>=0.17.3",
     "pyjwt[crypto]>=2.15.1",
+    "pytest-cov>=7.1.0",
 ]
 
 [project.scripts]
@@ -141,6 +142,18 @@ addopts = "-m 'not smoke'"
 markers = [
     "smoke: external-dependency smoke tests (clones fastapi/fastapi, fetches public OpenAPI specs over HTTP); skipped by default. Run explicitly with `pytest -m smoke`.",
 ]
+
+# Coverage of the gateway package by the test suite, lines and branches both, which CI holds at 80%.
+[tool.coverage.run]
+source = ["openapi_mcp_gateway"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
+# An abstract method has no body to run, and a type-checking import never runs at all.
+exclude_also = ["@abc.abstractmethod", "if typing.TYPE_CHECKING:"]
 
 [tool.basedpyright]
 venvPath = "."

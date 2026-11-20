@@ -50,7 +50,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
       - run: uv sync --all-packages --extra dev --extra redis
-      - run: uv run pytest tests/ -v --tb=short
+      # Fails below the coverage floor set under [tool.coverage.report] in pyproject.toml.
+      - run: uv run pytest tests/ -v --tb=short --cov
       - run: uv run pytest benchmarks/tests/ -v --tb=short
 
   smoke:
