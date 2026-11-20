@@ -21,8 +21,14 @@ PACKAGE_LOGGER = 'openapi_mcp_gateway'
 
 
 FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures'
+
+
 PETSTORE_SPEC = FIXTURES / 'petstore.json'
+
+
 UNDOCUMENTED_SPEC = FIXTURES / 'undocumented.json'
+
+
 CLIENT_CREDENTIALS_SPEC = FIXTURES / 'client_credentials.json'
 
 
@@ -35,33 +41,6 @@ def _reset_loggers():
         logger.handlers.clear()
         logger.setLevel(logging.NOTSET)
         logger.propagate = True
-
-
-def _run(*args, gateway_run: mock.Mock | None = None):
-    """Invoke ``cli.main`` with ``Gateway.run`` patched out, returning ``(result, mock)``."""
-    runner = CliRunner()
-    gateway_run = gateway_run or mock.Mock()
-    with mock.patch.object(cli.Gateway, 'run', gateway_run):
-        result = runner.invoke(cli.main, list(args), catch_exceptions=False)
-    return result, gateway_run
-
-
-def _run_capture_config(*args) -> tuple[typing.Any, GatewayConfig | None]:
-    """Run the CLI without starting uvicorn, returning the effective ``GatewayConfig``."""
-    captured: dict[str, GatewayConfig] = {}
-    real_from_config = cli.Gateway.from_config
-
-    def spy(config: GatewayConfig) -> typing.Any:
-        captured['config'] = config
-        return real_from_config(config)
-
-    runner = CliRunner()
-    with (
-        mock.patch.object(cli.Gateway, 'from_config', side_effect=spy),
-        mock.patch.object(cli.Gateway, 'run', mock.Mock()),
-    ):
-        result = runner.invoke(cli.main, list(args), catch_exceptions=False)
-    return result, captured.get('config')
 
 
 class TestLoggingFlags:
@@ -593,3 +572,30 @@ class TestDryRunJsonOutput:
         assert tools, 'the fixture should expose at least one tool'
         assert all(tool['description'] for tool in tools)
         assert any(tool['description'].startswith('GET /orders') for tool in tools)
+
+
+def _run(*args, gateway_run: mock.Mock | None = None):
+    """Invoke ``cli.main`` with ``Gateway.run`` patched out, returning ``(result, mock)``."""
+    runner = CliRunner()
+    gateway_run = gateway_run or mock.Mock()
+    with mock.patch.object(cli.Gateway, 'run', gateway_run):
+        result = runner.invoke(cli.main, list(args), catch_exceptions=False)
+    return result, gateway_run
+
+
+def _run_capture_config(*args) -> tuple[typing.Any, GatewayConfig | None]:
+    """Run the CLI without starting uvicorn, returning the effective ``GatewayConfig``."""
+    captured: dict[str, GatewayConfig] = {}
+    real_from_config = cli.Gateway.from_config
+
+    def spy(config: GatewayConfig) -> typing.Any:
+        captured['config'] = config
+        return real_from_config(config)
+
+    runner = CliRunner()
+    with (
+        mock.patch.object(cli.Gateway, 'from_config', side_effect=spy),
+        mock.patch.object(cli.Gateway, 'run', mock.Mock()),
+    ):
+        result = runner.invoke(cli.main, list(args), catch_exceptions=False)
+    return result, captured.get('config')

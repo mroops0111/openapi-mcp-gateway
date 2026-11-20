@@ -23,44 +23,6 @@ def signing_key():
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
-def _metadata_response(payload: dict | None, status_code: int = 200) -> MagicMock:
-    """Mock an issuer metadata endpoint response."""
-    response = MagicMock()
-    response.status_code = status_code
-    if payload is None:
-        response.json.side_effect = ValueError('not json')
-    else:
-        response.json.return_value = payload
-    return response
-
-
-def _issue(signing_key, **claims) -> str:
-    """Sign a JWT with sensible defaults for every registered claim the verifier requires."""
-    payload = {
-        'iss': ISSUER,
-        'aud': GATEWAY_RESOURCE,
-        'sub': 'user-123',
-        'exp': int(time.time()) + 300,
-        **claims,
-    }
-    return jwt.encode(payload, signing_key, algorithm='RS256')
-
-
-def _verifier(signing_key, **kwargs) -> McpExternalIssuerTokenVerifier:
-    """Build a verifier whose JWKS client resolves to ``signing_key``'s public half."""
-    with patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client') as build:
-        jwk = MagicMock()
-        jwk.key = signing_key.public_key()
-        jwk.key_type = 'RSA'
-        build.return_value.get_signing_key_from_jwt.return_value = jwk
-        return McpExternalIssuerTokenVerifier(
-            issuer=ISSUER,
-            audience=GATEWAY_RESOURCE,
-            jwks_uri=JWKS_URL,
-            **kwargs,
-        )
-
-
 class TestFetchExternalIssuerMetadata:
     """Discovery tries both well-known documents and refuses one that names another issuer."""
 
@@ -176,3 +138,41 @@ class TestExternalIssuerTokenVerifier:
         token = _issue(signing_key, scope='read')
 
         await self._assert_rejected(verifier, token, 'missing required scopes')
+
+
+def _metadata_response(payload: dict | None, status_code: int = 200) -> MagicMock:
+    """Mock an issuer metadata endpoint response."""
+    response = MagicMock()
+    response.status_code = status_code
+    if payload is None:
+        response.json.side_effect = ValueError('not json')
+    else:
+        response.json.return_value = payload
+    return response
+
+
+def _issue(signing_key, **claims) -> str:
+    """Sign a JWT with sensible defaults for every registered claim the verifier requires."""
+    payload = {
+        'iss': ISSUER,
+        'aud': GATEWAY_RESOURCE,
+        'sub': 'user-123',
+        'exp': int(time.time()) + 300,
+        **claims,
+    }
+    return jwt.encode(payload, signing_key, algorithm='RS256')
+
+
+def _verifier(signing_key, **kwargs) -> McpExternalIssuerTokenVerifier:
+    """Build a verifier whose JWKS client resolves to ``signing_key``'s public half."""
+    with patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client') as build:
+        jwk = MagicMock()
+        jwk.key = signing_key.public_key()
+        jwk.key_type = 'RSA'
+        build.return_value.get_signing_key_from_jwt.return_value = jwk
+        return McpExternalIssuerTokenVerifier(
+            issuer=ISSUER,
+            audience=GATEWAY_RESOURCE,
+            jwks_uri=JWKS_URL,
+            **kwargs,
+        )

@@ -8,15 +8,6 @@ from openapi_mcp_gateway.auth.upstream.token_source import UpstreamClientCredent
 from tests.constants import API_URL, TOKEN_URL
 
 
-def _build_response(status_code: int, payload: dict | None = None, text: str = '') -> MagicMock:
-    """Construct a MagicMock that mimics ``httpx.Response`` enough for the source."""
-    response = MagicMock()
-    response.status_code = status_code
-    response.json.return_value = payload or {}
-    response.text = text
-    return response
-
-
 class TestClientCredentialsTokenSourceFetch:
     """Initial fetch and caching behaviour of ``UpstreamClientCredentialsTokenSource``."""
 
@@ -204,3 +195,12 @@ class TestClientCredentialsTokenSourceAudience:
         assert post_mock.await_args is not None
         assert 'audience' not in post_mock.await_args.kwargs['data']
         assert 'resource' not in post_mock.await_args.kwargs['data']
+
+
+def _build_response(status_code: int, payload: dict | None = None, text: str = '') -> MagicMock:
+    """Construct a MagicMock that mimics ``httpx.Response`` enough for the source."""
+    response = MagicMock()
+    response.status_code = status_code
+    response.json.return_value = payload or {}
+    response.text = text
+    return response

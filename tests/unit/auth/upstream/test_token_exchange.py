@@ -7,15 +7,6 @@ from openapi_mcp_gateway.auth.upstream.token_exchange import UpstreamTokenExchan
 from tests.constants import API_URL, TOKEN_URL
 
 
-def _build_response(status_code: int, payload: dict | None = None, text: str = '') -> MagicMock:
-    """Construct a MagicMock that mimics ``httpx.Response`` enough for the source."""
-    response = MagicMock()
-    response.status_code = status_code
-    response.json.return_value = payload or {}
-    response.text = text
-    return response
-
-
 class TestUpstreamTokenExchangeClient:
     """RFC 8693 exchange of a caller's token for one the upstream API accepts."""
 
@@ -112,3 +103,12 @@ class TestUpstreamTokenExchangeClient:
 
         with pytest.raises(RuntimeError, match='RFC 8693'):
             await source.exchange('caller-token')
+
+
+def _build_response(status_code: int, payload: dict | None = None, text: str = '') -> MagicMock:
+    """Construct a MagicMock that mimics ``httpx.Response`` enough for the source."""
+    response = MagicMock()
+    response.status_code = status_code
+    response.json.return_value = payload or {}
+    response.text = text
+    return response

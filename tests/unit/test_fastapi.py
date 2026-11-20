@@ -13,32 +13,6 @@ from openapi_mcp_gateway.fastapi import (
 from openapi_mcp_gateway.openapi import OperationInfo, parse_spec
 
 
-def _build_app() -> FastAPI:
-    """Tiny FastAPI app used across the tests in this module."""
-    app = FastAPI()
-
-    @app.get('/users/{user_id}')
-    @mcp_tool(name='lookup_user', description='Find one user.')
-    def get_user(user_id: str):
-        return {'user_id': user_id}
-
-    @app.get('/users')
-    @mcp_tool()
-    def list_users():
-        return []
-
-    @app.get('/admin/reset')
-    def reset():
-        return {'ok': True}
-
-    @app.get('/health')
-    @mcp_tool(expose=False)
-    def health():
-        return {'ok': True}
-
-    return app
-
-
 class TestMcpToolDecorator:
     """``@mcp_tool`` attaches per-route override metadata."""
 
@@ -186,3 +160,29 @@ class TestInferAuthFromDeclaredFlows:
         config = infer_auth_from_declared_flows(declared)
         assert config.upstream.type == 'passthrough'
         assert config.upstream.flow is None
+
+
+def _build_app() -> FastAPI:
+    """Tiny FastAPI app used across the tests in this module."""
+    app = FastAPI()
+
+    @app.get('/users/{user_id}')
+    @mcp_tool(name='lookup_user', description='Find one user.')
+    def get_user(user_id: str):
+        return {'user_id': user_id}
+
+    @app.get('/users')
+    @mcp_tool()
+    def list_users():
+        return []
+
+    @app.get('/admin/reset')
+    def reset():
+        return {'ok': True}
+
+    @app.get('/health')
+    @mcp_tool(expose=False)
+    def health():
+        return {'ok': True}
+
+    return app

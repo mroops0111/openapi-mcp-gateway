@@ -12,10 +12,10 @@ from openapi_mcp_gateway.stores.redis import RedisTokenStore
 from openapi_mcp_gateway.upstream_http import UpstreamHttpClient
 
 
-_HttpHandler = typing.Callable[[httpx.Request], httpx.Response]
-
-
 FIXTURES_DIR = pathlib.Path(__file__).parent / 'fixtures'
+
+
+_HttpHandler = typing.Callable[[httpx.Request], httpx.Response]
 
 
 @pytest.fixture

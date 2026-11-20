@@ -58,15 +58,6 @@ class TestTokenSourceAuthResolver:
         assert await resolver.resolve(mock_context) == {}
 
 
-def _ctx_with_headers(headers: dict[str, str] | None) -> MagicMock:
-    """Stand-in MCP context whose request carries the given header map."""
-    request = MagicMock()
-    request.headers = headers if headers is not None else {}
-    ctx = MagicMock()
-    ctx.request_context.request = request
-    return ctx
-
-
 class TestPassthroughAuthResolver:
     """``UpstreamPassthroughAuthResolver`` copies named headers from the live MCP request."""
 
@@ -131,3 +122,12 @@ class TestCompositeAuthResolver:
     async def test_empty_composite_returns_empty(self, mock_context):
         """An empty resolver list yields an empty header dict (defensive default)."""
         assert await UpstreamCompositeAuthResolver([]).resolve(mock_context) == {}
+
+
+def _ctx_with_headers(headers: dict[str, str] | None) -> MagicMock:
+    """Stand-in MCP context whose request carries the given header map."""
+    request = MagicMock()
+    request.headers = headers if headers is not None else {}
+    ctx = MagicMock()
+    ctx.request_context.request = request
+    return ctx

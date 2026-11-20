@@ -11,113 +11,6 @@ from openapi_mcp_gateway.settings import ExposureConfig, GatewayConfig, Operatio
 from tests.constants import PETSTORE_URL
 
 
-def _spec_with_resource_optin() -> dict:
-    """OpenAPI spec exercising both kinds of resource exposure plus eligibility edge cases.
-
-    - ``listPets`` (GET /pets, no opt-in, no required params): under ``exposure.promote_resources`` auto-promotes to a resource.
-    - ``findPets`` (GET /pets/find, no opt-in, required query): not eligible, stays a tool even under ``exposure.promote_resources``.
-    - ``getPet`` (GET /pets/{petId}, explicit ``expose.resource``): templated resource.
-    - ``getInventory`` (GET /store/inventory, explicit ``expose.resource``): concrete resource.
-    """
-    return {
-        'openapi': '3.0.0',
-        'info': {'title': 'Petstore Resource', 'version': '1.0.0'},
-        'servers': [{'url': PETSTORE_URL}],
-        'paths': {
-            '/pets': {
-                'get': {
-                    'operationId': 'listPets',
-                    'summary': 'List pets',
-                    'responses': {'200': {'description': 'ok'}},
-                },
-            },
-            '/pets/find': {
-                'get': {
-                    'operationId': 'findPets',
-                    'summary': 'Search pets by status',
-                    'parameters': [
-                        {
-                            'name': 'status',
-                            'in': 'query',
-                            'required': True,
-                            'schema': {'type': 'string'},
-                        },
-                    ],
-                    'responses': {'200': {'description': 'ok'}},
-                },
-            },
-            '/pets/{petId}': {
-                'get': {
-                    'operationId': 'getPet',
-                    'summary': 'Fetch one pet by id',
-                    'description': 'Returns a single pet record.',
-                    'parameters': [
-                        {
-                            'name': 'petId',
-                            'in': 'path',
-                            'required': True,
-                            'schema': {'type': 'string'},
-                        },
-                    ],
-                    'x-mcp-integration': {
-                        'resource': {
-                            'name': 'pet',
-                            'mime_type': 'application/json',
-                        },
-                    },
-                    'responses': {'200': {'description': 'ok'}},
-                },
-            },
-            '/store/inventory': {
-                'get': {
-                    'operationId': 'getInventory',
-                    'summary': 'Aggregate inventory snapshot',
-                    'x-mcp-integration': {
-                        'resource': {
-                            'name': 'inventory',
-                            'mime_type': 'application/json',
-                        },
-                    },
-                    'responses': {'200': {'description': 'ok'}},
-                },
-            },
-        },
-    }
-
-
-def _spec_with_dual_optin() -> dict:
-    """Spec where ``getPet`` declares both ``expose.tool`` and ``expose.resource``."""
-    spec = _spec_with_resource_optin()
-    spec['paths']['/pets/{petId}']['get']['x-mcp-integration']['tool'] = {
-        'name': 'fetch_pet',
-    }
-    return spec
-
-
-def _spec_with_misconfig_post_resource() -> dict:
-    """Spec where ``createPet`` (POST) wrongly declares ``expose.resource``."""
-    return {
-        'openapi': '3.0.0',
-        'info': {'title': 'Bad Resource', 'version': '1.0.0'},
-        'servers': [{'url': PETSTORE_URL}],
-        'paths': {
-            '/pets': {
-                'post': {
-                    'operationId': 'createPet',
-                    'x-mcp-integration': {'resource': {}},
-                    'responses': {'201': {'description': 'created'}},
-                },
-            },
-        },
-    }
-
-
-def _write_spec(tmp_path, spec: dict):
-    path = tmp_path / 'spec.json'
-    path.write_text(json.dumps(spec))
-    return path
-
-
 class TestResourceExposureEndToEnd:
     """Full assembly chain for a spec opted into ``expose.resource``."""
 
@@ -269,26 +162,6 @@ class TestResourceUpstreamCall:
         assert '"id": 42' in contents.text
 
 
-def _vanilla_spec() -> dict:
-    """Vanilla spec without any ``x-mcp-integration`` declarations, for YAML-override tests."""
-    return {
-        'openapi': '3.0.0',
-        'info': {'title': 'Petstore', 'version': '1.0.0'},
-        'servers': [{'url': PETSTORE_URL}],
-        'paths': {
-            '/pets/{petId}': {
-                'get': {
-                    'operationId': 'getPet',
-                    'parameters': [
-                        {'name': 'petId', 'in': 'path', 'required': True, 'schema': {'type': 'string'}},
-                    ],
-                    'responses': {'200': {'description': 'ok'}},
-                },
-            },
-        },
-    }
-
-
 class TestYamlOverrideEndToEnd:
     """``ServerConfig.operations`` injects per-op ``x-mcp-integration`` overrides without touching the spec."""
 
@@ -335,3 +208,130 @@ class TestYamlOverrideEndToEnd:
                     ]
                 )
             )
+
+
+def _spec_with_resource_optin() -> dict:
+    """OpenAPI spec exercising both kinds of resource exposure plus eligibility edge cases.
+
+    - ``listPets`` (GET /pets, no opt-in, no required params): under ``exposure.promote_resources`` auto-promotes to a resource.
+    - ``findPets`` (GET /pets/find, no opt-in, required query): not eligible, stays a tool even under ``exposure.promote_resources``.
+    - ``getPet`` (GET /pets/{petId}, explicit ``expose.resource``): templated resource.
+    - ``getInventory`` (GET /store/inventory, explicit ``expose.resource``): concrete resource.
+    """
+    return {
+        'openapi': '3.0.0',
+        'info': {'title': 'Petstore Resource', 'version': '1.0.0'},
+        'servers': [{'url': PETSTORE_URL}],
+        'paths': {
+            '/pets': {
+                'get': {
+                    'operationId': 'listPets',
+                    'summary': 'List pets',
+                    'responses': {'200': {'description': 'ok'}},
+                },
+            },
+            '/pets/find': {
+                'get': {
+                    'operationId': 'findPets',
+                    'summary': 'Search pets by status',
+                    'parameters': [
+                        {
+                            'name': 'status',
+                            'in': 'query',
+                            'required': True,
+                            'schema': {'type': 'string'},
+                        },
+                    ],
+                    'responses': {'200': {'description': 'ok'}},
+                },
+            },
+            '/pets/{petId}': {
+                'get': {
+                    'operationId': 'getPet',
+                    'summary': 'Fetch one pet by id',
+                    'description': 'Returns a single pet record.',
+                    'parameters': [
+                        {
+                            'name': 'petId',
+                            'in': 'path',
+                            'required': True,
+                            'schema': {'type': 'string'},
+                        },
+                    ],
+                    'x-mcp-integration': {
+                        'resource': {
+                            'name': 'pet',
+                            'mime_type': 'application/json',
+                        },
+                    },
+                    'responses': {'200': {'description': 'ok'}},
+                },
+            },
+            '/store/inventory': {
+                'get': {
+                    'operationId': 'getInventory',
+                    'summary': 'Aggregate inventory snapshot',
+                    'x-mcp-integration': {
+                        'resource': {
+                            'name': 'inventory',
+                            'mime_type': 'application/json',
+                        },
+                    },
+                    'responses': {'200': {'description': 'ok'}},
+                },
+            },
+        },
+    }
+
+
+def _spec_with_dual_optin() -> dict:
+    """Spec where ``getPet`` declares both ``expose.tool`` and ``expose.resource``."""
+    spec = _spec_with_resource_optin()
+    spec['paths']['/pets/{petId}']['get']['x-mcp-integration']['tool'] = {
+        'name': 'fetch_pet',
+    }
+    return spec
+
+
+def _spec_with_misconfig_post_resource() -> dict:
+    """Spec where ``createPet`` (POST) wrongly declares ``expose.resource``."""
+    return {
+        'openapi': '3.0.0',
+        'info': {'title': 'Bad Resource', 'version': '1.0.0'},
+        'servers': [{'url': PETSTORE_URL}],
+        'paths': {
+            '/pets': {
+                'post': {
+                    'operationId': 'createPet',
+                    'x-mcp-integration': {'resource': {}},
+                    'responses': {'201': {'description': 'created'}},
+                },
+            },
+        },
+    }
+
+
+def _write_spec(tmp_path, spec: dict):
+    path = tmp_path / 'spec.json'
+    path.write_text(json.dumps(spec))
+    return path
+
+
+def _vanilla_spec() -> dict:
+    """Vanilla spec without any ``x-mcp-integration`` declarations, for YAML-override tests."""
+    return {
+        'openapi': '3.0.0',
+        'info': {'title': 'Petstore', 'version': '1.0.0'},
+        'servers': [{'url': PETSTORE_URL}],
+        'paths': {
+            '/pets/{petId}': {
+                'get': {
+                    'operationId': 'getPet',
+                    'parameters': [
+                        {'name': 'petId', 'in': 'path', 'required': True, 'schema': {'type': 'string'}},
+                    ],
+                    'responses': {'200': {'description': 'ok'}},
+                },
+            },
+        },
+    }
