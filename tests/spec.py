@@ -1,3 +1,5 @@
+import json
+import pathlib
 import typing
 
 from tests.constants import API_URL
@@ -46,3 +48,10 @@ def operation_spec(
     if schemas is not None:
         spec['components'] = {'schemas': schemas}
     return spec
+
+
+def write_spec(directory: pathlib.Path, spec: dict[str, typing.Any], name: str = 'spec.json') -> pathlib.Path:
+    """Write ``spec`` as JSON to ``name`` under ``directory``, and return its path."""
+    path = directory / name
+    path.write_text(json.dumps(spec))
+    return path

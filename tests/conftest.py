@@ -12,9 +12,11 @@ from openapi_mcp_gateway.stores.redis import RedisTokenStore
 from openapi_mcp_gateway.upstream_http import UpstreamHttpClient
 
 
+# Where the spec fixtures every test reads live.
 FIXTURES_DIR = pathlib.Path(__file__).parent / 'fixtures'
 
 
+# What answers an upstream request in place of the network.
 _HttpHandler = typing.Callable[[httpx.Request], httpx.Response]
 
 
@@ -89,3 +91,17 @@ def upstream_requests(mock_upstream) -> list[httpx.Request]:
 
     mock_upstream(record)
     return requests
+
+
+@pytest.fixture
+def constructed_upstream_clients(monkeypatch) -> list[UpstreamHttpClient]:
+    """Every ``UpstreamHttpClient`` built from here on, in order, each still built as it would be without this."""
+    constructed: list[UpstreamHttpClient] = []
+    original_init = UpstreamHttpClient.__init__
+
+    def recording_init(self, *args, **kwargs):
+        constructed.append(self)
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(UpstreamHttpClient, '__init__', recording_init)
+    return constructed

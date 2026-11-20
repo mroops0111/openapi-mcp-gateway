@@ -35,14 +35,8 @@ from tests.flow import (
 
 # The upstream of each kind, with what it needs to build, and the spec it builds against.
 BEARER = {'type': 'bearer', 'token': 't'}
-
-
 CLIENT_CREDENTIALS = {'type': 'oauth2', 'flow': 'client_credentials', 'client_id': 'cid', 'client_secret': 'sec'}
-
-
 AUTHORIZATION_CODE = {'type': 'oauth2', 'flow': 'authorization_code', 'client_id': 'cid', 'client_secret': 'sec'}
-
-
 TOKEN_EXCHANGE = {
     'type': 'oauth2',
     'flow': 'token_exchange',
@@ -50,16 +44,13 @@ TOKEN_EXCHANGE = {
     'client_id': 'cid',
     'client_secret': 'sec',
 }
-
-
-# What ``token_exchange`` needs on the MCP side to build.
-TOKEN_EXCHANGE_MCP = {'issuer': ISSUER}
-
-
 SPEC_BY_FLOW = {
     'client_credentials': spec_with_client_credentials,
     'authorization_code': spec_with_authorization_code,
 }
+
+# What ``token_exchange`` needs on the MCP side to build.
+TOKEN_EXCHANGE_MCP = {'issuer': ISSUER}
 
 
 class TestStaticCredentials:

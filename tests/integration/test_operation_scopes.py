@@ -20,7 +20,8 @@ from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
 from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, connect
 from tests.oauth import authorization_code_gateway, bridge_of, server_of, sign_in, upstream_token_response
-from tests.serving import bind_loopback_socket, build_socket_url, serve
+from tests.serving import serve, serve_gateway
+from tests.spec import write_spec
 from tests.tool_result import text_of
 
 
@@ -325,9 +326,7 @@ class TestUpstreamGrant:
             for operation in path_item.values():
                 if isinstance(operation, dict) and operation.get('operationId') in UPSTREAM_SECURITY:
                     operation['security'] = UPSTREAM_SECURITY[operation['operationId']]
-        path = tmp_path / 'secured-petstore.json'
-        path.write_text(json.dumps(spec))
-        return path
+        return write_spec(tmp_path, spec, 'secured-petstore.json')
 
     @pytest.fixture
     def make_enforcing_gateway(self, make_gateway, secured_spec) -> typing.Callable[..., Gateway]:
@@ -451,14 +450,12 @@ async def _tool_names(session: _Session) -> list[str]:
 
 async def _sign_in_through_the_sdk(make_gateway: typing.Callable[..., Gateway], client_id: str) -> OAuthToken:
     """Sign ``client_id`` in with the SDK's own client, through consent and the upstream, and return its tokens."""
-    sock = bind_loopback_socket()
-    base_url = build_socket_url(sock)
-    gateway = make_gateway(url=base_url)
-    endpoint = f'{base_url}/petstore/mcp'
     storage = MemoryTokenStorage()
-    auth = authorization_code_auth(endpoint, Browser(f'{base_url}/petstore'), client_id, storage=storage)
     with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())):
-        async with serve(gateway._build_app(transport='streamable-http'), sock), connect(endpoint, auth):
-            pass
+        async with serve_gateway(lambda url: make_gateway(url=url)) as base_url:
+            endpoint = f'{base_url}/petstore/mcp'
+            auth = authorization_code_auth(endpoint, Browser(f'{base_url}/petstore'), client_id, storage=storage)
+            async with connect(endpoint, auth):
+                pass
     assert storage.tokens is not None
     return storage.tokens

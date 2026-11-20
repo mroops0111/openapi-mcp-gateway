@@ -1,5 +1,3 @@
-import json
-
 import httpx
 import pytest
 from mcp import Client
@@ -9,6 +7,7 @@ from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import ResourceOverride
 from openapi_mcp_gateway.settings import ExposureConfig, GatewayConfig, OperationOverride, ServerConfig
 from tests.constants import PETSTORE_URL
+from tests.spec import write_spec
 
 
 class TestResourceExposureEndToEnd:
@@ -16,7 +15,7 @@ class TestResourceExposureEndToEnd:
 
     @pytest.fixture
     def gateway(self, tmp_path):
-        spec_path = _write_spec(tmp_path, _spec_with_resource_optin())
+        spec_path = write_spec(tmp_path, _spec_with_resource_optin())
         return Gateway.from_config(
             GatewayConfig(
                 servers=[
@@ -58,7 +57,7 @@ class TestDualExposureEndToEnd:
 
     @pytest.fixture
     def gateway(self, tmp_path):
-        spec_path = _write_spec(tmp_path, _spec_with_dual_optin())
+        spec_path = write_spec(tmp_path, _spec_with_dual_optin())
         return Gateway.from_config(
             GatewayConfig(
                 servers=[
@@ -82,7 +81,7 @@ class TestResourceMisconfigFailsFast:
 
     def test_post_with_expose_resource_raises(self, tmp_path):
         """A POST opted into ``expose.resource`` aborts ``Gateway.from_config`` with a clear error."""
-        spec_path = _write_spec(tmp_path, _spec_with_misconfig_post_resource())
+        spec_path = write_spec(tmp_path, _spec_with_misconfig_post_resource())
         with pytest.raises(ValueError, match='method is POST'):
             Gateway.from_config(
                 GatewayConfig(
@@ -112,7 +111,7 @@ class TestResourceUpstreamCall:
 
         mock_upstream(handler)
 
-        spec_path = _write_spec(tmp_path, _spec_with_resource_optin())
+        spec_path = write_spec(tmp_path, _spec_with_resource_optin())
         gateway = Gateway.from_config(
             GatewayConfig(
                 servers=[
@@ -138,7 +137,7 @@ class TestResourceUpstreamCall:
 
         mock_upstream(handler)
 
-        spec_path = _write_spec(tmp_path, _spec_with_resource_optin())
+        spec_path = write_spec(tmp_path, _spec_with_resource_optin())
         gateway = Gateway.from_config(
             GatewayConfig(
                 servers=[
@@ -160,7 +159,7 @@ class TestYamlOverrideEndToEnd:
 
     async def test_yaml_override_renames_auto_promoted_resource(self, tmp_path):
         """YAML ``operations.<id>.expose.resource.name`` renames the resource that promotion registered."""
-        spec_path = _write_spec(tmp_path, _vanilla_spec())
+        spec_path = write_spec(tmp_path, _vanilla_spec())
         gateway = Gateway.from_config(
             GatewayConfig(
                 servers=[
@@ -183,7 +182,7 @@ class TestYamlOverrideEndToEnd:
 
     def test_unknown_operation_id_in_yaml_aborts(self, tmp_path):
         """A YAML override targeting an op that the spec does not expose fails ``Gateway.from_config``."""
-        spec_path = _write_spec(tmp_path, _vanilla_spec())
+        spec_path = write_spec(tmp_path, _vanilla_spec())
         with pytest.raises(ValueError, match='not_a_real_op'):
             Gateway.from_config(
                 GatewayConfig(
@@ -302,12 +301,6 @@ def _spec_with_misconfig_post_resource() -> dict:
             },
         },
     }
-
-
-def _write_spec(tmp_path, spec: dict):
-    path = tmp_path / 'spec.json'
-    path.write_text(json.dumps(spec))
-    return path
 
 
 def _vanilla_spec() -> dict:

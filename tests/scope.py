@@ -13,7 +13,7 @@ SCHEMES = {
     'basic': {'type': 'http', 'scheme': 'basic'},
 }
 
-
+# A petstore operation that declares the upstream scopes it needs.
 DELETE_PET = operation('deletePet', 'delete', '/pets/{petId}', security=[{'oauth': ['read:pets', 'write:pets']}])
 
 

@@ -1,3 +1,17 @@
+"""Smoke against fastapi's official ``docs_src/`` tutorials.
+
+The intent is to verify that real-world FastAPI patterns assemble cleanly through ``Gateway.from_fastapi``,
+and produce at least one MCP tool.
+
+We deliberately do not pin to specific tutorial filenames such as ``tutorial001_py310``,
+since fastapi sometimes renames or removes those.
+Instead we glob the relevant category directory,
+and pick the first importable module that exposes a ``FastAPI`` ``app``.
+
+Tutorial code is not modified, so we use the public ``mark_tool`` helper to attach exposure metadata after the fact,
+not the ``@mcp_tool`` decorator.
+"""
+
 import importlib
 import pathlib
 import pkgutil

@@ -32,7 +32,7 @@ from openapi_mcp_gateway.exposure.tool import _build_tool_signature
 from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ParamOverride, ToolOverride, parse_spec
 from tests.constants import API_URL
 from tests.operation import expose_resource
-from tests.spec import component_ref, defs_ref, operation_spec
+from tests.spec import component_ref, defs_ref, operation_spec, write_spec
 
 
 # The ``$defs`` key grammar Anthropic's API accepts in a tool input schema,
@@ -221,8 +221,7 @@ class TestExposedToolDetail:
         A summary that reports ``priority: string`` cannot answer what the model may send.
         The answer lives below the top level, in an enum, a default, a pattern and a numeric bound.
         """
-        spec = tmp_path / 'spec.json'
-        spec.write_text(json.dumps(_nested_body_spec()))
+        spec = write_spec(tmp_path, _nested_body_spec())
         gateway = Gateway()
         gateway.add_server(name='o', spec=str(spec))
         schema = gateway.describe_servers()[0].tools[0].input_schema
@@ -330,8 +329,7 @@ class TestAdvertisedSchema:
 
     def test_the_dry_run_summary_shows_the_advertised_form(self, tmp_path):
         """``describe()`` reports the same ``$defs`` form a client receives, not an expanded copy."""
-        spec = tmp_path / 'spec.json'
-        spec.write_text(json.dumps(_shared_component_spec()))
+        spec = write_spec(tmp_path, _shared_component_spec())
         gateway = Gateway()
         gateway.add_server(name='p', spec=str(spec))
 

@@ -1,5 +1,4 @@
 import pathlib
-import re
 from unittest.mock import AsyncMock, patch
 
 import httpx2
@@ -13,6 +12,7 @@ from tests.oauth import (
     CLIENT_STATE,
     SECURE_COOKIE,
     authorization_code_gateway,
+    csrf_token_in,
     query_value,
     upstream_token_response,
 )
@@ -219,9 +219,9 @@ def _decide(
     browser: TestClient, page: httpx2.Response, decision: str, csrf_token: str | None = None
 ) -> httpx2.Response:
     """Post ``decision`` from ``page``, with the CSRF token it carries unless ``csrf_token`` replaces it."""
-    sent = re.search(r'name="csrf_token" value="([^"]+)"', page.text)
-    assert sent is not None
-    return browser.post(str(page.url), data={'csrf_token': csrf_token or sent.group(1), 'decision': decision})
+    return browser.post(
+        str(page.url), data={'csrf_token': csrf_token or csrf_token_in(page.text), 'decision': decision}
+    )
 
 
 def _return_from_upstream(approving: TestClient, finishing: TestClient, **answer: str) -> httpx2.Response:

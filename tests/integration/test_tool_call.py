@@ -18,11 +18,11 @@ from openapi_mcp_gateway.settings import (
     ServerConfig,
     UpstreamAuthConfig,
 )
-from openapi_mcp_gateway.upstream_http import UpstreamHttpClient
 from tests.constants import (
     PETSTORE_URL,
     TOKEN_URL,
 )
+from tests.gateway import auth_shutdown_hooks
 from tests.tool_result import text_of
 
 
@@ -157,6 +157,10 @@ class TestClientCredentialsFlowEndToEnd:
         monkeypatch.setattr(token_source_module.httpx.AsyncClient, 'post', token_post_mock, raising=False)
         return token_post_mock
 
+    def test_the_token_source_is_closed_at_shutdown(self, cc_gateway):
+        """The gateway registers the token source's own HTTP client among its shutdown hooks."""
+        assert len(auth_shutdown_hooks(cc_gateway)) == 1
+
     async def test_tool_call_attaches_fetched_bearer(self, cc_gateway, token_post, mock_upstream):
         """A tool call fetches a token from the IdP, then forwards it as ``Authorization`` upstream."""
         captured: dict = {}
@@ -167,9 +171,10 @@ class TestClientCredentialsFlowEndToEnd:
 
         mock_upstream(handler)
 
-        async with Client(cc_gateway._servers[0].mcp) as client:
-            await client.call_tool('list_pets', {})
+        async with Client(cc_gateway._servers[0].mcp, raise_exceptions=True) as client:
+            result = await client.call_tool('list_pets', {})
 
+        assert not result.is_error
         assert captured['authorization'] == 'Bearer cc-bearer-xyz'
         token_post.assert_awaited_once()
         post_args = token_post.await_args
@@ -182,26 +187,20 @@ class TestClientCredentialsFlowEndToEnd:
         """Multiple tool calls share a single cached token (one POST to the IdP)."""
         mock_upstream(lambda request: httpx.Response(200, json=[]))
 
-        async with Client(cc_gateway._servers[0].mcp) as client:
-            for _ in range(3):
-                await client.call_tool('list_pets', {})
+        async with Client(cc_gateway._servers[0].mcp, raise_exceptions=True) as client:
+            results = [await client.call_tool('list_pets', {}) for _ in range(3)]
 
+        assert not any(result.is_error for result in results)
         assert token_post.await_count == 1
 
 
 class TestUpstreamHttpClientLifecycle:
     """Each server keeps one upstream client across calls and closes it when the gateway shuts down."""
 
-    async def test_calls_reuse_one_client_closed_at_shutdown(self, gateway, upstream_requests, monkeypatch):
+    async def test_calls_reuse_one_client_closed_at_shutdown(
+        self, gateway, upstream_requests, constructed_upstream_clients
+    ):
         """Two calls go through one client, and running the shutdown hooks closes it."""
-        constructed: list[UpstreamHttpClient] = []
-        original_init = UpstreamHttpClient.__init__
-
-        def recording_init(self, *args, **kwargs):
-            constructed.append(self)
-            original_init(self, *args, **kwargs)
-
-        monkeypatch.setattr(UpstreamHttpClient, '__init__', recording_init)
 
         async with Client(gateway._servers[0].mcp, raise_exceptions=True) as client:
             await client.call_tool('list_pets', {})
@@ -209,8 +208,8 @@ class TestUpstreamHttpClientLifecycle:
         await gateway._run_shutdown_hooks()
 
         assert len(upstream_requests) == 2
-        assert len(constructed) == 1
-        assert constructed[0]._client.is_closed
+        assert len(constructed_upstream_clients) == 1
+        assert constructed_upstream_clients[0]._client.is_closed
 
 
 class TestTraceContextPropagation:

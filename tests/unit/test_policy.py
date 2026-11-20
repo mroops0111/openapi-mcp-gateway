@@ -104,6 +104,7 @@ def _operation(operation_id: str, method: str = 'get', path: str = '/test', mcp_
     )
 
 
+# The operations every pattern and filter test runs against, one of them marked for exposure.
 OPERATIONS = [
     _operation('listPets', 'get', '/pets'),
     _operation('createPet', 'post', '/pets'),

@@ -1,4 +1,5 @@
 import pathlib
+import re
 import typing
 import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -189,6 +190,13 @@ async def complete_upstream(
 async def deliver_callback(provider: McpAuthorizationCodeServer, upstream_url: str, iss: str | None = None) -> str:
     """Deliver the upstream's redirect to the browser that began ``upstream_url``, against a token endpoint the caller mocks."""
     return await bridge_of(provider).handle_upstream_callback('upstream-code', state_in(upstream_url), BROWSER_ID, iss)
+
+
+def csrf_token_in(consent_page: str) -> str:
+    """The CSRF token the consent page's form carries."""
+    sent = re.search(r'name="csrf_token" value="([^"]+)"', consent_page)
+    assert sent is not None
+    return sent.group(1)
 
 
 def query_value(url: str, name: str) -> str:

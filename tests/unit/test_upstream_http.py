@@ -227,7 +227,7 @@ class TestUpstreamSharedHttpClient:
 class TestConcurrentCallsShareNothingButConnections:
     """Calls through one server's shared upstream client never see each other's headers, cookies, or traces."""
 
-    async def test_each_request_carries_only_its_own_caller(self, monkeypatch, caplog):
+    async def test_each_request_carries_only_its_own_caller(self, constructed_upstream_clients, caplog):
         """Interleaved calls each send their own auth, trace, and header argument, and no cookie any call was set.
 
         Each request is also logged once with its own URL, so the log lines of one caller never mix with another's.
@@ -235,14 +235,6 @@ class TestConcurrentCallsShareNothingButConnections:
         The caller is read off the query string, which travels apart from every header under test.
         A second round runs after the first has been answered, so a cookie the first round was set could leak into it.
         """
-        constructed: list[UpstreamHttpClient] = []
-        original_init = UpstreamHttpClient.__init__
-
-        def counting_init(self, *args, **kwargs):
-            constructed.append(self)
-            original_init(self, *args, **kwargs)
-
-        monkeypatch.setattr(UpstreamHttpClient, '__init__', counting_init)
         caplog.set_level(logging.INFO, logger='httpx')
         received: list[httpx.Request] = []
 
@@ -296,7 +288,7 @@ class TestConcurrentCallsShareNothingButConnections:
             int(match.group(1)) for record in caplog.records if (match := _LOGGED_CALLER.search(record.getMessage()))
         )
         assert logged_callers == dict.fromkeys(range(_CALLERS), 2)
-        assert len(constructed) == 1
+        assert len(constructed_upstream_clients) == 1
         await connection.client.aclose()
 
 

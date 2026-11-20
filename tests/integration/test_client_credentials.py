@@ -14,7 +14,7 @@ from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
 from tests.mcp_client import MemoryTokenStorage, client_credentials_auth, connect
-from tests.serving import bind_loopback_socket, build_socket_url, serve
+from tests.serving import serve, serve_gateway
 
 
 # The agents the gateway issues tokens to, each with its own secret, by what each may do to pets.
@@ -166,7 +166,7 @@ class TestMcpEndpoint:
         assert response.status_code == 401
 
     async def test_each_agent_lists_only_what_its_scopes_open(self, make_gateway, upstream_requests):
-        async with _serve(make_gateway) as base_url, _connect(base_url, READER) as client:
+        async with serve_gateway(lambda url: make_gateway(url=url)) as base_url, _connect(base_url, READER) as client:
             assert [tool.name for tool in (await client.list_tools()).tools] == READ_TOOLS
             await client.call_tool('list_pets', {})
             with pytest.raises(MCPError):
@@ -176,13 +176,19 @@ class TestMcpEndpoint:
 
     async def test_the_server_advertises_the_extension(self, make_gateway):
         """A client probing ``server/discover`` learns it may obtain a token with its own credentials."""
-        async with _serve(make_gateway) as base_url, _connect(base_url, READER, mode='auto') as client:
+        async with (
+            serve_gateway(lambda url: make_gateway(url=url)) as base_url,
+            _connect(base_url, READER, mode='auto') as client,
+        ):
             assert CLIENT_CREDENTIALS_EXTENSION in (client.server_capabilities.extensions or {})
 
     async def test_an_agent_steps_up_without_a_user(self, make_gateway, upstream_requests):
         """Within its own scopes the agent steps up by asking again, since no user has anything to approve."""
         storage = MemoryTokenStorage()
-        async with _serve(make_gateway) as base_url, _connect(base_url, WRITER, storage=storage) as client:
+        async with (
+            serve_gateway(lambda url: make_gateway(url=url)) as base_url,
+            _connect(base_url, WRITER, storage=storage) as client,
+        ):
             result = await client.call_tool('create_pet', {'name': 'Rex'})
 
         assert not result.is_error
@@ -226,15 +232,6 @@ async def _obtain_token(base_url: str, client_id: str) -> str:
         )
     response.raise_for_status()
     return response.json()['access_token']
-
-
-@contextlib.asynccontextmanager
-async def _serve(make_gateway: typing.Callable[..., Gateway]) -> typing.AsyncIterator[str]:
-    """Serve a gateway built by ``make_gateway`` at the address it publishes, and yield that address."""
-    sock = bind_loopback_socket()
-    gateway = make_gateway(url=build_socket_url(sock))
-    async with serve(gateway._build_app(transport='streamable-http'), sock) as base_url:
-        yield base_url
 
 
 def _connect(

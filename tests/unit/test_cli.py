@@ -17,18 +17,13 @@ from openapi_mcp_gateway.settings import GatewayConfig, PolicyConfig
 from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
 
+# The logger every module of the package logs under.
 PACKAGE_LOGGER = 'openapi_mcp_gateway'
 
-
+# The specs the CLI is pointed at, from the shared fixtures directory.
 FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures'
-
-
 PETSTORE_SPEC = FIXTURES / 'petstore.json'
-
-
 UNDOCUMENTED_SPEC = FIXTURES / 'undocumented.json'
-
-
 CLIENT_CREDENTIALS_SPEC = FIXTURES / 'client_credentials.json'
 
 
@@ -94,6 +89,12 @@ class TestLoggingFlags:
         assert log_file.exists()
         content = log_file.read_text(encoding='utf-8')
         assert '[INFO]' in content
+
+    def test_invalid_log_level(self):
+        """``--log-level`` takes only the known levels, so an unknown one is a usage error before the gateway runs."""
+        result, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--log-level', 'LOUD')
+        assert result.exit_code != 0
+        assert 'LOUD' in result.output
 
 
 class TestAuthInference:

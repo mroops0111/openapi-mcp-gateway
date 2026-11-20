@@ -9,7 +9,7 @@ from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuth
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import AuthorizationCodeResult, OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 
-from tests.oauth import query_value
+from tests.oauth import csrf_token_in, query_value
 
 
 # Where an MCP client asks to be sent back once authorized, which it never serves since the test plays the browser.
@@ -60,17 +60,20 @@ def client_credentials_auth(
     client_secret: str,
     scope: str | None = None,
     storage: TokenStorage | None = None,
+    issuer: str | None = None,
 ) -> ClientCredentialsOAuthProvider:
-    """The SDK's own client_credentials sign-in at the gateway serving ``endpoint``, whose issuer it names."""
-    issuer = endpoint.removesuffix('/mcp')
+    """The SDK's own client_credentials sign-in at ``endpoint``, at ``issuer`` or else the gateway serving it."""
+    if issuer is None:
+        gateway_issuer = endpoint.removesuffix('/mcp')
+        # The gateway publishes a root issuer with its trailing slash, as ``pydantic.AnyHttpUrl`` renders it.
+        issuer = gateway_issuer if urllib.parse.urlparse(gateway_issuer).path else f'{gateway_issuer}/'
     return ClientCredentialsOAuthProvider(
         server_url=endpoint,
         storage=storage or MemoryTokenStorage(),
         client_id=client_id,
         client_secret=client_secret,
         scope=scope,
-        # The gateway publishes a root issuer with its trailing slash, as ``pydantic.AnyHttpUrl`` renders it.
-        issuer=issuer if urllib.parse.urlparse(issuer).path else f'{issuer}/',
+        issuer=issuer,
     )
 
 
@@ -98,19 +101,22 @@ class Browser:
     """The user's browser, which approves the client where asked and plays the upstream sending the user back.
 
     ``issuer`` is the gateway's issuer for the server, under which its consent and callback pages sit.
+    ``expect_consent`` says whether the gateway must show the consent page, which a sign-in fails on otherwise.
     """
 
-    def __init__(self, issuer: str) -> None:
+    def __init__(self, issuer: str, expect_consent: bool = True) -> None:
         self.issuer = issuer.rstrip('/')
+        self.expect_consent = expect_consent
         self._client_redirect: str | None = None
 
     async def sign_in(self, authorization_url: str) -> None:
         async with httpx2.AsyncClient(follow_redirects=False) as browser:
             location = (await browser.get(authorization_url)).headers['location']
-            if location.startswith(f'{self.issuer}/auth/consent'):
+            shows_consent = location.startswith(f'{self.issuer}/auth/consent')
+            assert shows_consent == self.expect_consent, f'consent page shown: {shows_consent}'
+            if shows_consent:
                 page = await browser.get(location)
-                csrf_token = page.text.split('name="csrf_token" value="')[1].split('"')[0]
-                decision = {'csrf_token': csrf_token, 'decision': 'approve'}
+                decision = {'csrf_token': csrf_token_in(page.text), 'decision': 'approve'}
                 location = (await browser.post(location, data=decision)).headers['location']
             if not location.startswith(CLIENT_CALLBACK):
                 # The upstream signs the user in and sends them back to the gateway's callback.
