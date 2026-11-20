@@ -77,10 +77,12 @@ def authorization_code_gateway(
     upstream: dict[str, typing.Any] | None = None,
     exposure: dict[str, typing.Any] | None = None,
     url: str = GATEWAY_URL,
+    other_clients: dict[str, typing.Any] | None = None,
 ) -> Gateway:
     """A gateway at ``url`` serving ``spec`` as ``petstore`` behind an ``authorization_code`` server for ``clients``.
 
     ``upstream`` is merged into ``auth.upstream``, which otherwise requests ``read``.
+    ``other_clients`` becomes ``auth.mcp.other_clients`` when given.
     """
     auth = {
         'upstream': {
@@ -93,6 +95,7 @@ def authorization_code_gateway(
         'mcp': {
             'clients': clients,
             **({'operation_scopes': operation_scopes} if operation_scopes is not None else {}),
+            **({'other_clients': other_clients} if other_clients is not None else {}),
         },
     }
     server = {'name': 'petstore', 'spec': str(spec), 'auth': auth, 'exposure': exposure or {}}

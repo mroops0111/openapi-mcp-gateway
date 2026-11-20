@@ -1,6 +1,7 @@
 import pathlib
 import re
 import typing
+import urllib.parse
 
 import pydantic
 import yaml
@@ -17,6 +18,9 @@ from .openapi import McpIntegration
 
 # One RFC 6749 §3.3 scope-token, which excludes spaces, double quotes and backslashes.
 SCOPE_TOKEN = re.compile(r'[\x21\x23-\x5B\x5D-\x7E]+')
+
+# A host name as ``trusted_hosts`` lists it, lowercase ASCII labels with no scheme, port, wildcard or trailing dot.
+_HOST_NAME = re.compile(r'[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*')
 
 # Keys that left the top of ``auth``, and where each lives now.
 # A config written for the old layout is refused with the new place named, rather than with a bare unknown key.
@@ -237,9 +241,19 @@ class OtherClientsConfig(ClientScopesConfig):
 
     @pydantic.field_validator('trusted_hosts')
     @classmethod
-    def _lowercase_hosts(cls, hosts: list[str] | None) -> list[str] | None:
-        """Hosts compare without case, as URL hosts do."""
-        return [host.lower() for host in hosts] if hosts is not None else None
+    def _validate_hosts(cls, hosts: list[str] | None) -> list[str] | None:
+        """Lowercase each host, as URL hosts compare without case, and refuse one no URL host could equal."""
+        if hosts is None:
+            return None
+        hosts = [host.lower() for host in hosts]
+        invalid = [host for host in hosts if not _HOST_NAME.fullmatch(host)]
+        if invalid:
+            raise ValueError(
+                f'trusted_hosts names {invalid!r}, which are not host names. '
+                'List each as a bare host such as claude.ai, without a scheme, port, wildcard or trailing dot, '
+                'and an internationalised one in its xn-- form.'
+            )
+        return hosts
 
 
 class McpAuthConfig(pydantic.BaseModel):
@@ -341,7 +355,7 @@ class McpAuthConfig(pydantic.BaseModel):
         problems += [
             f'auth.mcp.clients.{client_id} names a Client ID Metadata Document, whose client signs a user in'
             for client_id in self.clients
-            if client_id.startswith(('https://', 'http://'))
+            if is_url_client_id(client_id)
         ]
         if problems:
             raise ValueError(
@@ -769,6 +783,11 @@ def build_gateway_config(*layers: dict[str, typing.Any]) -> GatewayConfig:
     for layer in layers:
         merged = _deep_merge(merged, layer)
     return GatewayConfig.model_validate(merged)
+
+
+def is_url_client_id(client_id: str) -> bool:
+    """Whether an ``auth.mcp.clients`` key is a URL, meant as a Client ID Metadata Document's."""
+    return urllib.parse.urlsplit(client_id).scheme in ('http', 'https')
 
 
 def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:

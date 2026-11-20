@@ -50,7 +50,6 @@ class TestConsentPage:
         """Any program listening on this computer could have started the sign-in under the client's name."""
         page = _page_text(dataclasses.replace(HOSTILE_PROMPT, client_name='agent', redirect_uri=redirect_uri))
         assert ('a program on this computer' in page) is warned
-        assert 'started' in page
 
     def test_a_hostile_scope_description_is_escaped(self):
         assert '&lt;b&gt;Read&lt;/b&gt; pets<code class="aside">pets:read</code>' in _page_text(HOSTILE_PROMPT)

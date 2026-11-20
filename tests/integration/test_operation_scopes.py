@@ -87,6 +87,7 @@ def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gatew
         upstream: dict[str, typing.Any] | None = None,
         spec: pathlib.Path = petstore_json_path,
         url: str = GATEWAY_URL,
+        other_clients: dict[str, typing.Any] | None = None,
     ) -> Gateway:
         return authorization_code_gateway(
             spec,
@@ -95,6 +96,7 @@ def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gatew
             upstream=upstream,
             exposure={'style': style, 'promote_resources': promote_resources},
             url=url,
+            other_clients=other_clients,
         )
 
     return make
@@ -313,6 +315,10 @@ class TestAuthorizationServer:
     def test_a_client_granted_an_undefined_scope_is_refused_at_startup(self, make_gateway):
         with pytest.raises(ValueError, match=r'reader: pets:raed'):
             make_gateway(clients={READER: {'scopes': ['pets:raed']}})
+
+    def test_other_clients_granted_an_undefined_scope_are_refused_at_startup(self, make_gateway):
+        with pytest.raises(ValueError, match=r'other_clients: pets:raed'):
+            make_gateway(other_clients={'scopes': ['pets:raed']})
 
 
 class TestUpstreamGrant:

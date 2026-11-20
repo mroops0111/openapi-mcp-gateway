@@ -18,7 +18,12 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from openapi_mcp_gateway.auth.mcp.token_issuer import MCP_DEFAULT_SCOPE
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
-from tests.client_metadata import CLIENT_METADATA_URL, client_metadata_document, serving_client_metadata
+from tests.client_metadata import (
+    CLIENT_METADATA_HOST,
+    CLIENT_METADATA_URL,
+    client_metadata_document,
+    serving_client_metadata,
+)
 from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, client_credentials_auth, connect
 from tests.oauth import shared_credential_server, upstream_token_response
 from tests.serving import bind_loopback_socket, build_socket_url, serve_gateway
@@ -99,7 +104,7 @@ class TestClientIdMetadataDocument:
             (
                 {
                     'operation_scopes': {'auto': 'tags'},
-                    'other_clients': {'trusted_hosts': ['app.example.com'], 'scopes': ['pets:read']},
+                    'other_clients': {'trusted_hosts': [CLIENT_METADATA_HOST], 'scopes': ['pets:read']},
                 },
                 'pets:read',
             ),

@@ -213,8 +213,10 @@ class McpOtherClients:
     trusted_hosts: frozenset[str] | None = None
 
     def admits(self, client_id: str) -> bool:
-        host = urllib.parse.urlsplit(client_id).hostname
-        return self.trusted_hosts is None or host in self.trusted_hosts
+        """Whether ``client_id`` is a metadata document URL on a trusted host, without fetching the document."""
+        if not is_client_metadata_url(client_id):
+            return False
+        return self.trusted_hosts is None or urllib.parse.urlsplit(client_id).hostname in self.trusted_hosts
 
     def build_client(self, client_id: str) -> McpPreRegisteredClient:
         """The client ``client_id`` stands for, before its document supplies its name and redirect URIs."""
@@ -261,7 +263,9 @@ class McpClientMetadataDirectory(McpClientDirectory):
         return client.model_copy(update={'client_name': document.client_name, 'redirect_uris': document.redirect_uris})
 
     async def admits(self, client_id: str) -> bool:
-        if self._find_metadata_client(client_id) is not None or self._listed.find(client_id) is not None:
+        if self._listed.find(client_id) is not None:
+            return True
+        if self._other_clients is not None and self._other_clients.admits(client_id):
             return True
         return self._registry is not None and await self._registry.get(client_id) is not None
 

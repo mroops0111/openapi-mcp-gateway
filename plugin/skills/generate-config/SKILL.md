@@ -140,11 +140,11 @@ servers:
         #   consent: false skips the gateway's consent page for a client the operator trusts (default true)
         #   a key may be a client's metadata document URL (https://claude.ai/oauth/claude-code-client-metadata),
         #   which takes no client_secret or redirect_uris, since its document lists them
+        #   behind none, bearer, api_key or client_credentials no user signs in: each agent gets a token with
+        #   its own client_secret (required) at /<server>/token, and default_scopes, redirect_uris and consent are refused
         # other_clients: the clients signing in with a metadata document URL that clients does not list
         #   {trusted_hosts: [claude.ai, vscode.dev], scopes: [...], default_scopes: [...]}, or false for none
         #   left out it admits any when clients lists none and none otherwise; setting it turns off dynamic registration
-        #   behind none, bearer, api_key or client_credentials no user signs in: each agent gets a token with
-        #   its own client_secret (required) at /<server>/token, and default_scopes, redirect_uris and consent are refused
         # access_token_ttl: 3600, refresh_token_ttl: 86400, lifetimes of the MCP tokens the gateway mints
         #   (no refresh token is issued to an agent, so refresh_token_ttl is for authorization_code only)
     policy: # the selector for which operations become tools

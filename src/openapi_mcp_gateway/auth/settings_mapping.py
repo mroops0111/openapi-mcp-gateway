@@ -1,6 +1,6 @@
 import collections.abc
 
-from ..settings import ClientConfig, McpAuthConfig, OtherClientsConfig
+from ..settings import ClientConfig, McpAuthConfig, OtherClientsConfig, is_url_client_id
 from .mcp.client import McpOtherClients, McpPreRegisteredClient, McpPreRegisteredClientDirectory
 from .mcp.client_metadata import is_client_metadata_url
 from .mcp.token_issuer import MCP_DEFAULT_SCOPE, McpTokenPolicy
@@ -68,7 +68,7 @@ def _build_pre_registered_client(
 
 def _refuse_unusable_metadata_client(client_id: str, client: ClientConfig) -> None:
     """Refuse a URL ``client_id`` no metadata document can sit at, and settings its document overrides."""
-    if not client_id.startswith(('https://', 'http://')):
+    if not is_url_client_id(client_id):
         return
     if not is_client_metadata_url(client_id):
         raise ValueError(

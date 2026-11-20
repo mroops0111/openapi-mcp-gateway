@@ -501,6 +501,14 @@ class TestOtherClients:
         assert OtherClientsConfig(trusted_hosts=['Claude.AI']).trusted_hosts == ['claude.ai']
 
     @pytest.mark.parametrize(
+        'host', ['https://claude.ai', 'claude.ai:443', '*.example.com', 'claude.ai.', 'bücher.example', 'claude.ai/x']
+    )
+    def test_a_trusted_host_no_url_host_could_equal_is_refused(self, host):
+        """It would never match, and every sign-in it was meant for would fail with nothing pointing at it."""
+        with pytest.raises(pydantic.ValidationError, match='are not host names'):
+            OtherClientsConfig(trusted_hosts=[host])
+
+    @pytest.mark.parametrize(
         ('mcp', 'refusal'),
         [
             ({'other_clients': True}, 'other_clients'),

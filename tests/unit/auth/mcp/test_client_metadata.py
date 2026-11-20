@@ -17,7 +17,15 @@ from openapi_mcp_gateway.auth.mcp.client_metadata import (
     is_loopback_redirect,
     parse_client_metadata_document,
 )
-from tests.client_metadata import CLIENT_METADATA_URL, PUBLIC_ADDRESS, client_metadata_document, resolve_to
+from tests.client_metadata import (
+    CLIENT_METADATA_HOST,
+    CLIENT_METADATA_URL,
+    PUBLIC_ADDRESS,
+    client_metadata_document,
+    requested_url,
+    resolve_to,
+    resolver_over,
+)
 
 
 class TestClientMetadataUrl:
@@ -42,6 +50,9 @@ class TestClientMetadataUrl:
             'https://app.example.com/a/../client.json',
             'https://app.example.com/./client.json',
             'https://app.example.com:bad/client.json',
+            'https://bücher.example/client.json',
+            'https://app.example.com/a\x01b',
+            'https://app.example.com/a b',
         ],
     )
     def test_anything_else_is_not(self, client_id):
@@ -69,8 +80,10 @@ class TestDocumentParsing:
             ({'client_secret_expires_at': 0}, 'carries a client_secret'),
             ({'token_endpoint_auth_method': 'private_key_jwt'}, "authenticates with 'private_key_jwt'"),
             ({'token_endpoint_auth_method': 'client_secret_basic'}, 'only public clients'),
-            ({'grant_types': ['client_credentials']}, 'authorization_code grant'),
-            ({'response_types': ['token']}, 'code response type'),
+            ({'grant_types': ['client_credentials']}, 'does not list authorization_code among its grant_types'),
+            ({'grant_types': 5}, 'has a grant_types that is not a list'),
+            ({'response_types': ['token']}, 'does not list code among its response_types'),
+            ({'response_types': 'code'}, 'has a response_types that is not a list'),
             ({'client_name': None}, 'invalid client_name'),
             ({'redirect_uris': []}, 'invalid redirect_uris'),
             ({'redirect_uris': ['http://app.example.com/callback']}, 'neither https nor loopback'),
@@ -109,16 +122,39 @@ class TestFetching:
 
     async def test_the_connection_goes_to_the_checked_address_under_the_host_name(self):
         seen: list[httpx.Request] = []
-        resolver = _resolver(_serve(client_metadata_document(), seen=seen))
+        resolver = resolver_over(_serve(client_metadata_document(), seen=seen))
         assert (await resolver.resolve(CLIENT_METADATA_URL)).client_name == 'Example Agent'
         [request] = seen
         assert request.url.host == PUBLIC_ADDRESS
-        assert request.headers['host'] == 'app.example.com'
-        assert request.extensions['sni_hostname'] == 'app.example.com'
+        assert request.headers['host'] == CLIENT_METADATA_HOST
+        assert request.extensions['sni_hostname'] == CLIENT_METADATA_HOST
 
     @pytest.mark.parametrize(
         'addresses',
-        [['10.0.0.5'], ['127.0.0.1'], ['169.254.169.254'], ['::1'], ['fe80::1%en0'], [PUBLIC_ADDRESS, '10.0.0.5'], []],
+        [
+            ['10.0.0.5'],
+            ['127.0.0.1'],
+            ['169.254.169.254'],
+            ['::1'],
+            ['fe80::1%en0'],
+            [PUBLIC_ADDRESS, '10.0.0.5'],
+            [],
+            ['64:ff9b::a9fe:a9fe'],
+            ['::ffff:10.0.0.5'],
+            ['2002:a00:5::1'],
+        ],
+        ids=[
+            'private',
+            'loopback',
+            'link local',
+            'IPv6 loopback',
+            'zoned link local',
+            'one of two private',
+            'none',
+            'NAT64 of link local',
+            'IPv4 mapped',
+            '6to4 of private',
+        ],
     )
     async def test_a_host_resolving_to_any_private_or_local_address_is_refused(self, addresses):
         """One public address is not enough, since a later resolution may pick another of them."""
@@ -128,7 +164,7 @@ class TestFetching:
 
     async def test_a_client_id_that_is_no_metadata_url_is_never_fetched(self):
         with pytest.raises(ClientMetadataError, match='is not at an https URL with a path'):
-            await _resolver(_serve(client_metadata_document())).resolve('http://app.example.com/client.json')
+            await resolver_over(_serve(client_metadata_document())).resolve('http://app.example.com/client.json')
 
     async def test_the_system_resolver_finds_localhost_local(self):
         """Name resolution itself is checked, beyond the stand-in the other tests use."""
@@ -160,13 +196,25 @@ class TestFetching:
             lambda request: seen.append(request) or httpx.Response(status, headers={'location': 'http://10.0.0.5/'})
         )
         with pytest.raises(ClientMetadataError, match=f'answered HTTP {status}'):
-            await _resolver(transport).resolve(CLIENT_METADATA_URL)
+            await resolver_over(transport).resolve(CLIENT_METADATA_URL)
         assert len(seen) == 1
+
+    async def test_no_compressed_body_is_asked_for_or_read(self):
+        """A compressed body would be unpacked whole before the size limit could refuse it."""
+        seen: list[httpx.Request] = []
+
+        def serve(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, content=b'\x1f\x8b', headers={'content-encoding': 'gzip'})
+
+        with pytest.raises(ClientMetadataError, match='came gzip-encoded'):
+            await resolver_over(httpx.MockTransport(serve)).resolve(CLIENT_METADATA_URL)
+        assert seen[0].headers['accept-encoding'] == 'identity'
 
     async def test_a_document_over_the_size_limit_is_refused(self):
         oversized = {**client_metadata_document(), 'padding': 'x' * MAX_DOCUMENT_BYTES}
         with pytest.raises(ClientMetadataError, match='larger than'):
-            await _resolver(_serve(oversized)).resolve(CLIENT_METADATA_URL)
+            await resolver_over(_serve(oversized)).resolve(CLIENT_METADATA_URL)
 
     async def test_a_slow_server_is_cut_off(self, monkeypatch):
         monkeypatch.setattr(client_metadata, 'FETCH_TIMEOUT_SECONDS', 0.01)
@@ -176,14 +224,14 @@ class TestFetching:
             return httpx.Response(200)
 
         with pytest.raises(ClientMetadataError, match='took longer than'):
-            await _resolver(httpx.MockTransport(hang)).resolve(CLIENT_METADATA_URL)
+            await resolver_over(httpx.MockTransport(hang)).resolve(CLIENT_METADATA_URL)
 
     async def test_a_connection_failure_is_refused(self):
         def refuse(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError('refused', request=request)
 
         with pytest.raises(ClientMetadataError, match='could not be fetched'):
-            await _resolver(httpx.MockTransport(refuse)).resolve(CLIENT_METADATA_URL)
+            await resolver_over(httpx.MockTransport(refuse)).resolve(CLIENT_METADATA_URL)
 
 
 class TestCaching:
@@ -203,7 +251,7 @@ class TestCaching:
     async def test_a_document_is_reused_for_its_bounded_lifetime(self, monkeypatch, cache_control, lifetime):
         clock = _Clock(monkeypatch)
         seen: list[httpx.Request] = []
-        resolver = _resolver(_serve(client_metadata_document(), seen=seen, cache_control=cache_control))
+        resolver = resolver_over(_serve(client_metadata_document(), seen=seen, cache_control=cache_control))
         await resolver.resolve(CLIENT_METADATA_URL)
         clock.now += lifetime - 1
         await resolver.resolve(CLIENT_METADATA_URL)
@@ -214,7 +262,7 @@ class TestCaching:
 
     async def test_a_failure_is_fetched_again(self):
         responses = iter([httpx.Response(503), httpx.Response(200, json=client_metadata_document())])
-        resolver = _resolver(httpx.MockTransport(lambda request: next(responses)))
+        resolver = resolver_over(httpx.MockTransport(lambda request: next(responses)))
         with pytest.raises(ClientMetadataError):
             await resolver.resolve(CLIENT_METADATA_URL)
         assert (await resolver.resolve(CLIENT_METADATA_URL)).client_id == CLIENT_METADATA_URL
@@ -225,9 +273,9 @@ class TestCaching:
 
         def serve(request: httpx.Request) -> httpx.Response:
             seen.append(request)
-            return httpx.Response(200, json={**client_metadata_document(), 'client_id': _url_of(request)})
+            return httpx.Response(200, json={**client_metadata_document(), 'client_id': requested_url(request)})
 
-        resolver = _resolver(httpx.MockTransport(serve))
+        resolver = resolver_over(httpx.MockTransport(serve))
         first, second, third = (f'https://app.example.com/{name}.json' for name in ('a', 'b', 'c'))
         for client_id in (first, second, first, third, first):
             await resolver.resolve(client_id)
@@ -248,11 +296,6 @@ def _body(document: dict[str, typing.Any]) -> bytes:
     return json.dumps(document).encode()
 
 
-def _resolver(transport: httpx.AsyncBaseTransport) -> McpClientMetadataResolver:
-    """A resolver reaching ``transport`` for any host, as if every host resolved to ``PUBLIC_ADDRESS``."""
-    return McpClientMetadataResolver(transport, resolve_host=resolve_to(PUBLIC_ADDRESS))
-
-
 def _serve(
     document: dict[str, typing.Any], seen: list[httpx.Request] | None = None, cache_control: str | None = None
 ) -> httpx.MockTransport:
@@ -265,8 +308,3 @@ def _serve(
         return httpx.Response(200, json=document, headers=headers)
 
     return httpx.MockTransport(serve)
-
-
-def _url_of(request: httpx.Request) -> str:
-    """The URL a request was for, under the host its ``Host`` header names rather than the address it went to."""
-    return f'https://{request.headers["host"]}{request.url.raw_path.decode()}'

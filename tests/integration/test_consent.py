@@ -6,7 +6,12 @@ import pytest
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp
 
-from tests.client_metadata import CLIENT_METADATA_URL, client_metadata_document, serving_client_metadata
+from tests.client_metadata import (
+    CLIENT_METADATA_HOST,
+    CLIENT_METADATA_URL,
+    client_metadata_document,
+    serving_client_metadata,
+)
 from tests.constants import AUTHORIZE_URL, GATEWAY_URL
 from tests.oauth import (
     CLIENT_REDIRECT_URI,
@@ -94,7 +99,7 @@ class TestClientMetadataDocument:
         with serving_client_metadata({CLIENT_METADATA_URL: document}):
             gateway = authorization_code_gateway(petstore_json_path, {})
         page = _open_consent(_browser(gateway._build_app(transport='streamable-http')), CLIENT_METADATA_URL)
-        assert 'Allow Example Agent (app.example.com) to use petstore?' in page.text
+        assert f'Allow Example Agent ({CLIENT_METADATA_HOST}) to use petstore?' in page.text
 
     def test_a_client_whose_document_cannot_be_fetched_is_refused_without_a_redirect(self, petstore_json_path):
         """Its redirect URIs are unknown, so sending the browser to the one it asked for would be an open redirect."""

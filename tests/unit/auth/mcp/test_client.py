@@ -13,7 +13,7 @@ from openapi_mcp_gateway.auth.mcp.client import (
     McpPreRegisteredClientDirectory,
 )
 from openapi_mcp_gateway.auth.mcp.client_metadata import ClientMetadataDocument, McpClientMetadataResolver
-from tests.client_metadata import CLIENT_METADATA_URL, client_metadata_document, serving_resolver
+from tests.client_metadata import CLIENT_METADATA_HOST, CLIENT_METADATA_URL, client_metadata_document, serving_resolver
 from tests.constants import BROWSER_ORIGIN, GATEWAY_ISSUER
 
 
@@ -200,7 +200,7 @@ class TestClientMetadataDirectory:
         assert directory.requires_consent(CLIENT_METADATA_URL) is False
 
     async def test_another_client_on_a_trusted_host_is_granted_the_other_clients_scopes(self):
-        directory = _directory(other_clients=_other_clients(trusted_hosts=frozenset({'app.example.com'})))
+        directory = _directory(other_clients=_other_clients(trusted_hosts=frozenset({CLIENT_METADATA_HOST})))
         client = await directory.get(CLIENT_METADATA_URL)
         assert client is not None
         assert client.validate_scope(None) == ['pets:read']

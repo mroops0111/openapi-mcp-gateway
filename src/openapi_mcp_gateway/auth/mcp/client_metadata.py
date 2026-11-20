@@ -34,6 +34,10 @@ MAX_CACHED_DOCUMENTS = 1000
 HostResolver = collections.abc.Callable[[str, int], collections.abc.Awaitable[list[str]]]
 
 
+# The NAT64 prefix RFC 6052 §2.1 reserves, which carries an IPv4 address in its last 32 bits.
+_NAT64_NETWORK = ipaddress.IPv6Network('64:ff9b::/96')
+
+
 class ClientMetadataError(Exception):
     """Why a client's metadata document cannot be used, worded to follow "its metadata document"."""
 
@@ -75,7 +79,7 @@ class McpClientMetadataResolver:
                 body, lifetime = await self._fetch(client_id)
         except TimeoutError as error:
             raise ClientMetadataError(f'took longer than {FETCH_TIMEOUT_SECONDS:g} seconds to fetch') from error
-        except httpx.HTTPError as error:
+        except (httpx.HTTPError, httpx.InvalidURL) as error:
             raise ClientMetadataError(f'could not be fetched ({type(error).__name__})') from error
         document = parse_client_metadata_document(client_id, body)
         self._remember(client_id, document, lifetime)
@@ -88,11 +92,13 @@ class McpClientMetadataResolver:
         url = urllib.parse.urlsplit(client_id)
         host = url.hostname or ''
         address = await self._pick_public_address(host, url.port or 443)
-        async with httpx.AsyncClient(transport=self._transport, follow_redirects=False) as http:
+        # A proxy from the environment would reach the address rather than the host, and so fail its certificate.
+        async with httpx.AsyncClient(transport=self._transport, follow_redirects=False, trust_env=False) as http:
             request = http.build_request(
                 'GET',
                 urllib.parse.urlunsplit(url._replace(netloc=_netloc_at(address, url.port))),
-                headers={'Host': url.netloc, 'Accept': 'application/json'},
+                # A compressed body would be unpacked whole before its size is checked, so none is asked for.
+                headers={'Host': url.netloc, 'Accept': 'application/json', 'Accept-Encoding': 'identity'},
                 # The certificate is checked against the host, while the connection goes to the address checked here.
                 extensions={'sni_hostname': host},
             )
@@ -100,6 +106,9 @@ class McpClientMetadataResolver:
             try:
                 if response.status_code != 200:
                     raise ClientMetadataError(f'answered HTTP {response.status_code}')
+                encoding = response.headers.get('content-encoding', 'identity').strip().lower()
+                if encoding != 'identity':
+                    raise ClientMetadataError(f'came {encoding}-encoded, while only an unencoded document is read')
                 body = await _read_within_limit(response)
             finally:
                 await response.aclose()
@@ -117,8 +126,7 @@ class McpClientMetadataResolver:
         if not addresses:
             raise ClientMetadataError(f'is at {host}, which does not resolve')
         for address in addresses:
-            # A link-local IPv6 address may carry its zone, which ``ipaddress`` does not parse.
-            if not ipaddress.ip_address(address.partition('%')[0]).is_global:
+            if not _is_public_address(address):
                 raise ClientMetadataError(f'is at {host}, which resolves to {address}, a private or local address')
         return addresses[0]
 
@@ -133,7 +141,10 @@ def is_client_metadata_url(client_id: str) -> bool:
     """Whether ``client_id`` is a URL the CIMD draft §3 accepts as a client identifier.
 
     It is ``https`` with a host and a path, without a fragment, userinfo, or a ``.`` or ``..`` path segment.
+    Only printable ASCII is accepted, so a host or path the HTTP request cannot carry is refused here.
     """
+    if not all('!' <= character <= '~' for character in client_id):
+        return False
     try:
         url = urllib.parse.urlsplit(client_id)
         _ = url.port
@@ -171,10 +182,12 @@ def parse_client_metadata_document(client_id: str, body: bytes) -> ClientMetadat
     method = data.get('token_endpoint_auth_method', 'none')
     if method != 'none':
         raise ClientMetadataError(f'authenticates with {method!r}, while only public clients are accepted')
-    if 'authorization_code' not in data.get('grant_types', ['authorization_code']):
-        raise ClientMetadataError('does not list the authorization_code grant')
-    if 'code' not in data.get('response_types', ['code']):
-        raise ClientMetadataError('does not list the code response type')
+    for field, required in (('grant_types', 'authorization_code'), ('response_types', 'code')):
+        listed = data.get(field, [required])
+        if not isinstance(listed, list):
+            raise ClientMetadataError(f'has a {field} that is not a list')
+        if required not in listed:
+            raise ClientMetadataError(f'does not list {required} among its {field}')
     try:
         document = ClientMetadataDocument.model_validate(data)
     except pydantic.ValidationError as error:
@@ -202,6 +215,23 @@ async def _resolve_host(host: str, port: int) -> list[str]:
     return list(dict.fromkeys(str(info[4][0]) for info in infos))
 
 
+def _is_public_address(address: str) -> bool:
+    """Whether ``address`` reaches the public internet, judged by the IPv4 address it carries when it carries one.
+
+    ``is_global`` passes a NAT64, 6to4 or Teredo address whose IPv4 address is private,
+    and a gateway on such a network forwards to it.
+    """
+    # A link-local IPv6 address may carry its zone, which ``ipaddress`` does not parse.
+    ip = ipaddress.ip_address(address.partition('%')[0])
+    if isinstance(ip, ipaddress.IPv6Address):
+        embedded = ip.ipv4_mapped or ip.sixtofour or (ip.teredo[1] if ip.teredo else None)
+        if embedded is None and ip in _NAT64_NETWORK:
+            embedded = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        if embedded is not None and not embedded.is_global:
+            return False
+    return ip.is_global
+
+
 def _is_ip_literal(host: str) -> bool:
     try:
         ipaddress.ip_address(host)
@@ -217,7 +247,10 @@ def _netloc_at(address: str, port: int | None) -> str:
 
 
 async def _read_within_limit(response: httpx.Response) -> bytes:
-    """The body of ``response``, refused once it passes ``MAX_DOCUMENT_BYTES`` without reading the rest."""
+    """The body of ``response``, refused once it passes ``MAX_DOCUMENT_BYTES`` without reading the rest.
+
+    It counts the bytes as sent, since a response with any ``Content-Encoding`` was refused before.
+    """
     body = bytearray()
     async for chunk in response.aiter_bytes():
         body.extend(chunk)

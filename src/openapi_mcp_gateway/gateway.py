@@ -724,7 +724,7 @@ def _upstream_scope_policy(
             operations,
             upstream.scopes,
             mcp_scope_policy,
-            {client_id: client.scopes for client_id, client in server_config.auth.mcp.clients.items()},
+            _scoped_clients(server_config),
             server_config.name,
         )
     elif upstream.enforce_scopes:
@@ -842,14 +842,25 @@ def _semantic_search_options(server_name: str, config: SemanticSearchConfig | No
 def _refuse_undefined_mcp_scopes(server_config: ServerConfig, mcp_scope_policy: McpScopePolicy) -> None:
     """Refuse a client granted a scope the server does not define, since it would open nothing."""
     undefined = {
-        client_id: sorted(set(client.scopes) - set(mcp_scope_policy.mcp_defined_scopes))
-        for client_id, client in server_config.auth.mcp.clients.items()
+        client_id: sorted(set(scopes) - set(mcp_scope_policy.mcp_defined_scopes))
+        for client_id, scopes in _scoped_clients(server_config).items()
     }
     named = '; '.join(f'{client_id}: {", ".join(scopes)}' for client_id, scopes in undefined.items() if scopes)
     if named:
         raise ValueError(
-            f'Server "{server_config.name}": auth.mcp.clients grant scopes auth.mcp.operation_scopes does not define ({named}).'
+            f'Server "{server_config.name}": auth.mcp.clients or auth.mcp.other_clients grant scopes '
+            f'auth.mcp.operation_scopes does not define ({named}).'
         )
+
+
+def _scoped_clients(server_config: ServerConfig) -> dict[str, list[str]]:
+    """The scopes each configured client may hold, with unlisted metadata document clients as ``other_clients``."""
+    mcp = server_config.auth.mcp
+    scopes = {client_id: client.scopes for client_id, client in mcp.clients.items()}
+    other_clients = mcp.resolve_other_clients()
+    if mcp.operation_scopes is not None and other_clients is not None:
+        scopes['other_clients'] = other_clients.scopes
+    return scopes
 
 
 def _summarize_upstream_auth(auth: AuthConfig, setup: ServerAuthSetup) -> str:

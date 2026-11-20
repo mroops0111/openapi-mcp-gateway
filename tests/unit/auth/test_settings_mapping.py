@@ -72,7 +72,15 @@ class TestClientDirectory:
         with pytest.raises(ValueError, match=rf'auth\.mcp\.clients\.{re.escape(CLIENT_METADATA_URL)}\.{refusal}'):
             build_mcp_client_directory({CLIENT_METADATA_URL: ClientConfig.model_validate(client)}, ())
 
-    @pytest.mark.parametrize('client_id', ['https://app.example.com', 'http://app.example.com/client.json'])
+    def test_a_metadata_document_key_is_recognised_whatever_the_case_of_its_scheme(self):
+        """The directory reads the key as a document client either way, so its settings are checked the same."""
+        client_id = CLIENT_METADATA_URL.replace('https://', 'HTTPS://')
+        with pytest.raises(ValueError, match='client_secret cannot be set'):
+            build_mcp_client_directory({client_id: ClientConfig(client_secret='shh')}, ())
+
+    @pytest.mark.parametrize(
+        'client_id', ['https://app.example.com', 'http://app.example.com/client.json', 'HTTP://app.example.com/c.json']
+    )
     def test_a_url_no_metadata_document_can_sit_at_is_refused(self, client_id):
         with pytest.raises(ValueError, match='is not a Client ID Metadata Document URL'):
             build_mcp_client_directory({client_id: ClientConfig()}, ())
@@ -118,3 +126,6 @@ class TestOtherClients:
         """A parent domain does not admit its subdomains, so trusting one host never trusts a sibling."""
         rule = build_mcp_other_clients(OtherClientsConfig(trusted_hosts=trusted_hosts), ())
         assert rule.admits(CLIENT_METADATA_URL) is admitted
+
+    def test_an_id_that_is_no_metadata_document_url_is_never_admitted(self):
+        assert build_mcp_other_clients(OtherClientsConfig(), ()).admits('agent') is False
