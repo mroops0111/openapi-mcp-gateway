@@ -24,27 +24,8 @@ _CONCEPTS = (
 )
 
 
-class _ConceptEmbedder:
-    """A stand-in embedding model that places text by the concepts its words name, and counts its calls."""
-
-    def __init__(self, *, failing: bool = False):
-        self.failing = failing
-        self.embedded_documents: list[str] = []
-        self.query_requests = 0
-
-    async def embed_documents(self, documents: typing.Sequence[str], *, settings: typing.Any = None) -> typing.Any:
-        self.embedded_documents.extend(documents)
-        return types.SimpleNamespace(embeddings=[_place(text) for text in documents])
-
-    async def embed_query(self, queries: typing.Sequence[str], *, settings: typing.Any = None) -> typing.Any:
-        self.query_requests += 1
-        if self.failing:
-            raise ConnectionError('embedding service unreachable')
-        return types.SimpleNamespace(embeddings=[_place(query) for query in queries])
-
-
 @pytest.fixture
-def embedder() -> _ConceptEmbedder:
+def embedder() -> '_ConceptEmbedder':
     return _ConceptEmbedder()
 
 
@@ -155,6 +136,25 @@ class TestSemanticSearch:
         config = _semantic_config(petstore_json_path, 'openai:x')
         with pytest.raises(ValueError, match=r'openapi-mcp-gateway\[embeddings\]'):
             Gateway.from_config(config)
+
+
+class _ConceptEmbedder:
+    """A stand-in embedding model that places text by the concepts its words name, and counts its calls."""
+
+    def __init__(self, *, failing: bool = False):
+        self.failing = failing
+        self.embedded_documents: list[str] = []
+        self.query_requests = 0
+
+    async def embed_documents(self, documents: typing.Sequence[str], *, settings: typing.Any = None) -> typing.Any:
+        self.embedded_documents.extend(documents)
+        return types.SimpleNamespace(embeddings=[_place(text) for text in documents])
+
+    async def embed_query(self, queries: typing.Sequence[str], *, settings: typing.Any = None) -> typing.Any:
+        self.query_requests += 1
+        if self.failing:
+            raise ConnectionError('embedding service unreachable')
+        return types.SimpleNamespace(embeddings=[_place(query) for query in queries])
 
 
 def _place(text: str) -> list[float]:

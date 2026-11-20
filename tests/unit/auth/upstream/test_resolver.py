@@ -9,6 +9,7 @@ from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamStaticAuthResolver,
     UpstreamTokenSourceAuthResolver,
 )
+from tests.context import stub_context
 
 
 @pytest.fixture
@@ -58,27 +59,18 @@ class TestTokenSourceAuthResolver:
         assert await resolver.resolve(mock_context) == {}
 
 
-def _ctx_with_headers(headers: dict[str, str] | None) -> MagicMock:
-    """Stand-in MCP context whose request carries the given header map."""
-    request = MagicMock()
-    request.headers = headers if headers is not None else {}
-    ctx = MagicMock()
-    ctx.request_context.request = request
-    return ctx
-
-
 class TestPassthroughAuthResolver:
     """``UpstreamPassthroughAuthResolver`` copies named headers from the live MCP request."""
 
     async def test_default_forwards_authorization_only(self):
         """By default the resolver only forwards the ``Authorization`` header."""
-        ctx = _ctx_with_headers({'authorization': 'Bearer client-token', 'x-api-key': 'key'})
+        ctx = stub_context({'authorization': 'Bearer client-token', 'x-api-key': 'key'})
         resolver = UpstreamPassthroughAuthResolver()
         assert await resolver.resolve(ctx) == {'Authorization': 'Bearer client-token'}
 
     async def test_forwards_configured_headers(self):
         """``header_names`` lets callers forward any incoming credential header."""
-        ctx = _ctx_with_headers({'authorization': 'Bearer client-token', 'x-api-key': 'key'})
+        ctx = stub_context({'authorization': 'Bearer client-token', 'x-api-key': 'key'})
         resolver = UpstreamPassthroughAuthResolver(header_names=('Authorization', 'X-API-Key'))
         assert await resolver.resolve(ctx) == {
             'Authorization': 'Bearer client-token',
@@ -87,7 +79,7 @@ class TestPassthroughAuthResolver:
 
     async def test_skips_headers_absent_on_request(self):
         """Names not present on the request are simply omitted from the result."""
-        ctx = _ctx_with_headers({'authorization': 'Bearer t'})
+        ctx = stub_context({'authorization': 'Bearer t'})
         resolver = UpstreamPassthroughAuthResolver(header_names=('Authorization', 'X-API-Key'))
         assert await resolver.resolve(ctx) == {'Authorization': 'Bearer t'}
 

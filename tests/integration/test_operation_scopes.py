@@ -4,22 +4,25 @@ import json
 import logging
 import pathlib
 import typing
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import httpx2
 import pytest
 from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared.auth import InvalidScopeError
-from mcp.types import CallToolResult, TextContent
+from mcp.shared.auth import InvalidScopeError, OAuthToken
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
-from tests.oauth import authorization_code_gateway, bridge_of, server_of, sign_in
-from tests.serving import serve
+from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, connect
+from tests.oauth import authorization_code_gateway, bridge_of, server_of, sign_in, upstream_token_response
+from tests.serving import serve, serve_gateway
+from tests.spec import write_spec
+from tests.tool_result import text_of
 
 
 # The protocol revisions a client may speak.
@@ -83,6 +86,7 @@ def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gatew
         promote_resources: bool = False,
         upstream: dict[str, typing.Any] | None = None,
         spec: pathlib.Path = petstore_json_path,
+        url: str = GATEWAY_URL,
     ) -> Gateway:
         return authorization_code_gateway(
             spec,
@@ -90,6 +94,7 @@ def make_gateway(petstore_json_path: pathlib.Path) -> typing.Callable[..., Gatew
             operation_scopes=operation_scopes if operation_scopes is not None else {'auto': 'tags'},
             upstream=upstream,
             exposure={'style': style, 'promote_resources': promote_resources},
+            url=url,
         )
 
     return make
@@ -171,7 +176,7 @@ class TestScopeRejection:
         async with _connect(gateway, READER, LEGACY) as session:
             result = await session.client.call_tool('delete_pet', {'petId': '1'})
         assert result.is_error
-        assert _text(result) == 'This operation needs one of these scopes: pets:delete.'
+        assert text_of(result) == 'This operation needs one of these scopes: pets:delete.'
         assert upstream_requests == []
 
     @pytest.mark.parametrize('mode', [MODERN, LEGACY])
@@ -193,7 +198,7 @@ class TestDynamicExposure:
         async with _connect(gateway, READER, MODERN) as session:
             searched = await session.client.call_tool('search_operations', {})
             hidden = await session.client.call_tool('get_operation', {'name': 'delete_pet'})
-        listing = json.loads(_text(searched))
+        listing = json.loads(text_of(searched))
         assert [operation['name'] for operation in listing['operations']] == READ_TOOLS
         assert listing['tags'] == [{'name': 'pets', 'operations': 2}]
         assert hidden.is_error
@@ -202,7 +207,7 @@ class TestDynamicExposure:
         async with _connect(gateway, STEPPER, MODERN) as session:
             searched = await session.client.call_tool('search_operations', {})
             described = await session.client.call_tool('get_operation', {'name': 'delete_pet'})
-        assert 'delete_pet' in [operation['name'] for operation in json.loads(_text(searched))['operations']]
+        assert 'delete_pet' in [operation['name'] for operation in json.loads(text_of(searched))['operations']]
         assert not described.is_error
 
     async def test_a_modern_client_is_challenged_for_the_operation_it_calls(self, gateway):
@@ -219,7 +224,7 @@ class TestDynamicExposure:
                 'call_operation', {'name': 'delete_pet', 'arguments': {'petId': '1'}}
             )
         assert result.is_error
-        assert 'pets:delete' in _text(result)
+        assert 'pets:delete' in text_of(result)
         assert upstream_requests == []
 
 
@@ -282,6 +287,12 @@ class TestAuthorizationServer:
         token = await _sign_in(gateway, client_id, requested)
         assert token.scope == granted
 
+    @pytest.mark.parametrize(('client_id', 'granted'), [(DELETER, 'pets:read pets:delete'), (STEPPER, 'pets:write')])
+    async def test_the_sdk_client_is_granted_the_clients_defaults(self, make_gateway, client_id, granted):
+        """The SDK's own client names no scope on its first sign-in, so it starts on the client's defaults."""
+        token = await _sign_in_through_the_sdk(make_gateway, client_id)
+        assert token.scope == granted
+
     async def test_a_request_for_nothing_the_client_may_hold_is_refused(self, gateway):
         with pytest.raises(InvalidScopeError):
             await _sign_in(gateway, DELETER, 'pets:write')
@@ -315,9 +326,7 @@ class TestUpstreamGrant:
             for operation in path_item.values():
                 if isinstance(operation, dict) and operation.get('operationId') in UPSTREAM_SECURITY:
                     operation['security'] = UPSTREAM_SECURITY[operation['operationId']]
-        path = tmp_path / 'secured-petstore.json'
-        path.write_text(json.dumps(spec))
-        return path
+        return write_spec(tmp_path, spec, 'secured-petstore.json')
 
     @pytest.fixture
     def make_enforcing_gateway(self, make_gateway, secured_spec) -> typing.Callable[..., Gateway]:
@@ -352,7 +361,7 @@ class TestUpstreamGrant:
             result = await session.client.call_tool(tool, arguments)
         assert result.is_error
         # The meta-tool's refusal arrives prefixed by the SDK, as any error a tool raises does.
-        assert DELETE_UPSTREAM_REFUSAL in _text(result)
+        assert DELETE_UPSTREAM_REFUSAL in text_of(result)
         assert upstream_requests == []
 
     async def test_missing_mcp_scopes_are_challenged_first(self, make_enforcing_gateway):
@@ -439,8 +448,14 @@ async def _tool_names(session: _Session) -> list[str]:
     return [tool.name for tool in (await session.client.list_tools()).tools]
 
 
-def _text(result: CallToolResult) -> str:
-    """The text a tool result carries."""
-    [content] = result.content
-    assert isinstance(content, TextContent)
-    return content.text
+async def _sign_in_through_the_sdk(make_gateway: typing.Callable[..., Gateway], client_id: str) -> OAuthToken:
+    """Sign ``client_id`` in with the SDK's own client, through consent and the upstream, and return its tokens."""
+    storage = MemoryTokenStorage()
+    with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())):
+        async with serve_gateway(lambda url: make_gateway(url=url)) as base_url:
+            endpoint = f'{base_url}/petstore/mcp'
+            auth = authorization_code_auth(endpoint, Browser(f'{base_url}/petstore'), client_id, storage=storage)
+            async with connect(endpoint, auth):
+                pass
+    assert storage.tokens is not None
+    return storage.tokens

@@ -24,7 +24,7 @@ from openapi_mcp_gateway.settings import (
 )
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.constants import API_URL, GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
-from tests.flows import (
+from tests.flow import (
     auth_context,
     build_spec,
     server_entry,
@@ -44,23 +44,13 @@ TOKEN_EXCHANGE = {
     'client_id': 'cid',
     'client_secret': 'sec',
 }
-# What ``token_exchange`` needs on the MCP side to build.
-TOKEN_EXCHANGE_MCP = {'issuer': ISSUER}
 SPEC_BY_FLOW = {
     'client_credentials': spec_with_client_credentials,
     'authorization_code': spec_with_authorization_code,
 }
 
-
-def _context(auth: AuthConfig) -> AuthTypeContext:
-    """Build the one shape every handler receives, for a server carrying ``auth``."""
-    return AuthTypeContext(
-        entry=ServerConfig(name='srv', spec='dummy.json', base_url=API_URL, auth=auth),
-        spec=OpenAPISpec(title='test', version='1.0.0', operations=[], security_schemes={}),
-        store=MemoryTokenStore(),
-        gateway_url=GATEWAY_URL,
-        mcp_scope_policy=McpUnrestrictedScopePolicy(),
-    )
+# What ``token_exchange`` needs on the MCP side to build.
+TOKEN_EXCHANGE_MCP = {'issuer': ISSUER}
 
 
 class TestStaticCredentials:
@@ -122,12 +112,6 @@ class TestOtherTypes:
         """Previously the token was quietly ignored, which read as auth that was never applied."""
         with pytest.raises(pydantic.ValidationError, match='no effect'):
             AuthConfig(upstream=UpstreamAuthConfig(type='none', token='ignored'))
-
-    def test_passthrough_forwards_the_caller_header(self):
-        """The caller's own credential travels on, which only the in-process case may do."""
-        setup = build_auth(_context(AuthConfig(upstream=UpstreamAuthConfig(type='passthrough'))))
-
-        assert isinstance(setup.resolver, UpstreamPassthroughAuthResolver)
 
 
 class TestDispatch:
@@ -260,6 +244,17 @@ class TestMcpSettingsWithoutEffect:
         ):
             build_auth(context)
         fetch.assert_not_called()
+
+
+def _context(auth: AuthConfig) -> AuthTypeContext:
+    """Build the one shape every handler receives, for a server carrying ``auth``."""
+    return AuthTypeContext(
+        entry=ServerConfig(name='srv', spec='dummy.json', base_url=API_URL, auth=auth),
+        spec=OpenAPISpec(title='test', version='1.0.0', operations=[], security_schemes={}),
+        store=MemoryTokenStore(),
+        gateway_url=GATEWAY_URL,
+        mcp_scope_policy=McpUnrestrictedScopePolicy(),
+    )
 
 
 def _build(auth: dict):

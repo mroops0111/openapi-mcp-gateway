@@ -4,27 +4,6 @@ from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ToolOverr
 from openapi_mcp_gateway.policy import filter_operations, matches_pattern
 
 
-def _operation(operation_id: str, method: str = 'get', path: str = '/test', mcp_marker: bool = False) -> OperationInfo:
-    """Build a minimal ``OperationInfo`` for pattern/filter tests."""
-    integration = McpIntegration(tool=ToolOverride()) if mcp_marker else McpIntegration()
-    return OperationInfo(
-        operation_id=operation_id,
-        method=method,
-        path=path,
-        x_mcp_integration=integration,
-    )
-
-
-OPERATIONS = [
-    _operation('listPets', 'get', '/pets'),
-    _operation('createPet', 'post', '/pets'),
-    _operation('getPetById', 'get', '/pets/{petId}'),
-    _operation('deletePet', 'delete', '/pets/{petId}'),
-    _operation('listUsers', 'get', '/users'),
-    _operation('adminListPets', 'get', '/admin/pets', mcp_marker=True),
-]
-
-
 class TestMatchesPattern:
     """Pattern matching against operation id and ``METHOD /path`` syntax."""
 
@@ -104,10 +83,33 @@ class TestFilterOperations:
 
     def test_annotated_only_with_allow(self):
         """``annotated_only`` and ``allow`` intersect, not union."""
-        result = filter_operations(OPERATIONS, allow=['admin*'], annotated_only=True)
-        assert len(result) == 1
+        # ``listPets`` matches the pattern but carries no marker, so a union would keep it.
+        result = filter_operations(OPERATIONS, allow=['*Pets'], annotated_only=True)
+        assert [operation.operation_id for operation in result] == ['adminListPets']
 
     def test_allow_matches_nothing(self):
         """An ``allow`` that matches no operation yields an empty list."""
         result = filter_operations(OPERATIONS, allow=['nonexistent*'])
         assert result == []
+
+
+def _operation(operation_id: str, method: str = 'get', path: str = '/test', mcp_marker: bool = False) -> OperationInfo:
+    """Build a minimal ``OperationInfo`` for pattern/filter tests."""
+    integration = McpIntegration(tool=ToolOverride()) if mcp_marker else McpIntegration()
+    return OperationInfo(
+        operation_id=operation_id,
+        method=method,
+        path=path,
+        x_mcp_integration=integration,
+    )
+
+
+# The operations every pattern and filter test runs against, one of them marked for exposure.
+OPERATIONS = [
+    _operation('listPets', 'get', '/pets'),
+    _operation('createPet', 'post', '/pets'),
+    _operation('getPetById', 'get', '/pets/{petId}'),
+    _operation('deletePet', 'delete', '/pets/{petId}'),
+    _operation('listUsers', 'get', '/users'),
+    _operation('adminListPets', 'get', '/admin/pets', mcp_marker=True),
+]

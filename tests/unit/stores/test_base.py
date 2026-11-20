@@ -1,5 +1,5 @@
 import time
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -75,7 +75,7 @@ class TestStoreTTL:
             result = await memory_store.get('ns', 'key')
         assert result is None
 
-    async def test_ttl_expired_redis(self, redis_store):
+    async def test_redis_sets_the_key_ttl(self, redis_store):
         """Redis store sets the underlying key TTL (``-1`` when omitted)."""
         await redis_store.set('ns', 'key', 'data', ttl=60)
         full_key = redis_store._key('ns', 'key')
@@ -132,6 +132,7 @@ class TestStoreClose:
         assert await memory_store.get('ns', 'key') is None
 
     async def test_close_redis(self, redis_store):
-        """Closing the Redis store releases the underlying connection without error."""
-        await redis_store.set('ns', 'key', 'data')
-        await redis_store.close()
+        """Closing the Redis store closes its connection."""
+        with patch.object(redis_store._redis, 'aclose', AsyncMock()) as aclose:
+            await redis_store.close()
+        aclose.assert_awaited_once()

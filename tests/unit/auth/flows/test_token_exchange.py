@@ -19,59 +19,12 @@ from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy
 from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.constants import API_URL, ISSUER, JWKS_URL, TOKEN_URL
-from tests.flows import (
+from tests.flow import (
     auth_context,
     build_spec,
     server_entry,
     spec_with_authorization_code,
 )
-
-
-def _token_exchange_entry(**overrides) -> ServerConfig:
-    """Entry configured for the token_exchange flow, with every requirement satisfied by default.
-
-    Keys of both the ``upstream`` and ``mcp`` blocks are accepted flat here for brevity,
-    so a test can vary one of them without restating the rest.
-    """
-    mcp_keys = {'issuer', 'required_scopes'}
-    upstream: dict[str, typing.Any] = {
-        'type': 'oauth2',
-        'flow': 'token_exchange',
-        'audience': API_URL,
-        'client_id': 'gateway',
-        'client_secret': 'secret',
-    }
-    mcp: dict[str, typing.Any] = {'issuer': ISSUER}
-    for key, value in overrides.items():
-        (mcp if key in mcp_keys else upstream)[key] = value
-    return server_entry(AuthConfig.model_validate({'upstream': upstream, 'mcp': mcp}))
-
-
-def _build_token_exchange(entry: ServerConfig):
-    """Run the handler with issuer discovery stubbed out."""
-    metadata = McpExternalIssuerMetadata(
-        issuer=ISSUER,
-        jwks_uri=JWKS_URL,
-        token_endpoint=TOKEN_URL,
-    )
-    with (
-        patch(
-            'openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata', return_value=metadata
-        ),
-        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client'),
-    ):
-        return TokenExchangeFlowHandler().build(
-            OAuthFlowContext(
-                AuthTypeContext(
-                    entry=entry,
-                    spec=build_spec(),
-                    store=MemoryTokenStore(),
-                    gateway_url='http://localhost:8000',
-                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
-                ),
-                upstream_oauth_flow=None,
-            )
-        )
 
 
 class TestTokenExchangeFlowHandler:
@@ -189,3 +142,50 @@ class TestTokenExchangeBridge:
             assert await TokenExchangeBridge(upstream).get_token() is None
 
         upstream.exchange.assert_not_awaited()
+
+
+def _token_exchange_entry(**overrides) -> ServerConfig:
+    """Entry configured for the token_exchange flow, with every requirement satisfied by default.
+
+    Keys of both the ``upstream`` and ``mcp`` blocks are accepted flat here for brevity,
+    so a test can vary one of them without restating the rest.
+    """
+    mcp_keys = {'issuer', 'required_scopes'}
+    upstream: dict[str, typing.Any] = {
+        'type': 'oauth2',
+        'flow': 'token_exchange',
+        'audience': API_URL,
+        'client_id': 'gateway',
+        'client_secret': 'secret',
+    }
+    mcp: dict[str, typing.Any] = {'issuer': ISSUER}
+    for key, value in overrides.items():
+        (mcp if key in mcp_keys else upstream)[key] = value
+    return server_entry(AuthConfig.model_validate({'upstream': upstream, 'mcp': mcp}))
+
+
+def _build_token_exchange(entry: ServerConfig):
+    """Run the handler with issuer discovery stubbed out."""
+    metadata = McpExternalIssuerMetadata(
+        issuer=ISSUER,
+        jwks_uri=JWKS_URL,
+        token_endpoint=TOKEN_URL,
+    )
+    with (
+        patch(
+            'openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata', return_value=metadata
+        ),
+        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client'),
+    ):
+        return TokenExchangeFlowHandler().build(
+            OAuthFlowContext(
+                AuthTypeContext(
+                    entry=entry,
+                    spec=build_spec(),
+                    store=MemoryTokenStore(),
+                    gateway_url='http://localhost:8000',
+                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                ),
+                upstream_oauth_flow=None,
+            )
+        )

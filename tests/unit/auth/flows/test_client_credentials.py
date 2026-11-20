@@ -12,7 +12,7 @@ from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.constants import API_URL, TOKEN_URL
-from tests.flows import (
+from tests.flow import (
     server_entry,
     spec_with_client_credentials,
 )
