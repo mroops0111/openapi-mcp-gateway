@@ -29,12 +29,16 @@ from ..mcp.authorization_code import (
     McpAuthorizationCodeServer,
     McpNextSignIn,
 )
-from ..mcp.client import McpClientDirectory, McpDynamicClientRegistry
+from ..mcp.client import McpClientDirectory, McpClientDirectoryChain, McpDynamicClientRegistry
 from ..mcp.consent import PENDING_AUTHORIZATION_TTL, BrowserCookie, PendingAuthorization
 from ..mcp.consent_page import redirect_without_cache, render_error_page
 from ..mcp.record_origin import McpRecordOrigin
 from ..mcp.token_issuer import McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
-from ..settings_mapping import build_mcp_client_directory, build_mcp_token_policy
+from ..settings_mapping import (
+    build_mcp_client_directory,
+    build_mcp_client_metadata_directory,
+    build_mcp_token_policy,
+)
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamTokenSource
@@ -264,7 +268,9 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
 
     @property
     def mcp_settings(self) -> frozenset[McpSetting]:
-        return frozenset({'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl', 'refresh_token_ttl'})
+        return frozenset(
+            {'required_scopes', 'operation_scopes', 'clients', 'other_clients', 'access_token_ttl', 'refresh_token_ttl'}
+        )
 
     @property
     def mcp_settings_requirement(self) -> str:
@@ -346,7 +352,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             provider=server,
             settings=settings,
             mcp_tokens_carry_upstream_grant=True,
-            authorization_server_metadata=_build_authorization_server_metadata(settings),
+            authorization_server_metadata=_build_authorization_server_metadata(settings, clients),
             routes=[
                 McpAuthorizationCodeRoutes(server, flow_context.mcp_scope_policy, cookie),
                 AuthorizationCodeCallbackRoutes(bridge, cookie),
@@ -379,12 +385,14 @@ def build_authorization_code_server(
     return McpAuthorizationCodeServer(tokens, clients, bridge, server_name=server_name), bridge
 
 
-def _build_authorization_server_metadata(settings: AuthSettings) -> OAuthMetadata:
+def _build_authorization_server_metadata(settings: AuthSettings, clients: McpClientDirectory) -> OAuthMetadata:
     """The RFC 8414 document of the gateway's authorization server, as the SDK builds it plus what it adds.
 
     The server sends ``iss`` on its authorization responses,
     so RFC 9207 §2.3 has the document announce ``authorization_response_iss_parameter_supported``.
     That flag is what lets a client refuse a response that arrives without one.
+    ``client_id_metadata_document_supported`` tells a client it may sign in with its metadata document's URL,
+    which the MCP spec has it prefer to registering, and which the SDK does not announce yet.
     """
     metadata = build_metadata(
         issuer_url=settings.issuer_url,
@@ -393,22 +401,30 @@ def _build_authorization_server_metadata(settings: AuthSettings) -> OAuthMetadat
         revocation_options=settings.revocation_options or RevocationOptions(),
     )
     metadata.authorization_response_iss_parameter_supported = True
+    if clients.accepts_client_metadata_documents:
+        metadata.client_id_metadata_document_supported = True
     return metadata
 
 
 def _build_client_directory(
     flow_context: OAuthFlowContext, mcp_endpoint_scopes: list[str], issuer: str
 ) -> McpClientDirectory:
-    """The clients ``auth.mcp.clients`` declares, or Dynamic Client Registration when it declares none."""
-    entry = flow_context.entry
-    if entry.auth.mcp.clients:
-        return build_mcp_client_directory(entry.auth.mcp.clients, mcp_endpoint_scopes)
-    logger.warning(
-        'Server "%s" accepts Dynamic Client Registration, which the MCP 2026-07-28 spec deprecates. '
-        'Declare the clients allowed to sign in under auth.mcp.clients instead.',
-        entry.name,
-    )
-    return McpDynamicClientRegistry(flow_context.store, issuer)
+    """The clients ``auth.mcp.clients`` declares, the Client ID Metadata Document clients ``other_clients`` admits,
+    and Dynamic Client Registration where the config names neither.
+    """
+    mcp_config = flow_context.entry.auth.mcp
+    directories: list[McpClientDirectory] = [
+        build_mcp_client_directory(mcp_config.clients, mcp_endpoint_scopes),
+        build_mcp_client_metadata_directory(mcp_config, mcp_endpoint_scopes, flow_context.client_metadata_resolver),
+    ]
+    if mcp_config.accepts_dynamic_registration:
+        logger.warning(
+            'Server "%s" accepts Dynamic Client Registration, which the MCP 2026-07-28 spec deprecates. '
+            'Setting auth.mcp.clients or auth.mcp.other_clients turns it off.',
+            flow_context.entry.name,
+        )
+        directories.append(McpDynamicClientRegistry(flow_context.store, issuer))
+    return McpClientDirectoryChain(directories)
 
 
 def _expiry_of(expires_in: int | None) -> int | None:

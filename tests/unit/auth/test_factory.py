@@ -23,6 +23,7 @@ from openapi_mcp_gateway.settings import (
     UpstreamAuthConfig,
 )
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
+from tests.client_metadata import serving_resolver
 from tests.constants import API_URL, GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
 from tests.flow import (
     auth_context,
@@ -204,6 +205,10 @@ class TestMcpSettingsWithoutEffect:
                 r'clients needs auth\.upstream\.flow authorization_code, where',
             ),
             (
+                {'upstream': BEARER, 'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'other_clients': {}}},
+                r'other_clients needs auth\.upstream\.flow authorization_code',
+            ),
+            (
                 {'upstream': {'type': 'passthrough'}, 'mcp': {'clients': {'agent': {'client_secret': 's'}}}},
                 r'clients needs auth\.upstream\.flow authorization_code.*, or auth\.mcp\.clients on an upstream that sees only',
             ),
@@ -254,6 +259,7 @@ def _context(auth: AuthConfig) -> AuthTypeContext:
         store=MemoryTokenStore(),
         gateway_url=GATEWAY_URL,
         mcp_scope_policy=McpUnrestrictedScopePolicy(),
+        client_metadata_resolver=serving_resolver({}),
     )
 
 

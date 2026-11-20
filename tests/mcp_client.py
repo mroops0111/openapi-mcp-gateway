@@ -32,10 +32,13 @@ def authorization_code_auth(
     client_id: str | None = None,
     scope: str | None = None,
     storage: 'MemoryTokenStorage | None' = None,
+    client_metadata_url: str | None = None,
 ) -> OAuthClientProvider:
     """The SDK's own authorization code sign-in at ``endpoint``, with ``browser`` playing the user.
 
-    A ``client_id`` names a client the gateway already knows, and without one the client registers itself.
+    A ``client_id`` names a client the gateway already knows.
+    Without one the client signs in as ``client_metadata_url`` where the gateway accepts that,
+    and registers itself otherwise.
     """
     storage = storage or MemoryTokenStorage()
     if client_id is not None:
@@ -51,6 +54,7 @@ def authorization_code_auth(
         storage=storage,
         redirect_handler=browser.sign_in,
         callback_handler=browser.return_to_client,
+        client_metadata_url=client_metadata_url,
     )
 
 

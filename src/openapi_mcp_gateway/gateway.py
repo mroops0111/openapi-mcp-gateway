@@ -16,6 +16,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from .app import _ServerBundle, build_app, mount_mcp_apps, register_auth_routes, serve_lifespan
 from .auth.assembly import AuthTypeContext, ServerAuthSetup
 from .auth.factory import build_auth
+from .auth.mcp.client_metadata import McpClientMetadataResolver
 from .auth.upstream.oauth_flow import detect_unsupported_upstream_oauth_flows, detect_upstream_oauth_flows
 from .auth.upstream.resolver import (
     UpstreamAuthResolver,
@@ -90,8 +91,12 @@ class Gateway:
         Gateway.from_config(config).run()
     """
 
-    def __init__(self, config: GatewayConfig | None = None):
+    def __init__(
+        self, config: GatewayConfig | None = None, *, client_metadata_resolver: McpClientMetadataResolver | None = None
+    ):
         self._config = config or GatewayConfig()
+        # One resolver serves every server, so a client's metadata document is fetched once for all of them.
+        self._client_metadata_resolver = client_metadata_resolver or McpClientMetadataResolver()
         self._servers: list[_ServerBundle] = []
         self._shutdown_hooks: list[typing.Callable[[], typing.Awaitable[None]]] = []
         # The session managers ``mount`` created, which only the host app's lifespan can start.
@@ -105,9 +110,14 @@ class Gateway:
         logger.debug('Token store initialised: type=%s prefix=%s', store_config.type, store_config.key_prefix)
 
     @classmethod
-    def from_config(cls, config: GatewayConfig) -> typing.Self:
-        """Build a gateway and register every entry in ``config.servers``."""
-        gateway: typing.Self = cls(config=config)
+    def from_config(
+        cls, config: GatewayConfig, *, client_metadata_resolver: McpClientMetadataResolver | None = None
+    ) -> typing.Self:
+        """Build a gateway and register every entry in ``config.servers``.
+
+        ``client_metadata_resolver`` replaces how Client ID Metadata Documents are fetched, as tests need.
+        """
+        gateway: typing.Self = cls(config=config, client_metadata_resolver=client_metadata_resolver)
         for server_config in config.servers:
             gateway._add_server_from_server_config(server_config=server_config)
         return gateway
@@ -516,6 +526,7 @@ class Gateway:
                 store=self._store,
                 gateway_url=self._config.url,
                 mcp_scope_policy=mcp_scope_policy,
+                client_metadata_resolver=self._client_metadata_resolver,
             )
         )
         if setup.on_shutdown is not None:
@@ -724,7 +735,7 @@ def _upstream_scope_policy(
             operations,
             upstream.scopes,
             mcp_scope_policy,
-            {client_id: client.scopes for client_id, client in server_config.auth.mcp.clients.items()},
+            _scoped_clients(server_config),
             server_config.name,
         )
     elif upstream.enforce_scopes:
@@ -842,14 +853,25 @@ def _semantic_search_options(server_name: str, config: SemanticSearchConfig | No
 def _refuse_undefined_mcp_scopes(server_config: ServerConfig, mcp_scope_policy: McpScopePolicy) -> None:
     """Refuse a client granted a scope the server does not define, since it would open nothing."""
     undefined = {
-        client_id: sorted(set(client.scopes) - set(mcp_scope_policy.mcp_defined_scopes))
-        for client_id, client in server_config.auth.mcp.clients.items()
+        client_id: sorted(set(scopes) - set(mcp_scope_policy.mcp_defined_scopes))
+        for client_id, scopes in _scoped_clients(server_config).items()
     }
     named = '; '.join(f'{client_id}: {", ".join(scopes)}' for client_id, scopes in undefined.items() if scopes)
     if named:
         raise ValueError(
-            f'Server "{server_config.name}": auth.mcp.clients grant scopes auth.mcp.operation_scopes does not define ({named}).'
+            f'Server "{server_config.name}": auth.mcp.clients or auth.mcp.other_clients grant scopes '
+            f'auth.mcp.operation_scopes does not define ({named}).'
         )
+
+
+def _scoped_clients(server_config: ServerConfig) -> dict[str, list[str]]:
+    """The scopes each configured client may hold, with unlisted metadata document clients as ``other_clients``."""
+    mcp = server_config.auth.mcp
+    scopes = {client_id: client.scopes for client_id, client in mcp.clients.items()}
+    other_clients = mcp.resolve_other_clients()
+    if mcp.operation_scopes is not None and other_clients is not None:
+        scopes['other_clients'] = other_clients.scopes
+    return scopes
 
 
 def _summarize_upstream_auth(auth: AuthConfig, setup: ServerAuthSetup) -> str:

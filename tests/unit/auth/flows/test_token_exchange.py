@@ -18,6 +18,7 @@ from openapi_mcp_gateway.auth.upstream.resolver import (
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy
 from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
+from tests.client_metadata import serving_resolver
 from tests.constants import API_URL, ISSUER, JWKS_URL, TOKEN_URL
 from tests.flow import (
     auth_context,
@@ -185,6 +186,7 @@ def _build_token_exchange(entry: ServerConfig):
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000',
                     mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=None,
             )

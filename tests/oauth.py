@@ -11,6 +11,7 @@ from pydantic import AnyHttpUrl
 from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeBridge, build_authorization_code_server
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
 from openapi_mcp_gateway.auth.mcp.client import McpClientDirectory, McpDynamicClientRegistry
+from openapi_mcp_gateway.auth.mcp.client_metadata import McpClientMetadataResolver
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenPolicy
 from openapi_mcp_gateway.auth.upstream.authorization_code import UpstreamAuthorizationCodeClient
 from openapi_mcp_gateway.gateway import Gateway
@@ -77,10 +78,14 @@ def authorization_code_gateway(
     upstream: dict[str, typing.Any] | None = None,
     exposure: dict[str, typing.Any] | None = None,
     url: str = GATEWAY_URL,
+    other_clients: dict[str, typing.Any] | None = None,
+    client_metadata_resolver: McpClientMetadataResolver | None = None,
 ) -> Gateway:
     """A gateway at ``url`` serving ``spec`` as ``petstore`` behind an ``authorization_code`` server for ``clients``.
 
     ``upstream`` is merged into ``auth.upstream``, which otherwise requests ``read``.
+    ``other_clients`` becomes ``auth.mcp.other_clients`` when given,
+    and ``client_metadata_resolver`` fetches the metadata documents of the clients signing in with one.
     """
     auth = {
         'upstream': {
@@ -93,10 +98,14 @@ def authorization_code_gateway(
         'mcp': {
             'clients': clients,
             **({'operation_scopes': operation_scopes} if operation_scopes is not None else {}),
+            **({'other_clients': other_clients} if other_clients is not None else {}),
         },
     }
     server = {'name': 'petstore', 'spec': str(spec), 'auth': auth, 'exposure': exposure or {}}
-    return Gateway.from_config(GatewayConfig.model_validate({'url': url, 'servers': [server]}))
+    return Gateway.from_config(
+        GatewayConfig.model_validate({'url': url, 'servers': [server]}),
+        client_metadata_resolver=client_metadata_resolver,
+    )
 
 
 def shared_credential_server(spec_path: pathlib.Path, name: str, path_prefix: str) -> dict[str, typing.Any]:

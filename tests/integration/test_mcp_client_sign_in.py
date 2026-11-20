@@ -15,9 +15,17 @@ from fastapi.responses import JSONResponse
 from jwt.algorithms import RSAAlgorithm
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from openapi_mcp_gateway.auth.mcp.client_metadata import McpClientMetadataResolver
+from openapi_mcp_gateway.auth.mcp.token_issuer import MCP_DEFAULT_SCOPE
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
-from tests.mcp_client import Browser, authorization_code_auth, client_credentials_auth, connect
+from tests.client_metadata import (
+    CLIENT_METADATA_HOST,
+    CLIENT_METADATA_URL,
+    client_metadata_document,
+    serving_resolver,
+)
+from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, client_credentials_auth, connect
 from tests.oauth import shared_credential_server, upstream_token_response
 from tests.serving import bind_loopback_socket, build_socket_url, serve_gateway
 
@@ -84,6 +92,54 @@ class TestAuthorizationCode:
                 assert await _list_tools(endpoint, auth)
 
 
+class TestClientIdMetadataDocument:
+    """An MCP SDK client signs in with its metadata document's URL as its client_id, where the gateway accepts one.
+
+    The document lists its loopback redirect without a port, and the client listens on one of its choosing.
+    """
+
+    @pytest.mark.parametrize(
+        ('mcp', 'scope'),
+        [
+            ({}, MCP_DEFAULT_SCOPE),
+            (
+                {
+                    'operation_scopes': {'auto': 'tags'},
+                    'other_clients': {'trusted_hosts': [CLIENT_METADATA_HOST], 'scopes': ['pets:read']},
+                },
+                'pets:read',
+            ),
+            (
+                {'operation_scopes': {'auto': 'tags'}, 'clients': {CLIENT_METADATA_URL: {'scopes': ['pets:write']}}},
+                'pets:write',
+            ),
+        ],
+        ids=['open by default', 'other clients', 'listed'],
+    )
+    async def test_a_client_signs_a_user_in_without_registering(self, petstore_json_path, mcp, scope):
+        server = {
+            'name': 'petstore',
+            'spec': str(petstore_json_path),
+            'auth': {
+                'upstream': {'type': 'oauth2', 'client_id': 'gateway', 'client_secret': 'secret', 'scopes': ['read']},
+                'mcp': mcp,
+            },
+        }
+        storage = MemoryTokenStorage()
+        resolver = serving_resolver({CLIENT_METADATA_URL: client_metadata_document()})
+        with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())):
+            async with serve_gateway(lambda url: _build_gateway(url, [server], resolver)) as base_url:
+                endpoint = f'{base_url}/petstore/mcp'
+                auth = authorization_code_auth(
+                    endpoint, Browser(f'{base_url}/petstore'), storage=storage, client_metadata_url=CLIENT_METADATA_URL
+                )
+                assert await _list_tools(endpoint, auth)
+        assert storage.client_info is not None
+        assert storage.client_info.client_id == CLIENT_METADATA_URL
+        assert storage.tokens is not None
+        assert storage.tokens.scope == scope
+
+
 class TestTokenExchange:
     """An MCP SDK client finds the external issuer from the endpoint, gets a token there, and lists the tools."""
 
@@ -114,8 +170,15 @@ class TestTokenExchange:
                 assert await _list_tools(endpoint, auth)
 
 
-def _build_gateway(gateway_url: str, servers: list[dict[str, typing.Any]]) -> Gateway:
-    return Gateway.from_config(GatewayConfig.model_validate({'url': gateway_url, 'servers': servers}))
+def _build_gateway(
+    gateway_url: str,
+    servers: list[dict[str, typing.Any]],
+    client_metadata_resolver: McpClientMetadataResolver | None = None,
+) -> Gateway:
+    return Gateway.from_config(
+        GatewayConfig.model_validate({'url': gateway_url, 'servers': servers}),
+        client_metadata_resolver=client_metadata_resolver,
+    )
 
 
 def _strip_path_prefix(app: ASGIApp, prefix: str) -> ASGIApp:

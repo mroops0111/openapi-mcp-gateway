@@ -106,6 +106,13 @@ class TestClientSettingsWithoutSignIn:
         with pytest.raises(ValueError, match=refusal):
             build_auth(auth_context(entry, build_spec()))
 
+    def test_a_metadata_document_client_is_refused(self):
+        """Such a client signs a user in through a browser, which never happens here."""
+        client_id = 'https://app.example.com/client.json'
+        entry = _build_entry({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': {client_id: {}}}})
+        with pytest.raises(ValueError, match=r'names a Client ID Metadata Document, whose client signs a user in'):
+            build_auth(auth_context(entry, build_spec()))
+
     def test_a_refresh_token_ttl_is_refused(self):
         """No refresh token is issued, since the agent can always ask for a new token."""
         entry = _build_entry({'upstream': {'type': 'none'}, 'mcp': {'clients': AGENT, 'refresh_token_ttl': 600}})
