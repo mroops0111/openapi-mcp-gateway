@@ -174,6 +174,24 @@ class TestReplay:
             pending = await client.get(f'{url}/pets/pet/findByStatus', params={'status': 'pending'})
         assert (sold.json(), pending.json()) == (['sold'], ['any'])
 
+    async def test_a_request_for_two_kinds_gets_both_lists(self):
+        """Two statuses at once fit two overrides equally, so their lists are merged."""
+        replay = ReplayUpstream({'pets': json.loads(PETSTORE.read_text())})
+        replay.start_task(
+            [
+                ResponseOverride(server='pets', method='GET', path='/pet/findByStatus', body=['any']),
+                ResponseOverride(
+                    server='pets', method='GET', path='/pet/findByStatus', query={'status': 'sold'}, body=['sold']
+                ),
+                ResponseOverride(
+                    server='pets', method='GET', path='/pet/findByStatus', query={'status': 'pending'}, body=['pending']
+                ),
+            ]
+        )
+        async with serve(replay.app) as url, httpx.AsyncClient() as client:
+            both = await client.get(f'{url}/pets/pet/findByStatus', params=[('status', 'sold'), ('status', 'pending')])
+        assert both.json() == ['sold', 'pending']
+
     async def test_answers_a_date_a_yaml_spec_loaded_as_text(self):
         replay = ReplayUpstream({'pets': json.loads(PETSTORE.read_text())})
         created = datetime.datetime(2026, 11, 12, 10, tzinfo=datetime.UTC)
@@ -270,6 +288,33 @@ class TestGrading:
         assert grading.grade([append], [], split, {}).passed
         assert not grading.grade([append], [], split[:1], {}).passed
 
+    def test_a_later_update_undoes_a_matched_value(self):
+        """A due date set right counts only when no later update of the same record changes it."""
+        path = '/repos/{owner}/{repo}/issues/{number}'
+        expected = [_expected('PATCH', path, {'number': '7'}, body={'due_on': '2026-11-20'})]
+        right = _request('PATCH', '/repos/acme/web/issues/7', {'due_on': '2026-11-20'})
+        changed = _request('PATCH', '/repos/acme/web/issues/7', {'assignee': 'sam', 'due_on': '2026-11-27'})
+        assert grading.grade(expected, [], [changed, right], {}).passed
+        assert not grading.grade(expected, [], [right, changed], {}).passed
+
+    def test_a_request_fitting_two_calls_goes_where_it_is_needed(self):
+        """A request that fits both calls of a group is paired with the one only it fits, whatever the order."""
+        path = '/repos/{owner}/{repo}/issues/{number}/labels'
+        both = _request('POST', '/repos/acme/web/issues/7/labels', {'labels': ['bug', 'perf']})
+        bug = _request('POST', '/repos/acme/web/issues/7/labels', {'labels': ['bug']})
+        group = dataset.AnyOf(
+            any_of=[
+                _expected('PUT', path, {'number': '7'}),
+                dataset.AllOf(
+                    all_of=[
+                        _expected('POST', path, {'number': '7'}, body={'labels': ['bug']}),
+                        _expected('POST', path, {'number': '7'}, body={'labels': ['perf']}),
+                    ]
+                ),
+            ]
+        )
+        assert grading.grade([group], [], [both, bug], {}).passed
+
 
 class TestDataset:
     """Loading a tool calling benchmark and refusing an inconsistent one."""
@@ -347,8 +392,8 @@ class TestRun:
             _run_record('pets-t02', passed=False, cost=0.5, unset_reads=['GET /pet/findByTags on pets']),
         ]
         markdown = to_markdown(report.build_report(benchmark, records, []))
-        assert '| pets | baseline | scripted | 2/2 | 50% | 0% | 1,000 | 80% | 10 | $0.75 |' in markdown
-        assert '`scripted` cost $0.75' in markdown
+        assert '| pets | baseline | scripted | 2/2 | 50% | 0% | 1,000 | 80% | 10 | $0.7500 |' in markdown
+        assert '`scripted` cost $0.7500' in markdown
         assert '| pets | baseline | scripted | pets-t02 | GET /pet/findByTags on pets |' in markdown
 
     async def test_the_report_lists_tasks_a_variant_leaves_out_of_reach(self, tmp_path):

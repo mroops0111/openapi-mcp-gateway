@@ -346,7 +346,8 @@
     In Asana, under the "Q4 performance work" task in the Web Platform project (Acme Engineering workspace),
     add a subtask for each open pull request in acme/web labelled perf. Name each subtask after the PR title.
   split: test
-  # Asana makes a subtask under its parent, or as a new task naming that parent.
+  # Asana makes a subtask under its parent, as a new task naming that parent, or as a new task then given it.
+  # Every new task gets the same reply here, so which one a setParent names is left free.
   expected_calls:
     - any_of:
         - server: asana
@@ -358,6 +359,15 @@
           method: POST
           path: /tasks
           body: {data: {name: Lazy-load product images, parent: '1203000000000301'}}
+        - all_of:
+            - server: asana
+              method: POST
+              path: /tasks
+              body: {data: {name: Lazy-load product images}}
+            - server: asana
+              method: POST
+              path: /tasks/{task_gid}/setParent
+              body: {data: {parent: '1203000000000301'}}
     - any_of:
         - server: asana
           method: POST
@@ -368,6 +378,15 @@
           method: POST
           path: /tasks
           body: {data: {name: Cache rendered navigation menu, parent: '1203000000000301'}}
+        - all_of:
+            - server: asana
+              method: POST
+              path: /tasks
+              body: {data: {name: Cache rendered navigation menu}}
+            - server: asana
+              method: POST
+              path: /tasks/{task_gid}/setParent
+              body: {data: {parent: '1203000000000301'}}
   solution:
     - server: github
       operation: pulls_list

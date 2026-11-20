@@ -48,7 +48,7 @@ class ResponseOverride(pydantic.BaseModel):
 
     ``path`` is a concrete path, such as ``/repos/acme/api/pulls/42``, or a spec template with placeholders.
     ``query`` names values the request's query must carry, so one search endpoint can answer each kind it is asked for.
-    When several match, the one naming the most query values answers.
+    When several match, the one naming the most query values answers, and lists that tie are merged.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid', frozen=True)
@@ -100,7 +100,7 @@ class ReplayUpstream:
         route = _match(self._routes.get(server, []), method, path)
         query = urllib.parse.parse_qs(request.url.query, keep_blank_values=True)
         matching = [candidate for candidate in self._overrides if _overrides(candidate, server, method, path, query)]
-        override = max(matching, key=lambda candidate: len(candidate.query), default=None)
+        override = _most_specific(matching)
         answer: Answer = 'task' if override is not None else 'spec' if route is not None else 'not_found'
         self.requests.append(
             RecordedRequest(
@@ -156,6 +156,26 @@ def _overrides(
     if any(value not in query.get(name, []) for name, value in override.query.items()):
         return False
     return override.path == path or bool(_template_pattern(override.path).match(path))
+
+
+def _most_specific(overrides: typing.Sequence[ResponseOverride]) -> ResponseOverride | None:
+    """The override naming the most query values, or several such overrides merged.
+
+    A request asking for two kinds at once, such as two statuses, fits one override for each.
+    When each answers a list, the request gets every item of them, else the most general override answers.
+    """
+    if not overrides:
+        return None
+    size = max(len(override.query) for override in overrides)
+    fitting = [override for override in overrides if len(override.query) == size]
+    if len(fitting) == 1:
+        return fitting[0]
+    if all(isinstance(override.body, list) for override in fitting):
+        items = [item for override in fitting for item in override.body]
+        return fitting[0].model_copy(
+            update={'body': [item for index, item in enumerate(items) if item not in items[:index]]}
+        )
+    return min(overrides, key=lambda override: len(override.query))
 
 
 def _parse_body(raw: bytes, content_type: str) -> typing.Any:

@@ -22,7 +22,7 @@ from openapi_mcp_gateway.openapi import load_spec
 from openapi_mcp_gateway.settings import GatewayConfig, ServerConfig
 
 from .dataset import Benchmark, ModelSpec, Scenario, Task
-from .grading import Grade, grade
+from .grading import Grade, grade, reads
 from .local_server import serve
 from .replay import RecordedRequest, ReplayUpstream
 
@@ -51,6 +51,10 @@ class RunOutcome(pydantic.BaseModel):
     model_requests: int
     tool_calls: int
     tool_errors: int
+    # Reads the spec's sample answered, data the task never set, which can mislead a model on a correct route.
+    unset_reads: list[str] = pydantic.Field(default_factory=list)
+    # True when the provider failed the run, such as by a rate limit, which says nothing about the variant or model.
+    errored: bool = False
     # Why the run stopped before the model finished, such as a provider refusing that many tools, or None.
     failure: str | None = None
 
@@ -136,22 +140,37 @@ class ScenarioRun:
         return toolset.prefixed(prefix.removesuffix('_')) if prefix else toolset
 
     async def run_task(self, agent: Agent, task: Task) -> RunOutcome:
-        """Run ``task`` once with ``agent`` and grade what reached the upstream."""
+        """Run ``task`` once with ``agent`` and grade what reached the upstream.
+
+        A provider failure, such as a rate limit, marks the outcome errored rather than raising,
+        so what the attempt cost is still counted.
+        """
         self.replay.start_task(task.responses)
         failure = None
+        errored = False
         with capture_run_messages() as messages:
             try:
                 await agent.run(
                     task.prompt, usage_limits=UsageLimits(request_limit=self.benchmark.manifest.request_limit)
                 )
-            except TRANSIENT_ERRORS:
-                raise
+            except TRANSIENT_ERRORS as error:
+                failure = f'{type(error).__name__}: {error}'
+                errored = True
             except AgentRunError as error:
                 failure = f'{type(error).__name__}: {error}'
         requests = list(self.replay.requests)
+        read_only_operations = self.read_only_operations()
+        unset_reads = {
+            request.describe()
+            for request in requests
+            if request.answer == 'spec'
+            and reads(request.method, request.path, read_only_operations.get(request.server, ()))
+        }
         return RunOutcome(
-            grade=grade(task.expected_calls, task.forbidden_calls, requests, self.read_only_operations()),
+            grade=grade(task.expected_calls, task.forbidden_calls, requests, read_only_operations),
             requests=requests,
+            unset_reads=sorted(unset_reads),
+            errored=errored,
             failure=failure,
             **_costs(messages),
         )
@@ -178,8 +197,13 @@ def _costs(messages: typing.Sequence[ModelMessage]) -> dict[str, typing.Any]:
 
 
 def _price(responses: typing.Sequence[ModelResponse]) -> float | None:
-    """What ``responses`` cost, each priced on its own, since a long request can cost more per token."""
+    """What ``responses`` cost, each priced on its own, since a long request can cost more per token.
+
+    None when one has no known price, or reports too little usage to price, as Pydantic AI's own best effort treats it.
+    """
+    if any(response.model_name is None for response in responses):
+        return None
     try:
         return float(sum(response.cost().total_price for response in responses))
-    except LookupError:
+    except (LookupError, ValueError):
         return None

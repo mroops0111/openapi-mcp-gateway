@@ -145,7 +145,8 @@ def _model_costs(report: AgentReport) -> dict[str, float | None]:
 
 
 def _dollars(value: float | None) -> str:
-    return 'unknown' if value is None else f'${value:,.2f}'
+    # Four places, since one cell of the cheapest models can cost under a cent.
+    return 'unknown' if value is None else f'${value:,.4f}'
 
 
 def _percent(value: float) -> str:

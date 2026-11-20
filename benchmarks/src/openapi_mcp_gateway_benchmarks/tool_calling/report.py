@@ -43,7 +43,7 @@ class CellSummary(pydantic.BaseModel):
     mean_cache_read_tokens: RoundedValue
     mean_cache_write_tokens: RoundedValue
     mean_output_tokens: RoundedValue
-    # What the cell's scored runs cost in US dollars, or None when the model has no known price.
+    # What the cell's runs cost in US dollars, errored ones and retried attempts included, or None with no known price.
     total_cost: RoundedValue | None
     mean_tool_calls: RoundedValue
     mean_tool_errors: RoundedValue
@@ -209,7 +209,7 @@ def _run_coverage(
 
 
 def _total_cost(records: typing.Sequence[RunRecord]) -> float | None:
-    costs = [record.cost for record in records if not record.errored]
+    costs = [record.cost for record in records]
     return None if None in costs else sum(typing.cast(list[float], costs))
 
 

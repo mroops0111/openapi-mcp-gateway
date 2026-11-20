@@ -369,6 +369,22 @@
               path: /guilds/{guild_id}/roles/{role_id}
               path_parameters: {guild_id: '81384788765712384', role_id: '300000000000000025'}
               body: {hoist: true}
+        - all_of:
+            - server: discord
+              method: POST
+              path: /guilds/{guild_id}/roles
+              path_parameters: {guild_id: '81384788765712384'}
+              body: {name: Event Staff}
+            - server: discord
+              method: PATCH
+              path: /guilds/{guild_id}/roles/{role_id}
+              path_parameters: {guild_id: '81384788765712384', role_id: '300000000000000025'}
+              body: {hoist: true}
+            - server: discord
+              method: PATCH
+              path: /guilds/{guild_id}/roles/{role_id}
+              path_parameters: {guild_id: '81384788765712384', role_id: '300000000000000025'}
+              body: {mentionable: true}
   solution:
     - server: discord
       operation: create_guild_role
@@ -380,14 +396,17 @@
       path: /guilds/81384788765712384/roles
       body: *discord-roles
     # The new role gets this id, which a follow-up update names.
+    # One reply cannot follow the request's settings, so a new role answers with neither set.
+    # A model that set both at once has already passed, and one that did not still has to update the role.
     - server: discord
       method: POST
       path: /guilds/81384788765712384/roles
-      body: &discord-t05-role {id: '300000000000000025', name: Event Staff, position: 1, permissions: '0', color: 0, hoist: true, mentionable: true, managed: false}
+      body: {id: '300000000000000025', name: Event Staff, position: 1, permissions: '0', color: 0, hoist: false, mentionable: false, managed: false}
+    # An update or a read shows the role as the task leaves it.
     - server: discord
       method: PATCH
       path: /guilds/81384788765712384/roles/300000000000000025
-      body: *discord-t05-role
+      body: &discord-t05-role {id: '300000000000000025', name: Event Staff, position: 1, permissions: '0', color: 0, hoist: true, mentionable: true, managed: false}
     - server: discord
       method: GET
       path: /guilds/81384788765712384/roles/300000000000000025
