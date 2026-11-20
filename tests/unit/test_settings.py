@@ -473,7 +473,7 @@ class TestClientConfig:
     """A client declared under ``auth.mcp.clients`` refuses a default it could never be granted."""
 
     def test_defaults_beyond_the_set_are_refused(self):
-        with pytest.raises(ValueError, match=r"default_scopes names \['issues:write'\]"):
+        with pytest.raises(ValueError, match=r"auth\.mcp\.clients\.<client>\.default_scopes names \['issues:write'\]"):
             ClientConfig(scopes=['issues:read'], default_scopes=['issues:write'])
 
 
@@ -505,7 +505,7 @@ class TestOtherClients:
     )
     def test_a_trusted_host_no_url_host_could_equal_is_refused(self, host):
         """It would never match, and every sign-in it was meant for would fail with nothing pointing at it."""
-        with pytest.raises(pydantic.ValidationError, match='are not host names'):
+        with pytest.raises(pydantic.ValidationError, match=r'auth\.mcp\.other_clients\.trusted_hosts names'):
             OtherClientsConfig(trusted_hosts=[host])
 
     @pytest.mark.parametrize(
@@ -514,7 +514,10 @@ class TestOtherClients:
             ({'other_clients': True}, 'other_clients'),
             ({'other_clients': False}, 'so no client could sign in'),
             ({'other_clients': {'scopes': ['pets:read']}}, 'other_clients grants scopes but'),
-            ({'other_clients': {'scopes': ['pets:read'], 'default_scopes': ['pets:write']}}, 'not in scopes'),
+            (
+                {'other_clients': {'scopes': ['pets:read'], 'default_scopes': ['pets:write']}},
+                r'other_clients\.default_scopes names .* not in its scopes',
+            ),
             ({'other_clients': {'trusted_hosts': []}}, 'at least 1 item'),
         ],
     )
@@ -542,7 +545,10 @@ class TestScopeSettings:
                 'cannot be combined with auth.mcp.operation_scopes',
             ),
             ({'mcp': {'clients': {'agent': {'scopes': ['pets:read']}}}}, r'clients \(agent\) grant scopes'),
-            ({'mcp': {'clients': {'agent': {'scopes': ['pets read']}}}}, 'invalid scopes'),
+            (
+                {'mcp': {'clients': {'agent': {'scopes': ['pets read']}}}},
+                r'auth\.mcp\.clients\.<client>\.scopes names invalid scopes',
+            ),
             ({'upstream': {'scope_implies': {'repo': ['public repo']}}}, 'invalid scopes'),
             (
                 {

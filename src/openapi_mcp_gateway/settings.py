@@ -170,13 +170,16 @@ class ClientScopesConfig(pydantic.BaseModel):
 
     model_config = pydantic.ConfigDict(extra='forbid')
 
+    # Where these settings sit in the config, which each error names.
+    location: typing.ClassVar[str]
+
     scopes: list[str] = pydantic.Field(default_factory=list)
     default_scopes: list[str] | None = None
 
     @pydantic.field_validator('scopes')
     @classmethod
     def _validate_scope_names(cls, scopes: list[str]) -> list[str]:
-        _refuse_invalid_scope_tokens(scopes, 'scopes')
+        _refuse_invalid_scope_tokens(scopes, f'{cls.location}.scopes')
         return scopes
 
     @pydantic.model_validator(mode='after')
@@ -185,7 +188,7 @@ class ClientScopesConfig(pydantic.BaseModel):
         beyond = sorted(set(self.default_scopes or ()) - set(self.scopes))
         if beyond:
             raise ValueError(
-                f'default_scopes names {beyond!r}, which are not in scopes. '
+                f'{self.location}.default_scopes names {beyond!r}, which are not in its scopes. '
                 'Add them to scopes, or remove them from default_scopes.'
             )
         return self
@@ -209,6 +212,8 @@ class ClientConfig(ClientScopesConfig):
     A key that is a Client ID Metadata Document's URL names a client that publishes its own metadata there.
     It takes neither ``client_secret``, which the CIMD draft forbids, nor ``redirect_uris``, which its document lists.
     """
+
+    location: typing.ClassVar[str] = 'auth.mcp.clients.<client>'
 
     client_secret: str | None = None
     redirect_uris: list[pydantic.AnyUrl] | None = pydantic.Field(default=None, min_length=1)
@@ -237,6 +242,8 @@ class OtherClientsConfig(ClientScopesConfig):
     Each is granted scopes as a listed client is, and always passes the consent page.
     """
 
+    location: typing.ClassVar[str] = 'auth.mcp.other_clients'
+
     trusted_hosts: list[str] | None = pydantic.Field(default=None, min_length=1)
 
     @pydantic.field_validator('trusted_hosts')
@@ -249,7 +256,7 @@ class OtherClientsConfig(ClientScopesConfig):
         invalid = [host for host in hosts if not _HOST_NAME.fullmatch(host)]
         if invalid:
             raise ValueError(
-                f'trusted_hosts names {invalid!r}, which are not host names. '
+                f'{cls.location}.trusted_hosts names {invalid!r}, which are not host names. '
                 'List each as a bare host such as claude.ai, without a scheme, port, wildcard or trailing dot, '
                 'and an internationalised one in its xn-- form.'
             )

@@ -277,7 +277,7 @@ And because the issuer is the authorization server for this endpoint, MCP client
 <details>
 <summary><b>Which MCP Clients May Sign In</b></summary>
 
-Under `authorization_code`, clients such as Claude Code and VS Code sign in with a [Client ID Metadata Document](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#client-id-metadata-documents) and need no registration step. Their `client_id` is an `https` URL, where the gateway reads the client's name and redirect URIs.
+Under `authorization_code`, clients such as Claude Code sign in with a [Client ID Metadata Document](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#client-id-metadata-documents) URL as their `client_id`, which `clients` may list. `other_clients` admits the rest, from `trusted_hosts` when set, or none when `false`, and left out it is open only while `clients` lists none.
 
 ```yaml
 auth:
@@ -289,11 +289,6 @@ auth:
       trusted_hosts: [vscode.dev]
       scopes: [issues:read]
 ```
-
-- **`clients`**: a key may be such a URL, given `scopes` like any other client.
-- **`other_clients`**: admits the clients `clients` does not list, only from `trusted_hosts` when set. `false` admits none.
-- **Default**: left out, `other_clients` is open when `clients` lists none and closed otherwise.
-- **Dynamic Client Registration**: still offered, deprecated, to a config that sets neither.
 
 </details>
 
