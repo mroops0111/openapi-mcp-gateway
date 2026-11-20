@@ -20,7 +20,7 @@ from tests.constants import (
     GATEWAY_URL,
     TOKEN_URL,
 )
-from tests.oauth import shared_credential_server
+from tests.oauth import authorization_code_gateway, shared_credential_server
 from tests.serving import serve
 
 
@@ -93,6 +93,18 @@ class TestWellKnownOAuth:
         response = oauth_client.get(path)
         assert response.status_code == 200
         assert response.json()['authorization_response_iss_parameter_supported'] is True
+
+    def test_metadata_documents_are_announced_while_unlisted_clients_may_sign_in(self, oauth_client):
+        """The MCP spec has a client prefer its metadata document over registering where this is announced."""
+        response = oauth_client.get('/.well-known/oauth-authorization-server/petstore')
+        assert response.json()['client_id_metadata_document_supported'] is True
+
+    def test_a_closed_set_of_plain_clients_announces_no_metadata_documents(self, petstore_json_path):
+        gateway = authorization_code_gateway(petstore_json_path, {'agent': {}})
+        response = TestClient(gateway._build_app(transport='streamable-http')).get(
+            '/.well-known/oauth-authorization-server/petstore'
+        )
+        assert 'client_id_metadata_document_supported' not in response.json()
 
     def test_authorization_server_with_mcp(self, oauth_client):
         """Suffixing ``/mcp`` on the metadata path is also served."""

@@ -27,7 +27,13 @@ UpstreamPrincipal = typing.Literal['gateway', 'user', 'caller']
 
 # The ``auth.mcp`` fields, which a strategy building the MCP half names as the ones it reads.
 McpSetting = typing.Literal[
-    'issuer', 'required_scopes', 'operation_scopes', 'clients', 'access_token_ttl', 'refresh_token_ttl'
+    'issuer',
+    'required_scopes',
+    'operation_scopes',
+    'clients',
+    'other_clients',
+    'access_token_ttl',
+    'refresh_token_ttl',
 ]
 
 

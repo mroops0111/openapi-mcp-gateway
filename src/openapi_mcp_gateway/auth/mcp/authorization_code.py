@@ -21,6 +21,7 @@ from starlette.responses import Response
 from ...scopes import McpAccessToken, McpScopePolicy
 from ..routes import AuthRoutes
 from .client import McpClientDirectory
+from .client_metadata import is_client_metadata_url
 from .consent import PENDING_AUTHORIZATION_TTL, ApprovedScopes, BrowserCookie, ConsentRegistry, PendingAuthorization
 from .consent_page import ConsentPrompt, DescribedScope, redirect_without_cache, render_consent_page, render_error_page
 from .token_issuer import McpTokenAttachment, McpTokenIssuer, require_client_id
@@ -185,6 +186,9 @@ class McpAuthorizationCodeServer:
             next_sign_in_host=next_sign_in.host if next_sign_in else None,
             client_id=pending.client_id,
             client_name=client.client_name if client else None,
+            client_host=urllib.parse.urlsplit(pending.client_id).hostname
+            if is_client_metadata_url(pending.client_id)
+            else None,
             redirect_uri=pending.redirect_uri,
             next_sign_in_scopes=[
                 DescribedScope(scope, next_descriptions.get(scope), scope in new.next_sign_in_scopes)
@@ -257,12 +261,12 @@ class McpAuthorizationCodeServer:
         return await self.tokens.issue_tokens(client, authorization_code.scopes, attachment)
 
     async def load_access_token(self, token: str) -> McpAccessToken | None:
-        """The token, unless its client is gone, so removing a client revokes what it already holds.
+        """The token, unless its client is no longer admitted, so removing a client revokes what it already holds.
 
         A refresh needs no such check, since the SDK authenticates the client before it loads the refresh token.
         """
         access_token = await self.tokens.load_access_token(token)
-        if access_token is None or await self.clients.get(access_token.client_id) is None:
+        if access_token is None or not await self.clients.admits(access_token.client_id):
             return None
         return access_token
 

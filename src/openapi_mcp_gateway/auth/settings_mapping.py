@@ -1,7 +1,8 @@
 import collections.abc
 
-from ..settings import ClientConfig, McpAuthConfig
-from .mcp.client import McpPreRegisteredClient, McpPreRegisteredClientDirectory
+from ..settings import ClientConfig, McpAuthConfig, OtherClientsConfig
+from .mcp.client import McpOtherClients, McpPreRegisteredClient, McpPreRegisteredClientDirectory
+from .mcp.client_metadata import is_client_metadata_url
 from .mcp.token_issuer import MCP_DEFAULT_SCOPE, McpTokenPolicy
 
 
@@ -26,6 +27,17 @@ def build_mcp_client_directory(
     )
 
 
+def build_mcp_other_clients(
+    other_clients: OtherClientsConfig, mcp_endpoint_scopes: collections.abc.Sequence[str]
+) -> McpOtherClients:
+    """The rule ``auth.mcp.other_clients`` sets, granting ``mcp_endpoint_scopes`` beside its own scopes."""
+    return McpOtherClients(
+        scope=' '.join(dict.fromkeys([*mcp_endpoint_scopes, *other_clients.scopes])),
+        default_scopes=list(dict.fromkeys([*mcp_endpoint_scopes, *other_clients.granted_by_default])),
+        trusted_hosts=frozenset(other_clients.trusted_hosts) if other_clients.trusted_hosts is not None else None,
+    )
+
+
 def _build_pre_registered_client(
     client_id: str, client: ClientConfig, mcp_endpoint_scopes: collections.abc.Sequence[str]
 ) -> McpPreRegisteredClient:
@@ -33,7 +45,10 @@ def _build_pre_registered_client(
 
     A confidential client authenticates with HTTP Basic,
     the method RFC 6749 §2.3.1 requires every server to support and the one clients try first.
+    A ``client_id`` that is a URL must be one a Client ID Metadata Document may sit at,
+    and that client's secret and redirect URIs are its document's business.
     """
+    _refuse_unusable_metadata_client(client_id, client)
     secret = client.resolve_client_secret()
     if client.client_secret is not None and not secret:
         raise ValueError(
@@ -49,3 +64,20 @@ def _build_pre_registered_client(
         default_scopes=list(dict.fromkeys([*mcp_endpoint_scopes, *client.granted_by_default])),
         consent_required=client.consent,
     )
+
+
+def _refuse_unusable_metadata_client(client_id: str, client: ClientConfig) -> None:
+    """Refuse a URL ``client_id`` no metadata document can sit at, and settings its document overrides."""
+    if not client_id.startswith(('https://', 'http://')):
+        return
+    if not is_client_metadata_url(client_id):
+        raise ValueError(
+            f'auth.mcp.clients.{client_id} is not a Client ID Metadata Document URL, '
+            'which is https with a path and no fragment, userinfo, or . and .. segments.'
+        )
+    for field, reason in (
+        ('client_secret', 'the CIMD draft forbids a shared secret'),
+        ('redirect_uris', 'the client lists them in its metadata document'),
+    ):
+        if field in client.model_fields_set:
+            raise ValueError(f'auth.mcp.clients.{client_id}.{field} cannot be set, since {reason}.')

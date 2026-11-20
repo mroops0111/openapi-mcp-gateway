@@ -156,32 +156,23 @@ class OperationScopesConfig(pydantic.BaseModel):
         return manual
 
 
-class ClientConfig(pydantic.BaseModel):
-    """One pre-registered MCP client, keyed by its ``client_id`` under ``auth.mcp.clients``.
+class ClientScopesConfig(pydantic.BaseModel):
+    """The scopes a client may hold, shared by ``auth.mcp.clients`` and ``auth.mcp.other_clients``.
 
-    Without ``client_secret`` it is a public client, held to PKCE alone.
-    Without ``redirect_uris`` any loopback redirect is accepted, on any port and path, as OAuth 2.1 requires,
-    which is what a CLI client listening on a local port needs.
     ``scopes`` are every scope the client may be granted, and each must be one ``auth.mcp.operation_scopes`` defines.
     ``default_scopes`` are what a client asking for no scope receives, a subset of ``scopes``.
     Left out, they are all of ``scopes``, and otherwise the client steps up for the rest.
-    ``consent`` shows the gateway's consent page before the upstream sign-in.
-    Turning it off trusts the client on the operator's word.
-    The user is then never asked which client they are signing in to.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid')
 
-    client_secret: str | None = None
-    redirect_uris: list[pydantic.AnyUrl] | None = pydantic.Field(default=None, min_length=1)
     scopes: list[str] = pydantic.Field(default_factory=list)
     default_scopes: list[str] | None = None
-    consent: bool = True
 
     @pydantic.field_validator('scopes')
     @classmethod
     def _validate_scope_names(cls, scopes: list[str]) -> list[str]:
-        _refuse_invalid_scope_tokens(scopes, 'auth.mcp.clients.<client>.scopes')
+        _refuse_invalid_scope_tokens(scopes, 'scopes')
         return scopes
 
     @pydantic.model_validator(mode='after')
@@ -190,10 +181,34 @@ class ClientConfig(pydantic.BaseModel):
         beyond = sorted(set(self.default_scopes or ()) - set(self.scopes))
         if beyond:
             raise ValueError(
-                f'auth.mcp.clients.<client>.default_scopes names {beyond!r}, which are not in its scopes. '
+                f'default_scopes names {beyond!r}, which are not in scopes. '
                 'Add them to scopes, or remove them from default_scopes.'
             )
         return self
+
+    @property
+    def granted_by_default(self) -> list[str]:
+        """What the client receives when it asks for no scope."""
+        return self.scopes if self.default_scopes is None else self.default_scopes
+
+
+class ClientConfig(ClientScopesConfig):
+    """One pre-registered MCP client, keyed by its ``client_id`` under ``auth.mcp.clients``.
+
+    Without ``client_secret`` it is a public client, held to PKCE alone.
+    Without ``redirect_uris`` any loopback redirect is accepted, on any port and path, as OAuth 2.1 requires,
+    which is what a CLI client listening on a local port needs.
+    ``consent`` shows the gateway's consent page before the upstream sign-in.
+    Turning it off trusts the client on the operator's word.
+    The user is then never asked which client they are signing in to.
+
+    A key that is a Client ID Metadata Document's URL names a client that publishes its own metadata there.
+    It takes neither ``client_secret``, which the CIMD draft forbids, nor ``redirect_uris``, which its document lists.
+    """
+
+    client_secret: str | None = None
+    redirect_uris: list[pydantic.AnyUrl] | None = pydantic.Field(default=None, min_length=1)
+    consent: bool = True
 
     def find_settings_without_sign_in(self) -> list[tuple[str, str]]:
         """The fields this client sets, or lacks, that only make sense when a user signs in, each with why."""
@@ -205,14 +220,26 @@ class ClientConfig(pydantic.BaseModel):
                 problems.append((field, 'has no effect, since no user signs in'))
         return problems
 
-    @property
-    def granted_by_default(self) -> list[str]:
-        """What the client receives when it asks for no scope."""
-        return self.scopes if self.default_scopes is None else self.default_scopes
-
     def resolve_client_secret(self) -> str | None:
         """Client secret after env-var substitution."""
         return _resolve_env_var(self.client_secret)
+
+
+class OtherClientsConfig(ClientScopesConfig):
+    """The Client ID Metadata Document clients that ``auth.mcp.clients`` does not list, under ``auth.mcp.other_clients``.
+
+    ``trusted_hosts`` admits only the clients whose documents sit on one of these hosts, matched exactly,
+    and left out admits any.
+    Each is granted scopes as a listed client is, and always passes the consent page.
+    """
+
+    trusted_hosts: list[str] | None = pydantic.Field(default=None, min_length=1)
+
+    @pydantic.field_validator('trusted_hosts')
+    @classmethod
+    def _lowercase_hosts(cls, hosts: list[str] | None) -> list[str] | None:
+        """Hosts compare without case, as URL hosts do."""
+        return [host.lower() for host in hosts] if hosts is not None else None
 
 
 class McpAuthConfig(pydantic.BaseModel):
@@ -232,8 +259,11 @@ class McpAuthConfig(pydantic.BaseModel):
     required_scopes: list[str] = pydantic.Field(default_factory=list)
 
     # Which operations each scope opens, and the clients the gateway issues tokens to, with the scopes each may hold.
+    # ``other_clients`` admits the Client ID Metadata Document clients ``clients`` does not list, and ``false`` none.
+    # Left out, it admits any when ``clients`` lists none, and none otherwise, so a listed set stays closed.
     operation_scopes: OperationScopesConfig | None = None
     clients: dict[str, ClientConfig] = pydantic.Field(default_factory=dict)
+    other_clients: OtherClientsConfig | typing.Literal[False] | None = None
 
     # Lifetimes of the MCP tokens the gateway mints, in seconds.
     # The refresh TTL is the practical idle window, since each refresh issues a fresh refresh token,
@@ -245,18 +275,23 @@ class McpAuthConfig(pydantic.BaseModel):
     def _reject_scope_settings_that_cannot_take_effect(self) -> typing.Self:
         """Refuse operation scopes no client could receive, and endpoint scopes that would stop no one.
 
-        With ``operation_scopes`` set, every token is minted from a pre-registered client's own scopes,
+        With ``operation_scopes`` set, every token is minted from the scopes a client is configured with,
         so an endpoint-wide ``required_scopes`` checks only what the gateway itself just granted.
         """
-        if self.operation_scopes is not None and not self.clients:
+        if self.other_clients is False and not self.clients:
             raise ValueError(
-                'auth.mcp.operation_scopes needs auth.mcp.clients, since only a pre-registered client is granted scopes, '
-                'so it would have no effect here.'
+                'auth.mcp.other_clients is false and auth.mcp.clients lists no client, so no client could sign in.'
+            )
+        if self.operation_scopes is not None and not self.clients and not self.other_clients:
+            raise ValueError(
+                'auth.mcp.operation_scopes needs auth.mcp.clients or auth.mcp.other_clients, '
+                'since only a client configured there is granted scopes, so it would have no effect here.'
             )
         if self.operation_scopes is not None and 'required_scopes' in self.model_fields_set:
             raise ValueError(
                 'auth.mcp.required_scopes cannot be combined with auth.mcp.operation_scopes. '
-                'Every token is minted from a client in auth.mcp.clients, so an endpoint-wide scope would stop no one.'
+                'Every token is minted from a client in auth.mcp.clients or auth.mcp.other_clients, '
+                'so an endpoint-wide scope would stop no one.'
             )
         scoped_clients = sorted(client_id for client_id, client in self.clients.items() if client.scopes)
         if self.operation_scopes is None and scoped_clients:
@@ -264,7 +299,28 @@ class McpAuthConfig(pydantic.BaseModel):
                 f'auth.mcp.clients ({", ".join(scoped_clients)}) grant scopes but auth.mcp.operation_scopes defines none, '
                 'so they would have no effect here.'
             )
+        if self.operation_scopes is None and self.other_clients and self.other_clients.scopes:
+            raise ValueError(
+                'auth.mcp.other_clients grants scopes but auth.mcp.operation_scopes defines none, '
+                'so they would have no effect here.'
+            )
         return self
+
+    def resolve_other_clients(self) -> OtherClientsConfig | None:
+        """The rule for unlisted Client ID Metadata Document clients, or ``None`` when none may sign in."""
+        if self.other_clients is None:
+            return None if self.clients else OtherClientsConfig()
+        return self.other_clients or None
+
+    @property
+    def accepts_dynamic_registration(self) -> bool:
+        """Whether clients may register themselves, which only a config naming neither kind of client allows.
+
+        The 2026-07-28 spec deprecates Dynamic Client Registration.
+        It cannot be held to ``other_clients.trusted_hosts``, since nothing a client registers is verified,
+        so setting ``other_clients`` at all turns it off.
+        """
+        return not self.clients and self.other_clients is None
 
     def resolve_issuer(self) -> str | None:
         """External authorization server issuer after env-var substitution."""
@@ -281,6 +337,11 @@ class McpAuthConfig(pydantic.BaseModel):
             f'auth.mcp.clients.{client_id}.{field} {reason}'
             for client_id, client in self.clients.items()
             for field, reason in client.find_settings_without_sign_in()
+        ]
+        problems += [
+            f'auth.mcp.clients.{client_id} names a Client ID Metadata Document, whose client signs a user in'
+            for client_id in self.clients
+            if client_id.startswith(('https://', 'http://'))
         ]
         if problems:
             raise ValueError(

@@ -11,6 +11,8 @@ from openapi_mcp_gateway.settings import (
     ClientConfig,
     DNSRebindingProtectionConfig,
     GatewayConfig,
+    McpAuthConfig,
+    OtherClientsConfig,
     ServerConfig,
     UpstreamAuthConfig,
     build_gateway_config,
@@ -473,6 +475,51 @@ class TestClientConfig:
     def test_defaults_beyond_the_set_are_refused(self):
         with pytest.raises(ValueError, match=r"default_scopes names \['issues:write'\]"):
             ClientConfig(scopes=['issues:read'], default_scopes=['issues:write'])
+
+
+class TestOtherClients:
+    """``auth.mcp.other_clients`` admits unlisted metadata document clients, and decides whether clients may register."""
+
+    @pytest.mark.parametrize(
+        ('mcp', 'admits_others', 'registration'),
+        [
+            ({}, True, True),
+            ({'clients': {'agent': {}}}, False, False),
+            ({'other_clients': {}}, True, False),
+            ({'clients': {'agent': {}}, 'other_clients': {}}, True, False),
+            ({'clients': {'agent': {}}, 'other_clients': False}, False, False),
+        ],
+        ids=['nothing set', 'clients only', 'other clients', 'both', 'other clients off'],
+    )
+    def test_the_defaults_keep_a_listed_set_closed(self, mcp, admits_others, registration):
+        """Registration stays only for a config naming neither, since it cannot be held to ``trusted_hosts``."""
+        config = McpAuthConfig.model_validate(mcp)
+        assert (config.resolve_other_clients() is not None) is admits_others
+        assert config.accepts_dynamic_registration is registration
+
+    def test_trusted_hosts_compare_without_case(self):
+        assert OtherClientsConfig(trusted_hosts=['Claude.AI']).trusted_hosts == ['claude.ai']
+
+    @pytest.mark.parametrize(
+        ('mcp', 'refusal'),
+        [
+            ({'other_clients': True}, 'other_clients'),
+            ({'other_clients': False}, 'so no client could sign in'),
+            ({'other_clients': {'scopes': ['pets:read']}}, 'other_clients grants scopes but'),
+            ({'other_clients': {'scopes': ['pets:read'], 'default_scopes': ['pets:write']}}, 'not in scopes'),
+            ({'other_clients': {'trusted_hosts': []}}, 'at least 1 item'),
+        ],
+    )
+    def test_unusable_settings_are_refused(self, mcp, refusal):
+        with pytest.raises(pydantic.ValidationError, match=refusal):
+            McpAuthConfig.model_validate(mcp)
+
+    def test_other_clients_alone_can_hold_operation_scopes(self):
+        """A server with operation scopes can then be offered to clients the operator never listed."""
+        config = McpAuthConfig.model_validate(
+            {'operation_scopes': {'auto': 'tags'}, 'other_clients': {'scopes': ['pets:read']}}
+        )
+        assert config.resolve_other_clients() == OtherClientsConfig(scopes=['pets:read'])
 
 
 class TestScopeSettings:

@@ -204,6 +204,10 @@ class TestMcpSettingsWithoutEffect:
                 r'clients needs auth\.upstream\.flow authorization_code, where',
             ),
             (
+                {'upstream': BEARER, 'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'other_clients': {}}},
+                r'other_clients needs auth\.upstream\.flow authorization_code',
+            ),
+            (
                 {'upstream': {'type': 'passthrough'}, 'mcp': {'clients': {'agent': {'client_secret': 's'}}}},
                 r'clients needs auth\.upstream\.flow authorization_code.*, or auth\.mcp\.clients on an upstream that sees only',
             ),

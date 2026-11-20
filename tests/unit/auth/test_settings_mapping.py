@@ -1,8 +1,15 @@
+import re
+
 import pytest
 
 from openapi_mcp_gateway.auth.mcp.token_issuer import MCP_DEFAULT_SCOPE
-from openapi_mcp_gateway.auth.settings_mapping import build_mcp_client_directory, build_mcp_token_policy
-from openapi_mcp_gateway.settings import ClientConfig, McpAuthConfig
+from openapi_mcp_gateway.auth.settings_mapping import (
+    build_mcp_client_directory,
+    build_mcp_other_clients,
+    build_mcp_token_policy,
+)
+from openapi_mcp_gateway.settings import ClientConfig, McpAuthConfig, OtherClientsConfig
+from tests.client_metadata import CLIENT_METADATA_URL
 
 
 class TestTokenPolicy:
@@ -53,6 +60,32 @@ class TestClientDirectory:
         assert record.scope == 'api'
         assert record.validate_scope(None) == ['api']
 
+    @pytest.mark.parametrize(
+        ('client', 'refusal'),
+        [
+            ({'client_secret': 'shh'}, r'client_secret cannot be set, since the CIMD draft forbids'),
+            ({'redirect_uris': ['http://localhost/cb']}, r'redirect_uris cannot be set, since the client lists them'),
+        ],
+    )
+    def test_a_metadata_document_client_takes_no_secret_or_redirects(self, client, refusal):
+        """Its document is where both live, and the CIMD draft forbids a shared secret."""
+        with pytest.raises(ValueError, match=rf'auth\.mcp\.clients\.{re.escape(CLIENT_METADATA_URL)}\.{refusal}'):
+            build_mcp_client_directory({CLIENT_METADATA_URL: ClientConfig.model_validate(client)}, ())
+
+    @pytest.mark.parametrize('client_id', ['https://app.example.com', 'http://app.example.com/client.json'])
+    def test_a_url_no_metadata_document_can_sit_at_is_refused(self, client_id):
+        with pytest.raises(ValueError, match='is not a Client ID Metadata Document URL'):
+            build_mcp_client_directory({client_id: ClientConfig()}, ())
+
+    async def test_a_metadata_document_client_keeps_its_scopes_and_consent(self):
+        directory = build_mcp_client_directory(
+            {CLIENT_METADATA_URL: ClientConfig(scopes=['pets:write'], consent=False)}, ('api',)
+        )
+        client = directory.find(CLIENT_METADATA_URL)
+        assert client is not None
+        assert (client.scope, client.token_endpoint_auth_method) == ('api pets:write', 'none')
+        assert directory.requires_consent(CLIENT_METADATA_URL) is False
+
     @pytest.mark.parametrize(('client', 'required'), [({}, True), ({'consent': False}, False)])
     def test_consent_follows_the_setting(self, client, required):
         directory = build_mcp_client_directory({'agent': ClientConfig.model_validate(client)}, ())
@@ -65,3 +98,23 @@ async def _build_record(client: dict, mcp_endpoint_scopes: tuple[str, ...] = ())
     record = await directory.get('agent')
     assert record is not None
     return record
+
+
+class TestOtherClients:
+    """``auth.mcp.other_clients`` becomes the rule unlisted metadata document clients are admitted and granted by."""
+
+    def test_its_scopes_are_granted_beside_the_endpoint_scopes(self):
+        rule = build_mcp_other_clients(
+            OtherClientsConfig(scopes=['pets:read', 'pets:write'], default_scopes=['pets:read']), ('api',)
+        )
+        client = rule.build_client(CLIENT_METADATA_URL)
+        assert client.scope == 'api pets:read pets:write'
+        assert client.validate_scope(None) == ['api', 'pets:read']
+
+    @pytest.mark.parametrize(
+        ('trusted_hosts', 'admitted'), [(None, True), (['App.Example.com'], True), (['example.com'], False)]
+    )
+    def test_trusted_hosts_match_the_document_host_exactly(self, trusted_hosts, admitted):
+        """A parent domain does not admit its subdomains, so trusting one host never trusts a sibling."""
+        rule = build_mcp_other_clients(OtherClientsConfig(trusted_hosts=trusted_hosts), ())
+        assert rule.admits(CLIENT_METADATA_URL) is admitted

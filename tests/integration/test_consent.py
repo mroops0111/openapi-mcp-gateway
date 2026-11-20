@@ -6,6 +6,7 @@ import pytest
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp
 
+from tests.client_metadata import CLIENT_METADATA_URL, client_metadata_document, serving_client_metadata
 from tests.constants import AUTHORIZE_URL, GATEWAY_URL
 from tests.oauth import (
     CLIENT_REDIRECT_URI,
@@ -82,6 +83,26 @@ class TestConsentPage:
         response = _open_consent(browser, TRUSTED)
         assert response.status_code == 302
         assert response.headers['location'].startswith(f'{AUTHORIZE_URL}?')
+
+
+class TestClientMetadataDocument:
+    """A client signing in with its metadata document is named on the page by the host the gateway fetched it from."""
+
+    def test_the_page_names_the_client_with_its_verified_host(self, petstore_json_path):
+        """The name is whatever the document says, while the host is where the gateway found it."""
+        document = client_metadata_document(redirect_uris=['http://localhost/callback'])
+        with serving_client_metadata({CLIENT_METADATA_URL: document}):
+            gateway = authorization_code_gateway(petstore_json_path, {})
+        page = _open_consent(_browser(gateway._build_app(transport='streamable-http')), CLIENT_METADATA_URL)
+        assert 'Allow Example Agent (app.example.com) to use petstore?' in page.text
+
+    def test_a_client_whose_document_cannot_be_fetched_is_refused_without_a_redirect(self, petstore_json_path):
+        """Its redirect URIs are unknown, so sending the browser to the one it asked for would be an open redirect."""
+        with serving_client_metadata({}):
+            gateway = authorization_code_gateway(petstore_json_path, {})
+        authorize = _authorize(_browser(gateway._build_app(transport='streamable-http')), CLIENT_METADATA_URL)
+        assert authorize.status_code == 400
+        assert 'location' not in authorize.headers
 
 
 class TestScopeDescriptions:
@@ -199,7 +220,14 @@ def _open_consent(browser: TestClient, client_id: str = AGENT, scope: str | None
 
     The response is the consent page, or the redirect past it when no consent is needed.
     """
-    authorize = browser.get(
+    authorize = _authorize(browser, client_id, scope)
+    assert authorize.status_code == 302
+    return browser.get(authorize.headers['location'])
+
+
+def _authorize(browser: TestClient, client_id: str, scope: str | None = None) -> httpx2.Response:
+    """The SDK's ``/authorize`` answer to a sign-in for ``client_id`` asking for ``scope``."""
+    return browser.get(
         '/petstore/authorize',
         params={
             'response_type': 'code',
@@ -211,8 +239,6 @@ def _open_consent(browser: TestClient, client_id: str = AGENT, scope: str | None
             **({'scope': scope} if scope else {}),
         },
     )
-    assert authorize.status_code == 302
-    return browser.get(authorize.headers['location'])
 
 
 def _decide(

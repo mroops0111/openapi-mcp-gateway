@@ -4,7 +4,10 @@ import html
 import typing
 import urllib.parse
 
+from pydantic import AnyUrl
 from starlette.responses import HTMLResponse, RedirectResponse
+
+from .client_metadata import is_loopback_redirect
 
 
 # The headers every gateway page carries.
@@ -101,6 +104,8 @@ class ConsentPrompt:
 
     ``client_name`` is whatever the client registered itself as, so the page shows ``redirect_uri`` first,
     the address the authorization code is sent to, which a client cannot fake.
+    ``client_host`` is the host of a Client ID Metadata Document client's ``client_id``,
+    the one part of its identity the gateway verified by fetching its document there.
     ``mcp_scopes`` are the scopes the server defines that the client is granted.
     ``opens_unscoped_tools`` says the tools no scope covers are open to every client,
     which on a server without ``auth.mcp.operation_scopes`` is every tool.
@@ -116,12 +121,14 @@ class ConsentPrompt:
     mcp_scopes: collections.abc.Sequence[DescribedScope]
     opens_unscoped_tools: bool
     csrf_token: str
+    client_host: str | None = None
 
 
 def render_consent_page(prompt: ConsentPrompt) -> HTMLResponse:
     """The consent page for ``prompt``, posting the user's decision back to the address it was served from."""
     client = html.escape(prompt.client_name or prompt.client_id)
     server = html.escape(prompt.server_name)
+    named_client = f'{client} ({html.escape(prompt.client_host)})' if prompt.client_host else client
     next_sign_in_host = html.escape(prompt.next_sign_in_host or '')
     next_step = (
         f'You sign in at <b>{next_sign_in_host}</b> next, then {client} can use {server} on your behalf.'
@@ -134,11 +141,11 @@ def render_consent_page(prompt: ConsentPrompt) -> HTMLResponse:
         else ''
     )
     content = f"""
-<h1>Allow {client} to use {server}?</h1>
+<h1>Allow {named_client} to use {server}?</h1>
 <p>{next_step}</p>
 <p class="label">Access is sent to</p>
 <div class="redirect mono">{_redirect_label(prompt.redirect_uri)}</div>
-<p class="hint">{_HINT_ICON}<span>Approve only if you just started this sign-in from {client}.</span></p>
+<p class="hint">{_HINT_ICON}<span>{_sign_in_hint(prompt.redirect_uri, client)}</span></p>
 <p class="label">{client} will be able to</p>
 {_mcp_scope_list(prompt, server)}
 {next_sign_in_scopes}
@@ -185,6 +192,20 @@ def _redirect_label(redirect_uri: str) -> str:
     scheme = f'{origin.scheme}://'
     rest = redirect_uri.removeprefix(f'{scheme}{origin.netloc}')
     return f'{html.escape(scheme)}<b>{html.escape(origin.netloc)}</b>{html.escape(rest)}'
+
+
+def _sign_in_hint(redirect_uri: str, client: str) -> str:
+    """What the user checks before approving, which is ``client``, already escaped.
+
+    A loopback redirect reaches whatever program listens on this computer,
+    so any of them could have started the sign-in under the client's name, which the MCP spec asks to warn of.
+    """
+    if is_loopback_redirect(AnyUrl(redirect_uri)):
+        return (
+            'Access is sent to a program on this computer, and any program here could have started this sign-in. '
+            f'Approve only if you just started it from {client}.'
+        )
+    return f'Approve only if you just started this sign-in from {client}.'
 
 
 def _mcp_scope_list(prompt: ConsentPrompt, server: str) -> str:

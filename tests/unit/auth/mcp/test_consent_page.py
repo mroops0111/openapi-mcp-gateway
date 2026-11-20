@@ -35,6 +35,23 @@ class TestConsentPage:
         page = _page_text(dataclasses.replace(HOSTILE_PROMPT, client_name=None))
         assert 'Allow client-1 to use petstore?' in page
 
+    def test_a_document_client_is_named_with_its_verified_host(self):
+        prompt = dataclasses.replace(HOSTILE_PROMPT, client_name='Claude Code', client_host='claude.ai')
+        assert 'Allow Claude Code (claude.ai) to use petstore?' in _page_text(prompt)
+
+    def test_a_hostile_client_host_is_escaped(self):
+        page = _page_text(dataclasses.replace(HOSTILE_PROMPT, client_host='<i>host</i>'))
+        assert '(&lt;i&gt;host&lt;/i&gt;)' in page
+
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'warned'), [('http://127.0.0.1:3000/callback', True), ('https://app.example.com/cb', False)]
+    )
+    def test_a_loopback_redirect_warns_that_any_local_program_could_ask(self, redirect_uri, warned):
+        """Any program listening on this computer could have started the sign-in under the client's name."""
+        page = _page_text(dataclasses.replace(HOSTILE_PROMPT, client_name='agent', redirect_uri=redirect_uri))
+        assert ('a program on this computer' in page) is warned
+        assert 'started' in page
+
     def test_a_hostile_scope_description_is_escaped(self):
         assert '&lt;b&gt;Read&lt;/b&gt; pets<code class="aside">pets:read</code>' in _page_text(HOSTILE_PROMPT)
 
