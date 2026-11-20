@@ -10,7 +10,7 @@ from tests.client_metadata import (
     CLIENT_METADATA_HOST,
     CLIENT_METADATA_URL,
     client_metadata_document,
-    serving_client_metadata,
+    serving_resolver,
 )
 from tests.constants import AUTHORIZE_URL, GATEWAY_URL
 from tests.oauth import (
@@ -96,15 +96,15 @@ class TestClientMetadataDocument:
     def test_the_page_names_the_client_with_its_verified_host(self, petstore_json_path):
         """The name is whatever the document says, while the host is where the gateway found it."""
         document = client_metadata_document(redirect_uris=['http://localhost/callback'])
-        with serving_client_metadata({CLIENT_METADATA_URL: document}):
-            gateway = authorization_code_gateway(petstore_json_path, {})
+        gateway = authorization_code_gateway(
+            petstore_json_path, {}, client_metadata_resolver=serving_resolver({CLIENT_METADATA_URL: document})
+        )
         page = _open_consent(_browser(gateway._build_app(transport='streamable-http')), CLIENT_METADATA_URL)
         assert f'Allow Example Agent ({CLIENT_METADATA_HOST}) to use petstore?' in page.text
 
     def test_a_client_whose_document_cannot_be_fetched_is_refused_without_a_redirect(self, petstore_json_path):
         """Its redirect URIs are unknown, so sending the browser to the one it asked for would be an open redirect."""
-        with serving_client_metadata({}):
-            gateway = authorization_code_gateway(petstore_json_path, {})
+        gateway = authorization_code_gateway(petstore_json_path, {}, client_metadata_resolver=serving_resolver({}))
         authorize = _authorize(_browser(gateway._build_app(transport='streamable-http')), CLIENT_METADATA_URL)
         assert authorize.status_code == 400
         assert 'location' not in authorize.headers

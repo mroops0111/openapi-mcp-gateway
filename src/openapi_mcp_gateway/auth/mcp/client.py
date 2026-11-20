@@ -2,7 +2,6 @@ import abc
 import collections.abc
 import dataclasses
 import logging
-import urllib.parse
 
 import pydantic
 from mcp.server.auth.provider import RegistrationError
@@ -11,12 +10,8 @@ from mcp.shared.auth import InvalidRedirectUriError, InvalidScopeError, OAuthCli
 from pydantic import AnyUrl
 
 from ...stores.base import TokenStore
-from .client_metadata import (
-    ClientMetadataError,
-    McpClientMetadataResolver,
-    is_client_metadata_url,
-    is_loopback_redirect,
-)
+from .client_id import client_metadata_host, is_client_metadata_url, is_loopback_redirect
+from .client_metadata import ClientMetadataError, McpClientMetadataResolver
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +20,7 @@ logger = logging.getLogger(__name__)
 class McpClientDirectory(abc.ABC):
     """Where the gateway's authorization server finds the MCP clients allowed to sign in.
 
-    Only a directory that accepts Dynamic Client Registration overrides ``register``,
+    Only a directory that accepts Dynamic Client Registration overrides ``register`` and says so,
     so the default refuses it, and the matching registration options turn the endpoint off.
     """
 
@@ -44,6 +39,11 @@ class McpClientDirectory(abc.ABC):
     @property
     def accepts_client_metadata_documents(self) -> bool:
         """Whether a client may sign in with its metadata document's URL as its ``client_id``, which by default none may."""
+        return False
+
+    @property
+    def accepts_dynamic_registration(self) -> bool:
+        """Whether ``register`` records a client rather than refusing it, which by default it refuses."""
         return False
 
     async def register(self, client_info: OAuthClientInformationFull) -> None:
@@ -75,7 +75,7 @@ class McpDynamicClientRegistry(McpClientDirectory):
     """Clients that register themselves through Dynamic Client Registration, kept in ``store``.
 
     The 2026-07-28 spec deprecates Dynamic Client Registration.
-    It stays only for servers without ``auth.mcp.clients``.
+    It stays only for servers whose config sets neither ``auth.mcp.clients`` nor ``auth.mcp.other_clients``.
     """
 
     def __init__(self, store: TokenStore, issuer: str) -> None:
@@ -87,6 +87,10 @@ class McpDynamicClientRegistry(McpClientDirectory):
         # The client is then unknown to this server and registers again, which is the migration path.
         data = await self._store.get('mcp_client', self._client_key(client_id))
         return OAuthClientInformationFull(**data) if data else None
+
+    @property
+    def accepts_dynamic_registration(self) -> bool:
+        return True
 
     async def register(self, client_info: OAuthClientInformationFull) -> None:
         await self._store.set(
@@ -175,7 +179,7 @@ class McpPreRegisteredClient(OAuthClientInformationFull):
 
 
 class McpPreRegisteredClientDirectory(McpClientDirectory):
-    """The clients ``auth.mcp.clients`` declares, and no others."""
+    """The clients ``auth.mcp.clients`` declares under a plain ``client_id``, and no others."""
 
     def __init__(self, clients: collections.abc.Iterable[McpPreRegisteredClient]) -> None:
         self._clients: dict[str, McpPreRegisteredClient] = {}
@@ -186,14 +190,6 @@ class McpPreRegisteredClientDirectory(McpClientDirectory):
 
     async def get(self, client_id: str) -> McpPreRegisteredClient | None:
         return self._clients.get(client_id)
-
-    def find(self, client_id: str) -> McpPreRegisteredClient | None:
-        """The client declared as ``client_id``, without the wait ``get`` has for other directories."""
-        return self._clients.get(client_id)
-
-    @property
-    def client_ids(self) -> list[str]:
-        return list(self._clients)
 
     def requires_consent(self, client_id: str) -> bool:
         client = self._clients.get(client_id)
@@ -214,9 +210,8 @@ class McpOtherClients:
 
     def admits(self, client_id: str) -> bool:
         """Whether ``client_id`` is a metadata document URL on a trusted host, without fetching the document."""
-        if not is_client_metadata_url(client_id):
-            return False
-        return self.trusted_hosts is None or urllib.parse.urlsplit(client_id).hostname in self.trusted_hosts
+        host = client_metadata_host(client_id)
+        return host is not None and (self.trusted_hosts is None or host in self.trusted_hosts)
 
     def build_client(self, client_id: str) -> McpPreRegisteredClient:
         """The client ``client_id`` stands for, before its document supplies its name and redirect URIs."""
@@ -229,32 +224,28 @@ class McpOtherClients:
 
 
 class McpClientMetadataDirectory(McpClientDirectory):
-    """The clients ``listed`` holds, the Client ID Metadata Document clients ``other_clients`` admits,
-    and Dynamic Client Registration into ``registry`` when it is given.
+    """The Client ID Metadata Document clients ``auth.mcp.clients`` lists, and those ``other_clients`` admits.
 
-    A ``client_id`` that is a metadata document's URL is admitted when ``listed`` holds it or ``other_clients`` admits it.
-    Its document then supplies its name and redirect URIs,
-    and the listing or ``other_clients`` its scopes and whether it needs consent.
+    A listed client keeps its scopes and consent setting, and another is granted what ``other_clients`` sets.
+    Its document, fetched by ``resolver``, supplies its name and redirect URIs.
     Whether it may keep using its tokens is read from that configuration alone,
     so the document is fetched only to sign in or refresh, and a client whose server is down keeps working.
     """
 
     def __init__(
         self,
-        listed: McpPreRegisteredClientDirectory,
+        listed: collections.abc.Iterable[McpPreRegisteredClient],
         other_clients: McpOtherClients | None,
         resolver: McpClientMetadataResolver,
-        registry: McpDynamicClientRegistry | None = None,
     ) -> None:
-        self._listed = listed
+        self._listed = {client.client_id: client for client in listed}
         self._other_clients = other_clients
         self._resolver = resolver
-        self._registry = registry
 
     async def get(self, client_id: str) -> OAuthClientInformationFull | None:
-        client = self._find_metadata_client(client_id)
+        client = self._configured_client(client_id)
         if client is None:
-            return self._listed.find(client_id) or (await self._registry.get(client_id) if self._registry else None)
+            return None
         try:
             document = await self._resolver.resolve(client_id)
         except ClientMetadataError as error:
@@ -263,42 +254,74 @@ class McpClientMetadataDirectory(McpClientDirectory):
         return client.model_copy(update={'client_name': document.client_name, 'redirect_uris': document.redirect_uris})
 
     async def admits(self, client_id: str) -> bool:
-        if self._listed.find(client_id) is not None:
-            return True
-        if self._other_clients is not None and self._other_clients.admits(client_id):
-            return True
-        return self._registry is not None and await self._registry.get(client_id) is not None
+        return client_id in self._listed or (self._other_clients is not None and self._other_clients.admits(client_id))
 
     @property
     def accepts_client_metadata_documents(self) -> bool:
-        return self._other_clients is not None or any(map(is_client_metadata_url, self._listed.client_ids))
-
-    async def register(self, client_info: OAuthClientInformationFull) -> None:
-        if self._registry is None:
-            await super().register(client_info)
-        else:
-            await self._registry.register(client_info)
+        return bool(self._listed) or self._other_clients is not None
 
     def requires_consent(self, client_id: str) -> bool:
-        return self._listed.requires_consent(client_id)
+        client = self._listed.get(client_id)
+        return client is None or client.consent_required
 
-    def build_registration_options(
-        self, mcp_endpoint_scopes: collections.abc.Sequence[str]
-    ) -> ClientRegistrationOptions:
-        if self._registry is None:
-            return super().build_registration_options(mcp_endpoint_scopes)
-        return self._registry.build_registration_options(mcp_endpoint_scopes)
-
-    def _find_metadata_client(self, client_id: str) -> McpPreRegisteredClient | None:
-        """The client a metadata document URL stands for, listed or admitted as another, before its document is read."""
-        if not is_client_metadata_url(client_id):
-            return None
-        listed = self._listed.find(client_id)
+    def _configured_client(self, client_id: str) -> McpPreRegisteredClient | None:
+        """The client ``client_id`` stands for as configured, before its document supplies its name and redirects."""
+        listed = self._listed.get(client_id)
         if listed is not None:
             return listed
         if self._other_clients is not None and self._other_clients.admits(client_id):
             return self._other_clients.build_client(client_id)
         return None
+
+
+class McpClientDirectoryChain(McpClientDirectory):
+    """Every client the ``directories`` hold, each asked in turn, as one directory.
+
+    A client is found in the first directory holding it, and the directories hold different clients.
+    Registration goes to the directory that accepts it, and is refused when none does.
+    """
+
+    def __init__(self, directories: collections.abc.Sequence[McpClientDirectory]) -> None:
+        self._directories = list(directories)
+        self._registrar = next((d for d in self._directories if d.accepts_dynamic_registration), None)
+
+    async def get(self, client_id: str) -> OAuthClientInformationFull | None:
+        for directory in self._directories:
+            client = await directory.get(client_id)
+            if client is not None:
+                return client
+        return None
+
+    async def admits(self, client_id: str) -> bool:
+        for directory in self._directories:
+            if await directory.admits(client_id):
+                return True
+        return False
+
+    @property
+    def accepts_client_metadata_documents(self) -> bool:
+        return any(directory.accepts_client_metadata_documents for directory in self._directories)
+
+    @property
+    def accepts_dynamic_registration(self) -> bool:
+        return self._registrar is not None
+
+    async def register(self, client_info: OAuthClientInformationFull) -> None:
+        if self._registrar is None:
+            await super().register(client_info)
+        else:
+            await self._registrar.register(client_info)
+
+    def requires_consent(self, client_id: str) -> bool:
+        """Whether the directory holding ``client_id`` asks for consent, since every other one asks by default."""
+        return all(directory.requires_consent(client_id) for directory in self._directories)
+
+    def build_registration_options(
+        self, mcp_endpoint_scopes: collections.abc.Sequence[str]
+    ) -> ClientRegistrationOptions:
+        if self._registrar is None:
+            return super().build_registration_options(mcp_endpoint_scopes)
+        return self._registrar.build_registration_options(mcp_endpoint_scopes)
 
 
 def get_mcp_registered_scopes(client: OAuthClientInformationFull) -> list[str]:

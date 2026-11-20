@@ -16,6 +16,7 @@ from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenPolicy
 from openapi_mcp_gateway.scopes import McpAccessToken, McpUnrestrictedScopePolicy
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
+from tests.client_metadata import serving_resolver
 from tests.constants import (
     API_URL,
     ATTACKER_URL,
@@ -62,6 +63,7 @@ class TestAuthorizationCodeFlowHandler:
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000/',
                     mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=flow,
             )
@@ -92,6 +94,7 @@ class TestAuthorizationCodeFlowHandler:
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000',
                     mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
             )
@@ -121,6 +124,7 @@ class TestUpstreamAudienceWiring:
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000',
                     mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
             )
@@ -144,6 +148,7 @@ class TestUpstreamAudienceWiring:
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000',
                     mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
             )
@@ -169,6 +174,7 @@ class TestAuthorizationCodeScopes:
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000',
                     mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
             )

@@ -1,8 +1,14 @@
 import collections.abc
 
 from ..settings import ClientConfig, McpAuthConfig, OtherClientsConfig, is_url_client_id
-from .mcp.client import McpOtherClients, McpPreRegisteredClient, McpPreRegisteredClientDirectory
-from .mcp.client_metadata import is_client_metadata_url
+from .mcp.client import (
+    McpClientMetadataDirectory,
+    McpOtherClients,
+    McpPreRegisteredClient,
+    McpPreRegisteredClientDirectory,
+)
+from .mcp.client_id import is_client_metadata_url
+from .mcp.client_metadata import McpClientMetadataResolver
 from .mcp.token_issuer import MCP_DEFAULT_SCOPE, McpTokenPolicy
 
 
@@ -21,9 +27,33 @@ def build_mcp_token_policy(config: McpAuthConfig) -> McpTokenPolicy:
 def build_mcp_client_directory(
     clients: collections.abc.Mapping[str, ClientConfig], mcp_endpoint_scopes: collections.abc.Sequence[str]
 ) -> McpPreRegisteredClientDirectory:
-    """The clients ``auth.mcp.clients`` declares, each granted ``mcp_endpoint_scopes`` beside its own scopes."""
+    """The clients ``auth.mcp.clients`` declares under a plain ``client_id``,
+    each granted ``mcp_endpoint_scopes`` beside its own scopes.
+    """
     return McpPreRegisteredClientDirectory(
-        _build_pre_registered_client(client_id, client, mcp_endpoint_scopes) for client_id, client in clients.items()
+        _build_pre_registered_client(client_id, client, mcp_endpoint_scopes)
+        for client_id, client in clients.items()
+        if not is_url_client_id(client_id)
+    )
+
+
+def build_mcp_client_metadata_directory(
+    config: McpAuthConfig,
+    mcp_endpoint_scopes: collections.abc.Sequence[str],
+    resolver: McpClientMetadataResolver,
+) -> McpClientMetadataDirectory:
+    """The Client ID Metadata Document clients ``auth.mcp.clients`` lists by URL, and those ``other_clients`` admits,
+    each granted ``mcp_endpoint_scopes`` beside its own scopes.
+    """
+    other_clients = config.resolve_other_clients()
+    return McpClientMetadataDirectory(
+        (
+            _build_pre_registered_client(client_id, client, mcp_endpoint_scopes)
+            for client_id, client in config.clients.items()
+            if is_url_client_id(client_id)
+        ),
+        build_mcp_other_clients(other_clients, mcp_endpoint_scopes) if other_clients is not None else None,
+        resolver,
     )
 
 

@@ -29,13 +29,16 @@ from ..mcp.authorization_code import (
     McpAuthorizationCodeServer,
     McpNextSignIn,
 )
-from ..mcp.client import McpClientDirectory, McpClientMetadataDirectory, McpDynamicClientRegistry
-from ..mcp.client_metadata import McpClientMetadataResolver
+from ..mcp.client import McpClientDirectory, McpClientDirectoryChain, McpDynamicClientRegistry
 from ..mcp.consent import PENDING_AUTHORIZATION_TTL, BrowserCookie, PendingAuthorization
 from ..mcp.consent_page import redirect_without_cache, render_error_page
 from ..mcp.record_origin import McpRecordOrigin
 from ..mcp.token_issuer import McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
-from ..settings_mapping import build_mcp_client_directory, build_mcp_other_clients, build_mcp_token_policy
+from ..settings_mapping import (
+    build_mcp_client_directory,
+    build_mcp_client_metadata_directory,
+    build_mcp_token_policy,
+)
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamTokenSource
@@ -410,21 +413,18 @@ def _build_client_directory(
     and Dynamic Client Registration where the config names neither.
     """
     mcp_config = flow_context.entry.auth.mcp
-    registry = None
+    directories: list[McpClientDirectory] = [
+        build_mcp_client_directory(mcp_config.clients, mcp_endpoint_scopes),
+        build_mcp_client_metadata_directory(mcp_config, mcp_endpoint_scopes, flow_context.client_metadata_resolver),
+    ]
     if mcp_config.accepts_dynamic_registration:
         logger.warning(
             'Server "%s" accepts Dynamic Client Registration, which the MCP 2026-07-28 spec deprecates. '
             'Setting auth.mcp.clients or auth.mcp.other_clients turns it off.',
             flow_context.entry.name,
         )
-        registry = McpDynamicClientRegistry(flow_context.store, issuer)
-    other_clients = mcp_config.resolve_other_clients()
-    return McpClientMetadataDirectory(
-        build_mcp_client_directory(mcp_config.clients, mcp_endpoint_scopes),
-        build_mcp_other_clients(other_clients, mcp_endpoint_scopes) if other_clients is not None else None,
-        McpClientMetadataResolver(),
-        registry,
-    )
+        directories.append(McpDynamicClientRegistry(flow_context.store, issuer))
+    return McpClientDirectoryChain(directories)
 
 
 def _expiry_of(expires_in: int | None) -> int | None:

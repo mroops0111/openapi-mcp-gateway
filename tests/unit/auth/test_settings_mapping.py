@@ -2,14 +2,16 @@ import re
 
 import pytest
 
+from openapi_mcp_gateway.auth.mcp.client import McpClientMetadataDirectory
 from openapi_mcp_gateway.auth.mcp.token_issuer import MCP_DEFAULT_SCOPE
 from openapi_mcp_gateway.auth.settings_mapping import (
     build_mcp_client_directory,
+    build_mcp_client_metadata_directory,
     build_mcp_other_clients,
     build_mcp_token_policy,
 )
-from openapi_mcp_gateway.settings import ClientConfig, McpAuthConfig, OtherClientsConfig
-from tests.client_metadata import CLIENT_METADATA_URL
+from openapi_mcp_gateway.settings import ClientConfig, McpAuthConfig, OperationScopesConfig, OtherClientsConfig
+from tests.client_metadata import CLIENT_METADATA_URL, client_metadata_document, serving_resolver
 
 
 class TestTokenPolicy:
@@ -60,6 +62,15 @@ class TestClientDirectory:
         assert record.scope == 'api'
         assert record.validate_scope(None) == ['api']
 
+    @pytest.mark.parametrize(('client', 'required'), [({}, True), ({'consent': False}, False)])
+    def test_consent_follows_the_setting(self, client, required):
+        directory = build_mcp_client_directory({'agent': ClientConfig.model_validate(client)}, ())
+        assert directory.requires_consent('agent') is required
+
+
+class TestClientMetadataDirectory:
+    """Keys of ``auth.mcp.clients`` that are URLs become Client ID Metadata Document clients."""
+
     @pytest.mark.parametrize(
         ('client', 'refusal'),
         [
@@ -70,34 +81,34 @@ class TestClientDirectory:
     def test_a_metadata_document_client_takes_no_secret_or_redirects(self, client, refusal):
         """Its document is where both live, and the CIMD draft forbids a shared secret."""
         with pytest.raises(ValueError, match=rf'auth\.mcp\.clients\.{re.escape(CLIENT_METADATA_URL)}\.{refusal}'):
-            build_mcp_client_directory({CLIENT_METADATA_URL: ClientConfig.model_validate(client)}, ())
+            _build_metadata_directory({CLIENT_METADATA_URL: ClientConfig.model_validate(client)})
 
     def test_a_metadata_document_key_is_recognised_whatever_the_case_of_its_scheme(self):
         """The directory reads the key as a document client either way, so its settings are checked the same."""
         client_id = CLIENT_METADATA_URL.replace('https://', 'HTTPS://')
         with pytest.raises(ValueError, match='client_secret cannot be set'):
-            build_mcp_client_directory({client_id: ClientConfig(client_secret='shh')}, ())
+            _build_metadata_directory({client_id: ClientConfig(client_secret='shh')})
 
     @pytest.mark.parametrize(
         'client_id', ['https://app.example.com', 'http://app.example.com/client.json', 'HTTP://app.example.com/c.json']
     )
     def test_a_url_no_metadata_document_can_sit_at_is_refused(self, client_id):
         with pytest.raises(ValueError, match='is not a Client ID Metadata Document URL'):
-            build_mcp_client_directory({client_id: ClientConfig()}, ())
+            _build_metadata_directory({client_id: ClientConfig()})
 
     async def test_a_metadata_document_client_keeps_its_scopes_and_consent(self):
-        directory = build_mcp_client_directory(
+        directory = _build_metadata_directory(
             {CLIENT_METADATA_URL: ClientConfig(scopes=['pets:write'], consent=False)}, ('api',)
         )
-        client = directory.find(CLIENT_METADATA_URL)
+        client = await directory.get(CLIENT_METADATA_URL)
         assert client is not None
         assert (client.scope, client.token_endpoint_auth_method) == ('api pets:write', 'none')
         assert directory.requires_consent(CLIENT_METADATA_URL) is False
 
-    @pytest.mark.parametrize(('client', 'required'), [({}, True), ({'consent': False}, False)])
-    def test_consent_follows_the_setting(self, client, required):
-        directory = build_mcp_client_directory({'agent': ClientConfig.model_validate(client)}, ())
-        assert directory.requires_consent('agent') is required
+    async def test_a_metadata_document_client_is_left_out_of_the_plain_directory(self):
+        """Each directory holds its own kind, so a URL key is never looked up as a plain client_id."""
+        directory = build_mcp_client_directory({CLIENT_METADATA_URL: ClientConfig()}, ())
+        assert await directory.get(CLIENT_METADATA_URL) is None
 
 
 async def _build_record(client: dict, mcp_endpoint_scopes: tuple[str, ...] = ()):
@@ -129,3 +140,12 @@ class TestOtherClients:
 
     def test_an_id_that_is_no_metadata_document_url_is_never_admitted(self):
         assert build_mcp_other_clients(OtherClientsConfig(), ()).admits('agent') is False
+
+
+def _build_metadata_directory(
+    clients: dict[str, ClientConfig], mcp_endpoint_scopes: tuple[str, ...] = ()
+) -> McpClientMetadataDirectory:
+    """The metadata document directory ``clients`` makes, whose network serves the document of ``CLIENT_METADATA_URL``."""
+    config = McpAuthConfig(clients=clients, operation_scopes=OperationScopesConfig(auto='tags'))
+    resolver = serving_resolver({CLIENT_METADATA_URL: client_metadata_document()})
+    return build_mcp_client_metadata_directory(config, mcp_endpoint_scopes, resolver)

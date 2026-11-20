@@ -8,11 +8,12 @@ import openapi_mcp_gateway
 
 # The auth package's layers, and which other parts of ``auth`` each may import.
 # The two sides know nothing of each other, and only the assembling layer joins them.
+# ``auth.assembly`` names types from both sides in the contracts it defines.
 ALLOWED_AUTH_IMPORTS = {
     'auth.routes': set(),
     'auth.upstream': {'auth.upstream'},
     'auth.mcp': {'auth.mcp', 'auth.routes'},
-    'auth.assembly': {'auth.routes', 'auth.upstream'},
+    'auth.assembly': {'auth.routes', 'auth.upstream', 'auth.mcp'},
 }
 
 # The layers that speak a protocol, which take plain values and never read the config.

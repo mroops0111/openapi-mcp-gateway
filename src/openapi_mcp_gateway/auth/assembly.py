@@ -12,6 +12,7 @@ from ..openapi import OpenAPISpec
 from ..scopes import McpScopePolicy
 from ..settings import AuthConfig, ServerConfig
 from ..stores.base import TokenStore
+from .mcp.client_metadata import McpClientMetadataResolver
 from .routes import AuthRoutes
 from .upstream.oauth_flow import UpstreamOAuthFlow
 from .upstream.resolver import UpstreamAuthResolver
@@ -41,7 +42,8 @@ class AuthTypeContext(typing.NamedTuple):
     """Everything an ``AuthTypeHandler`` may need, whether or not it uses all of it.
 
     Passing one shape to every handler is what keeps the caller free of per-type branching.
-    Only ``oauth2`` reads the store, the URLs and ``mcp_scope_policy``, and that stays the handler's business.
+    Only ``oauth2`` reads the store, the URLs, ``mcp_scope_policy`` and ``client_metadata_resolver``,
+    and that stays the handler's business.
     """
 
     entry: ServerConfig
@@ -49,6 +51,7 @@ class AuthTypeContext(typing.NamedTuple):
     store: TokenStore
     gateway_url: str
     mcp_scope_policy: McpScopePolicy
+    client_metadata_resolver: McpClientMetadataResolver
 
     @property
     def issuer_url(self) -> str:
@@ -185,6 +188,10 @@ class OAuthFlowContext:
     @property
     def store(self) -> TokenStore:
         return self.auth_context.store
+
+    @property
+    def client_metadata_resolver(self) -> McpClientMetadataResolver:
+        return self.auth_context.client_metadata_resolver
 
     @property
     def gateway_url(self) -> str:

@@ -6,6 +6,7 @@ from mcp.shared.auth import InvalidRedirectUriError, InvalidScopeError, OAuthCli
 from pydantic import AnyUrl
 
 from openapi_mcp_gateway.auth.mcp.client import (
+    McpClientDirectoryChain,
     McpClientMetadataDirectory,
     McpDynamicClientRegistry,
     McpOtherClients,
@@ -189,7 +190,7 @@ class TestClientMetadataDirectory:
 
     async def test_a_listed_document_client_keeps_its_listing_and_takes_its_name_and_redirects(self):
         listed = _pre_registered(scopes=('pets:write',), consent_required=False, client_id=CLIENT_METADATA_URL)
-        directory = _directory([listed])
+        directory = _metadata_directory([listed])
         client = await directory.get(CLIENT_METADATA_URL)
         assert client is not None
         assert (client.client_name, [str(uri) for uri in client.redirect_uris or []]) == (
@@ -200,7 +201,7 @@ class TestClientMetadataDirectory:
         assert directory.requires_consent(CLIENT_METADATA_URL) is False
 
     async def test_another_client_on_a_trusted_host_is_granted_the_other_clients_scopes(self):
-        directory = _directory(other_clients=_other_clients(trusted_hosts=frozenset({CLIENT_METADATA_HOST})))
+        directory = _metadata_directory(other_clients=_other_clients(trusted_hosts=frozenset({CLIENT_METADATA_HOST})))
         client = await directory.get(CLIENT_METADATA_URL)
         assert client is not None
         assert client.validate_scope(None) == ['pets:read']
@@ -212,52 +213,91 @@ class TestClientMetadataDirectory:
     )
     async def test_an_unlisted_document_client_without_a_rule_admitting_it_is_unknown(self, other_clients):
         """Nothing is fetched for it, so an unlisted URL cannot make the gateway reach out."""
-        directory = _directory(other_clients=other_clients, resolver=_FailingResolver())
+        directory = _metadata_directory(other_clients=other_clients, resolver=_FailingResolver())
         assert await directory.get(CLIENT_METADATA_URL) is None
         assert await directory.admits(CLIENT_METADATA_URL) is False
 
+    async def test_a_plain_client_id_is_never_its_business(self):
+        directory = _metadata_directory(other_clients=_other_clients(), resolver=_FailingResolver())
+        assert await directory.get('agent') is None
+        assert await directory.admits('agent') is False
+
     async def test_a_document_that_cannot_be_used_leaves_the_client_unknown(self, caplog):
         """The SDK then refuses the sign-in, and the log says why, which its own error does not."""
-        directory = _directory(other_clients=_other_clients(), resolver=serving_resolver({}))
+        directory = _metadata_directory(other_clients=_other_clients(), resolver=serving_resolver({}))
         with caplog.at_level(logging.WARNING):
             assert await directory.get(CLIENT_METADATA_URL) is None
         assert 'its metadata document answered HTTP 404' in caplog.text
 
     async def test_a_document_client_keeps_its_tokens_while_its_server_is_down(self):
         """Each MCP request reads the config alone, so it never waits on, or fails with, the client's server."""
-        directory = _directory(other_clients=_other_clients(), resolver=_FailingResolver())
+        directory = _metadata_directory(other_clients=_other_clients(), resolver=_FailingResolver())
         assert await directory.admits(CLIENT_METADATA_URL) is True
 
-    async def test_a_client_named_by_a_plain_id_is_found_where_it_is_listed_or_registered(self, memory_store):
+    @pytest.mark.parametrize(
+        ('listed', 'other_clients', 'accepts'),
+        [([], None, False), ([CLIENT_METADATA_URL], None, True), ([], McpOtherClients('', []), True)],
+        ids=['neither', 'a listed document client', 'other clients'],
+    )
+    def test_metadata_documents_are_accepted_when_any_client_may_use_one(self, listed, other_clients, accepts):
+        directory = _metadata_directory([_pre_registered(client_id=client_id) for client_id in listed], other_clients)
+        assert directory.accepts_client_metadata_documents is accepts
+
+
+class TestClientDirectoryChain:
+    """The directories of a server answer as one, each for the clients it holds."""
+
+    async def test_a_client_is_found_in_whichever_directory_holds_it(self, memory_store):
         registry = McpDynamicClientRegistry(memory_store, GATEWAY_ISSUER)
         await registry.register(OAuthClientInformationFull(client_id='registered'))
-        directory = _directory([_pre_registered()], registry=registry, resolver=_FailingResolver())
-        assert [await directory.admits(client_id) for client_id in ('agent', 'registered', 'stranger')] == [
-            True,
-            True,
+        chain = McpClientDirectoryChain(
+            [
+                McpPreRegisteredClientDirectory([_pre_registered()]),
+                _metadata_directory(other_clients=_other_clients()),
+                registry,
+            ]
+        )
+        found = {client_id: await chain.get(client_id) for client_id in ('agent', 'registered', CLIENT_METADATA_URL)}
+        assert {client_id: client.client_id if client else None for client_id, client in found.items()} == {
+            'agent': 'agent',
+            'registered': 'registered',
+            CLIENT_METADATA_URL: CLIENT_METADATA_URL,
+        }
+        assert await chain.get('stranger') is None
+        assert [await chain.admits(client_id) for client_id in (*found, 'stranger')] == [True, True, True, False]
+
+    def test_consent_follows_the_directory_holding_the_client(self):
+        """Every other directory asks for consent by default, so only the one holding the client decides."""
+        chain = McpClientDirectoryChain(
+            [
+                McpPreRegisteredClientDirectory([_pre_registered(consent_required=False)]),
+                _metadata_directory([_pre_registered(consent_required=False, client_id=CLIENT_METADATA_URL)]),
+            ]
+        )
+        assert [chain.requires_consent(client_id) for client_id in ('agent', CLIENT_METADATA_URL, 'stranger')] == [
             False,
+            False,
+            True,
         ]
-        registered = await directory.get('registered')
-        assert registered is not None
-        assert registered.client_id == 'registered'
 
     async def test_registration_is_open_only_with_a_registry(self, memory_store):
-        closed = _directory()
+        closed = McpClientDirectoryChain([McpPreRegisteredClientDirectory([]), _metadata_directory()])
         assert closed.build_registration_options(['api']).enabled is False
         with pytest.raises(RegistrationError):
             await closed.register(OAuthClientInformationFull(client_id='newcomer'))
-        open_ = _directory(registry=McpDynamicClientRegistry(memory_store, GATEWAY_ISSUER))
+        open_ = McpClientDirectoryChain(
+            [McpPreRegisteredClientDirectory([]), McpDynamicClientRegistry(memory_store, GATEWAY_ISSUER)]
+        )
         assert open_.build_registration_options(['api']).enabled is True
         await open_.register(OAuthClientInformationFull(client_id='newcomer'))
         assert await open_.admits('newcomer') is True
 
-    @pytest.mark.parametrize(
-        ('listed_id', 'other_clients', 'accepts'),
-        [('agent', None, False), (CLIENT_METADATA_URL, None, True), ('agent', McpOtherClients('', []), True)],
-    )
-    def test_metadata_documents_are_announced_when_any_client_may_use_one(self, listed_id, other_clients, accepts):
-        directory = _directory([_pre_registered(client_id=listed_id)], other_clients=other_clients)
-        assert directory.accepts_client_metadata_documents is accepts
+    @pytest.mark.parametrize(('other_clients', 'accepts'), [(None, False), (McpOtherClients('', []), True)])
+    def test_metadata_documents_are_announced_when_any_directory_accepts_them(self, other_clients, accepts):
+        chain = McpClientDirectoryChain(
+            [McpPreRegisteredClientDirectory([_pre_registered()]), _metadata_directory(other_clients=other_clients)]
+        )
+        assert chain.accepts_client_metadata_documents is accepts
 
 
 class _FailingResolver(McpClientMetadataResolver):
@@ -267,18 +307,14 @@ class _FailingResolver(McpClientMetadataResolver):
         raise AssertionError(f'{client_id} was fetched')
 
 
-def _directory(
+def _metadata_directory(
     listed: list[McpPreRegisteredClient] | None = None,
     other_clients: McpOtherClients | None = None,
     resolver: McpClientMetadataResolver | None = None,
-    registry: McpDynamicClientRegistry | None = None,
 ) -> McpClientMetadataDirectory:
     """A directory whose network serves the document of ``CLIENT_METADATA_URL`` unless ``resolver`` replaces it."""
     return McpClientMetadataDirectory(
-        McpPreRegisteredClientDirectory(listed or []),
-        other_clients,
-        resolver or serving_resolver({CLIENT_METADATA_URL: client_metadata_document()}),
-        registry,
+        listed or [], other_clients, resolver or serving_resolver({CLIENT_METADATA_URL: client_metadata_document()})
     )
 
 

@@ -1,8 +1,6 @@
 import collections.abc
-import contextlib
 import typing
 import urllib.parse
-from unittest.mock import patch
 
 import httpx
 
@@ -62,13 +60,3 @@ def serving_resolver(documents: collections.abc.Mapping[str, dict[str, typing.An
         return httpx.Response(200, json=document) if document is not None else httpx.Response(404)
 
     return resolver_over(httpx.MockTransport(serve))
-
-
-@contextlib.contextmanager
-def serving_client_metadata(documents: collections.abc.Mapping[str, dict[str, typing.Any]]) -> typing.Iterator[None]:
-    """Gateways built inside fetch client metadata documents from ``documents`` rather than the network."""
-    with patch(
-        'openapi_mcp_gateway.auth.flows.authorization_code.McpClientMetadataResolver',
-        lambda: serving_resolver(documents),
-    ):
-        yield

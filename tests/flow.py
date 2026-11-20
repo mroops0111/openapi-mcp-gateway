@@ -3,6 +3,7 @@ from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy
 from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
+from tests.client_metadata import serving_resolver
 from tests.constants import API_URL, AUTHORIZE_URL, TOKEN_URL
 
 
@@ -81,6 +82,7 @@ def auth_context(entry: ServerConfig, spec: OpenAPISpec) -> AuthTypeContext:
         store=MemoryTokenStore(),
         gateway_url='http://localhost:8000',
         mcp_scope_policy=McpUnrestrictedScopePolicy(),
+        client_metadata_resolver=serving_resolver({}),
     )
 
 

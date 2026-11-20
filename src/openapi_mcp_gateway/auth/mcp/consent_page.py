@@ -7,7 +7,7 @@ import urllib.parse
 from pydantic import AnyUrl
 from starlette.responses import HTMLResponse, RedirectResponse
 
-from .client_metadata import is_loopback_redirect
+from .client_id import is_loopback_redirect
 
 
 # The headers every gateway page carries.

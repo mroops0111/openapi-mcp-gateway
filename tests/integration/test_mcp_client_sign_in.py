@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from jwt.algorithms import RSAAlgorithm
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from openapi_mcp_gateway.auth.mcp.client_metadata import McpClientMetadataResolver
 from openapi_mcp_gateway.auth.mcp.token_issuer import MCP_DEFAULT_SCOPE
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
@@ -22,7 +23,7 @@ from tests.client_metadata import (
     CLIENT_METADATA_HOST,
     CLIENT_METADATA_URL,
     client_metadata_document,
-    serving_client_metadata,
+    serving_resolver,
 )
 from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, client_credentials_auth, connect
 from tests.oauth import shared_credential_server, upstream_token_response
@@ -125,11 +126,9 @@ class TestClientIdMetadataDocument:
             },
         }
         storage = MemoryTokenStorage()
-        with (
-            patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())),
-            serving_client_metadata({CLIENT_METADATA_URL: client_metadata_document()}),
-        ):
-            async with serve_gateway(lambda url: _build_gateway(url, [server])) as base_url:
+        resolver = serving_resolver({CLIENT_METADATA_URL: client_metadata_document()})
+        with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())):
+            async with serve_gateway(lambda url: _build_gateway(url, [server], resolver)) as base_url:
                 endpoint = f'{base_url}/petstore/mcp'
                 auth = authorization_code_auth(
                     endpoint, Browser(f'{base_url}/petstore'), storage=storage, client_metadata_url=CLIENT_METADATA_URL
@@ -171,8 +170,15 @@ class TestTokenExchange:
                 assert await _list_tools(endpoint, auth)
 
 
-def _build_gateway(gateway_url: str, servers: list[dict[str, typing.Any]]) -> Gateway:
-    return Gateway.from_config(GatewayConfig.model_validate({'url': gateway_url, 'servers': servers}))
+def _build_gateway(
+    gateway_url: str,
+    servers: list[dict[str, typing.Any]],
+    client_metadata_resolver: McpClientMetadataResolver | None = None,
+) -> Gateway:
+    return Gateway.from_config(
+        GatewayConfig.model_validate({'url': gateway_url, 'servers': servers}),
+        client_metadata_resolver=client_metadata_resolver,
+    )
 
 
 def _strip_path_prefix(app: ASGIApp, prefix: str) -> ASGIApp:

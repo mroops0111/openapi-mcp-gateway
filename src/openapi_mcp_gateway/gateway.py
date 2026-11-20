@@ -16,6 +16,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from .app import _ServerBundle, build_app, mount_mcp_apps, register_auth_routes, serve_lifespan
 from .auth.assembly import AuthTypeContext, ServerAuthSetup
 from .auth.factory import build_auth
+from .auth.mcp.client_metadata import McpClientMetadataResolver
 from .auth.upstream.oauth_flow import detect_unsupported_upstream_oauth_flows, detect_upstream_oauth_flows
 from .auth.upstream.resolver import (
     UpstreamAuthResolver,
@@ -90,8 +91,12 @@ class Gateway:
         Gateway.from_config(config).run()
     """
 
-    def __init__(self, config: GatewayConfig | None = None):
+    def __init__(
+        self, config: GatewayConfig | None = None, *, client_metadata_resolver: McpClientMetadataResolver | None = None
+    ):
         self._config = config or GatewayConfig()
+        # One resolver serves every server, so a client's metadata document is fetched once for all of them.
+        self._client_metadata_resolver = client_metadata_resolver or McpClientMetadataResolver()
         self._servers: list[_ServerBundle] = []
         self._shutdown_hooks: list[typing.Callable[[], typing.Awaitable[None]]] = []
         # The session managers ``mount`` created, which only the host app's lifespan can start.
@@ -105,9 +110,14 @@ class Gateway:
         logger.debug('Token store initialised: type=%s prefix=%s', store_config.type, store_config.key_prefix)
 
     @classmethod
-    def from_config(cls, config: GatewayConfig) -> typing.Self:
-        """Build a gateway and register every entry in ``config.servers``."""
-        gateway: typing.Self = cls(config=config)
+    def from_config(
+        cls, config: GatewayConfig, *, client_metadata_resolver: McpClientMetadataResolver | None = None
+    ) -> typing.Self:
+        """Build a gateway and register every entry in ``config.servers``.
+
+        ``client_metadata_resolver`` replaces how Client ID Metadata Documents are fetched, as tests need.
+        """
+        gateway: typing.Self = cls(config=config, client_metadata_resolver=client_metadata_resolver)
         for server_config in config.servers:
             gateway._add_server_from_server_config(server_config=server_config)
         return gateway
@@ -516,6 +526,7 @@ class Gateway:
                 store=self._store,
                 gateway_url=self._config.url,
                 mcp_scope_policy=mcp_scope_policy,
+                client_metadata_resolver=self._client_metadata_resolver,
             )
         )
         if setup.on_shutdown is not None:

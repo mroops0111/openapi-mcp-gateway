@@ -1,6 +1,7 @@
 import asyncio
 import collections
 import collections.abc
+import contextlib
 import ipaddress
 import json
 import logging
@@ -11,6 +12,8 @@ import urllib.parse
 import httpx
 import pydantic
 from pydantic import AnyUrl
+
+from .client_id import is_client_metadata_url, is_loopback_redirect
 
 
 logger = logging.getLogger(__name__)
@@ -58,6 +61,7 @@ class McpClientMetadataResolver:
     without following redirects, and within ``MAX_DOCUMENT_BYTES`` and ``FETCH_TIMEOUT_SECONDS``.
     It is used for its Cache-Control lifetime held between ``MIN_CACHE_SECONDS`` and ``MAX_CACHE_SECONDS``,
     and a failure is never cached.
+    One resolver serves every server of a gateway, so they share its cache.
     ``transport`` and ``resolve_host`` replace the network, which tests need since a local server is refused.
     """
 
@@ -66,6 +70,8 @@ class McpClientMetadataResolver:
     ) -> None:
         self._transport = transport
         self._resolve_host = resolve_host or _resolve_host
+        # Loading the CA bundle blocks, so it is loaded once rather than on every fetch.
+        self._ssl_context = httpx.create_ssl_context(trust_env=False)
         self._cache: collections.OrderedDict[str, tuple[float, ClientMetadataDocument]] = collections.OrderedDict()
 
     async def resolve(self, client_id: str) -> ClientMetadataDocument:
@@ -93,7 +99,9 @@ class McpClientMetadataResolver:
         host = url.hostname or ''
         address = await self._pick_public_address(host, url.port or 443)
         # A proxy from the environment would reach the address rather than the host, and so fail its certificate.
-        async with httpx.AsyncClient(transport=self._transport, follow_redirects=False, trust_env=False) as http:
+        async with httpx.AsyncClient(
+            transport=self._transport, verify=self._ssl_context, follow_redirects=False, trust_env=False
+        ) as http:
             request = http.build_request(
                 'GET',
                 urllib.parse.urlunsplit(url._replace(netloc=_netloc_at(address, url.port))),
@@ -120,7 +128,7 @@ class McpClientMetadataResolver:
         Every address must be public, since a later resolution may pick another of them.
         """
         try:
-            addresses = [host] if _is_ip_literal(host) else await self._resolve_host(host, port)
+            addresses = await self._addresses_of(host, port)
         except OSError as error:
             raise ClientMetadataError(f'is at {host}, which does not resolve') from error
         if not addresses:
@@ -130,36 +138,17 @@ class McpClientMetadataResolver:
                 raise ClientMetadataError(f'is at {host}, which resolves to {address}, a private or local address')
         return addresses[0]
 
+    async def _addresses_of(self, host: str, port: int) -> list[str]:
+        """``host`` itself when it is an IP literal, and otherwise what it resolves to."""
+        with contextlib.suppress(ValueError):
+            return [str(ipaddress.ip_address(host))]
+        return await self._resolve_host(host, port)
+
     def _remember(self, client_id: str, document: ClientMetadataDocument, lifetime: int) -> None:
         self._cache[client_id] = (time.monotonic() + lifetime, document)
         self._cache.move_to_end(client_id)
         while len(self._cache) > MAX_CACHED_DOCUMENTS:
             self._cache.popitem(last=False)
-
-
-def is_client_metadata_url(client_id: str) -> bool:
-    """Whether ``client_id`` is a URL the CIMD draft §3 accepts as a client identifier.
-
-    It is ``https`` with a host and a path, without a fragment, userinfo, or a ``.`` or ``..`` path segment.
-    Only printable ASCII is accepted, so a host or path the HTTP request cannot carry is refused here.
-    """
-    if not all('!' <= character <= '~' for character in client_id):
-        return False
-    try:
-        url = urllib.parse.urlsplit(client_id)
-        _ = url.port
-    except ValueError:
-        return False
-    segments = url.path.split('/')
-    return (
-        url.scheme == 'https'
-        and bool(url.hostname)
-        and url.path not in ('', '/')
-        and '#' not in client_id
-        and '@' not in url.netloc
-        and '.' not in segments
-        and '..' not in segments
-    )
 
 
 def parse_client_metadata_document(client_id: str, body: bytes) -> ClientMetadataDocument:
@@ -199,17 +188,6 @@ def parse_client_metadata_document(client_id: str, body: bytes) -> ClientMetadat
     return document
 
 
-def is_loopback_redirect(uri: AnyUrl) -> bool:
-    """Whether ``uri`` is an ``http`` redirect to this machine, as RFC 8252 §7.3 defines a loopback redirect.
-
-    ``localhost`` counts as well as the IP literals, since clients such as Claude Code register it.
-    """
-    if uri.scheme != 'http' or uri.host is None:
-        return False
-    host = uri.host.strip('[]')
-    return host == 'localhost' or (_is_ip_literal(host) and ipaddress.ip_address(host).is_loopback)
-
-
 async def _resolve_host(host: str, port: int) -> list[str]:
     infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
     return list(dict.fromkeys(str(info[4][0]) for info in infos))
@@ -230,14 +208,6 @@ def _is_public_address(address: str) -> bool:
         if embedded is not None and not embedded.is_global:
             return False
     return ip.is_global
-
-
-def _is_ip_literal(host: str) -> bool:
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return True
 
 
 def _netloc_at(address: str, port: int | None) -> str:
