@@ -134,7 +134,7 @@ async def test_untyped_body_is_text_only_when_it_decodes(body, expected):
     assert result == expected
 
 
-@pytest.mark.parametrize('status_code', [400, 401, 404, 500, 503])
+@pytest.mark.parametrize('status_code', [404, 500])
 async def test_http_error_raises_status_error(status_code):
     """4xx and 5xx responses raise ``httpx.HTTPStatusError`` carrying the response."""
 

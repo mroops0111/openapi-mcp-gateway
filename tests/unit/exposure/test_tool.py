@@ -1,6 +1,7 @@
 import inspect
 
 import httpx
+import pytest
 from mcp import Client
 from mcp.server import MCPServer
 
@@ -231,12 +232,22 @@ class TestDeriveToolAnnotations:
         """Build a minimal operation with only the method (and optional ``summary``) varying."""
         return OperationInfo(operation_id='op', method=method, path='/r', summary=summary)
 
-    def test_get_is_read_only_and_idempotent(self):
-        """``GET`` is safe and idempotent, never destructive."""
-        annotations = derive_tool_annotations(self._operation('get'))
-        assert annotations.read_only_hint is True
-        assert annotations.idempotent_hint is True
-        assert annotations.destructive_hint is None
+    @pytest.mark.parametrize(
+        ('method', 'read_only', 'idempotent', 'destructive'),
+        [
+            ('get', True, True, None),
+            ('put', None, True, None),
+            ('patch', None, True, None),
+            ('delete', None, True, True),
+            ('post', None, None, None),
+        ],
+    )
+    def test_each_method_maps_to_its_hints(self, method, read_only, idempotent, destructive):
+        """Only ``GET`` is read-only, only ``DELETE`` destructive, and every method but ``POST`` idempotent."""
+        annotations = derive_tool_annotations(self._operation(method))
+        assert annotations.read_only_hint is read_only
+        assert annotations.idempotent_hint is idempotent
+        assert annotations.destructive_hint is destructive
         assert annotations.open_world_hint is True
 
     def test_summary_mirrored_to_annotations_title(self):
@@ -248,34 +259,6 @@ class TestDeriveToolAnnotations:
         """No ``summary`` means no ``ToolAnnotations.title`` field."""
         annotations = derive_tool_annotations(self._operation('get'))
         assert annotations.title is None
-
-    def test_put_idempotent_not_destructive(self):
-        """``PUT`` is idempotent without being read-only or destructive."""
-        annotations = derive_tool_annotations(self._operation('put'))
-        assert annotations.read_only_hint is None
-        assert annotations.idempotent_hint is True
-        assert annotations.destructive_hint is None
-
-    def test_patch_idempotent_not_destructive(self):
-        """``PATCH`` is idempotent without being destructive."""
-        annotations = derive_tool_annotations(self._operation('patch'))
-        assert annotations.idempotent_hint is True
-        assert annotations.destructive_hint is None
-
-    def test_delete_destructive_and_idempotent(self):
-        """``DELETE`` is destructive and idempotent."""
-        annotations = derive_tool_annotations(self._operation('delete'))
-        assert annotations.destructive_hint is True
-        assert annotations.idempotent_hint is True
-        assert annotations.read_only_hint is None
-
-    def test_post_neither_idempotent_nor_destructive(self):
-        """``POST`` carries no idempotency or destructiveness guarantees."""
-        annotations = derive_tool_annotations(self._operation('post'))
-        assert annotations.read_only_hint is None
-        assert annotations.idempotent_hint is None
-        assert annotations.destructive_hint is None
-        assert annotations.open_world_hint is True
 
 
 class TestToolRegistrationMetadata:

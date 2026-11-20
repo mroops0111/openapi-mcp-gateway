@@ -490,7 +490,7 @@ class TestParseSpec:
         assert self.spec.version == '1.0.0'
         assert self.spec.default_base_url == PETSTORE_URL
 
-    def test_operation_count(self):
+    def test_every_operation_is_parsed(self):
         """All declared operations show up by id."""
         ids = [op.operation_id for op in self.spec.operations]
         assert 'listPets' in ids
@@ -886,20 +886,11 @@ class TestRelativeServerResolution:
 class TestLoadSpec:
     """File loading for both JSON and YAML spec formats."""
 
-    def test_load_json(self, petstore_json_path):
-        """A ``.json`` spec file is loaded into a dict with parsed metadata."""
-        raw = load_spec(petstore_json_path)
-        assert raw['info']['title'] == 'Petstore'
-
-    def test_load_yaml(self, petstore_yml_path):
-        """A ``.yml`` spec file is loaded equivalently to JSON."""
-        raw = load_spec(petstore_yml_path)
-        assert raw['info']['title'] == 'Petstore'
-
     def test_json_and_yaml_equivalent(self, petstore_json_path, petstore_yml_path):
-        """JSON and YAML versions of the same spec produce identical dicts."""
+        """A ``.json`` and a ``.yml`` file of the same spec load into identical dicts."""
         json_raw = load_spec(petstore_json_path)
         yaml_raw = load_spec(petstore_yml_path)
+        assert json_raw['info']['title'] == 'Petstore'
         assert json_raw == yaml_raw
 
     def test_file_not_found(self, tmp_path):

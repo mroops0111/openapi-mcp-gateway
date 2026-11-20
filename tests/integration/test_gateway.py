@@ -18,13 +18,6 @@ class TestGatewayAssembly:
         assert gateway._servers[0].name == 'petstore'
         assert gateway._servers[0].mount_path == '/petstore'
 
-    def test_spec_parsed(self, gateway):
-        """The OpenAPI spec is parsed and its operations are discoverable."""
-        spec = gateway._servers[0].spec
-        assert spec.title == 'Petstore'
-        ids = [op.operation_id for op in spec.operations]
-        assert 'listPets' in ids
-
     def test_no_auth_provider_for_no_auth(self, gateway):
         """A server without auth config has no ``auth_provider`` attached."""
         assert gateway._servers[0].auth_provider is None

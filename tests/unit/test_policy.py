@@ -83,8 +83,9 @@ class TestFilterOperations:
 
     def test_annotated_only_with_allow(self):
         """``annotated_only`` and ``allow`` intersect, not union."""
-        result = filter_operations(OPERATIONS, allow=['admin*'], annotated_only=True)
-        assert len(result) == 1
+        # ``listPets`` matches the pattern but carries no marker, so a union would keep it.
+        result = filter_operations(OPERATIONS, allow=['*Pets'], annotated_only=True)
+        assert [operation.operation_id for operation in result] == ['adminListPets']
 
     def test_allow_matches_nothing(self):
         """An ``allow`` that matches no operation yields an empty list."""

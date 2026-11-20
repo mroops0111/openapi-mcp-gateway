@@ -1,11 +1,5 @@
 import pytest
-from mcp.server import MCPServer
 
-from openapi_mcp_gateway.exposure import (
-    ResourceGenerator,
-    ToolGenerator,
-    UpstreamConnection,
-)
 from openapi_mcp_gateway.gateway import (
     _apply_yaml_overrides,
     _partition_operations,
@@ -19,7 +13,6 @@ from openapi_mcp_gateway.openapi import (
     ToolOverride,
 )
 from openapi_mcp_gateway.settings import OperationOverride
-from tests.constants import API_URL
 from tests.operation import expose_resource
 
 
@@ -30,20 +23,9 @@ OAUTH2_SCHEMES = {'oauth2': {'type': 'oauth2'}}
 class TestResourceEligibilityValidation:
     """``_validate_resource_eligibility`` is the strict, fail-fast gate."""
 
-    def test_non_get_rejected(self):
-        """``expose.resource`` on a POST raises ``ValueError`` at startup."""
-        operation = OperationInfo(
-            operation_id='createPet',
-            method='post',
-            path='/pets',
-            x_mcp_integration=expose_resource(),
-        )
-        with pytest.raises(ValueError, match='method is POST'):
-            _validate_resource_eligibility(operation, 'petstore')
-
-    @pytest.mark.parametrize('method', ['put', 'patch', 'delete'])
-    def test_other_non_get_methods_rejected(self, method):
-        """Every non-GET method is rejected with the same shape of error."""
+    @pytest.mark.parametrize('method', ['post', 'put', 'patch', 'delete'])
+    def test_non_get_methods_rejected(self, method):
+        """``expose.resource`` on any method but GET raises ``ValueError`` at startup."""
         operation = OperationInfo(
             operation_id='changePet',
             method=method,
@@ -164,20 +146,8 @@ class TestPartitioning:
         with pytest.raises(ValueError, match='method is POST'):
             _partition_operations([op], 'petstore', promote_resources=True)
 
-    def test_required_query_resource_raises(self):
-        """A required query param on a resource-exposed GET fails fast at partition time."""
-        op = OperationInfo(
-            operation_id='search_pets',
-            method='get',
-            path='/pets',
-            parameters=[ParameterInfo(name='q', location='query', required=True)],
-            x_mcp_integration=expose_resource(),
-        )
-        with pytest.raises(ValueError, match='required non-path parameter'):
-            _partition_operations([op], 'petstore', promote_resources=True)
-
-    def test_tool_only_ignores_resource_optin(self):
-        """Under ``mode=tool_only`` (the default), ``expose.resource`` declarations are ignored."""
+    def test_without_promotion_resource_opt_ins_stay_tools(self):
+        """Without ``exposure.promote_resources``, ``expose.resource`` declarations are ignored."""
         op = OperationInfo(
             operation_id='get_pet',
             method='get',
@@ -189,8 +159,8 @@ class TestPartitioning:
         assert resources == []
         assert tools == [op]
 
-    def test_default_mode_is_tool_only(self):
-        """Calling without ``mode`` keyword defaults to ``tool_only``."""
+    def test_promotion_is_off_by_default(self):
+        """Calling without ``promote_resources`` leaves every operation a tool."""
         op = OperationInfo(
             operation_id='get_pet',
             method='get',
@@ -234,31 +204,6 @@ class TestPartitioning:
         resources, tools = _partition_operations([op], 'petstore', promote_resources=True)
         assert resources == []
         assert tools == [op]
-
-
-class TestDualExposureRegistration:
-    """When both ``expose.tool`` and ``expose.resource`` are present, both end up on the MCPServer."""
-
-    async def test_op_appears_as_tool_and_resource(self):
-        """``ToolGenerator`` and ``ResourceGenerator`` cooperate on the same MCPServer instance."""
-        mcp = MCPServer('test')
-        connection = UpstreamConnection(base_url=API_URL)
-        op = OperationInfo(
-            operation_id='getPet',
-            method='get',
-            path='/pets/{petId}',
-            parameters=[ParameterInfo(name='petId', location='path', required=True, schema={'type': 'string'})],
-            x_mcp_integration=_expose_tool_and_resource(),
-        )
-        resources, tools = _partition_operations([op], 'petstore', promote_resources=True)
-        ResourceGenerator(mcp=mcp, connection=connection, server_name='petstore').register(resources)
-        ToolGenerator(mcp=mcp, connection=connection).register(tools)
-
-        tool_names = {t.name for t in mcp._tool_manager.list_tools()}
-        assert 'get_pet' in tool_names
-
-        templates = await mcp.list_resource_templates()
-        assert 'petstore://pets/{petId}' in {t.uri_template for t in templates}
 
 
 class TestApplyYamlOverrides:

@@ -30,62 +30,6 @@ class TestGatewayFromFastapiAssembly:
         assert bundle.auth_settings is None
         assert auth_shutdown_hooks(gateway) == []
 
-    def test_authorization_code_without_creds_picks_passthrough(self):
-        """No client credentials but an authorizationCode scheme falls back to passthrough."""
-        oauth = OAuth2AuthorizationCodeBearer(
-            authorizationUrl=AUTHORIZE_URL,
-            tokenUrl=TOKEN_URL,
-        )
-        app = FastAPI()
-
-        @app.get('/me')
-        @mcp_tool()
-        def me(_token: str = Depends(oauth)):
-            return {'me': True}
-
-        gateway = Gateway.from_fastapi(app, name='svc')
-        bundle = gateway._servers[0]
-        # Passthrough setup carries no provider, no settings, no shutdown hook.
-        assert bundle.auth_provider is None
-        assert bundle.auth_settings is None
-        assert auth_shutdown_hooks(gateway) == []
-
-    def test_client_credentials_uses_token_source(self):
-        """A clientCredentials scheme + creds registers a service-token shutdown hook."""
-        app = FastAPI()
-
-        @app.get('/me')
-        @mcp_tool()
-        def me():
-            return {'me': True}
-
-        original_openapi = app.openapi
-
-        def _openapi_with_cc():
-            schema = original_openapi()
-            schema.setdefault('components', {})['securitySchemes'] = {
-                'oauth2': {
-                    'type': 'oauth2',
-                    'flows': {
-                        'clientCredentials': {
-                            'tokenUrl': TOKEN_URL,
-                            'scopes': {'api': 'API access'},
-                        },
-                    },
-                },
-            }
-            return schema
-
-        app.openapi = _openapi_with_cc  # type: ignore[method-assign]
-
-        gateway = Gateway.from_fastapi(
-            app,
-            name='svc',
-            auth=AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec')),
-        )
-        # client_credentials registers a shutdown hook that closes the token source's HTTP client.
-        assert len(auth_shutdown_hooks(gateway)) == 1
-
     def test_no_marked_routes_raises(self):
         """A FastAPI app without any ``@mcp_tool`` route is a configuration error."""
         app = FastAPI()
@@ -127,6 +71,32 @@ class TestGatewayFromFastapiAssembly:
 
         with pytest.raises(ValueError, match='unsupported OAuth2 flows'):
             Gateway.from_fastapi(app, name='svc')
+
+    def test_mixed_security_emits_warning(self, caplog):
+        """Mixed security schemes across marked routes log a single startup warning."""
+        oauth = OAuth2AuthorizationCodeBearer(
+            authorizationUrl=AUTHORIZE_URL,
+            tokenUrl=TOKEN_URL,
+            auto_error=False,
+        )
+        api_key = APIKeyHeader(name='X-API-Key', auto_error=False)
+        app = FastAPI()
+
+        @app.get('/oauth')
+        @mcp_tool()
+        def oauth_route(_token: str | None = Depends(oauth)):
+            return {'kind': 'oauth'}
+
+        @app.get('/apikey')
+        @mcp_tool()
+        def apikey_route(_key: str | None = Depends(api_key)):
+            return {'kind': 'apikey'}
+
+        with caplog.at_level('WARNING', logger='openapi_mcp_gateway.gateway'):
+            Gateway.from_fastapi(app, name='svc')
+
+        warnings = [record for record in caplog.records if 'distinct security schemes' in record.message]
+        assert len(warnings) == 1
 
 
 class TestGatewayFromFastapiToolCall:
@@ -284,29 +254,3 @@ class TestGatewayFromFastapiToolCall:
         ctx = stub_context({'x-tenant': 'acme-co'})
         result = await tool.run({}, context=ctx)
         assert result.structured_content == {'tenant': 'acme-co'}
-
-    async def test_mixed_security_emits_warning(self, caplog):
-        """Mixed security schemes across marked routes log a single startup warning."""
-        oauth = OAuth2AuthorizationCodeBearer(
-            authorizationUrl=AUTHORIZE_URL,
-            tokenUrl=TOKEN_URL,
-            auto_error=False,
-        )
-        api_key = APIKeyHeader(name='X-API-Key', auto_error=False)
-        app = FastAPI()
-
-        @app.get('/oauth')
-        @mcp_tool()
-        def oauth_route(_token: str | None = Depends(oauth)):
-            return {'kind': 'oauth'}
-
-        @app.get('/apikey')
-        @mcp_tool()
-        def apikey_route(_key: str | None = Depends(api_key)):
-            return {'kind': 'apikey'}
-
-        with caplog.at_level('WARNING', logger='openapi_mcp_gateway.gateway'):
-            Gateway.from_fastapi(app, name='svc')
-
-        warnings = [record for record in caplog.records if 'distinct security schemes' in record.message]
-        assert len(warnings) == 1

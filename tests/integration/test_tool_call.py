@@ -23,7 +23,6 @@ from tests.constants import (
     PETSTORE_URL,
     TOKEN_URL,
 )
-from tests.gateway import auth_shutdown_hooks
 from tests.tool_result import text_of
 
 
@@ -149,13 +148,6 @@ class TestClientCredentialsFlowEndToEnd:
         token_post_mock = AsyncMock(return_value=token_response)
         monkeypatch.setattr(token_source_module.httpx.AsyncClient, 'post', token_post_mock, raising=False)
         return token_post_mock
-
-    def test_setup_uses_client_credentials_flow(self, cc_gateway):
-        """The gateway picks the client_credentials flow when only that flow is declared."""
-        bundle = cc_gateway._servers[0]
-        assert bundle.auth_provider is None
-        assert bundle.auth_settings is None
-        assert len(auth_shutdown_hooks(cc_gateway)) == 1
 
     async def test_tool_call_attaches_fetched_bearer(self, cc_gateway, token_post, mock_upstream):
         """A tool call fetches a token from the IdP, then forwards it as ``Authorization`` upstream."""

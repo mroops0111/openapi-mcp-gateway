@@ -25,13 +25,6 @@ class TestResourceExposureEndToEnd:
             )
         )
 
-    async def test_path_param_resource_listed_as_template(self, gateway):
-        """A GET with a path param appears under ``resources/templates/list`` with the derived URI."""
-        mcp = gateway._servers[0].mcp
-        templates = await mcp.list_resource_templates()
-        uris = {t.uri_template for t in templates}
-        assert 'petstore://pets/{petId}' in uris
-
     async def test_no_path_param_resource_listed_as_concrete(self, gateway):
         """A GET with no path params appears under ``resources/list`` (concrete), not templates."""
         mcp = gateway._servers[0].mcp
@@ -52,7 +45,7 @@ class TestResourceExposureEndToEnd:
         assert 'find_pets' in tool_names
 
     async def test_template_metadata_from_spec(self, gateway):
-        """Description and mime type fall back to spec values when not overridden in the resource block."""
+        """A GET with a path param is listed as a template, its description and mime type from the spec."""
         mcp = gateway._servers[0].mcp
         templates = await mcp.list_resource_templates()
         template = next(t for t in templates if t.uri_template == 'petstore://pets/{petId}')

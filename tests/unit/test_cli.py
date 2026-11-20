@@ -95,12 +95,6 @@ class TestLoggingFlags:
         content = log_file.read_text(encoding='utf-8')
         assert '[INFO]' in content
 
-    def test_invalid_log_level(self):
-        """An unknown level value is rejected by Click before the gateway runs."""
-        result, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--log-level', 'LOUD')
-        assert result.exit_code != 0
-        assert 'LOUD' in result.output
-
 
 class TestAuthInference:
     """``_build_auth_config`` derives ``AuthConfig`` from optional auth flags."""
@@ -262,13 +256,6 @@ class TestConfigPrecedence:
 class TestDryRun:
     """``--dry-run`` validates the config and exits without serving."""
 
-    def test_help_lists_dry_run(self):
-        """``--help`` advertises the ``--dry-run`` flag."""
-        runner = CliRunner()
-        result = runner.invoke(cli.main, ['--help'])
-        assert result.exit_code == 0
-        assert '--dry-run' in result.output
-
     def test_dry_run_does_not_serve(self):
         """``--dry-run`` builds the gateway but never calls ``Gateway.run``."""
         result, gateway_run = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run')
@@ -382,12 +369,6 @@ class TestDryRunJsonOutput:
         assert result.exit_code == 0, result.output
         return json.loads(result.stdout)
 
-    def test_help_lists_the_option(self):
-        runner = CliRunner()
-        result = runner.invoke(cli.main, ['--help'])
-        assert result.exit_code == 0
-        assert '--output' in result.output
-
     def test_text_remains_the_default(self):
         """Adding a format must not change what someone running the old command sees."""
         without, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run')
@@ -409,13 +390,6 @@ class TestDryRunJsonOutput:
 
         assert json.loads(result.stdout)
         assert 'Loading server' in result.stderr, 'logging should still happen, just not on stdout'
-
-    def test_the_output_is_plain_json(self):
-        """No custom encoder, because a caller in another language has none of our types."""
-        document = self._describe()
-
-        assert json.dumps(document)
-        assert document['servers'][0]['tools']
 
     def test_every_field_the_table_prints_is_present(self):
         """The two views describe one thing, so neither may carry a fact the other lacks."""

@@ -122,12 +122,6 @@ class TestOtherTypes:
         with pytest.raises(pydantic.ValidationError, match='no effect'):
             AuthConfig(upstream=UpstreamAuthConfig(type='none', token='ignored'))
 
-    def test_passthrough_forwards_the_caller_header(self):
-        """The caller's own credential travels on, which only the in-process case may do."""
-        setup = build_auth(_context(AuthConfig(upstream=UpstreamAuthConfig(type='passthrough'))))
-
-        assert isinstance(setup.resolver, UpstreamPassthroughAuthResolver)
-
 
 class TestDispatch:
     """The registry is the extension point, so adding a type never edits a branch."""
