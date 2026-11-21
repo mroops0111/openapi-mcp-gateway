@@ -68,6 +68,22 @@ class TestScopeRegistryWithUpstreamScopes:
         refusal = scope_registry.refusal('delete_pet', grant)
         assert refusal == refused_for
 
+    @pytest.mark.parametrize(
+        ('mcp_scopes', 'upstream_scopes', 'listed'),
+        [
+            (set(), set(), True),
+            ({'pets:delete'}, {'read:pets'}, False),
+            ({'pets:delete'}, {'read:pets', 'write:pets'}, True),
+        ],
+        ids=['mcp scopes still to step up for', 'mcp scopes held, grant short', 'both held'],
+    )
+    def test_lists_ignore_the_upstream_grant_until_the_mcp_scopes_are_held(self, mcp_scopes, upstream_scopes, listed):
+        """The sign-in a step-up starts asks the upstream again, so only a short grant behind held scopes is final."""
+        scope_registry = ScopeRegistry(tag_scopes(DELETE_PET), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
+        scope_registry.register('delete_pet', DELETE_PET)
+        grant = TokenGrant(frozenset(mcp_scopes), frozenset(upstream_scopes), frozenset({'pets:delete'}))
+        assert scope_registry.lists('delete_pet', grant) is listed
+
     def test_the_lists_are_cached_per_token_once_the_grant_is_enforced(self):
         scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
         assert scope_registry.list_cache_scope == 'private'

@@ -13,7 +13,12 @@ from openapi_mcp_gateway.auth.flows import (
 from openapi_mcp_gateway.auth.flows.factory import resolve_upstream_oauth_flow
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenPolicy
-from openapi_mcp_gateway.scopes import McpAccessToken, McpUnrestrictedScopePolicy
+from openapi_mcp_gateway.scopes import (
+    McpAccessToken,
+    McpUnrestrictedScopePolicy,
+    UpstreamFixedScopeRequest,
+    UpstreamScopeRequest,
+)
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.client_metadata import serving_resolver
@@ -35,6 +40,7 @@ from tests.oauth import (
     code_in,
     complete_upstream,
     deliver_callback,
+    query_value,
     server_of,
     sign_in,
     upstream_token_response,
@@ -63,6 +69,7 @@ class TestAuthorizationCodeFlowHandler:
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000/',
                     mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    upstream_scope_request=UpstreamFixedScopeRequest(entry.auth.upstream.scopes),
                     client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=flow,
@@ -94,6 +101,7 @@ class TestAuthorizationCodeFlowHandler:
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000',
                     mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    upstream_scope_request=UpstreamFixedScopeRequest(entry.auth.upstream.scopes),
                     client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
@@ -124,6 +132,7 @@ class TestUpstreamAudienceWiring:
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000',
                     mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    upstream_scope_request=UpstreamFixedScopeRequest(entry.auth.upstream.scopes),
                     client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
@@ -148,6 +157,7 @@ class TestUpstreamAudienceWiring:
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000',
                     mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    upstream_scope_request=UpstreamFixedScopeRequest(entry.auth.upstream.scopes),
                     client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
@@ -174,6 +184,7 @@ class TestAuthorizationCodeScopes:
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000',
                     mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    upstream_scope_request=UpstreamFixedScopeRequest(entry.auth.upstream.scopes),
                     client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
@@ -230,6 +241,21 @@ class TestUpstreamGrant:
             rotated = await provider.exchange_refresh_token(mcp_client_info, refresh, [])
 
         assert await _upstream_scopes_of(provider, rotated.access_token) == recorded
+
+
+class TestUpstreamScopesPerSignIn:
+    """Each sign-in asks the upstream for what the scope request chooses for the MCP scopes it will grant."""
+
+    async def test_the_upstream_is_asked_for_what_the_mcp_grant_needs(self, make_provider, mcp_client_info):
+        provider = make_provider(scope_request=_MirroredScopeRequest())
+        await provider.register_client(mcp_client_info)
+        upstream_url = await begin_upstream(provider, mcp_client_info, scopes=['issues:read'])
+        assert query_value(upstream_url, 'scope') == 'upstream:api upstream:issues:read'
+
+    async def test_an_omitted_upstream_scope_records_what_this_sign_in_asked_for(self, make_provider, mcp_client_info):
+        provider = make_provider(scope_request=_MirroredScopeRequest())
+        token = await sign_in(provider, mcp_client_info, scopes=['issues:read'])
+        assert await _upstream_scopes_of(provider, token.access_token) == ['upstream:api', 'upstream:issues:read']
 
 
 class TestUpstreamTokenLifetime:
@@ -511,3 +537,10 @@ async def _upstream_scopes_of(provider: McpAuthorizationCodeServer, mcp_access_t
     access_token = await provider.load_access_token(mcp_access_token)
     assert isinstance(access_token, McpAccessToken)
     return access_token.upstream_scopes
+
+
+class _MirroredScopeRequest(UpstreamScopeRequest):
+    """Asks the upstream for one ``upstream:`` scope per MCP scope, so a request shows which grant it came from."""
+
+    def scopes_for(self, mcp_scopes):
+        return [f'upstream:{scope}' for scope in mcp_scopes]

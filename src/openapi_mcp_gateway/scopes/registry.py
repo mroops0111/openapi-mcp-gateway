@@ -63,9 +63,16 @@ class ScopeRegistry:
 
         The MCP scopes are checked against those the token can step up to rather than those it holds,
         so a tool the client can step up for stays in sight, and calling it starts the step-up.
-        The upstream grant is checked as it stands, since stepping up cannot change it.
+        While the MCP scopes it needs are not yet held, the upstream grant is not checked,
+        since the sign-in a step-up starts asks the upstream for what they need.
+        Once they are held, stepping up cannot change the upstream grant, so it is checked as it stands.
         """
-        return self.refusal(name, grant._replace(mcp_scopes=grant.mcp_reachable_scopes)) is None
+        requirements = self._requirements_of(name)
+        if not requirements.mcp.is_met(grant.mcp_reachable_scopes):
+            return False
+        if not requirements.mcp.is_met(grant.mcp_scopes):
+            return True
+        return requirements.upstream.is_met(self.upstream_policy.held_scopes(grant.upstream_scopes))
 
     def _requirements_of(self, name: str) -> '_NameRequirements':
         if name in self._requirements:

@@ -9,7 +9,7 @@ from mcp.server.extension import Extension
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
 from ..openapi import OpenAPISpec
-from ..scopes import McpScopePolicy
+from ..scopes import McpScopePolicy, UpstreamScopeRequest
 from ..settings import AuthConfig, ServerConfig
 from ..stores.base import TokenStore
 from .mcp.client_metadata import McpClientMetadataResolver
@@ -42,8 +42,8 @@ class AuthTypeContext(typing.NamedTuple):
     """Everything an ``AuthTypeHandler`` may need, whether or not it uses all of it.
 
     Passing one shape to every handler is what keeps the caller free of per-type branching.
-    Only ``oauth2`` reads the store, the URLs, ``mcp_scope_policy`` and ``client_metadata_resolver``,
-    and that stays the handler's business.
+    Only ``oauth2`` reads the store, the URLs, ``mcp_scope_policy``, ``upstream_scope_request``
+    and ``client_metadata_resolver``, and that stays the handler's business.
     """
 
     entry: ServerConfig
@@ -51,6 +51,7 @@ class AuthTypeContext(typing.NamedTuple):
     store: TokenStore
     gateway_url: str
     mcp_scope_policy: McpScopePolicy
+    upstream_scope_request: UpstreamScopeRequest
     client_metadata_resolver: McpClientMetadataResolver
 
     @property
@@ -200,6 +201,10 @@ class OAuthFlowContext:
     @property
     def mcp_scope_policy(self) -> McpScopePolicy:
         return self.auth_context.mcp_scope_policy
+
+    @property
+    def upstream_scope_request(self) -> UpstreamScopeRequest:
+        return self.auth_context.upstream_scope_request
 
     @property
     def mount_path(self) -> str:

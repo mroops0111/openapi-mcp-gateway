@@ -14,7 +14,7 @@ from openapi_mcp_gateway.auth.upstream.resolver import (
 )
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import OpenAPISpec
-from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy
+from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, UpstreamFixedScopeRequest
 from openapi_mcp_gateway.settings import (
     AuthConfig,
     GatewayConfig,
@@ -145,7 +145,7 @@ class TestPassthroughAuthType:
         gateway = Gateway.from_config(GatewayConfig())
         entry = server_entry(AuthConfig(upstream=UpstreamAuthConfig(type='passthrough')))
 
-        setup = gateway._resolve_auth(entry, build_spec(), McpUnrestrictedScopePolicy())
+        setup = gateway._resolve_auth(entry, build_spec(), McpUnrestrictedScopePolicy(), UpstreamFixedScopeRequest([]))
 
         assert isinstance(setup.resolver, UpstreamPassthroughAuthResolver)
         assert setup.provider is None
@@ -259,6 +259,7 @@ def _context(auth: AuthConfig) -> AuthTypeContext:
         store=MemoryTokenStore(),
         gateway_url=GATEWAY_URL,
         mcp_scope_policy=McpUnrestrictedScopePolicy(),
+        upstream_scope_request=UpstreamFixedScopeRequest(auth.upstream.scopes),
         client_metadata_resolver=serving_resolver({}),
     )
 

@@ -40,6 +40,7 @@ class UpstreamAuthorizationCodeClient:
     ``callback_url`` is the gateway's own address,
     and belongs here because it is only ever meaningful as the ``redirect_uri`` of this conversation.
 
+    Which scopes a sign-in asks for is decided per sign-in, so it is not part of the client.
     ``scope_descriptions`` maps each upstream scope to what it allows, as the spec's OAuth flow states it.
 
     ``audience_params`` names the API the token is for,
@@ -55,7 +56,6 @@ class UpstreamAuthorizationCodeClient:
     client_id: str
     client_secret: str
     callback_url: str
-    scopes: list[str] = dataclasses.field(default_factory=list)
     scope_descriptions: dict[str, str] = dataclasses.field(default_factory=dict)
     audience_params: dict[str, str] = dataclasses.field(default_factory=dict)
     issuer: str | None = None
@@ -75,22 +75,22 @@ class UpstreamAuthorizationCodeClient:
         """Where the user signs in, as a consent page names it."""
         return urllib.parse.urlsplit(self.authorization_url).netloc
 
-    def build_authorize_url(self, state: str) -> str:
-        """The upstream authorize URL for a sign-in under ``state``."""
+    def build_authorize_url(self, state: str, scopes: list[str]) -> str:
+        """The upstream authorize URL for a sign-in under ``state`` asking for ``scopes``."""
         query_params = {
             'client_id': self.client_id,
             'redirect_uri': self.callback_url,
             'state': state,
             'response_type': 'code',
         }
-        if self.scopes:
-            query_params['scope'] = ' '.join(self.scopes)
+        if scopes:
+            query_params['scope'] = ' '.join(scopes)
         # Sent on the authorization request as well as the token request,
         # since an authorization server binds the audience at consent time,
         # and RFC 8707 §2 requires the parameter on both.
         query_params.update(self.audience_params)
 
-        logger.info('Upstream OAuth authorize: scopes=%s audience_params=%s', self.scopes, self.audience_params)
+        logger.info('Upstream OAuth authorize: scopes=%s audience_params=%s', scopes, self.audience_params)
         return f'{self.authorization_url}?{urllib.parse.urlencode(query_params)}'
 
     def validate_issuer(self, iss: str | None) -> None:

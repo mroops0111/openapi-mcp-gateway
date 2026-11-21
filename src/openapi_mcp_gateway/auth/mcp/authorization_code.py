@@ -42,12 +42,11 @@ _TAMPERED_FORM = 'The approval form was not the one this gateway sent.'
 class McpNextSignIn:
     """The sign-in a user goes on to after approving the gateway's consent page, as that page describes it.
 
-    ``host`` is where it happens, and ``scopes`` what it asks for there.
-    ``scope_descriptions`` maps each of those scopes to what it allows, when anything says so.
+    ``host`` is where it happens.
+    ``scope_descriptions`` maps each scope it may ask for there to what it allows, when anything says so.
     """
 
     host: str
-    scopes: list[str] = dataclasses.field(default_factory=list)
     scope_descriptions: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
@@ -61,6 +60,13 @@ class McpAuthorizationCodeContinuation(abc.ABC):
     @abc.abstractmethod
     def describe_next_sign_in(self) -> McpNextSignIn | None:
         """Describe the sign-in that approval leads to, for the consent page, or return ``None`` when none follows."""
+
+    def select_next_sign_in_scopes(self, mcp_scopes: list[str]) -> list[str]:
+        """The scopes the sign-in after consent asks for, when the gateway is to grant ``mcp_scopes``.
+
+        A browser's approval covers them too. None by default, as when no sign-in follows.
+        """
+        return []
 
     @abc.abstractmethod
     async def continue_after_consent(self, pending: PendingAuthorization) -> str:
@@ -125,14 +131,16 @@ class McpAuthorizationCodeServer:
                 state=params.state,
                 iss=self.issuer,
             )
+        # The scopes the SDK settled on for this client, always with the endpoint scopes every request must hold.
+        scopes: list[str] = list(dict.fromkeys([*self.tokens.policy.scopes, *(params.scopes or [])]))
         pending = PendingAuthorization(
             request_id=secrets.token_urlsafe(32),
             client_id=require_client_id(client),
             redirect_uri=str(params.redirect_uri),
             redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
             code_challenge=params.code_challenge,
-            # The scopes the SDK settled on for this client, always with the endpoint scopes every request must hold.
-            scopes=list(dict.fromkeys([*self.tokens.policy.scopes, *(params.scopes or [])])),
+            scopes=scopes,
+            next_sign_in_scopes=self.continuation.select_next_sign_in_scopes(scopes),
             client_state=params.state,
             csrf_token=secrets.token_urlsafe(32),
             origin=self.tokens.origin,
@@ -164,7 +172,7 @@ class McpAuthorizationCodeServer:
             pending.bound_browser_id,
             pending.client_id,
             pending.scopes,
-            self._list_next_sign_in_scopes(),
+            pending.next_sign_in_scopes,
         )
 
     async def build_consent_prompt(
@@ -176,7 +184,7 @@ class McpAuthorizationCodeServer:
         Nothing is marked on a first approval, where every scope would be.
         """
         next_sign_in = self.continuation.describe_next_sign_in()
-        next_scopes = next_sign_in.scopes if next_sign_in else []
+        next_scopes = pending.next_sign_in_scopes
         next_descriptions = next_sign_in.scope_descriptions if next_sign_in else {}
         client = await self.clients.get(pending.client_id)
         approved = await self._consents.load_approved_scopes(pending.bound_browser_id, pending.client_id)
@@ -207,7 +215,7 @@ class McpAuthorizationCodeServer:
             pending.bound_browser_id,
             pending.client_id,
             pending.scopes,
-            self._list_next_sign_in_scopes(),
+            pending.next_sign_in_scopes,
         )
         logger.info('OAuth consent approved: client_id=%s', pending.client_id)
         return await self.continue_after_consent(pending)
@@ -329,11 +337,6 @@ class McpAuthorizationCodeServer:
         )
 
     # Private helpers
-
-    def _list_next_sign_in_scopes(self) -> list[str]:
-        """The scopes the sign-in after consent asks for, which a browser's approval covers too."""
-        next_sign_in = self.continuation.describe_next_sign_in()
-        return next_sign_in.scopes if next_sign_in else []
 
     async def _load_record(self, namespace: str, key: str, client: OAuthClientInformationFull) -> dict | None:
         """The code or token stored under ``key`` when ``client`` owns it and it is bound to this server."""

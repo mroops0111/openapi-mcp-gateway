@@ -49,9 +49,11 @@ from .scopes import (
     ScopeFilterMiddleware,
     ScopeRegistry,
     UpstreamScopePolicy,
+    UpstreamScopeRequest,
     UpstreamSpecSecurityScopePolicy,
     build_mcp_scope_policy,
     build_upstream_scope_policy,
+    build_upstream_scope_request,
 )
 from .settings import (
     AuthConfig,
@@ -396,7 +398,10 @@ class Gateway:
         spec_security = UpstreamSpecSecurityScopePolicy(spec.security_schemes, upstream.scope_implies)
         if upstream.enforce_scopes and not upstream.scopes:
             server_config = _with_requested_upstream_scopes(server_config, spec_security.requested_scopes(operations))
-        auth = self._resolve_auth(server_config, spec, mcp_scope_policy)
+        upstream_scope_request = build_upstream_scope_request(
+            upstream.enforce_scopes, server_config.auth.upstream.scopes, operations, mcp_scope_policy, spec_security
+        )
+        auth = self._resolve_auth(server_config, spec, mcp_scope_policy, upstream_scope_request)
         auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
         scope_registry = ScopeRegistry(
             mcp_scope_policy,
@@ -511,7 +516,11 @@ class Gateway:
         )
 
     def _resolve_auth(
-        self, entry: ServerConfig, spec: OpenAPISpec, mcp_scope_policy: McpScopePolicy
+        self,
+        entry: ServerConfig,
+        spec: OpenAPISpec,
+        mcp_scope_policy: McpScopePolicy,
+        upstream_scope_request: UpstreamScopeRequest,
     ) -> ServerAuthSetup:
         """Return the auth components for ``entry``, dispatching on ``auth.upstream.type``.
 
@@ -526,6 +535,7 @@ class Gateway:
                 store=self._store,
                 gateway_url=self._config.url,
                 mcp_scope_policy=mcp_scope_policy,
+                upstream_scope_request=upstream_scope_request,
                 client_metadata_resolver=self._client_metadata_resolver,
             )
         )
@@ -747,11 +757,11 @@ def _upstream_scope_policy(
 
 
 def _with_requested_upstream_scopes(server_config: ServerConfig, scopes: list[str]) -> ServerConfig:
-    """Return ``server_config`` requesting ``scopes`` from the upstream, as when ``auth.upstream.scopes`` lists them."""
+    """Return ``server_config`` requesting at most ``scopes`` upstream, as when ``auth.upstream.scopes`` lists them."""
     if scopes:
         logger.info(
-            'Server "%s": auth.upstream.scopes is unset, so the gateway requests the upstream scopes '
-            'the exposed operations declare (%s).',
+            'Server "%s": auth.upstream.scopes is unset, so each sign-in asks for what it needs '
+            'of the upstream scopes the exposed operations declare (%s).',
             server_config.name,
             ' '.join(scopes),
         )

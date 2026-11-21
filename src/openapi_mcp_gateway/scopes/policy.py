@@ -223,7 +223,15 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
 
         A scope another requested scope implies is left out, since the broader one already covers it.
         """
-        requested = list(
+        requested = self.declared_scopes(operations)
+        for scope in list(requested):
+            if scope in self.held_scopes(other for other in requested if other != scope):
+                requested.remove(scope)
+        return requested
+
+    def declared_scopes(self, operations: collections.abc.Iterable[OperationInfo]) -> list[str]:
+        """Every upstream scope any of ``operations`` names, in the order the operations name them."""
+        return list(
             dict.fromkeys(
                 scope
                 for operation in operations
@@ -232,10 +240,6 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
                 for scope in sorted(scope_set)
             )
         )
-        for scope in list(requested):
-            if scope in self.held_scopes(other for other in requested if other != scope):
-                requested.remove(scope)
-        return requested
 
     def warn_on_unrequested_scopes(
         self,

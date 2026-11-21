@@ -15,6 +15,7 @@ from openapi_mcp_gateway.auth.mcp.client_metadata import McpClientMetadataResolv
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenPolicy
 from openapi_mcp_gateway.auth.upstream.authorization_code import UpstreamAuthorizationCodeClient
 from openapi_mcp_gateway.gateway import Gateway
+from openapi_mcp_gateway.scopes import UpstreamFixedScopeRequest, UpstreamScopeRequest
 from openapi_mcp_gateway.settings import GatewayConfig
 from openapi_mcp_gateway.stores.base import TokenStore
 from tests.constants import GATEWAY_URL
@@ -41,15 +42,18 @@ def authorization_code_server(
     policy: McpTokenPolicy | None = None,
     clients: McpClientDirectory | None = None,
     server_name: str = 'petstore',
+    scope_request: UpstreamScopeRequest | None = None,
 ) -> McpAuthorizationCodeServer:
     """The MCP authorization server ``AuthorizationCodeFlowHandler`` builds, joined to ``upstream`` by its Bridge.
 
     ``clients`` defaults to Dynamic Client Registration into ``store``.
+    ``scope_request`` chooses each sign-in's upstream scopes, which are ``read`` alone unless it says otherwise.
     """
     server, _ = build_authorization_code_server(
         store,
         issuer,
         upstream,
+        scope_request or UpstreamFixedScopeRequest(['read']),
         policy or McpTokenPolicy(),
         clients or McpDynamicClientRegistry(store, issuer),
         server_name,

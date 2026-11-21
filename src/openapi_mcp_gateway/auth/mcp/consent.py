@@ -29,6 +29,7 @@ class PendingAuthorization(pydantic.BaseModel):
     It is stored under ``request_id`` until the browser leaves the consent page,
     then under whatever key the step after consent chooses, such as the ``state`` sent to the upstream.
     ``browser_id`` is the browser that opened the consent page, the only one that may finish the sign-in.
+    ``next_sign_in_scopes`` are what the sign-in after consent asks for, chosen once so every step agrees.
     ``csrf_token`` is what the consent form must send back for its decision to count.
     ``origin`` is the server and upstream the sign-in was started against.
     """
@@ -39,6 +40,7 @@ class PendingAuthorization(pydantic.BaseModel):
     redirect_uri_provided_explicitly: bool
     code_challenge: str
     scopes: list[str]
+    next_sign_in_scopes: list[str]
     client_state: str | None
     csrf_token: str
     origin: McpRecordOrigin
