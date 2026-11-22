@@ -2,6 +2,7 @@ import logging
 
 import pytest
 
+from openapi_mcp_gateway.openapi import OperationInfo
 from openapi_mcp_gateway.scopes import (
     McpUnrestrictedScopePolicy,
     UnreachableRequirement,
@@ -13,17 +14,17 @@ from openapi_mcp_gateway.scopes import (
 )
 from tests.operation import PETSTORE_OPERATIONS, operation
 from tests.scope import (
+    CREATE_PET,
     DELETE_PET,
     DELETE_PET_UPSTREAM_REFUSAL,
+    LIST_PETS,
     SCHEMES,
+    SECURED_CEILING,
+    SECURED_OPERATIONS,
     configured_policy,
     operation_named,
     tag_scopes,
 )
-
-
-# A petstore whose operations declare upstream scopes, with tags for the MCP scopes beside them.
-LIST_PETS = operation('listPets', 'get', '/pets', security=[{'oauth': ['read:pets']}])
 
 
 class TestConfiguredMcpScopePolicy:
@@ -160,6 +161,37 @@ class TestSpecSecurityUpstreamScopePolicy:
         assert requirement.refusal == DELETE_PET_UPSTREAM_REFUSAL
 
 
+class TestSpecSecuritySignInScopes:
+    """A sign-in asks the upstream for what the operations it opens declare, within the ceiling."""
+
+    @pytest.mark.parametrize(
+        ('opened_operations', 'requested'),
+        [
+            ([LIST_PETS], ['read:pets']),
+            ([CREATE_PET], ['write:pets']),
+            ([DELETE_PET], ['read:pets', 'write:pets']),
+            ([], []),
+        ],
+    )
+    def test_each_sign_in_asks_for_what_its_operations_declare(self, opened_operations, requested):
+        assert _sign_in_scopes(SECURED_CEILING, opened_operations) == requested
+
+    def test_the_request_keeps_the_ceilings_order(self):
+        assert _sign_in_scopes(['write:pets', 'read:pets'], [LIST_PETS, CREATE_PET]) == ['write:pets', 'read:pets']
+
+    def test_a_scope_no_operation_declares_is_asked_for_at_every_sign_in(self):
+        """``offline_access`` serves the sign-in itself, so no operation would ever ask for it."""
+        assert _sign_in_scopes([*SECURED_CEILING, 'offline_access'], [LIST_PETS]) == ['read:pets', 'offline_access']
+
+    def test_a_declared_scope_outside_the_ceiling_is_asked_for_through_one_implying_it(self):
+        scope_implies = {'admin': ['read:pets', 'write:pets']}
+        assert _sign_in_scopes(['admin'], [LIST_PETS], scope_implies) == ['admin']
+        assert _sign_in_scopes(['admin'], [], scope_implies) == []
+
+    def test_a_declared_scope_nothing_in_the_ceiling_covers_is_not_asked_for(self):
+        assert _sign_in_scopes(['read:pets'], [CREATE_PET]) == []
+
+
 class TestUnrequestedScopeWarning:
     """Startup warns about the clients that can reach operations the requested upstream scopes cannot open."""
 
@@ -205,3 +237,16 @@ class TestUpstreamScopePolicy:
             )
         assert isinstance(policy, UpstreamUnrestrictedScopePolicy)
         assert 'the spec declares no OAuth security scheme' in caplog.text
+
+    def test_without_enforcement_every_sign_in_asks_for_the_whole_ceiling(self):
+        """The spec's ``security`` is not trusted then, so it cannot narrow a sign-in."""
+        policy = build_upstream_scope_policy(False, UpstreamSpecSecurityScopePolicy(SCHEMES, {}), 'petstore')
+        assert policy.sign_in_scopes(SECURED_CEILING, [LIST_PETS], SECURED_OPERATIONS) == SECURED_CEILING
+
+
+def _sign_in_scopes(
+    ceiling: list[str], opened_operations: list[OperationInfo], scope_implies: dict[str, list[str]] | None = None
+) -> list[str]:
+    """What a sign-in to the secured petstore opening ``opened_operations`` asks for, at most ``ceiling``."""
+    spec_security = UpstreamSpecSecurityScopePolicy(SCHEMES, scope_implies or {})
+    return spec_security.sign_in_scopes(ceiling, opened_operations, SECURED_OPERATIONS)

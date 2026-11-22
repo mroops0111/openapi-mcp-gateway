@@ -40,7 +40,7 @@ class UpstreamAuthorizationCodeClient:
     ``callback_url`` is the gateway's own address,
     and belongs here because it is only ever meaningful as the ``redirect_uri`` of this conversation.
 
-    Which scopes a sign-in asks for is decided per sign-in, so it is not part of the client.
+    ``scopes`` is the most a sign-in asks for, while each sign-in names its own to ``build_authorize_url``.
     ``scope_descriptions`` maps each upstream scope to what it allows, as the spec's OAuth flow states it.
 
     ``audience_params`` names the API the token is for,
@@ -56,6 +56,7 @@ class UpstreamAuthorizationCodeClient:
     client_id: str
     client_secret: str
     callback_url: str
+    scopes: list[str] = dataclasses.field(default_factory=list)
     scope_descriptions: dict[str, str] = dataclasses.field(default_factory=dict)
     audience_params: dict[str, str] = dataclasses.field(default_factory=dict)
     issuer: str | None = None

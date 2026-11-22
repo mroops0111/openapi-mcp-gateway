@@ -48,12 +48,9 @@ from .scopes import (
     RequestTarget,
     ScopeFilterMiddleware,
     ScopeRegistry,
-    UpstreamScopePolicy,
-    UpstreamScopeRequest,
     UpstreamSpecSecurityScopePolicy,
     build_mcp_scope_policy,
     build_upstream_scope_policy,
-    build_upstream_scope_request,
 )
 from .settings import (
     AuthConfig,
@@ -398,15 +395,13 @@ class Gateway:
         spec_security = UpstreamSpecSecurityScopePolicy(spec.security_schemes, upstream.scope_implies)
         if upstream.enforce_scopes and not upstream.scopes:
             server_config = _with_requested_upstream_scopes(server_config, spec_security.requested_scopes(operations))
-        upstream_scope_request = build_upstream_scope_request(
-            upstream.enforce_scopes, server_config.auth.upstream.scopes, operations, mcp_scope_policy, spec_security
-        )
-        auth = self._resolve_auth(server_config, spec, mcp_scope_policy, upstream_scope_request)
-        auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
         scope_registry = ScopeRegistry(
             mcp_scope_policy,
-            _upstream_scope_policy(server_config, auth, spec_security, operations, mcp_scope_policy),
+            build_upstream_scope_policy(upstream.enforce_scopes, spec_security, server_config.name),
         )
+        auth = self._resolve_auth(server_config, spec, scope_registry)
+        _check_upstream_grant(server_config, auth, spec_security, operations, mcp_scope_policy)
+        auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
         mcp = self._build_mcp_server(server_config.name, auth, server_config.instructions, scope_registry)
         for routes in auth.routes:
             routes.register(mcp)
@@ -519,8 +514,7 @@ class Gateway:
         self,
         entry: ServerConfig,
         spec: OpenAPISpec,
-        mcp_scope_policy: McpScopePolicy,
-        upstream_scope_request: UpstreamScopeRequest,
+        scope_registry: ScopeRegistry,
     ) -> ServerAuthSetup:
         """Return the auth components for ``entry``, dispatching on ``auth.upstream.type``.
 
@@ -534,8 +528,7 @@ class Gateway:
                 spec=spec,
                 store=self._store,
                 gateway_url=self._config.url,
-                mcp_scope_policy=mcp_scope_policy,
-                upstream_scope_request=upstream_scope_request,
+                scope_registry=scope_registry,
                 client_metadata_resolver=self._client_metadata_resolver,
             )
         )
@@ -728,14 +721,14 @@ def _apply_yaml_override(operation: OperationInfo, override: OperationOverride) 
     return operation.model_copy(update=update)
 
 
-def _upstream_scope_policy(
+def _check_upstream_grant(
     server_config: ServerConfig,
     auth: ServerAuthSetup,
     spec_security: UpstreamSpecSecurityScopePolicy,
     operations: list[OperationInfo],
     mcp_scope_policy: McpScopePolicy,
-) -> UpstreamScopePolicy:
-    """Return what each operation requires of the upstream grant, warning about scopes the gateway never requests.
+) -> None:
+    """Warn about upstream scopes the gateway never requests, once ``auth`` shows the flow records a user grant.
 
     Raises ``ValueError`` when ``enforce_scopes`` is on but the flow records no user grant.
     """
@@ -753,7 +746,6 @@ def _upstream_scope_policy(
             f'Server "{server_config.name}": auth.upstream.enforce_scopes needs auth.upstream.flow authorization_code, '
             f'but the spec resolves to {auth.flow_type}. Set auth.upstream.flow, or turn enforce_scopes off.'
         )
-    return build_upstream_scope_policy(upstream.enforce_scopes, spec_security, server_config.name)
 
 
 def _with_requested_upstream_scopes(server_config: ServerConfig, scopes: list[str]) -> ServerConfig:

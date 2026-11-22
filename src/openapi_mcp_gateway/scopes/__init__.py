@@ -21,12 +21,6 @@ from .requirement import (
     UnreachableRequirement,
     UnrestrictedRequirement,
 )
-from .upstream_request import (
-    UpstreamDownscopedScopeRequest,
-    UpstreamFixedScopeRequest,
-    UpstreamScopeRequest,
-    build_upstream_scope_request,
-)
 
 
 __all__ = [
@@ -52,15 +46,11 @@ __all__ = [
     'UnreachableRequirement',
     'UnrestrictedRequirement',
     'UnrestrictedScopePolicy',
-    'UpstreamDownscopedScopeRequest',
-    'UpstreamFixedScopeRequest',
     'UpstreamScopePolicy',
-    'UpstreamScopeRequest',
     'UpstreamSpecSecurityScopePolicy',
     'UpstreamUnrestrictedScopePolicy',
     'build_mcp_scope_policy',
     'build_upstream_scope_policy',
-    'build_upstream_scope_request',
     'current_grant',
     'grant_of',
 ]

@@ -69,8 +69,8 @@ class McpAuthorizationCodeContinuation(abc.ABC):
         return []
 
     @abc.abstractmethod
-    async def continue_after_consent(self, pending: PendingAuthorization) -> str:
-        """Take over ``pending`` once the browser may go on, and return the URL to send it to."""
+    async def continue_after_consent(self, pending_authorization: PendingAuthorization) -> str:
+        """Take over ``pending_authorization`` once the browser may go on, and return the URL to send it to."""
 
     async def refresh_attachment(self, client_id: str, attachment: McpTokenAttachment) -> McpTokenAttachment:
         """Return what tokens refreshed from ones carrying ``attachment`` carry, which by default is the same."""
@@ -133,7 +133,7 @@ class McpAuthorizationCodeServer:
             )
         # The scopes the SDK settled on for this client, always with the endpoint scopes every request must hold.
         scopes: list[str] = list(dict.fromkeys([*self.tokens.policy.scopes, *(params.scopes or [])]))
-        pending = PendingAuthorization(
+        pending_authorization = PendingAuthorization(
             request_id=secrets.token_urlsafe(32),
             client_id=require_client_id(client),
             redirect_uri=str(params.redirect_uri),
@@ -145,8 +145,9 @@ class McpAuthorizationCodeServer:
             csrf_token=secrets.token_urlsafe(32),
             origin=self.tokens.origin,
         )
-        await self._store_pending(pending)
-        return f'{self.issuer.rstrip("/")}{CONSENT_PATH}?{urllib.parse.urlencode({"request": pending.request_id})}'
+        await self._store_pending_authorization(pending_authorization)
+        query = urllib.parse.urlencode({'request': pending_authorization.request_id})
+        return f'{self.issuer.rstrip("/")}{CONSENT_PATH}?{query}'
 
     async def claim_authorization(self, request_id: str, browser_id: str) -> PendingAuthorization | None:
         """The sign-in waiting under ``request_id``, bound to ``browser_id`` by the first browser to open it.
@@ -154,91 +155,97 @@ class McpAuthorizationCodeServer:
         ``None`` when it expired, belongs to another server, or another browser opened it first,
         so a consent link passed on to someone else is worthless to them.
         """
-        pending = await self._load_pending(request_id)
-        if pending is not None and pending.browser_id is None:
-            pending = pending.model_copy(update={'browser_id': browser_id})
-            await self._store_pending(pending)
-        return self._opened_by(pending, browser_id)
+        pending_authorization = await self._load_pending_authorization(request_id)
+        if pending_authorization is not None and pending_authorization.browser_id is None:
+            pending_authorization = pending_authorization.model_copy(update={'browser_id': browser_id})
+            await self._store_pending_authorization(pending_authorization)
+        return self._opened_by(pending_authorization, browser_id)
 
     async def load_shown_authorization(self, request_id: str, browser_id: str) -> PendingAuthorization | None:
         """The sign-in waiting under ``request_id`` if ``browser_id`` opened it, or ``None`` for any other browser."""
-        return self._opened_by(await self._load_pending(request_id), browser_id)
+        return self._opened_by(await self._load_pending_authorization(request_id), browser_id)
 
-    async def requires_consent(self, pending: PendingAuthorization) -> bool:
-        """Whether the browser behind ``pending`` has to approve its client before it goes on."""
-        if not self.clients.requires_consent(pending.client_id):
+    async def requires_consent(self, pending_authorization: PendingAuthorization) -> bool:
+        """Whether the browser behind ``pending_authorization`` has to approve its client before it goes on."""
+        if not self.clients.requires_consent(pending_authorization.client_id):
             return False
         return not await self._consents.is_approved(
-            pending.bound_browser_id,
-            pending.client_id,
-            pending.scopes,
-            pending.next_sign_in_scopes,
+            pending_authorization.bound_browser_id,
+            pending_authorization.client_id,
+            pending_authorization.scopes,
+            pending_authorization.next_sign_in_scopes,
         )
 
     async def build_consent_prompt(
-        self, pending: PendingAuthorization, mcp_scope_policy: McpScopePolicy
+        self, pending_authorization: PendingAuthorization, mcp_scope_policy: McpScopePolicy
     ) -> ConsentPrompt:
-        """What the consent page shows for ``pending``, its MCP access read from ``mcp_scope_policy``.
+        """What the consent page shows for ``pending_authorization``, its MCP access read from ``mcp_scope_policy``.
 
         On a step-up, the scopes beyond what the browser approved before are marked new.
         Nothing is marked on a first approval, where every scope would be.
         """
         next_sign_in = self.continuation.describe_next_sign_in()
-        next_scopes = pending.next_sign_in_scopes
-        next_descriptions = next_sign_in.scope_descriptions if next_sign_in else {}
-        client = await self.clients.get(pending.client_id)
-        approved = await self._consents.load_approved_scopes(pending.bound_browser_id, pending.client_id)
-        new = approved.find_new_scopes(pending.scopes, next_scopes) if approved else ApprovedScopes()
+        next_sign_in_scopes = pending_authorization.next_sign_in_scopes
+        next_sign_in_descriptions = next_sign_in.scope_descriptions if next_sign_in else {}
+        client = await self.clients.get(pending_authorization.client_id)
+        approved_scopes = await self._consents.load_approved_scopes(
+            pending_authorization.bound_browser_id, pending_authorization.client_id
+        )
+        new_scopes = (
+            approved_scopes.find_new_scopes(pending_authorization.scopes, next_sign_in_scopes)
+            if approved_scopes
+            else ApprovedScopes()
+        )
         return ConsentPrompt(
             server_name=self._server_name,
             next_sign_in_host=next_sign_in.host if next_sign_in else None,
-            client_id=pending.client_id,
+            client_id=pending_authorization.client_id,
             client_name=client.client_name if client else None,
-            client_host=client_metadata_host(pending.client_id),
-            redirect_uri=pending.redirect_uri,
+            client_host=client_metadata_host(pending_authorization.client_id),
+            redirect_uri=pending_authorization.redirect_uri,
             next_sign_in_scopes=[
-                DescribedScope(scope, next_descriptions.get(scope), scope in new.next_sign_in_scopes)
-                for scope in next_scopes
+                DescribedScope(scope, next_sign_in_descriptions.get(scope), scope in new_scopes.next_sign_in_scopes)
+                for scope in next_sign_in_scopes
             ],
             mcp_scopes=[
-                DescribedScope(scope, mcp_scope_policy.mcp_defined_scopes[scope], scope in new.mcp_scopes)
-                for scope in pending.scopes
+                DescribedScope(scope, mcp_scope_policy.mcp_defined_scopes[scope], scope in new_scopes.mcp_scopes)
+                for scope in pending_authorization.scopes
                 if scope in mcp_scope_policy.mcp_defined_scopes
             ],
             opens_unscoped_tools=mcp_scope_policy.opens_unscoped_operations,
-            csrf_token=pending.csrf_token,
+            csrf_token=pending_authorization.csrf_token,
         )
 
-    async def approve(self, pending: PendingAuthorization) -> str:
+    async def approve(self, pending_authorization: PendingAuthorization) -> str:
         """Record that the browser approved the client, and return where the sign-in goes on."""
         await self._consents.approve(
-            pending.bound_browser_id,
-            pending.client_id,
-            pending.scopes,
-            pending.next_sign_in_scopes,
+            pending_authorization.bound_browser_id,
+            pending_authorization.client_id,
+            pending_authorization.scopes,
+            pending_authorization.next_sign_in_scopes,
         )
-        logger.info('OAuth consent approved: client_id=%s', pending.client_id)
-        return await self.continue_after_consent(pending)
+        logger.info('OAuth consent approved: client_id=%s', pending_authorization.client_id)
+        return await self.continue_after_consent(pending_authorization)
 
-    async def deny(self, pending: PendingAuthorization) -> str:
+    async def deny(self, pending_authorization: PendingAuthorization) -> str:
         """End the sign-in, and return the redirect telling the client the user refused, per RFC 6749 §4.1.2.1."""
-        await self.tokens.store.delete('mcp_auth_request', pending.request_id)
-        logger.info('OAuth consent denied: client_id=%s', pending.client_id)
+        await self.tokens.store.delete('mcp_auth_request', pending_authorization.request_id)
+        logger.info('OAuth consent denied: client_id=%s', pending_authorization.client_id)
         return construct_redirect_uri(
-            pending.redirect_uri,
+            pending_authorization.redirect_uri,
             error='access_denied',
             error_description='The user denied the sign-in',
-            state=pending.client_state,
+            state=pending_authorization.client_state,
             iss=self.issuer,
         )
 
-    async def continue_after_consent(self, pending: PendingAuthorization) -> str:
-        """Hand ``pending`` on past the consent page, and return where the browser goes next.
+    async def continue_after_consent(self, pending_authorization: PendingAuthorization) -> str:
+        """Hand ``pending_authorization`` on past the consent page, and return where the browser goes next.
 
         The continuation records the sign-in first, so a failure there leaves the consent page able to retry it.
         """
-        next_url = await self.continuation.continue_after_consent(pending)
-        await self.tokens.store.delete('mcp_auth_request', pending.request_id)
+        next_url = await self.continuation.continue_after_consent(pending_authorization)
+        await self.tokens.store.delete('mcp_auth_request', pending_authorization.request_id)
         return next_url
 
     async def load_authorization_code(
@@ -345,23 +352,26 @@ class McpAuthorizationCodeServer:
             return data
         return None
 
-    async def _store_pending(self, pending: PendingAuthorization) -> None:
-        """Keep ``pending`` under its request id until the browser leaves the consent page."""
+    async def _store_pending_authorization(self, pending_authorization: PendingAuthorization) -> None:
+        """Keep ``pending_authorization`` under its request id until the browser leaves the consent page."""
         await self.tokens.store.set(
-            'mcp_auth_request', pending.request_id, pending.model_dump(), ttl=PENDING_AUTHORIZATION_TTL
+            'mcp_auth_request',
+            pending_authorization.request_id,
+            pending_authorization.model_dump(),
+            ttl=PENDING_AUTHORIZATION_TTL,
         )
 
-    async def _load_pending(self, request_id: str) -> PendingAuthorization | None:
+    async def _load_pending_authorization(self, request_id: str) -> PendingAuthorization | None:
         """The sign-in waiting at this server's consent page under ``request_id``."""
-        return await self.tokens.load_pending('mcp_auth_request', request_id)
+        return await self.tokens.load_pending_authorization('mcp_auth_request', request_id)
 
     @staticmethod
-    def _opened_by(pending: PendingAuthorization | None, browser_id: str) -> PendingAuthorization | None:
-        """``pending`` when ``browser_id`` is the browser it is bound to, else ``None``."""
-        if pending is not None and pending.browser_id != browser_id:
-            logger.warning('OAuth consent rejected: reason=other_browser client_id=%s', pending.client_id)
+    def _opened_by(pending_authorization: PendingAuthorization | None, browser_id: str) -> PendingAuthorization | None:
+        """``pending_authorization`` when ``browser_id`` is the browser it is bound to, else ``None``."""
+        if pending_authorization is not None and pending_authorization.browser_id != browser_id:
+            logger.warning('OAuth consent rejected: reason=other_browser client_id=%s', pending_authorization.client_id)
             return None
-        return pending
+        return pending_authorization
 
 
 class McpAuthorizationCodeRoutes(AuthRoutes):
@@ -390,30 +400,34 @@ class McpAuthorizationCodeRoutes(AuthRoutes):
         The page is skipped for a client the operator exempts, and for one this browser already approved.
         """
         browser_id = self._cookie.read_or_issue(request)
-        pending = await self._server.claim_authorization(request.query_params.get('request', ''), browser_id)
-        if pending is None:
+        pending_authorization = await self._server.claim_authorization(
+            request.query_params.get('request', ''), browser_id
+        )
+        if pending_authorization is None:
             response: Response = render_error_page(_UNKNOWN_SIGN_IN, 400)
-        elif await self._server.requires_consent(pending):
-            response = render_consent_page(await self._server.build_consent_prompt(pending, self._mcp_scope_policy))
+        elif await self._server.requires_consent(pending_authorization):
+            response = render_consent_page(
+                await self._server.build_consent_prompt(pending_authorization, self._mcp_scope_policy)
+            )
         else:
-            response = redirect_without_cache(await self._server.continue_after_consent(pending), 302)
+            response = redirect_without_cache(await self._server.continue_after_consent(pending_authorization), 302)
         self._cookie.attach(response, browser_id)
         return response
 
     async def submit_consent(self, request: Request) -> Response:
         """Act on the decision the consent page posts, which counts only from the browser the page was shown to."""
-        pending = await self._shown_authorization(request)
-        if pending is None:
+        pending_authorization = await self._shown_authorization(request)
+        if pending_authorization is None:
             return render_error_page(_UNKNOWN_SIGN_IN, 400)
         form = await request.form()
-        if not secrets.compare_digest(str(form.get('csrf_token', '')), pending.csrf_token):
-            logger.warning('OAuth consent rejected: reason=csrf_mismatch client_id=%s', pending.client_id)
+        if not secrets.compare_digest(str(form.get('csrf_token', '')), pending_authorization.csrf_token):
+            logger.warning('OAuth consent rejected: reason=csrf_mismatch client_id=%s', pending_authorization.client_id)
             return render_error_page(_TAMPERED_FORM, 400)
         match form.get('decision'):
             case 'approve':
-                redirect_uri = await self._server.approve(pending)
+                redirect_uri = await self._server.approve(pending_authorization)
             case 'deny':
-                redirect_uri = await self._server.deny(pending)
+                redirect_uri = await self._server.deny(pending_authorization)
             case _:
                 return render_error_page(_TAMPERED_FORM, 400)
         return redirect_without_cache(redirect_uri, 303)

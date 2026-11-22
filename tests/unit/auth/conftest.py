@@ -7,7 +7,7 @@ from pydantic import AnyHttpUrl
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenPolicy
 from openapi_mcp_gateway.auth.upstream.authorization_code import UpstreamAuthorizationCodeClient
-from openapi_mcp_gateway.scopes import UpstreamFixedScopeRequest, UpstreamScopeRequest
+from openapi_mcp_gateway.scopes import ScopeRegistry
 from tests.constants import (
     AUTHORIZE_URL,
     GATEWAY_ISSUER,
@@ -23,7 +23,8 @@ from tests.oauth import (
 def make_provider(memory_store) -> typing.Callable[..., McpAuthorizationCodeServer]:
     """Build a provider on the shared store, naming ``issuer`` as its own in front of the upstream.
 
-    Every sign-in asks the upstream for ``scopes``, ``read`` alone unless ``scope_request`` chooses per sign-in.
+    A sign-in asks the upstream for at most ``scopes``, ``read`` by default, and for all of them
+    unless ``scope_registry`` chooses per sign-in.
     """
 
     def make(
@@ -33,7 +34,7 @@ def make_provider(memory_store) -> typing.Callable[..., McpAuthorizationCodeServ
         scopes: list[str] | None = None,
         audience_params: dict[str, str] | None = None,
         issued_tokens: McpTokenPolicy | None = None,
-        scope_request: UpstreamScopeRequest | None = None,
+        scope_registry: ScopeRegistry | None = None,
     ) -> McpAuthorizationCodeServer:
         return authorization_code_server(
             memory_store,
@@ -44,11 +45,12 @@ def make_provider(memory_store) -> typing.Callable[..., McpAuthorizationCodeServ
                 client_id='gateway-client-id',
                 client_secret='gateway-client-secret',
                 callback_url=f'{issuer}/auth/callback',
+                scopes=scopes or ['read'],
                 audience_params=audience_params or {},
                 issuer=upstream_issuer,
             ),
             issued_tokens,
-            scope_request=scope_request or UpstreamFixedScopeRequest(scopes or ['read']),
+            scope_registry=scope_registry,
         )
 
     return make

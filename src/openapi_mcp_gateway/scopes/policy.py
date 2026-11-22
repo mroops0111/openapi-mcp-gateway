@@ -66,6 +66,18 @@ class McpScopePolicy(ScopePolicy):
 class UpstreamScopePolicy(ScopePolicy):
     """What each operation requires of the scopes the upstream granted the user behind a token."""
 
+    def sign_in_scopes(
+        self,
+        ceiling: collections.abc.Sequence[str],
+        opened_operations: collections.abc.Iterable[OperationInfo],
+        operations: collections.abc.Iterable[OperationInfo],
+    ) -> list[str]:
+        """The upstream scopes a sign-in asks for, at most ``ceiling``, to open ``opened_operations`` of ``operations``.
+
+        Every ``ceiling`` scope by default, for a policy that cannot tell which of them an operation needs.
+        """
+        return list(dict.fromkeys(ceiling))
+
 
 class UnrestrictedScopePolicy(ScopePolicy):
     """Every operation open whatever the token holds, so the lists are the same for every token."""
@@ -241,6 +253,29 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
             )
         )
 
+    def sign_in_scopes(
+        self,
+        ceiling: collections.abc.Sequence[str],
+        opened_operations: collections.abc.Iterable[OperationInfo],
+        operations: collections.abc.Iterable[OperationInfo],
+    ) -> list[str]:
+        """The ``ceiling`` scopes that ask for what ``opened_operations`` declare, in the order of ``ceiling``.
+
+        A declared scope outside ``ceiling`` is asked for through the ``ceiling`` scope implying it, or not at all.
+        A ``ceiling`` scope no operation of ``operations`` declares, alone or through what it implies,
+        is asked for at every sign-in, since it serves the sign-in itself, as ``offline_access`` and ``openid`` do.
+        """
+        ceiling_scopes = list(dict.fromkeys(ceiling))
+        declared_scopes = set(self.declared_scopes(operations))
+        needed_scopes = {
+            self._covering_ceiling_scope(scope, ceiling_scopes) for scope in self.requested_scopes(opened_operations)
+        }
+        return [
+            scope
+            for scope in ceiling_scopes
+            if scope in needed_scopes or declared_scopes.isdisjoint(self.held_scopes([scope]))
+        ]
+
     def warn_on_unrequested_scopes(
         self,
         operations: collections.abc.Sequence[OperationInfo],
@@ -284,6 +319,12 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
                 len(described),
                 _shorten(described),
             )
+
+    def _covering_ceiling_scope(self, scope: str, ceiling_scopes: collections.abc.Sequence[str]) -> str | None:
+        """The ``ceiling_scopes`` scope that asks for ``scope``, itself or one implying it, or ``None`` for neither."""
+        if scope in ceiling_scopes:
+            return scope
+        return next((broader for broader in ceiling_scopes if scope in self.held_scopes([broader])), None)
 
     def _scope_sets_of(self, operation: OperationInfo) -> AnyScopeSetRequirement | None:
         """The scope sets ``operation`` requires, or ``None`` when it needs no upstream scope."""

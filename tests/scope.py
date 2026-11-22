@@ -1,7 +1,5 @@
 from openapi_mcp_gateway.openapi import OperationInfo
-from openapi_mcp_gateway.scopes import (
-    McpConfiguredScopePolicy,
-)
+from openapi_mcp_gateway.scopes import McpConfiguredScopePolicy, ScopeRegistry, UpstreamSpecSecurityScopePolicy
 from openapi_mcp_gateway.settings import OperationScopesConfig
 from tests.operation import PETSTORE_OPERATIONS, operation
 
@@ -13,8 +11,14 @@ SCHEMES = {
     'basic': {'type': 'http', 'scheme': 'basic'},
 }
 
-# A petstore operation that declares the upstream scopes it needs.
+# A petstore whose operations declare the upstream scopes they need, with tags for the MCP scopes beside them.
+LIST_PETS = operation('listPets', 'get', '/pets', security=[{'oauth': ['read:pets']}])
+CREATE_PET = operation('createPet', 'post', '/pets', security=[{'oauth': ['write:pets']}])
 DELETE_PET = operation('deletePet', 'delete', '/pets/{petId}', security=[{'oauth': ['read:pets', 'write:pets']}])
+SECURED_OPERATIONS = (LIST_PETS, CREATE_PET, DELETE_PET)
+
+# The most a sign-in to the secured petstore asks the upstream for.
+SECURED_CEILING = ['read:pets', 'write:pets']
 
 
 # Why a token whose upstream grant lacks what ``deletePet`` declares is refused.
@@ -37,3 +41,13 @@ def operation_named(operation_id: str) -> OperationInfo:
 def tag_scopes(*operations: OperationInfo) -> McpConfiguredScopePolicy:
     """MCP scopes derived from the tags of ``operations``, as ``auth.mcp.operation_scopes.auto: tags`` does."""
     return McpConfiguredScopePolicy(OperationScopesConfig(auto='tags'), operations, 'petstore')
+
+
+def secured_registry(scope_implies: dict[str, list[str]] | None = None) -> ScopeRegistry:
+    """The secured petstore registered under tag-derived MCP scopes, its upstream grant enforced by the spec."""
+    scope_registry = ScopeRegistry(
+        tag_scopes(*SECURED_OPERATIONS), UpstreamSpecSecurityScopePolicy(SCHEMES, scope_implies or {})
+    )
+    for secured_operation in SECURED_OPERATIONS:
+        scope_registry.register(secured_operation.operation_id, secured_operation)
+    return scope_registry

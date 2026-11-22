@@ -1,3 +1,4 @@
+import collections.abc
 import typing
 
 from mcp.shared.uri_template import UriTemplate
@@ -16,12 +17,14 @@ class ScopeRegistry:
     A concrete URI a template expands to requires what the template does.
     A name it never registered, such as a dynamic meta-tool, requires nothing,
     since the operations behind it are what the scopes guard.
+    The operations it registered are also what a sign-in asks the upstream for, as ``upstream_sign_in_scopes`` says.
     """
 
     def __init__(self, mcp_policy: McpScopePolicy, upstream_policy: UpstreamScopePolicy | None = None) -> None:
         self.mcp_policy = mcp_policy
         self.upstream_policy = upstream_policy or UpstreamUnrestrictedScopePolicy()
         self._requirements: dict[str, _NameRequirements] = {}
+        self._operations: dict[str, OperationInfo] = {}
         self._resource_templates: list[tuple[UriTemplate, _NameRequirements]] = []
 
     @property
@@ -32,6 +35,7 @@ class ScopeRegistry:
 
     def register(self, name: str, operation: OperationInfo) -> None:
         """Record what ``operation``, exposed as the tool or operation ``name``, requires."""
+        self._operations[operation.operation_id] = operation
         self._requirements[name] = _NameRequirements(
             self.mcp_policy.requirement_for(operation), self.upstream_policy.requirement_for(operation)
         )
@@ -73,6 +77,21 @@ class ScopeRegistry:
         if not requirements.mcp.is_met(grant.mcp_scopes):
             return True
         return requirements.upstream.is_met(self.upstream_policy.held_scopes(grant.upstream_scopes))
+
+    def upstream_sign_in_scopes(
+        self, ceiling: collections.abc.Sequence[str], mcp_scopes: collections.abc.Iterable[str]
+    ) -> list[str]:
+        """The upstream scopes a sign-in granting ``mcp_scopes`` asks for, at most ``ceiling``.
+
+        The sign-in opens the registered operations whose MCP requirement ``mcp_scopes`` meets,
+        and ``upstream_policy`` picks what of ``ceiling`` they need.
+        """
+        granted_scopes = frozenset(mcp_scopes)
+        operations = list(self._operations.values())
+        opened_operations = [
+            operation for operation in operations if self.mcp_policy.requirement_for(operation).is_met(granted_scopes)
+        ]
+        return self.upstream_policy.sign_in_scopes(ceiling, opened_operations, operations)
 
     def _requirements_of(self, name: str) -> '_NameRequirements':
         if name in self._requirements:

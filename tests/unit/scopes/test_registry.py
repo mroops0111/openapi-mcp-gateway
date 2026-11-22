@@ -10,8 +10,10 @@ from tests.scope import (
     DELETE_PET,
     DELETE_PET_UPSTREAM_REFUSAL,
     SCHEMES,
+    SECURED_CEILING,
     configured_policy,
     operation_named,
+    secured_registry,
     tag_scopes,
 )
 
@@ -95,3 +97,29 @@ def _mcp_grant(mcp_scopes: set[str], grantable: set[str] | None = None) -> Token
     The client may be granted only ``mcp_scopes`` when ``grantable`` is ``None``.
     """
     return TokenGrant(frozenset(mcp_scopes), frozenset(), frozenset(mcp_scopes if grantable is None else grantable))
+
+
+class TestUpstreamSignInScopes:
+    """A sign-in asks the upstream for what the registered operations its MCP scopes open need."""
+
+    @pytest.mark.parametrize(
+        ('mcp_scopes', 'requested'),
+        [
+            (['pets:read'], ['read:pets']),
+            (['pets:write'], ['write:pets']),
+            (['pets:delete'], ['read:pets', 'write:pets']),
+            ([], []),
+        ],
+    )
+    def test_each_sign_in_asks_for_what_its_mcp_scopes_open(self, mcp_scopes, requested):
+        assert secured_registry().upstream_sign_in_scopes(SECURED_CEILING, mcp_scopes) == requested
+
+    def test_without_mcp_scopes_every_registered_operation_counts(self):
+        scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
+        scope_registry.register('delete_pet', DELETE_PET)
+        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, []) == SECURED_CEILING
+
+    def test_without_an_enforced_grant_every_sign_in_asks_for_the_whole_ceiling(self):
+        scope_registry = ScopeRegistry(tag_scopes(DELETE_PET))
+        scope_registry.register('delete_pet', DELETE_PET)
+        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, []) == SECURED_CEILING
