@@ -46,7 +46,8 @@ class ScopeChallengeMiddleware:
     """ASGI middleware refusing a request the token's scopes do not cover, with ``403`` and a scope challenge.
 
     It guards ``tools/call``, through the target the exposure style names, and ``resources/read``.
-    Only the MCP scopes are challenged, since stepping up at the gateway cannot change what the upstream granted.
+    Only the MCP scopes are challenged, since a client steps up for those alone.
+    The sign-in a step-up starts asks the upstream for what the wider MCP grant needs.
     It runs after the SDK authenticates the request and before the SDK reads the body,
     since only an HTTP response can carry the ``insufficient_scope`` challenge a client steps up from.
     Requests from clients older than 2026-07-28 carry no routing headers and pass through,
@@ -120,7 +121,8 @@ class ScopeFilterMiddleware:
     A tool the client can step up for stays listed, since hiding it would keep the step-up from ever starting.
     A refused tool call is a tool error and a refused resource read a protocol error,
     which a client cannot step up from.
-    It is the only refusal of a token whose upstream grant falls short, since stepping up cannot fix that.
+    It is the only refusal of a token whose upstream grant falls short once it holds the MCP scopes,
+    since stepping up to scopes it already holds asks the upstream for nothing more.
     For MCP scopes, it is the deprecated path for clients older than 2026-07-28.
     Those clients cannot read what ``ScopeChallengeMiddleware`` sends.
     """

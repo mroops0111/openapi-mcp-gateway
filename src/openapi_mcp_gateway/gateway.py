@@ -135,10 +135,9 @@ class Gateway:
     ) -> typing.Self:
         """Expose ``@mcp_tool``-decorated routes of ``app`` in-process via ``httpx.ASGITransport``.
 
-        Auth is auto-detected from the spec's ``securitySchemes``: no scheme gives no auth,
-        ``client_credentials`` selects the service-token flow,
-        ``authorization_code`` uses the full provider when ``client_id`` and ``client_secret`` are set,
-        else it falls back to passthrough of the client's ``Authorization`` header.
+        Auth is auto-detected from the spec's ``securitySchemes``.
+        No scheme gives no auth, and any supported OAuth flow passes the client's ``Authorization`` header through.
+        An explicit ``auth`` overrides it, such as one with credentials for the gateway to mint upstream tokens.
 
         ``passthrough_headers`` copies headers verbatim from the live MCP call to the FastAPI route.
         The auth resolver wins on ``Authorization`` collision, so minted tokens take priority.
@@ -394,13 +393,13 @@ class Gateway:
         upstream = server_config.auth.upstream
         spec_security = UpstreamSpecSecurityScopePolicy(spec.security_schemes, upstream.scope_implies)
         if upstream.enforce_scopes and not upstream.scopes:
-            server_config = _with_requested_upstream_scopes(server_config, spec_security.requested_scopes(operations))
+            server_config = _with_requested_upstream_scopes(server_config, spec_security.declared_scopes(operations))
         scope_registry = ScopeRegistry(
             mcp_scope_policy,
-            build_upstream_scope_policy(upstream.enforce_scopes, spec_security, server_config.name),
+            build_upstream_scope_policy(upstream.enforce_scopes, spec_security),
         )
         auth = self._resolve_auth(server_config, spec, scope_registry)
-        _check_upstream_grant(server_config, auth, spec_security, operations, mcp_scope_policy)
+        operations = _check_upstream_grant(server_config, auth, spec_security, operations, mcp_scope_policy)
         auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
         mcp = self._build_mcp_server(server_config.name, auth, server_config.instructions, scope_registry)
         for routes in auth.routes:
@@ -440,12 +439,6 @@ class Gateway:
                     server_config.name,
                     len(resource_optins),
                     ', '.join(resource_optins[:5]) + ('...' if len(resource_optins) > 5 else ''),
-                )
-            if server_config.exposure.promote_resources:
-                logger.warning(
-                    'Server "%s": dynamic exposure overrides promote_resources. '
-                    'The meta-tools surface every operation uniformly, so resource promotion is skipped.',
-                    server_config.name,
                 )
             search = server_config.exposure.search
             exposed_tools = MetaToolGenerator(
@@ -727,25 +720,49 @@ def _check_upstream_grant(
     spec_security: UpstreamSpecSecurityScopePolicy,
     operations: list[OperationInfo],
     mcp_scope_policy: McpScopePolicy,
-) -> None:
-    """Warn about upstream scopes the gateway never requests, once ``auth`` shows the flow records a user grant.
+) -> list[OperationInfo]:
+    """Return the operations to expose, once ``auth`` shows whether the flow records a user grant.
 
-    Raises ``ValueError`` when ``enforce_scopes`` is on but the flow records no user grant.
+    Raises ``ValueError`` when ``enforce_scopes`` or ``required_scopes`` is set but the flow records no user grant,
+    or when ``enforce_scopes`` leaves no operation any sign-in can open.
+    Only after the flow check does it warn about what ``enforce_scopes`` does with the spec,
+    so a server that cannot start is not first reported as running unrestricted.
+    Under ``enforce_scopes``, an operation no sign-in can open is left out, since every call to it is refused.
+    Without it the gateway does not check the grant, so such an operation is only warned about.
     """
     upstream = server_config.auth.upstream
-    if auth.mcp_tokens_carry_upstream_grant:
+    if not auth.mcp_tokens_carry_upstream_grant:
+        for key in ('enforce_scopes', 'required_scopes'):
+            if getattr(upstream, key):
+                raise ValueError(
+                    f'Server "{server_config.name}": auth.upstream.{key} needs auth.upstream.flow authorization_code, '
+                    f'but the spec resolves to {auth.flow_type}. Set auth.upstream.flow, or remove {key}.'
+                )
+        return operations
+    if not upstream.enforce_scopes:
         spec_security.warn_on_unrequested_scopes(
             operations,
-            upstream.scopes,
+            [*upstream.required_scopes, *upstream.scopes],
             mcp_scope_policy,
             _scoped_clients(server_config),
             server_config.name,
         )
-    elif upstream.enforce_scopes:
+        return operations
+    spec_security.warn_on_missing_oauth_scheme(server_config.name)
+    exposed = spec_security.drop_unreachable_operations(
+        operations, upstream.scopes, upstream.required_scopes, server_config.name
+    )
+    if not exposed:
         raise ValueError(
-            f'Server "{server_config.name}": auth.upstream.enforce_scopes needs auth.upstream.flow authorization_code, '
-            f'but the spec resolves to {auth.flow_type}. Set auth.upstream.flow, or turn enforce_scopes off.'
+            f'Server "{server_config.name}": no operation is left to expose, '
+            'since no sign-in can open any within auth.upstream.scopes and auth.upstream.required_scopes. '
+            'Add the scopes the operations need to auth.upstream.scopes, or correct them under operations.<id>.security.'
         )
+    spec_security.warn_on_unasked_ceiling_scopes(exposed, upstream.scopes, server_config.name)
+    spec_security.warn_on_empty_sign_in(
+        exposed, upstream.scopes, upstream.required_scopes, mcp_scope_policy, server_config.name
+    )
+    return exposed
 
 
 def _with_requested_upstream_scopes(server_config: ServerConfig, scopes: list[str]) -> ServerConfig:
@@ -817,7 +834,10 @@ def _policy_summary(policy: PolicyConfig) -> str:
 
 
 def _cache_hints(scope_registry: ScopeRegistry) -> dict[CacheableMethod, CacheHint]:
-    """Freshness hints for the static lists, where the tool and resource lists turn private once they depend on the token."""
+    """Freshness hints for the static lists.
+
+    The tool and resource lists turn private once they depend on the token.
+    """
     list_cache_scope = scope_registry.list_cache_scope
     return {
         'tools/list': CacheHint(ttl_ms=_STATIC_CACHE_TTL_MS, scope=list_cache_scope),

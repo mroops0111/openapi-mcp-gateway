@@ -42,8 +42,8 @@ class AuthTypeContext(typing.NamedTuple):
     """Everything an ``AuthTypeHandler`` may need, whether or not it uses all of it.
 
     Passing one shape to every handler is what keeps the caller free of per-type branching.
-    Only ``oauth2`` reads the store, the URLs, ``scope_registry`` and ``client_metadata_resolver``,
-    and that stays the handler's business.
+    Only ``oauth2`` reads the store, the URLs, ``scope_registry`` and ``client_metadata_resolver``.
+    What a handler reads stays its own business.
     """
 
     entry: ServerConfig

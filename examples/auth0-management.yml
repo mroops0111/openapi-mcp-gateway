@@ -7,7 +7,7 @@
 # OpenAPI cannot express that parameter,
 # which is why Auth0's own spec smuggles it through a vendor extension.
 # Its clientCredentials block carries an "x-form-parameters" entry naming the audience.
-# The gateway takes it as configuration instead, through auth.upstream_audience.
+# The gateway takes it as configuration instead, through auth.upstream.audience.
 #
 # Prerequisites:
 #   1. Create a Machine to Machine application authorised for the Management API,

@@ -64,6 +64,12 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
 
+    # The upstream scopes every sign-in asks for, whatever the operations it opens need,
+    # such as ``offline_access`` for a refresh token or ``openid`` for the user's identity.
+    # ``scopes`` is the most a sign-in asks for beyond them.
+    # Only ``authorization_code`` signs the user in, so no other flow reads them.
+    required_scopes: list[str] = pydantic.Field(default_factory=list)
+
     # The upstream authorization server's issuer identifier, exactly as its metadata publishes it.
     # It is what an RFC 9207 ``iss`` on the authorization response must equal.
     # Unset, a present ``iss`` cannot be checked, so the mix-up defence is off.
@@ -235,10 +241,10 @@ class ClientConfig(ClientScopesConfig):
 
 
 class OtherClientsConfig(ClientScopesConfig):
-    """The Client ID Metadata Document clients that ``auth.mcp.clients`` does not list, under ``auth.mcp.other_clients``.
+    """The Client ID Metadata Document clients ``auth.mcp.clients`` does not list, under ``auth.mcp.other_clients``.
 
-    ``trusted_hosts`` admits only the clients whose documents sit on one of these hosts, matched exactly,
-    and left out admits any.
+    ``trusted_hosts`` admits only the clients whose documents sit on one of these hosts, matched exactly.
+    Left out, it admits any.
     Each is granted scopes as a listed client is, and always passes the consent page.
     """
 
@@ -577,8 +583,8 @@ class ExposureConfig(pydantic.BaseModel):
     """How a server's operations surface as MCP primitives.
 
     The two settings interact, so they live together rather than as sibling keys.
-    ``style: dynamic`` fronts the whole spec with meta-tools and ignores ``promote_resources``,
-    since the meta-tools surface every operation uniformly.
+    ``style: dynamic`` fronts the whole spec with meta-tools, which surface every operation uniformly,
+    so it refuses ``promote_resources``.
     """
 
     model_config = pydantic.ConfigDict(extra='forbid')
@@ -593,10 +599,15 @@ class ExposureConfig(pydantic.BaseModel):
     search: SearchConfig | None = None
 
     @pydantic.model_validator(mode='after')
-    def _refuse_search_without_dynamic(self) -> typing.Self:
-        """Refuse ``search`` under static exposure, since only the dynamic meta-tools search."""
+    def _refuse_settings_of_the_other_style(self) -> typing.Self:
+        """Refuse a setting the chosen ``style`` ignores, since it would have no effect.
+
+        Only the dynamic meta-tools search, and only static exposure promotes resources.
+        """
         if self.search is not None and self.style != 'dynamic':
             raise ValueError('exposure.search needs exposure.style dynamic, so it would have no effect here.')
+        if self.promote_resources and self.style == 'dynamic':
+            raise ValueError('exposure.promote_resources needs exposure.style static, so it would have no effect here.')
         return self
 
 
@@ -664,6 +675,21 @@ class ServerConfig(pydantic.BaseModel):
         if any(name.lower() == 'authorization' for name in headers):
             raise ValueError('headers cannot set Authorization. The upstream credential belongs to auth.')
         return headers
+
+    @pydantic.model_validator(mode='after')
+    def _refuse_resources_under_dynamic_exposure(self) -> typing.Self:
+        """Refuse an ``operations.<operationId>.resource`` that dynamic exposure would ignore.
+
+        The meta-tools surface every operation uniformly, so no operation becomes a resource there.
+        A spec's own ``x-mcp-integration.resource`` is only warned about, since the operator did not write it.
+        """
+        if self.exposure.style != 'dynamic':
+            return self
+        named = [operation_id for operation_id, override in self.operations.items() if override.resource is not None]
+        if named:
+            fields = ', '.join(f'operations.{operation_id}.resource' for operation_id in named)
+            raise ValueError(f'{fields} needs exposure.style static, so it would have no effect here.')
+        return self
 
     def resolve_headers(self) -> dict[str, str]:
         """Static upstream headers after env-var substitution."""

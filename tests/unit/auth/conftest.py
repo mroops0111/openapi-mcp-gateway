@@ -23,8 +23,8 @@ from tests.oauth import (
 def make_provider(memory_store) -> typing.Callable[..., McpAuthorizationCodeServer]:
     """Build a provider on the shared store, naming ``issuer`` as its own in front of the upstream.
 
-    A sign-in asks the upstream for at most ``scopes``, ``read`` by default, and for all of them
-    unless ``scope_registry`` chooses per sign-in.
+    A sign-in asks the upstream for at most ``scopes``, which default to ``read``.
+    It asks for all of them unless ``scope_registry`` chooses per sign-in.
     """
 
     def make(

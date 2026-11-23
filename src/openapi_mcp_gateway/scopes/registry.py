@@ -24,7 +24,8 @@ class ScopeRegistry:
         self.mcp_policy = mcp_policy
         self.upstream_policy = upstream_policy or UpstreamUnrestrictedScopePolicy()
         self._requirements: dict[str, _NameRequirements] = {}
-        self._operations: dict[str, OperationInfo] = {}
+        self._operations: dict[str, _RegisteredOperation] = {}
+        self._sign_in_scopes: dict[tuple[tuple[str, ...], tuple[str, ...], frozenset[str]], list[str]] = {}
         self._resource_templates: list[tuple[UriTemplate, _NameRequirements]] = []
 
     @property
@@ -35,10 +36,12 @@ class ScopeRegistry:
 
     def register(self, name: str, operation: OperationInfo) -> None:
         """Record what ``operation``, exposed as the tool or operation ``name``, requires."""
-        self._operations[operation.operation_id] = operation
-        self._requirements[name] = _NameRequirements(
+        requirements = _NameRequirements(
             self.mcp_policy.requirement_for(operation), self.upstream_policy.requirement_for(operation)
         )
+        self._requirements[name] = requirements
+        self._operations[operation.operation_id] = _RegisteredOperation(operation, requirements.mcp)
+        self._sign_in_scopes.clear()
 
     def register_resource(self, uri_template: str, operation: OperationInfo) -> None:
         """Record what ``operation``, exposed as a resource at ``uri_template``, requires."""
@@ -53,7 +56,8 @@ class ScopeRegistry:
     def refusal(self, name: str, grant: TokenGrant) -> str | None:
         """Why a token with ``grant`` may not use ``name``, or ``None`` when it may.
 
-        The MCP scopes are checked first, since a client can step up for those and not for the upstream grant.
+        The MCP scopes are checked first, since a client steps up for those,
+        and the sign-in a step-up starts is what asks the upstream for more.
         """
         requirements = self._requirements_of(name)
         if not requirements.mcp.is_met(grant.mcp_scopes):
@@ -79,19 +83,28 @@ class ScopeRegistry:
         return requirements.upstream.is_met(self.upstream_policy.held_scopes(grant.upstream_scopes))
 
     def upstream_sign_in_scopes(
-        self, ceiling: collections.abc.Sequence[str], mcp_scopes: collections.abc.Iterable[str]
+        self,
+        ceiling: collections.abc.Sequence[str],
+        required_scopes: collections.abc.Sequence[str],
+        mcp_scopes: collections.abc.Iterable[str],
     ) -> list[str]:
-        """The upstream scopes a sign-in granting ``mcp_scopes`` asks for, at most ``ceiling``.
+        """The upstream scopes a sign-in granting ``mcp_scopes`` asks for.
 
-        The sign-in opens the registered operations whose MCP requirement ``mcp_scopes`` meets,
-        and ``upstream_policy`` picks what of ``ceiling`` they need.
+        The sign-in opens the registered operations whose MCP requirement ``mcp_scopes`` meets.
+        ``upstream_policy`` asks for ``required_scopes`` and picks what of ``ceiling`` those operations need.
+        Each answer is kept until another operation is registered, since every sign-in asks the same question again.
+        Only the scopes ``mcp_policy`` defines can open an operation, so only they tell one answer from another.
         """
-        granted_scopes = frozenset(mcp_scopes)
-        operations = list(self._operations.values())
-        opened_operations = [
-            operation for operation in operations if self.mcp_policy.requirement_for(operation).is_met(granted_scopes)
-        ]
-        return self.upstream_policy.sign_in_scopes(ceiling, opened_operations, operations)
+        granted_scopes = frozenset(mcp_scopes).intersection(self.mcp_policy.mcp_defined_scopes)
+        key = (tuple(ceiling), tuple(required_scopes), granted_scopes)
+        if key not in self._sign_in_scopes:
+            opened_operations = [
+                registered.operation
+                for registered in self._operations.values()
+                if registered.mcp_requirement.is_met(granted_scopes)
+            ]
+            self._sign_in_scopes[key] = self.upstream_policy.sign_in_scopes(ceiling, required_scopes, opened_operations)
+        return list(self._sign_in_scopes[key])
 
     def _requirements_of(self, name: str) -> '_NameRequirements':
         if name in self._requirements:
@@ -107,6 +120,13 @@ class _NameRequirements(typing.NamedTuple):
 
     mcp: ScopeRequirement
     upstream: ScopeRequirement
+
+
+class _RegisteredOperation(typing.NamedTuple):
+    """A registered operation, with what it requires of the MCP scopes."""
+
+    operation: OperationInfo
+    mcp_requirement: ScopeRequirement
 
 
 # What a name nobody registered requires.

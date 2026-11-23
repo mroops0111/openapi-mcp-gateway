@@ -1,6 +1,6 @@
 # GitHub REST API exposed via dynamic meta-tools.
 #
-# GitHub's OpenAPI spec carries 700+ operations,
+# GitHub's OpenAPI spec carries ~1,200 operations,
 # and registering each as its own MCP tool overflows most LLM context windows on connect.
 # With `exposure.style: dynamic` the client sees only three meta-tools,
 # and the LLM walks search -> get -> call to pick operations on demand.

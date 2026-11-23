@@ -98,7 +98,9 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         return McpNextSignIn(host=self.upstream.host, scope_descriptions=self.upstream.scope_descriptions)
 
     def select_next_sign_in_scopes(self, mcp_scopes: list[str]) -> list[str]:
-        return self.scope_registry.upstream_sign_in_scopes(self.upstream.scopes, mcp_scopes)
+        return self.scope_registry.upstream_sign_in_scopes(
+            self.upstream.scopes, self.upstream.required_scopes, mcp_scopes
+        )
 
     async def continue_after_consent(self, pending_authorization: PendingAuthorization) -> str:
         """Send the browser to the upstream under a fresh ``state``.
@@ -319,6 +321,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             client_secret=client_secret,
             callback_url=f'{gateway_url}{flow_context.mount_path.rstrip("/")}{CALLBACK_PATH}',
             scopes=list(upstream_config.scopes),
+            required_scopes=list(upstream_config.required_scopes),
             scope_descriptions=oauth_flow.scope_descriptions,
             audience_params=upstream_config.resolve_audience_params(),
             issuer=upstream_config.resolve_issuer(),
@@ -426,8 +429,11 @@ def _build_authorization_server_metadata(settings: AuthSettings, clients: McpCli
 def _build_client_directory(
     flow_context: OAuthFlowContext, mcp_endpoint_scopes: list[str], issuer: str
 ) -> McpClientDirectory:
-    """The clients ``auth.mcp.clients`` declares, the Client ID Metadata Document clients ``other_clients`` admits,
-    and Dynamic Client Registration where the config names neither.
+    """The MCP clients this server admits.
+
+    They are the clients ``auth.mcp.clients`` declares,
+    with the Client ID Metadata Document clients ``other_clients`` admits.
+    Where the config names neither, clients register themselves by Dynamic Client Registration.
     """
     mcp_config = flow_context.entry.auth.mcp
     directories: list[McpClientDirectory] = [

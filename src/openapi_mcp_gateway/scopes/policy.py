@@ -69,14 +69,15 @@ class UpstreamScopePolicy(ScopePolicy):
     def sign_in_scopes(
         self,
         ceiling: collections.abc.Sequence[str],
+        required_scopes: collections.abc.Sequence[str],
         opened_operations: collections.abc.Iterable[OperationInfo],
-        operations: collections.abc.Iterable[OperationInfo],
     ) -> list[str]:
-        """The upstream scopes a sign-in asks for, at most ``ceiling``, to open ``opened_operations`` of ``operations``.
+        """The upstream scopes a sign-in asks for to open ``opened_operations``.
 
-        Every ``ceiling`` scope by default, for a policy that cannot tell which of them an operation needs.
+        ``required_scopes`` are asked for at every sign-in, and the rest come from ``ceiling``.
+        Every ``ceiling`` scope comes by default, for a policy that cannot tell which of them an operation needs.
         """
-        return list(dict.fromkeys(ceiling))
+        return list(dict.fromkeys([*required_scopes, *ceiling]))
 
 
 class UnrestrictedScopePolicy(ScopePolicy):
@@ -230,17 +231,6 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
                     pending.append(implied)
         return frozenset(held)
 
-    def requested_scopes(self, operations: collections.abc.Iterable[OperationInfo]) -> list[str]:
-        """Every upstream scope any of ``operations`` names, in the order the operations name them.
-
-        A scope another requested scope implies is left out, since the broader one already covers it.
-        """
-        requested = self.declared_scopes(operations)
-        for scope in list(requested):
-            if scope in self.held_scopes(other for other in requested if other != scope):
-                requested.remove(scope)
-        return requested
-
     def declared_scopes(self, operations: collections.abc.Iterable[OperationInfo]) -> list[str]:
         """Every upstream scope any of ``operations`` names, in the order the operations name them."""
         return list(
@@ -256,25 +246,120 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
     def sign_in_scopes(
         self,
         ceiling: collections.abc.Sequence[str],
+        required_scopes: collections.abc.Sequence[str],
         opened_operations: collections.abc.Iterable[OperationInfo],
-        operations: collections.abc.Iterable[OperationInfo],
     ) -> list[str]:
-        """The ``ceiling`` scopes that ask for what ``opened_operations`` declare, in the order of ``ceiling``.
+        """``required_scopes``, then the ``ceiling`` scopes that ask for what ``opened_operations`` declare.
 
-        A declared scope outside ``ceiling`` is asked for through the ``ceiling`` scope implying it, or not at all.
-        A ``ceiling`` scope no operation of ``operations`` declares, alone or through what it implies,
-        is asked for at every sign-in, since it serves the sign-in itself, as ``offline_access`` and ``openid`` do.
+        OpenAPI lets any one security requirement of an operation authorize it, so each operation asks for one.
+        It is the requirement the fewest scopes beyond ``required_scopes`` meet, counting what each scope implies,
+        the first the spec lists among equals.
+        A requirement no ``ceiling`` scope can meet is passed over, and an operation with none asks for nothing.
+        Each scope of the chosen requirement is asked for itself when ``ceiling`` lists it,
+        or else through the narrowest ``ceiling`` scope implying it.
+        A chosen scope another chosen one implies is left out, since the broader one already covers it,
+        and so is one a required scope implies.
+        The chosen scopes keep the order of ``ceiling``.
         """
         ceiling_scopes = list(dict.fromkeys(ceiling))
-        declared_scopes = set(self.declared_scopes(operations))
-        needed_scopes = {
-            self._covering_ceiling_scope(scope, ceiling_scopes) for scope in self.requested_scopes(opened_operations)
-        }
-        return [
+        required_held_scopes = self.held_scopes(required_scopes)
+        chosen_scopes = [
             scope
-            for scope in ceiling_scopes
-            if scope in needed_scopes or declared_scopes.isdisjoint(self.held_scopes([scope]))
+            for operation in opened_operations
+            for scope in self._cheapest_covering(operation, ceiling_scopes, required_held_scopes)
         ]
+        needed_scopes = {
+            scope for scope in self._without_implied_scopes(chosen_scopes) if scope not in required_held_scopes
+        }
+        return list(dict.fromkeys([*required_scopes, *(scope for scope in ceiling_scopes if scope in needed_scopes)]))
+
+    def warn_on_missing_oauth_scheme(self, server_name: str) -> None:
+        """Warn that enforcing the upstream grant restricts nothing, when the spec declares no OAuth scheme."""
+        if not self.oauth_schemes:
+            logger.warning(
+                'Server "%s": auth.upstream.enforce_scopes is on, but the spec declares no OAuth security scheme, '
+                'so no operation is restricted by the upstream grant.',
+                server_name,
+            )
+
+    def drop_unreachable_operations(
+        self,
+        operations: collections.abc.Sequence[OperationInfo],
+        ceiling: collections.abc.Sequence[str],
+        required_scopes: collections.abc.Sequence[str],
+        server_name: str,
+    ) -> list[OperationInfo]:
+        """Return ``operations`` less those no sign-in can open, warning about the ones left out.
+
+        A sign-in asks for at most ``required_scopes`` and ``ceiling``,
+        so an operation their scopes cannot meet is refused at every call.
+        It is left out with a warning rather than refused at startup, since the spec may declare it wrongly.
+        """
+        held = self.held_scopes([*required_scopes, *ceiling])
+        unmet = {
+            operation.operation_id: requirement.missing(held)
+            for operation in operations
+            if (requirement := self._scope_sets_of(operation)) and not requirement.is_met(held)
+        }
+        if unmet:
+            described = [_describe_unmet(operation_id, missing) for operation_id, missing in unmet.items()]
+            logger.warning(
+                'Server "%s": no sign-in can open %d operation(s) within auth.upstream.scopes '
+                'and auth.upstream.required_scopes, so they are not exposed (%s). '
+                'Add the scopes to auth.upstream.scopes, or correct an operation under operations.<id>.security.',
+                server_name,
+                len(described),
+                _shorten(described),
+            )
+        return [operation for operation in operations if operation.operation_id not in unmet]
+
+    def warn_on_unasked_ceiling_scopes(
+        self,
+        operations: collections.abc.Iterable[OperationInfo],
+        ceiling: collections.abc.Sequence[str],
+        server_name: str,
+    ) -> None:
+        """Warn about the ``ceiling`` scopes no sign-in asks for, since no operation declares what they cover.
+
+        A scope a sign-in needs whatever it opens, such as one for a refresh token, belongs in ``required_scopes``.
+        """
+        declared_scopes = set(self.declared_scopes(operations))
+        unasked_scopes = [scope for scope in ceiling if declared_scopes.isdisjoint(self.held_scopes([scope]))]
+        if unasked_scopes:
+            logger.warning(
+                'Server "%s": no operation declares what auth.upstream.scopes %s cover, so no sign-in asks for them. '
+                'Move a scope every sign-in needs to auth.upstream.required_scopes, '
+                'or declare it under operations.<id>.security.',
+                server_name,
+                ' '.join(unasked_scopes),
+            )
+
+    def warn_on_empty_sign_in(
+        self,
+        operations: collections.abc.Iterable[OperationInfo],
+        ceiling: collections.abc.Sequence[str],
+        required_scopes: collections.abc.Sequence[str],
+        mcp_policy: McpScopePolicy,
+        server_name: str,
+    ) -> None:
+        """Warn when a sign-in granted no MCP scope asks the upstream for no scope at all.
+
+        A wider MCP grant opens more operations, so it asks for at least as much,
+        and the sign-in granted none is the only one to check.
+        Its authorize request then carries no ``scope``, which some upstreams accept and others refuse.
+        """
+        opened_operations = [
+            operation for operation in operations if mcp_policy.requirement_for(operation).is_met(frozenset())
+        ]
+        if not self.sign_in_scopes(ceiling, required_scopes, opened_operations):
+            logger.warning(
+                'Server "%s": a sign-in whose MCP scopes open only operations declaring no upstream scope '
+                'asks the upstream for none, so its authorize request carries no scope parameter. '
+                'An upstream that requires one refuses that sign-in. '
+                'List the scopes every sign-in needs in auth.upstream.required_scopes, '
+                'or declare what the operations need under operations.<id>.security.',
+                server_name,
+            )
 
     def warn_on_unrequested_scopes(
         self,
@@ -320,11 +405,51 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
                 _shorten(described),
             )
 
+    def _cheapest_covering(
+        self,
+        operation: OperationInfo,
+        ceiling_scopes: collections.abc.Sequence[str],
+        required_held_scopes: collections.abc.Set[str],
+    ) -> list[str]:
+        """The ``ceiling_scopes`` that meet the security requirement of ``operation`` asking least of a sign-in.
+
+        Empty when ``operation`` needs no scope, when ``required_held_scopes`` already meet a requirement,
+        or when no requirement can be met within ``ceiling_scopes``.
+        """
+        requirement = self._scope_sets_of(operation)
+        if requirement is None:
+            return []
+        coverings: list[list[str]] = []
+        for scope_set in requirement.scope_sets:
+            covering = [
+                self._covering_ceiling_scope(scope, ceiling_scopes)
+                for scope in sorted(scope_set - required_held_scopes)
+            ]
+            if None not in covering:
+                coverings.append([scope for scope in covering if scope is not None])
+        return min(coverings, key=lambda covering: len(self.held_scopes(covering) - required_held_scopes), default=[])
+
     def _covering_ceiling_scope(self, scope: str, ceiling_scopes: collections.abc.Sequence[str]) -> str | None:
-        """The ``ceiling_scopes`` scope that asks for ``scope``, itself or one implying it, or ``None`` for neither."""
+        """The ``ceiling_scopes`` scope that asks for ``scope``, or ``None`` when none does.
+
+        That is ``scope`` itself when listed, or else the listed scope implying it that implies the fewest scopes,
+        the first listed among equals.
+        """
         if scope in ceiling_scopes:
             return scope
-        return next((broader for broader in ceiling_scopes if scope in self.held_scopes([broader])), None)
+        broader_scopes = [broader for broader in ceiling_scopes if scope in self.held_scopes([broader])]
+        return min(broader_scopes, key=lambda broader: len(self.held_scopes([broader])), default=None)
+
+    def _without_implied_scopes(self, scopes: collections.abc.Iterable[str]) -> list[str]:
+        """``scopes`` in order without repeats, less each one the others imply, since a broader one covers it.
+
+        Scopes that imply each other are left out one at a time, so one of them always stays.
+        """
+        kept_scopes = list(dict.fromkeys(scopes))
+        for scope in list(kept_scopes):
+            if scope in self.held_scopes(other for other in kept_scopes if other != scope):
+                kept_scopes.remove(scope)
+        return kept_scopes
 
     def _scope_sets_of(self, operation: OperationInfo) -> AnyScopeSetRequirement | None:
         """The scope sets ``operation`` requires, or ``None`` when it needs no upstream scope."""
@@ -352,17 +477,13 @@ def build_mcp_scope_policy(
 
 
 def build_upstream_scope_policy(
-    enforce_scopes: bool, spec_security: UpstreamSpecSecurityScopePolicy, server_name: str
+    enforce_scopes: bool, spec_security: UpstreamSpecSecurityScopePolicy
 ) -> UpstreamScopePolicy:
-    """Return the upstream scope policy for a server, which restricts nothing unless ``enforce_scopes`` is on."""
-    if not enforce_scopes:
-        return UpstreamUnrestrictedScopePolicy()
-    if not spec_security.oauth_schemes:
-        logger.warning(
-            'Server "%s": auth.upstream.enforce_scopes is on, but the spec declares no OAuth security scheme, '
-            'so no operation is restricted by the upstream grant.',
-            server_name,
-        )
+    """Return the upstream scope policy for a server, which restricts nothing unless ``enforce_scopes`` is on.
+
+    A spec declaring no OAuth scheme restricts nothing either, as ``warn_on_missing_oauth_scheme`` tells the operator.
+    """
+    if not enforce_scopes or not spec_security.oauth_schemes:
         return UpstreamUnrestrictedScopePolicy()
     return spec_security
 

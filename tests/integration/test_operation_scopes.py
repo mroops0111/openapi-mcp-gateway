@@ -374,7 +374,7 @@ class TestUpstreamGrant:
         assert upstream_requests == []
 
     async def test_missing_mcp_scopes_are_challenged_first(self, make_enforcing_gateway):
-        """A client can step up for the MCP scopes and not for the upstream grant, so it hears about them first."""
+        """A client steps up for the MCP scopes, so it hears about them before the upstream grant."""
         async with _connect(make_enforcing_gateway(), STEPPER, MODERN, 'read:pets') as session:
             with pytest.raises(MCPError):
                 await session.client.call_tool('delete_pet', {'petId': '1'})
@@ -387,19 +387,29 @@ class TestUpstreamGrant:
         async with _connect(make_enforcing_gateway(), STEPPER, MODERN, 'write:pets') as session:
             assert 'delete_pet' in await _tool_names(session)
 
+    @pytest.mark.parametrize('mode', [MODERN, LEGACY])
+    async def test_a_tool_no_sign_in_can_open_is_not_exposed(self, make_enforcing_gateway, caplog, mode):
+        """No sign-in within ``read:pets`` opens ``create_pet`` or ``delete_pet``, so a step-up would stall."""
+        with caplog.at_level(logging.WARNING):
+            gateway = make_enforcing_gateway(scopes=['read:pets'])
+        assert 'no sign-in can open 2 operation(s)' in caplog.text
+        async with _connect(gateway, STEPPER, mode, 'read:pets') as session:
+            names = await _tool_names(session)
+        assert 'list_pets' in names
+        assert not {'create_pet', 'delete_pet'} & set(names)
+
     def test_startup_warns_about_operations_the_requested_scopes_cannot_open(self, make_gateway, secured_spec, caplog):
-        """The check runs without ``enforce_scopes`` as well, since the upstream refuses the call anyway."""
+        """Without ``enforce_scopes`` the gateway does not check the grant, so the call may still succeed."""
         with caplog.at_level(logging.WARNING):
             make_gateway(spec=secured_spec, upstream={'scopes': ['read:pets']})
         assert '"deleter" can reach 1 operation(s) the requested upstream scopes cannot open' in caplog.text
         assert '"reader"' not in caplog.text
 
-    def test_enforcing_a_flow_without_a_user_grant_is_refused(self, client_credentials_spec_path):
-        auth = {
-            'upstream': {'type': 'oauth2', 'client_id': 'gateway', 'client_secret': 'secret', 'enforce_scopes': True}
-        }
+    @pytest.mark.parametrize(('key', 'value'), [('enforce_scopes', True), ('required_scopes', ['offline_access'])])
+    def test_a_flow_without_a_user_grant_refuses_the_sign_in_settings(self, client_credentials_spec_path, key, value):
+        auth = {'upstream': {'type': 'oauth2', 'client_id': 'gateway', 'client_secret': 'secret', key: value}}
         server = {'name': 'svc', 'spec': str(client_credentials_spec_path), 'auth': auth}
-        with pytest.raises(ValueError, match=r'enforce_scopes needs auth\.upstream\.flow authorization_code'):
+        with pytest.raises(ValueError, match=rf'auth\.upstream\.{key} needs auth\.upstream\.flow authorization_code'):
             Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
 
 
@@ -418,10 +428,11 @@ class TestUpstreamDownscoping:
         browser = await _sign_in_with_the_sdk(lambda url: make_enforcing_gateway(url=url, scopes=ceiling), client_id)
         assert [query_value(url, 'scope') for url in browser.upstream_sign_ins] == [requested]
 
-    async def test_a_scope_no_operation_declares_is_asked_for_at_every_sign_in(self, make_enforcing_gateway):
-        scopes = ['read:pets', 'write:pets', 'offline_access']
-        browser = await _sign_in_with_the_sdk(lambda url: make_enforcing_gateway(url=url, scopes=scopes), READER)
-        assert query_value(browser.upstream_sign_ins[0], 'scope') == 'read:pets offline_access'
+    async def test_a_required_scope_is_asked_for_at_every_sign_in(self, make_enforcing_gateway):
+        browser = await _sign_in_with_the_sdk(
+            lambda url: make_enforcing_gateway(url=url, required_scopes=['offline_access']), READER
+        )
+        assert query_value(browser.upstream_sign_ins[0], 'scope') == 'offline_access read:pets'
 
     async def test_without_enforce_scopes_every_sign_in_asks_for_the_whole_list(self, make_gateway, secured_spec):
         upstream = {'scopes': ['read:pets', 'write:pets']}

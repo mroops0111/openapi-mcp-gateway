@@ -124,10 +124,11 @@ servers:
         # client_id, client_secret, scopes and the rest below are for oauth2 only
         client_id: ${SOME_ID}
         scopes: [...] # the most it asks for; with enforce_scopes and none listed, what the operations' security declares
+        # required_scopes: [offline_access], for authorization_code, asked for at every sign-in
         audience: https://the-api.example.com # when the API and its AS differ
         # enforce_scopes: true, for authorization_code, an operation also needs the upstream scopes
         #   its OpenAPI security declares, checked against what the upstream granted the user,
-        #   and each sign-in asks only for what its MCP scopes need, plus listed scopes no operation declares
+        #   and each sign-in asks only for what its MCP scopes need, plus required_scopes
         # scope_implies: {repo: [public_repo]}, an upstream scope covering narrower ones
       mcp: # who may call this MCP endpoint; leave it out to keep the endpoint open
         # issuer: for token_exchange, the authorization server that mints tokens for this endpoint
