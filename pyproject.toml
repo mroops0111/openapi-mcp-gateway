@@ -21,17 +21,17 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastapi>=0.162.0",
+    "fastapi>=0.165.0",
     "uvicorn[standard]>=0.54.0",
     "mcp>=2.0.0",
-    "pydantic>=2.14.2",
-    "pydantic-settings>=2.16.2",
+    "pydantic>=2.14.4",
+    "pydantic-settings>=2.16.3",
     "httpx>=0.28.1",
     "pyyaml>=6.0.3",
     "inflection>=0.5.1",
-    "click>=8.4.0",
+    "click>=8.5.1",
     "jsonschema>=4.26.0",
-    "jsonata-python>=0.7.0",
+    "jsonata-python>=0.7.2",
     "snowballstemmer>=3.1.1",
 ]
 
@@ -44,11 +44,11 @@ embeddings = ["pydantic-ai-slim[openai]>=2.69.0"]
 eval = ["openapi-mcp-gateway-eval==0.8.0"]
 dev = [
     "pytest>=9.2.0",
-    "pytest-asyncio>=1.4.1.post1",
+    "pytest-asyncio>=1.5.0",
     "fakeredis>=2.35.0",
     "httpx>=0.28.1",
     "basedpyright>=1.39.0",
-    "ruff>=0.17.3",
+    "ruff>=0.17.6",
     "pyjwt[crypto]>=2.15.1",
     "pytest-cov>=7.1.0",
 ]
