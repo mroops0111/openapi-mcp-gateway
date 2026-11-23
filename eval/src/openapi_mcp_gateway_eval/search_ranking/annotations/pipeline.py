@@ -8,12 +8,12 @@ from ...provenance import write_provenance
 from ..dataset import PROMPTS_DIRECTORY, Manifest
 from ..runner import corpus_server
 from .annotators import (
-    Adjudicator,
+    AdjudicatingAnnotator,
     AnnotatorRun,
-    IndependentAssessor,
-    QueryAuthor,
-    Refiner,
-    Reviser,
+    AuthoringAnnotator,
+    FollowUpAnnotator,
+    IndependentAssessingAnnotator,
+    RevisingAnnotator,
     SpecOperations,
     UnjudgedQuery,
 )
@@ -41,7 +41,7 @@ class AnnotationPipeline:
 
     Each spec runs its annotators in turn, since each reads what the one before it wrote.
     The query author writes the queries and the independent assessor judges them without the author's answers.
-    Then each refiner revisits the annotations it has a request for.
+    Then each follow-up annotator revisits the annotations it has a request for.
     The adjudicator settles any query the two share no answer for,
     and the reviser, the author's model, rewords any paraphrase or indirect query that repeats its answer.
     Specs run side by side, and nothing is written until every spec has finished,
@@ -60,12 +60,12 @@ class AnnotationPipeline:
         prompts_directory = root / PROMPTS_DIRECTORY
         self._manifest = manifest
         self._root = root
-        self._author = QueryAuthor(author_model, prompts_directory)
-        self._assessor = IndependentAssessor(assessor_model, prompts_directory)
+        self._author = AuthoringAnnotator(author_model, prompts_directory)
+        self._assessor = IndependentAssessingAnnotator(assessor_model, prompts_directory)
         # In the order they run, since the reviser reads the judgements the adjudicator settles.
-        self._refiners: list[Refiner[typing.Any, typing.Any]] = [
-            Adjudicator(adjudicator_model, prompts_directory),
-            Reviser(author_model, prompts_directory),
+        self._follow_up_annotators: list[FollowUpAnnotator[typing.Any, typing.Any]] = [
+            AdjudicatingAnnotator(adjudicator_model, prompts_directory),
+            RevisingAnnotator(author_model, prompts_directory),
         ]
 
     async def run(self, work_directory: pathlib.Path, specs: typing.Sequence[str] = ()) -> list[SpecAnnotation]:
@@ -94,10 +94,10 @@ class AnnotationPipeline:
         operations = await self._spec_operations(spec)
         (work_directory / OPERATIONS_FILE).write_text(operations.operation_list(), encoding='utf-8')
         annotations, runs = await self._annotate_queries(operations, work_directory)
-        for refiner in self._refiners:
-            annotations, refiner_run = await refiner.refine(operations, annotations, work_directory)
-            if refiner_run is not None:
-                runs.append(refiner_run)
+        for follow_up_annotator in self._follow_up_annotators:
+            annotations, follow_up_run = await follow_up_annotator.follow_up(operations, annotations, work_directory)
+            if follow_up_run is not None:
+                runs.append(follow_up_run)
         return SpecAnnotation(spec=spec, annotations=annotations, runs=runs)
 
     async def _spec_operations(self, spec: str) -> SpecOperations:

@@ -563,10 +563,10 @@ def _copy_annotation_templates(benchmark_directory: pathlib.Path) -> None:
     target = benchmark_directory / dataset.PROMPTS_DIRECTORY
     target.mkdir(exist_ok=True)
     for annotator in (
-        annotators.QueryAuthor,
-        annotators.IndependentAssessor,
-        annotators.Adjudicator,
-        annotators.Reviser,
+        annotators.AuthoringAnnotator,
+        annotators.IndependentAssessingAnnotator,
+        annotators.AdjudicatingAnnotator,
+        annotators.RevisingAnnotator,
     ):
         template = annotator.template
         shutil.copy(templates / template, target / template)

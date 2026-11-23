@@ -233,39 +233,41 @@ class Annotator(abc.ABC, typing.Generic[RequestT, AnswerT]):
         return answer
 
 
-class Refiner(Annotator[IdentifiedRequestT, IdentifiedAnswerT]):
+class FollowUpAnnotator(Annotator[IdentifiedRequestT, IdentifiedAnswerT]):
     """An annotator that revisits only the annotations it has a request for, and changes each by its answer.
 
-    A role that refines the annotations further is a new subclass, which the pipeline runs after the others.
+    A role that follows up on the annotations further is a new subclass, which the pipeline runs after the others.
     """
 
-    async def refine(
+    async def follow_up(
         self, operations: SpecOperations, annotations: typing.Sequence[Annotation], work_directory: pathlib.Path
     ) -> tuple[list[Annotation], AnnotatorRun | None]:
         """``annotations`` with this role's changes, and its run, or no run when it has nothing to ask."""
         requests = [
-            request for annotation in annotations if (request := self.request(operations, annotation)) is not None
+            request
+            for annotation in annotations
+            if (request := self.follow_up_request(operations, annotation)) is not None
         ]
         if not requests:
             return list(annotations), None
         answer, run = await self.annotate(operations, requests, work_directory)
         answer_by_id = {item.id: item for item in answer}
-        refined = [
-            self.apply(annotation, answer_by_id[annotation.id]) if annotation.id in answer_by_id else annotation
+        followed_up = [
+            self.apply_answer(annotation, answer_by_id[annotation.id]) if annotation.id in answer_by_id else annotation
             for annotation in annotations
         ]
-        return refined, run
+        return followed_up, run
 
     @abc.abstractmethod
-    def request(self, operations: SpecOperations, annotation: Annotation) -> IdentifiedRequestT | None:
+    def follow_up_request(self, operations: SpecOperations, annotation: Annotation) -> IdentifiedRequestT | None:
         """What this role is asked about ``annotation``, or ``None`` when it leaves it as it is."""
 
     @abc.abstractmethod
-    def apply(self, annotation: Annotation, answer: IdentifiedAnswerT) -> Annotation:
+    def apply_answer(self, annotation: Annotation, answer: IdentifiedAnswerT) -> Annotation:
         """``annotation`` changed by this role's ``answer`` for it."""
 
 
-class QueryAuthor(Annotator[pydantic.BaseModel, AuthoredQuery]):
+class AuthoringAnnotator(Annotator[pydantic.BaseModel, AuthoredQuery]):
     """Writes the queries of every style from the operation list alone, with its own judgements."""
 
     role = 'query author'
@@ -295,7 +297,7 @@ class QueryAuthor(Annotator[pydantic.BaseModel, AuthoredQuery]):
         return problems
 
 
-class IndependentAssessor(Annotator[UnjudgedQuery, AssessedQuery]):
+class IndependentAssessingAnnotator(Annotator[UnjudgedQuery, AssessedQuery]):
     """Judges every query on its own, never seeing the author's answers."""
 
     role = 'independent assessor'
@@ -308,14 +310,14 @@ class IndependentAssessor(Annotator[UnjudgedQuery, AssessedQuery]):
         return judged_query_problems(dependencies, answer)
 
 
-class Adjudicator(Refiner[DisputedQuery, AdjudicatedQuery]):
+class AdjudicatingAnnotator(FollowUpAnnotator[DisputedQuery, AdjudicatedQuery]):
     """Settles each query whose two annotators share no answer, having read both."""
 
     role = 'adjudicator'
     template = 'adjudicator.txt'
     answer_type = AdjudicatedQuery
 
-    def request(self, operations: SpecOperations, annotation: Annotation) -> DisputedQuery | None:
+    def follow_up_request(self, operations: SpecOperations, annotation: Annotation) -> DisputedQuery | None:
         if annotation.has_shared_answer:
             return None
         return DisputedQuery(
@@ -325,7 +327,7 @@ class Adjudicator(Refiner[DisputedQuery, AdjudicatedQuery]):
             independent_assessor=annotation.annotator_b,
         )
 
-    def apply(self, annotation: Annotation, answer: AdjudicatedQuery) -> Annotation:
+    def apply_answer(self, annotation: Annotation, answer: AdjudicatedQuery) -> Annotation:
         adjudication = Adjudication(relevant=answer.relevant, note=answer.note)
         return annotation.model_copy(update={'adjudication': adjudication})
 
@@ -335,21 +337,21 @@ class Adjudicator(Refiner[DisputedQuery, AdjudicatedQuery]):
         return judged_query_problems(dependencies, answer)
 
 
-class Reviser(Refiner[FlaggedQuery, RevisedQuery]):
+class RevisingAnnotator(FollowUpAnnotator[FlaggedQuery, RevisedQuery]):
     """Rewords each paraphrase or indirect query that repeats its answer, until the style check passes it."""
 
     role = 'reviser'
     template = 'reviser.txt'
     answer_type = RevisedQuery
 
-    def request(self, operations: SpecOperations, annotation: Annotation) -> FlaggedQuery | None:
+    def follow_up_request(self, operations: SpecOperations, annotation: Annotation) -> FlaggedQuery | None:
         answers = sorted(answers_in(annotation.judgements()))
         overlap = best_term_overlap(annotation.text, answers, operations.summaries)
         if not contradicts_style(annotation.style, overlap):
             return None
         return FlaggedQuery(id=annotation.id, text=annotation.text, style=annotation.style, answers=answers)
 
-    def apply(self, annotation: Annotation, answer: RevisedQuery) -> Annotation:
+    def apply_answer(self, annotation: Annotation, answer: RevisedQuery) -> Annotation:
         return annotation.model_copy(update={'text': answer.text})
 
     def problems(
