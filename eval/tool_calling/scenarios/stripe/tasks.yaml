@@ -1,0 +1,655 @@
+- id: stripe-t01
+  prompt: >-
+    Please cancel the subscription for our customer with the email jane.ortiz@example.com, she asked to stop her plan right away.
+  split: dev
+  expected_calls:
+    # Stripe cancels a subscription by its own endpoint or by the customer's.
+    - any_of:
+        - server: stripe
+          method: DELETE
+          path: /v1/subscriptions/{subscription_exposed_id}
+          path_parameters: {subscription_exposed_id: sub_1JaneOrtiz}
+        - server: stripe
+          method: DELETE
+          path: /v1/customers/{customer}/subscriptions/{subscription_exposed_id}
+          path_parameters: {customer: cus_JaneOrtiz01, subscription_exposed_id: sub_1JaneOrtiz}
+  solution:
+    - server: stripe
+      operation: delete_subscriptions_subscription_exposed_id
+      arguments: {subscription_exposed_id: sub_1JaneOrtiz}
+  upstream_responses:
+    # The customer, by listing, by email, by search, or by id.
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      body:
+        object: list
+        url: /v1/customers
+        has_more: false
+        data:
+          - &jane_ortiz {id: cus_JaneOrtiz01, object: customer, email: jane.ortiz@example.com, name: Jane Ortiz}
+          - &jane_orton {id: cus_JaneOrton02, object: customer, email: jane.orton@example.com, name: Jane Orton}
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      query: {email: jane.ortiz@example.com}
+      body: {object: list, url: /v1/customers, has_more: false, data: [*jane_ortiz]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/search
+      body: {object: search_result, url: /v1/customers/search, has_more: false, data: [*jane_ortiz]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_JaneOrtiz01
+      body: *jane_ortiz
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_JaneOrton02
+      body: *jane_orton
+    # The subscriptions, listed for everyone or one customer, searched, or by id.
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions
+      body:
+        object: list
+        url: /v1/subscriptions
+        has_more: false
+        data:
+          - &sub_jane_ortiz {id: sub_1JaneOrtiz, object: subscription, customer: cus_JaneOrtiz01, status: active}
+          - &sub_jane_orton {id: sub_1JaneOrton, object: subscription, customer: cus_JaneOrton02, status: active}
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions
+      query: {customer: cus_JaneOrtiz01}
+      body: &jane_ortiz_subscriptions
+        {object: list, url: /v1/subscriptions, has_more: false, data: [*sub_jane_ortiz]}
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions
+      query: {customer: cus_JaneOrton02}
+      body: &jane_orton_subscriptions
+        {object: list, url: /v1/subscriptions, has_more: false, data: [*sub_jane_orton]}
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions/search
+      body: {object: search_result, url: /v1/subscriptions/search, has_more: false, data: [*sub_jane_ortiz]}
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions/sub_1JaneOrtiz
+      body: *sub_jane_ortiz
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions/sub_1JaneOrton
+      body: *sub_jane_orton
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_JaneOrtiz01/subscriptions
+      body: *jane_ortiz_subscriptions
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_JaneOrton02/subscriptions
+      body: *jane_orton_subscriptions
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_JaneOrtiz01/subscriptions/sub_1JaneOrtiz
+      body: *sub_jane_ortiz
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_JaneOrton02/subscriptions/sub_1JaneOrton
+      body: *sub_jane_orton
+
+- id: stripe-t02
+  prompt: >-
+    The open invoice we sent to Kitchen Supply Co (orders@kitchensupply.co) should never have gone out, the order was cancelled. Void it.
+  split: dev
+  expected_calls:
+    - server: stripe
+      method: POST
+      path: /v1/invoices/{invoice}/void
+      path_parameters: {invoice: in_1KitchenSupply4471}
+  solution:
+    - server: stripe
+      operation: post_invoices_invoice_void
+      arguments: {invoice: in_1KitchenSupply4471}
+  upstream_responses:
+    # The customer, by listing, by email, by search, or by id.
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      body:
+        object: list
+        url: /v1/customers
+        has_more: false
+        data:
+          - &kitchen_supply {id: cus_KitchenSupply, object: customer, email: orders@kitchensupply.co, name: Kitchen Supply Co}
+          - &kitchen_works {id: cus_KitchenWorks, object: customer, email: orders@kitchenworks.co, name: Kitchen Works}
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      query: {email: orders@kitchensupply.co}
+      body: {object: list, url: /v1/customers, has_more: false, data: [*kitchen_supply]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/search
+      body: {object: search_result, url: /v1/customers/search, has_more: false, data: [*kitchen_supply]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_KitchenSupply
+      body: *kitchen_supply
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_KitchenWorks
+      body: *kitchen_works
+    # The invoices, listed for everyone, one customer, or one status, searched, or by id.
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      body:
+        object: list
+        url: /v1/invoices
+        has_more: false
+        data:
+          - &kitchen_supply_open
+            {id: in_1KitchenSupply4471, object: invoice, customer: cus_KitchenSupply, customer_email: orders@kitchensupply.co, customer_name: Kitchen Supply Co, status: open, amount_due: 21000, currency: usd}
+          - &kitchen_supply_paid
+            {id: in_1KitchenSupply4402, object: invoice, customer: cus_KitchenSupply, customer_email: orders@kitchensupply.co, customer_name: Kitchen Supply Co, status: paid, amount_due: 18000, currency: usd}
+          - &kitchen_works_open
+            {id: in_1KitchenWorks0090, object: invoice, customer: cus_KitchenWorks, customer_email: orders@kitchenworks.co, customer_name: Kitchen Works, status: open, amount_due: 9900, currency: usd}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {customer: cus_KitchenSupply}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*kitchen_supply_open, *kitchen_supply_paid]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {customer: cus_KitchenWorks}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*kitchen_works_open]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {status: open}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*kitchen_supply_open, *kitchen_works_open]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {customer: cus_KitchenSupply, status: open}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*kitchen_supply_open]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices/search
+      body: {object: search_result, url: /v1/invoices/search, has_more: false, data: [*kitchen_supply_open, *kitchen_supply_paid]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices/in_1KitchenSupply4471
+      body: *kitchen_supply_open
+    - server: stripe
+      method: GET
+      path: /v1/invoices/in_1KitchenSupply4402
+      body: *kitchen_supply_paid
+    - server: stripe
+      method: GET
+      path: /v1/invoices/in_1KitchenWorks0090
+      body: *kitchen_works_open
+
+- id: stripe-t03
+  prompt: >-
+    Marco Bellini (marco@bellini-design.com) says he never got his open invoice. Can you email it to him again?
+  split: test
+  expected_calls:
+    - server: stripe
+      method: POST
+      path: /v1/invoices/{invoice}/send
+      path_parameters: {invoice: in_1MarcoOpen}
+  solution:
+    - server: stripe
+      operation: post_invoices_invoice_send
+      arguments: {invoice: in_1MarcoOpen}
+  upstream_responses:
+    # The customer, by listing, by email, by search, or by id.
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      body:
+        object: list
+        url: /v1/customers
+        has_more: false
+        data:
+          - &marco_bellini {id: cus_MarcoB, object: customer, email: marco@bellini-design.com, name: Marco Bellini}
+          - &marco_rossi {id: cus_MarcoR, object: customer, email: marco@rossi-studio.com, name: Marco Rossi}
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      query: {email: marco@bellini-design.com}
+      body: {object: list, url: /v1/customers, has_more: false, data: [*marco_bellini]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/search
+      body: {object: search_result, url: /v1/customers/search, has_more: false, data: [*marco_bellini]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_MarcoB
+      body: *marco_bellini
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_MarcoR
+      body: *marco_rossi
+    # The invoices, listed for everyone, one customer, or one status, searched, or by id.
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      body:
+        object: list
+        url: /v1/invoices
+        has_more: false
+        data:
+          - &marco_paid
+            {id: in_1MarcoPaid, object: invoice, customer: cus_MarcoB, customer_email: marco@bellini-design.com, customer_name: Marco Bellini, status: paid, amount_due: 12000, currency: usd}
+          - &marco_open
+            {id: in_1MarcoOpen, object: invoice, customer: cus_MarcoB, customer_email: marco@bellini-design.com, customer_name: Marco Bellini, status: open, amount_due: 8500, currency: usd}
+          - &rossi_open
+            {id: in_1RossiOpen, object: invoice, customer: cus_MarcoR, customer_email: marco@rossi-studio.com, customer_name: Marco Rossi, status: open, amount_due: 4300, currency: usd}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {customer: cus_MarcoB}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*marco_paid, *marco_open]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {customer: cus_MarcoR}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*rossi_open]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {status: open}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*marco_open, *rossi_open]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {customer: cus_MarcoB, status: open}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*marco_open]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices/search
+      body: {object: search_result, url: /v1/invoices/search, has_more: false, data: [*marco_paid, *marco_open]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices/in_1MarcoPaid
+      body: *marco_paid
+    - server: stripe
+      method: GET
+      path: /v1/invoices/in_1MarcoOpen
+      body: *marco_open
+    - server: stripe
+      method: GET
+      path: /v1/invoices/in_1RossiOpen
+      body: *rossi_open
+
+- id: stripe-t04
+  prompt: >-
+    Priya Shah (priya.shah@example.org) returned her order. Refund her most recent payment in full.
+  split: test
+  expected_calls:
+    # Stripe refunds a charge by either of its own endpoints,
+    # or by creating a refund for the charge or its payment intent.
+    - any_of:
+        - server: stripe
+          method: POST
+          path: /v1/charges/{charge}/refund
+          path_parameters: {charge: ch_PriyaRecent}
+        - server: stripe
+          method: POST
+          path: /v1/charges/{charge}/refunds
+          path_parameters: {charge: ch_PriyaRecent}
+        - server: stripe
+          method: POST
+          path: /v1/refunds
+          body: {charge: ch_PriyaRecent}
+        - server: stripe
+          method: POST
+          path: /v1/refunds
+          body: {payment_intent: pi_PriyaRecent}
+  solution:
+    - server: stripe
+      operation: post_charges_charge_refund
+      arguments: {charge: ch_PriyaRecent}
+  upstream_responses:
+    # The customer, by listing, by email, by search, or by id.
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      body:
+        object: list
+        url: /v1/customers
+        has_more: false
+        data:
+          - &priya_shah {id: cus_PriyaShah, object: customer, email: priya.shah@example.org, name: Priya Shah}
+          - &priya_shahnaz {id: cus_PriyaShahnaz, object: customer, email: priya.shahnaz@example.org, name: Priya Shahnaz}
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      query: {email: priya.shah@example.org}
+      body: {object: list, url: /v1/customers, has_more: false, data: [*priya_shah]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/search
+      body: {object: search_result, url: /v1/customers/search, has_more: false, data: [*priya_shah]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_PriyaShah
+      body: *priya_shah
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_PriyaShahnaz
+      body: *priya_shahnaz
+    # The charges, listed for everyone or one customer, searched, or by id.
+    - server: stripe
+      method: GET
+      path: /v1/charges
+      body:
+        object: list
+        url: /v1/charges
+        has_more: false
+        data:
+          - &ch_priya_recent
+            {id: ch_PriyaRecent, object: charge, customer: cus_PriyaShah, payment_intent: pi_PriyaRecent, amount: 6400, amount_refunded: 0, currency: usd, created: 1762900000, paid: true, refunded: false, status: succeeded}
+          - &ch_priya_older
+            {id: ch_PriyaOlder, object: charge, customer: cus_PriyaShah, payment_intent: pi_PriyaOlder, amount: 2900, amount_refunded: 0, currency: usd, created: 1757000000, paid: true, refunded: false, status: succeeded}
+          - &ch_shahnaz_recent
+            {id: ch_ShahnazRecent, object: charge, customer: cus_PriyaShahnaz, payment_intent: pi_ShahnazRecent, amount: 5100, amount_refunded: 0, currency: usd, created: 1763000000, paid: true, refunded: false, status: succeeded}
+    - server: stripe
+      method: GET
+      path: /v1/charges
+      query: {customer: cus_PriyaShah}
+      body: {object: list, url: /v1/charges, has_more: false, data: [*ch_priya_recent, *ch_priya_older]}
+    - server: stripe
+      method: GET
+      path: /v1/charges
+      query: {customer: cus_PriyaShahnaz}
+      body: {object: list, url: /v1/charges, has_more: false, data: [*ch_shahnaz_recent]}
+    - server: stripe
+      method: GET
+      path: /v1/charges/search
+      body: {object: search_result, url: /v1/charges/search, has_more: false, data: [*ch_priya_recent, *ch_priya_older]}
+    - server: stripe
+      method: GET
+      path: /v1/charges/ch_PriyaRecent
+      body: *ch_priya_recent
+    - server: stripe
+      method: GET
+      path: /v1/charges/ch_PriyaOlder
+      body: *ch_priya_older
+    - server: stripe
+      method: GET
+      path: /v1/charges/ch_ShahnazRecent
+      body: *ch_shahnaz_recent
+    # The same payments as payment intents, each naming its charge.
+    - server: stripe
+      method: GET
+      path: /v1/payment_intents
+      body:
+        object: list
+        url: /v1/payment_intents
+        has_more: false
+        data:
+          - &pi_priya_recent
+            {id: pi_PriyaRecent, object: payment_intent, customer: cus_PriyaShah, latest_charge: ch_PriyaRecent, amount: 6400, amount_received: 6400, currency: usd, created: 1762900000, status: succeeded}
+          - &pi_priya_older
+            {id: pi_PriyaOlder, object: payment_intent, customer: cus_PriyaShah, latest_charge: ch_PriyaOlder, amount: 2900, amount_received: 2900, currency: usd, created: 1757000000, status: succeeded}
+          - &pi_shahnaz_recent
+            {id: pi_ShahnazRecent, object: payment_intent, customer: cus_PriyaShahnaz, latest_charge: ch_ShahnazRecent, amount: 5100, amount_received: 5100, currency: usd, created: 1763000000, status: succeeded}
+    - server: stripe
+      method: GET
+      path: /v1/payment_intents
+      query: {customer: cus_PriyaShah}
+      body: {object: list, url: /v1/payment_intents, has_more: false, data: [*pi_priya_recent, *pi_priya_older]}
+    - server: stripe
+      method: GET
+      path: /v1/payment_intents
+      query: {customer: cus_PriyaShahnaz}
+      body: {object: list, url: /v1/payment_intents, has_more: false, data: [*pi_shahnaz_recent]}
+    - server: stripe
+      method: GET
+      path: /v1/payment_intents/search
+      body: {object: search_result, url: /v1/payment_intents/search, has_more: false, data: [*pi_priya_recent, *pi_priya_older]}
+    - server: stripe
+      method: GET
+      path: /v1/payment_intents/pi_PriyaRecent
+      body: *pi_priya_recent
+    - server: stripe
+      method: GET
+      path: /v1/payment_intents/pi_PriyaOlder
+      body: *pi_priya_older
+    - server: stripe
+      method: GET
+      path: /v1/payment_intents/pi_ShahnazRecent
+      body: *pi_shahnaz_recent
+    # Nothing is refunded yet, and her payments were one-off charges with no invoice.
+    - server: stripe
+      method: GET
+      path: /v1/refunds
+      body: {object: list, url: /v1/refunds, has_more: false, data: []}
+    - server: stripe
+      method: GET
+      path: /v1/charges/{charge}/refunds
+      body: {object: list, url: /v1/refunds, has_more: false, data: []}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      body: {object: list, url: /v1/invoices, has_more: false, data: []}
+    - server: stripe
+      method: GET
+      path: /v1/invoices/search
+      body: {object: search_result, url: /v1/invoices/search, has_more: false, data: []}
+
+- id: stripe-t05
+  prompt: >-
+    Tom Becker (tom.becker@example.net) paused his coffee subscription last month and wants it running again. Please resume it.
+  split: test
+  expected_calls:
+    - server: stripe
+      method: POST
+      path: /v1/subscriptions/{subscription}/resume
+      path_parameters: {subscription: sub_TomPaused}
+  solution:
+    - server: stripe
+      operation: post_subscriptions_subscription_resume
+      arguments: {subscription: sub_TomPaused}
+  upstream_responses:
+    # The customer, by listing, by email, by search, or by id.
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      body:
+        object: list
+        url: /v1/customers
+        has_more: false
+        data:
+          - &tom_becker {id: cus_TomBecker, object: customer, email: tom.becker@example.net, name: Tom Becker}
+          - &tom_baker {id: cus_TomBaker, object: customer, email: tom.baker@example.net, name: Tom Baker}
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      query: {email: tom.becker@example.net}
+      body: {object: list, url: /v1/customers, has_more: false, data: [*tom_becker]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/search
+      body: {object: search_result, url: /v1/customers/search, has_more: false, data: [*tom_becker]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_TomBecker
+      body: *tom_becker
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_TomBaker
+      body: *tom_baker
+    # The subscriptions, listed for everyone, one customer, or one status, searched, or by id.
+    # The paused one is paused by status, not by pause_collection, so resuming it is the way back.
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions
+      body:
+        object: list
+        url: /v1/subscriptions
+        has_more: false
+        data:
+          - &sub_tom_active
+            {id: sub_TomActive, object: subscription, customer: cus_TomBecker, status: active, pause_collection: null, description: Tea of the month}
+          - &sub_tom_paused
+            {id: sub_TomPaused, object: subscription, customer: cus_TomBecker, status: paused, pause_collection: null, description: Coffee club}
+          - &sub_baker_paused
+            {id: sub_BakerPaused, object: subscription, customer: cus_TomBaker, status: paused, pause_collection: null, description: Coffee club}
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions
+      query: {customer: cus_TomBecker}
+      body: &tom_becker_subscriptions
+        {object: list, url: /v1/subscriptions, has_more: false, data: [*sub_tom_active, *sub_tom_paused]}
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions
+      query: {customer: cus_TomBaker}
+      body: &tom_baker_subscriptions
+        {object: list, url: /v1/subscriptions, has_more: false, data: [*sub_baker_paused]}
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions
+      query: {status: paused}
+      body: {object: list, url: /v1/subscriptions, has_more: false, data: [*sub_tom_paused, *sub_baker_paused]}
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions
+      query: {customer: cus_TomBecker, status: paused}
+      body: {object: list, url: /v1/subscriptions, has_more: false, data: [*sub_tom_paused]}
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions/search
+      body: {object: search_result, url: /v1/subscriptions/search, has_more: false, data: [*sub_tom_active, *sub_tom_paused]}
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions/sub_TomActive
+      body: *sub_tom_active
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions/sub_TomPaused
+      body: *sub_tom_paused
+    - server: stripe
+      method: GET
+      path: /v1/subscriptions/sub_BakerPaused
+      body: *sub_baker_paused
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_TomBecker/subscriptions
+      body: *tom_becker_subscriptions
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_TomBaker/subscriptions
+      body: *tom_baker_subscriptions
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_TomBecker/subscriptions/sub_TomActive
+      body: *sub_tom_active
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_TomBecker/subscriptions/sub_TomPaused
+      body: *sub_tom_paused
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_TomBaker/subscriptions/sub_BakerPaused
+      body: *sub_baker_paused
+
+- id: stripe-t06
+  prompt: >-
+    The draft invoice for our wholesale client Harbor Bakery (accounts@harborbakery.com) is ready. Finalize it so it can be sent.
+  split: test
+  expected_calls:
+    - server: stripe
+      method: POST
+      path: /v1/invoices/{invoice}/finalize
+      path_parameters: {invoice: in_1WholesaleQ4}
+  solution:
+    - server: stripe
+      operation: post_invoices_invoice_finalize
+      arguments: {invoice: in_1WholesaleQ4}
+  upstream_responses:
+    # The customer, by listing, by email, by search, or by id.
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      body:
+        object: list
+        url: /v1/customers
+        has_more: false
+        data:
+          - &harbor_bakery {id: cus_HarborBakery, object: customer, email: accounts@harborbakery.com, name: Harbor Bakery}
+          - &harbour_cafe {id: cus_HarbourCafe, object: customer, email: accounts@harbourcafe.com, name: Harbour Cafe}
+    - server: stripe
+      method: GET
+      path: /v1/customers
+      query: {email: accounts@harborbakery.com}
+      body: {object: list, url: /v1/customers, has_more: false, data: [*harbor_bakery]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/search
+      body: {object: search_result, url: /v1/customers/search, has_more: false, data: [*harbor_bakery]}
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_HarborBakery
+      body: *harbor_bakery
+    - server: stripe
+      method: GET
+      path: /v1/customers/cus_HarbourCafe
+      body: *harbour_cafe
+    # The invoices, listed for everyone, one customer, or one status, searched, or by id.
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      body:
+        object: list
+        url: /v1/invoices
+        has_more: false
+        data:
+          - &harbor_draft
+            {id: in_1WholesaleQ4, object: invoice, customer: cus_HarborBakery, customer_email: accounts@harborbakery.com, customer_name: Harbor Bakery, status: draft, amount_due: 54000, currency: usd}
+          - &harbor_paid
+            {id: in_1WholesaleQ3, object: invoice, customer: cus_HarborBakery, customer_email: accounts@harborbakery.com, customer_name: Harbor Bakery, status: paid, amount_due: 49000, currency: usd}
+          - &harbour_draft
+            {id: in_1HarbourDraft, object: invoice, customer: cus_HarbourCafe, customer_email: accounts@harbourcafe.com, customer_name: Harbour Cafe, status: draft, amount_due: 7600, currency: usd}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {customer: cus_HarborBakery}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*harbor_draft, *harbor_paid]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {customer: cus_HarbourCafe}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*harbour_draft]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {status: draft}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*harbor_draft, *harbour_draft]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices
+      query: {customer: cus_HarborBakery, status: draft}
+      body: {object: list, url: /v1/invoices, has_more: false, data: [*harbor_draft]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices/search
+      body: {object: search_result, url: /v1/invoices/search, has_more: false, data: [*harbor_draft, *harbor_paid]}
+    - server: stripe
+      method: GET
+      path: /v1/invoices/in_1WholesaleQ4
+      body: *harbor_draft
+    - server: stripe
+      method: GET
+      path: /v1/invoices/in_1WholesaleQ3
+      body: *harbor_paid
+    - server: stripe
+      method: GET
+      path: /v1/invoices/in_1HarbourDraft
+      body: *harbour_draft

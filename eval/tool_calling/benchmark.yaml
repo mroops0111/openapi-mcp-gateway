@@ -1,0 +1,75 @@
+# The tool calling benchmark. See README.md for what it measures and how to run it.
+# Each spec is pinned to one revision and checked by SHA-256.
+# A change to a pin, a task, a variant, or the system prompt makes a new version.
+version: 2
+
+specs:
+  petstore:
+    source: https://raw.githubusercontent.com/swagger-api/swagger-petstore/5cb909fc7780bc708151bce0014939acba8b212a/src/main/resources/openapi.yaml
+    sha256: 65cfe2e8826c81db0eea34c51d18da3a305ae4840f1a778cd63b89d396efb687
+  notion:
+    source: https://raw.githubusercontent.com/APIs-guru/openapi-directory/f04b8d0bcd39c52e1cf3ad7a5fe744709832ae49/APIs/notion.com/1.0.0/openapi.yaml
+    sha256: 9bc037c3d9d66ae4c85e1996319cf67a38867dbbd23bed4f5d8a633cca32c226
+  asana:
+    source: https://raw.githubusercontent.com/Asana/openapi/65bd6e77a6692a62c03fefa6a340dd401795e5bc/defs/asana_oas.yaml
+    sha256: bb9128f33708de453e1443c3631df21428b21a458c12b9587597566e9761620a
+  discord:
+    source: https://raw.githubusercontent.com/discord/discord-api-spec/3a21a01249a763cd47f1dfec3da91c5ba71bb974/specs/openapi.json
+    sha256: ef338088f4c6a73fdb9840acd1ce2bf8f16c1870f4437bfc563418c7e0de7278
+  github:
+    source: https://raw.githubusercontent.com/github/rest-api-description/2a33d9cc5d1dc6ca603b908e0796454af88c1999/descriptions/api.github.com/api.github.com.json
+    sha256: f7a3de68869181d34b232d88840d31f8157ade45cad1746eaab90cd3c801b31c
+  stripe:
+    source: https://raw.githubusercontent.com/stripe/openapi/a045100cf4af0acb548cb9c6f236bb117f83458f/openapi/spec3.json
+    sha256: 7cff4cc46d0654101a36a3302f7544640f5f73e4f3cad6f264f0e23c19fa1776
+
+# The cheapest current model from each provider, named as Pydantic AI names them.
+# Google's is the newest Flash-Lite, since Gemini 4's cheapest costs about 15 times the other two.
+# Each caches its tools, system prompt, and conversation so far, and Gemini does so implicitly.
+# Caching changes what a run costs, not what it sends or what it counts.
+models:
+  claude-haiku:
+    model: anthropic:claude-haiku-5-5
+    settings: {cache: true}
+  gpt-luna:
+    model: openai:gpt-6-luna
+    settings: {cache: true}
+  gemini-flash-lite:
+    model: google:gemini-3.5-flash-lite
+
+scenarios: [petstore, notion, asana, discord, github, stripe, github-asana]
+
+repeat: 3
+request_limit: 20
+# A model may fix a tool call the gateway refused this many times, rather than failing the run at its first slip.
+tool_retries: 3
+
+system_prompt: >-
+  You act for a user through the tools of their APIs. Carry out the user's request by calling the tools.
+  Do not ask the user anything; when something is ambiguous, make the most reasonable choice and go on.
+  When the request is done, reply with one short sentence saying what you did.
+
+# The model and skill that write each scenario's generated config, seeing its intent and specs but never its tasks.
+# One fixed model writes every config, so a model under test is never graded on a config it wrote itself.
+config_generator:
+  model:
+    model: anthropic:claude-sonnet-5-5
+  skill_library: ../../plugin/skills
+  skill: generate-config
+  # generated asks with the intent alone.
+  # generated-shaped adds that the user wants the tools shaped, measuring what shaping brings when asked for.
+  variants:
+    generated: ""
+    generated-shaped: Also shape the operations, so that each tool is easy for a model to call correctly.
+
+# Operations that only read though their method writes, which the grader never counts as an extra write.
+read_only_operations:
+  notion:
+    - POST /v1/databases/{id}/query
+  github:
+    - POST /markdown
+    - POST /markdown/raw
+    - POST /orgs/{org}/attestations/bulk-list
+    - POST /users/{username}/attestations/bulk-list
+  stripe:
+    - POST /v1/invoices/create_preview

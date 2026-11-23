@@ -9,7 +9,7 @@
 #   - getInventory     -> concrete resource `petstore://store/inventory` named `inventory`
 #   - everything else  -> handled by `promote_resources: true` (eligible GETs promote, the rest stay tools)
 #
-# Usage: openapi-mcp-gateway --config examples/petstore-override.yml
+# Usage: openapi-mcp-gateway serve --config examples/petstore-override.yml
 
 host: "127.0.0.1"
 port: 8000

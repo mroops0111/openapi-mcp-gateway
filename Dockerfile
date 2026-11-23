@@ -46,4 +46,4 @@ WORKDIR /config
 # The flags pin the listen address over the config's, so EXPOSE and HEALTHCHECK always hold.
 # Publish another host port with `-p <port>:8000` rather than changing it in the config.
 ENTRYPOINT ["openapi-mcp-gateway"]
-CMD ["--config", "/config/config.yml", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["serve", "--config", "/config/config.yml", "--host", "0.0.0.0", "--port", "8000"]

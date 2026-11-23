@@ -1,0 +1,699 @@
+- id: asana-t01
+  prompt: >-
+    Add a task called "Draft launch checklist" to our Website Redesign project, due December 1, 2026.
+  split: dev
+  expected_calls:
+    # The due date may come with the new task, or in an update after it.
+    - any_of:
+        - server: asana
+          method: POST
+          path: /tasks
+          body: {data: {name: Draft launch checklist, projects: ['1205000000000101'], due_on: '2026-12-01'}}
+        - all_of:
+            - server: asana
+              method: POST
+              path: /tasks
+              body: {data: {name: Draft launch checklist, projects: ['1205000000000101']}}
+            - server: asana
+              method: PUT
+              path: /tasks/{task_gid}
+              path_parameters: {task_gid: '1206000000000111'}
+              body: {data: {due_on: '2026-12-01'}}
+  solution:
+    - server: asana
+      operation: create_task
+      arguments: {data: {name: Draft launch checklist, projects: ['1205000000000101'], due_on: '2026-12-01'}}
+  upstream_responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: &workspaces {data: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}
+    # The acting user is a teammate in the one workspace.
+    - server: asana
+      method: GET
+      path: /users/me
+      body: &me {data: {gid: '1201000000000099', name: Jordan Lee, email: jordan.lee@acme.example, resource_type: user, workspaces: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}}
+    - server: asana
+      method: GET
+      path: /users/me/favorites
+      body: &no-favorites {data: []}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/teams
+      body: &teams {data: [{gid: '1204000000000001', name: Everyone at Acme, resource_type: team}]}
+    - server: asana
+      method: GET
+      path: /users/me/teams
+      body: *teams
+    - server: asana
+      method: GET
+      path: /projects
+      body: &t01-projects {data: [{gid: '1205000000000101', name: Website Redesign, resource_type: project}, {gid: '1205000000000102', name: Mobile App Redesign, resource_type: project}, {gid: '1205000000000103', name: Website Redesign 2025 (old), resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: *t01-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects/search
+      body: *t01-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: project}
+      body: *t01-projects
+    - server: asana
+      method: GET
+      path: /teams/{team_gid}/projects
+      body: *t01-projects
+    - server: asana
+      method: GET
+      path: /projects/1205000000000101
+      body: {data: {gid: '1205000000000101', name: Website Redesign, resource_type: project, archived: false, workspace: {gid: '1200000000000001', name: Acme Corp}, team: {gid: '1204000000000001', name: Everyone at Acme}}}
+    - server: asana
+      method: POST
+      path: /tasks
+      body: {data: {gid: '1206000000000111', name: Draft launch checklist, resource_type: task}}
+
+- id: asana-t02
+  prompt: >-
+    Add a task called "Book venue for offsite" to our Team Offsite project and assign it to Tom Becker.
+  split: dev
+  # Asana takes an assignee by gid or by email, with the new task or in an update after it.
+  expected_calls:
+    - any_of:
+        - server: asana
+          method: POST
+          path: /tasks
+          body: {data: {name: Book venue for offsite, projects: ['1205000000000701'], assignee: '1201000000000071'}}
+        - server: asana
+          method: POST
+          path: /tasks
+          body: {data: {name: Book venue for offsite, projects: ['1205000000000701'], assignee: tom.becker@acme.example}}
+        - all_of:
+            - server: asana
+              method: POST
+              path: /tasks
+              body: {data: {name: Book venue for offsite, projects: ['1205000000000701']}}
+            - server: asana
+              method: PUT
+              path: /tasks/{task_gid}
+              path_parameters: {task_gid: '1206000000000711'}
+              body: {data: {assignee: '1201000000000071'}}
+        - all_of:
+            - server: asana
+              method: POST
+              path: /tasks
+              body: {data: {name: Book venue for offsite, projects: ['1205000000000701']}}
+            - server: asana
+              method: PUT
+              path: /tasks/{task_gid}
+              path_parameters: {task_gid: '1206000000000711'}
+              body: {data: {assignee: tom.becker@acme.example}}
+  solution:
+    - server: asana
+      operation: create_task
+      arguments: {data: {name: Book venue for offsite, projects: ['1205000000000701'], assignee: '1201000000000071'}}
+  upstream_responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: *workspaces
+    - server: asana
+      method: GET
+      path: /users/me
+      body: *me
+    - server: asana
+      method: GET
+      path: /users/me/favorites
+      body: *no-favorites
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/teams
+      body: *teams
+    - server: asana
+      method: GET
+      path: /users/me/teams
+      body: *teams
+    - server: asana
+      method: GET
+      path: /projects
+      body: &t02-projects {data: [{gid: '1205000000000701', name: Team Offsite, resource_type: project}, {gid: '1205000000000702', name: Team Offsite 2025, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: *t02-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects/search
+      body: *t02-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: project}
+      body: *t02-projects
+    - server: asana
+      method: GET
+      path: /teams/{team_gid}/projects
+      body: *t02-projects
+    - server: asana
+      method: GET
+      path: /projects/1205000000000701
+      body: {data: {gid: '1205000000000701', name: Team Offsite, resource_type: project, archived: false, workspace: {gid: '1200000000000001', name: Acme Corp}, team: {gid: '1204000000000001', name: Everyone at Acme}}}
+    # Every route to the user carries both Toms.
+    - server: asana
+      method: GET
+      path: /users
+      body: &t02-users {data: [{gid: '1201000000000071', name: Tom Becker, email: tom.becker@acme.example, resource_type: user}, {gid: '1201000000000072', name: Tom Baker, email: tom.baker@acme.example, resource_type: user}, {gid: '1201000000000099', name: Jordan Lee, email: jordan.lee@acme.example, resource_type: user}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/users
+      body: *t02-users
+    - server: asana
+      method: GET
+      path: /teams/{team_gid}/users
+      body: *t02-users
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: user}
+      body: *t02-users
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: actor}
+      body: *t02-users
+    - server: asana
+      method: GET
+      path: /memberships
+      query: {parent: '1205000000000701'}
+      body: {data: [{gid: '1208000000000711', resource_type: membership, resource_subtype: project_membership, parent: {gid: '1205000000000701', name: Team Offsite, resource_type: project}, member: {gid: '1201000000000071', name: Tom Becker, resource_type: user}, access_level: editor}, {gid: '1208000000000712', resource_type: membership, resource_subtype: project_membership, parent: {gid: '1205000000000701', name: Team Offsite, resource_type: project}, member: {gid: '1201000000000072', name: Tom Baker, resource_type: user}, access_level: editor}]}
+    - server: asana
+      method: GET
+      path: /users/1201000000000071
+      body: &tom-becker {data: {gid: '1201000000000071', name: Tom Becker, email: tom.becker@acme.example, resource_type: user, workspaces: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/users/1201000000000071
+      body: *tom-becker
+    - server: asana
+      method: GET
+      path: /users/1201000000000072
+      body: &tom-baker {data: {gid: '1201000000000072', name: Tom Baker, email: tom.baker@acme.example, resource_type: user, workspaces: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/users/1201000000000072
+      body: *tom-baker
+    - server: asana
+      method: POST
+      path: /tasks
+      body: {data: {gid: '1206000000000711', name: Book venue for offsite, resource_type: task}}
+
+- id: asana-t03
+  prompt: >-
+    I finished "Update onboarding docs" in the Customer Success Q4 project, can you mark it complete?
+  split: test
+  expected_calls:
+    - server: asana
+      method: PUT
+      path: /tasks/{task_gid}
+      path_parameters: {task_gid: '1206000000000311'}
+      body: {data: {completed: true}}
+  solution:
+    - server: asana
+      operation: update_task
+      arguments: {task_gid: '1206000000000311', data: {completed: true}}
+  upstream_responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: *workspaces
+    - server: asana
+      method: GET
+      path: /users/me
+      body: *me
+    - server: asana
+      method: GET
+      path: /users/me/favorites
+      body: *no-favorites
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/teams
+      body: *teams
+    - server: asana
+      method: GET
+      path: /users/me/teams
+      body: *teams
+    - server: asana
+      method: GET
+      path: /projects
+      body: &t03-projects {data: [{gid: '1205000000000301', name: Customer Success Q4, resource_type: project}, {gid: '1205000000000302', name: Customer Success Q3, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: *t03-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects/search
+      body: *t03-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: project}
+      body: *t03-projects
+    - server: asana
+      method: GET
+      path: /teams/{team_gid}/projects
+      body: *t03-projects
+    - server: asana
+      method: GET
+      path: /projects/1205000000000301
+      body: {data: {gid: '1205000000000301', name: Customer Success Q4, resource_type: project, archived: false, workspace: {gid: '1200000000000001', name: Acme Corp}, team: {gid: '1204000000000001', name: Everyone at Acme}}}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000301/tasks
+      body: &t03-q4-tasks {data: [{gid: '1206000000000311', name: Update onboarding docs, resource_type: task}, {gid: '1206000000000312', name: Review onboarding survey, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000302/tasks
+      body: &t03-q3-tasks {data: [{gid: '1206000000000321', name: Update onboarding docs, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /tasks
+      body: *t03-q4-tasks
+    - server: asana
+      method: GET
+      path: /tasks
+      query: {project: '1205000000000302'}
+      body: *t03-q3-tasks
+    # A search across the workspace finds the task of the same name in Q3 too, told apart by its project.
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/tasks/search
+      body: &t03-search {data: [{gid: '1206000000000311', name: Update onboarding docs, resource_type: task, projects: [{gid: '1205000000000301', name: Customer Success Q4}]}, {gid: '1206000000000321', name: Update onboarding docs, resource_type: task, projects: [{gid: '1205000000000302', name: Customer Success Q3}]}, {gid: '1206000000000312', name: Review onboarding survey, resource_type: task, projects: [{gid: '1205000000000301', name: Customer Success Q4}]}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/tasks/search
+      query: {projects.any: '1205000000000301'}
+      body: *t03-q4-tasks
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/tasks/search
+      query: {projects.any: '1205000000000302'}
+      body: *t03-q3-tasks
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: task}
+      body: *t03-search
+    - server: asana
+      method: GET
+      path: /tasks/1206000000000311
+      body: {data: {gid: '1206000000000311', name: Update onboarding docs, resource_type: task, completed: false, assignee: {gid: '1201000000000099', name: Jordan Lee}, projects: [{gid: '1205000000000301', name: Customer Success Q4}], memberships: [{project: {gid: '1205000000000301', name: Customer Success Q4}, section: {gid: '1207000000000301', name: Untitled section}}]}}
+    - server: asana
+      method: GET
+      path: /tasks/1206000000000321
+      body: {data: {gid: '1206000000000321', name: Update onboarding docs, resource_type: task, completed: false, assignee: {gid: '1201000000000099', name: Jordan Lee}, projects: [{gid: '1205000000000302', name: Customer Success Q3}], memberships: [{project: {gid: '1205000000000302', name: Customer Success Q3}, section: {gid: '1207000000000302', name: Untitled section}}]}}
+
+- id: asana-t04
+  prompt: >-
+    Priya Shah is taking over "Prepare sprint demo" in the Platform Sprint 42 project. Assign it to her and push the due date to November 20, 2026.
+  split: test
+  # Asana takes an assignee by gid or by email, and both changes in one update or one each.
+  expected_calls:
+    - any_of:
+        - server: asana
+          method: PUT
+          path: /tasks/{task_gid}
+          path_parameters: {task_gid: '1206000000000411'}
+          body: {data: {assignee: '1201000000000041', due_on: '2026-11-20'}}
+        - server: asana
+          method: PUT
+          path: /tasks/{task_gid}
+          path_parameters: {task_gid: '1206000000000411'}
+          body: {data: {assignee: priya.shah@acme.example, due_on: '2026-11-20'}}
+        - all_of:
+            - server: asana
+              method: PUT
+              path: /tasks/{task_gid}
+              path_parameters: {task_gid: '1206000000000411'}
+              body: {data: {assignee: '1201000000000041'}}
+            - server: asana
+              method: PUT
+              path: /tasks/{task_gid}
+              path_parameters: {task_gid: '1206000000000411'}
+              body: {data: {due_on: '2026-11-20'}}
+        - all_of:
+            - server: asana
+              method: PUT
+              path: /tasks/{task_gid}
+              path_parameters: {task_gid: '1206000000000411'}
+              body: {data: {assignee: priya.shah@acme.example}}
+            - server: asana
+              method: PUT
+              path: /tasks/{task_gid}
+              path_parameters: {task_gid: '1206000000000411'}
+              body: {data: {due_on: '2026-11-20'}}
+  solution:
+    - server: asana
+      operation: update_task
+      arguments: {task_gid: '1206000000000411', data: {assignee: '1201000000000041', due_on: '2026-11-20'}}
+  upstream_responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: *workspaces
+    - server: asana
+      method: GET
+      path: /users/me
+      body: *me
+    - server: asana
+      method: GET
+      path: /users/me/favorites
+      body: *no-favorites
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/teams
+      body: *teams
+    - server: asana
+      method: GET
+      path: /users/me/teams
+      body: *teams
+    - server: asana
+      method: GET
+      path: /projects
+      body: &t04-projects {data: [{gid: '1205000000000401', name: Platform Sprint 42, resource_type: project}, {gid: '1205000000000402', name: Platform Sprint 41, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: *t04-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects/search
+      body: *t04-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: project}
+      body: *t04-projects
+    - server: asana
+      method: GET
+      path: /teams/{team_gid}/projects
+      body: *t04-projects
+    - server: asana
+      method: GET
+      path: /projects/1205000000000401
+      body: {data: {gid: '1205000000000401', name: Platform Sprint 42, resource_type: project, archived: false, workspace: {gid: '1200000000000001', name: Acme Corp}, team: {gid: '1204000000000001', name: Everyone at Acme}}}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000401/tasks
+      body: &t04-tasks {data: [{gid: '1206000000000411', name: Prepare sprint demo, resource_type: task}, {gid: '1206000000000412', name: Prepare sprint retro, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /tasks
+      body: *t04-tasks
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/tasks/search
+      body: *t04-tasks
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: task}
+      body: *t04-tasks
+    - server: asana
+      method: GET
+      path: /tasks/1206000000000411
+      body: {data: {gid: '1206000000000411', name: Prepare sprint demo, resource_type: task, completed: false, assignee: {gid: '1201000000000043', name: Tom Becker}, due_on: '2026-11-13', projects: [{gid: '1205000000000401', name: Platform Sprint 42}], memberships: [{project: {gid: '1205000000000401', name: Platform Sprint 42}, section: {gid: '1207000000000401', name: Untitled section}}]}}
+    # Every route to the user carries both Priyas.
+    - server: asana
+      method: GET
+      path: /users
+      body: &t04-users {data: [{gid: '1201000000000041', name: Priya Shah, email: priya.shah@acme.example, resource_type: user}, {gid: '1201000000000042', name: Priya Sharma, email: priya.sharma@acme.example, resource_type: user}, {gid: '1201000000000043', name: Tom Becker, email: tom.becker@acme.example, resource_type: user}, {gid: '1201000000000099', name: Jordan Lee, email: jordan.lee@acme.example, resource_type: user}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/users
+      body: *t04-users
+    - server: asana
+      method: GET
+      path: /teams/{team_gid}/users
+      body: *t04-users
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: user}
+      body: *t04-users
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: actor}
+      body: *t04-users
+    - server: asana
+      method: GET
+      path: /memberships
+      query: {parent: '1205000000000401'}
+      body: {data: [{gid: '1208000000000411', resource_type: membership, resource_subtype: project_membership, parent: {gid: '1205000000000401', name: Platform Sprint 42, resource_type: project}, member: {gid: '1201000000000041', name: Priya Shah, resource_type: user}, access_level: editor}, {gid: '1208000000000412', resource_type: membership, resource_subtype: project_membership, parent: {gid: '1205000000000401', name: Platform Sprint 42, resource_type: project}, member: {gid: '1201000000000042', name: Priya Sharma, resource_type: user}, access_level: editor}, {gid: '1208000000000413', resource_type: membership, resource_subtype: project_membership, parent: {gid: '1205000000000401', name: Platform Sprint 42, resource_type: project}, member: {gid: '1201000000000043', name: Tom Becker, resource_type: user}, access_level: editor}]}
+    - server: asana
+      method: GET
+      path: /users/1201000000000041
+      body: &priya-shah {data: {gid: '1201000000000041', name: Priya Shah, email: priya.shah@acme.example, resource_type: user, workspaces: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/users/1201000000000041
+      body: *priya-shah
+    - server: asana
+      method: GET
+      path: /users/1201000000000042
+      body: &priya-sharma {data: {gid: '1201000000000042', name: Priya Sharma, email: priya.sharma@acme.example, resource_type: user, workspaces: [{gid: '1200000000000001', name: Acme Corp, resource_type: workspace}]}}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/users/1201000000000042
+      body: *priya-sharma
+
+- id: asana-t05
+  prompt: >-
+    Under the "Vendor contract renewal" task in the Operations project, add a subtask called "Collect legal sign-off".
+  split: test
+  # Asana makes a subtask under its parent, as a new task naming that parent, or as a new task moved under it.
+  expected_calls:
+    - any_of:
+        - server: asana
+          method: POST
+          path: /tasks/{task_gid}/subtasks
+          path_parameters: {task_gid: '1206000000000511'}
+          body: {data: {name: Collect legal sign-off}}
+        - server: asana
+          method: POST
+          path: /tasks
+          body: {data: {name: Collect legal sign-off, parent: '1206000000000511'}}
+        - all_of:
+            - server: asana
+              method: POST
+              path: /tasks
+              body: {data: {name: Collect legal sign-off}}
+            - server: asana
+              method: POST
+              path: /tasks/{task_gid}/setParent
+              path_parameters: {task_gid: '1206000000000514'}
+              body: {data: {parent: '1206000000000511'}}
+  solution:
+    - server: asana
+      operation: create_subtask_for_task
+      arguments: {task_gid: '1206000000000511', data: {name: Collect legal sign-off}}
+  upstream_responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: *workspaces
+    - server: asana
+      method: GET
+      path: /users/me
+      body: *me
+    - server: asana
+      method: GET
+      path: /users/me/favorites
+      body: *no-favorites
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/teams
+      body: *teams
+    - server: asana
+      method: GET
+      path: /users/me/teams
+      body: *teams
+    - server: asana
+      method: GET
+      path: /projects
+      body: &t05-projects {data: [{gid: '1205000000000501', name: Operations, resource_type: project}, {gid: '1205000000000502', name: IT Operations, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: *t05-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects/search
+      body: *t05-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: project}
+      body: *t05-projects
+    - server: asana
+      method: GET
+      path: /teams/{team_gid}/projects
+      body: *t05-projects
+    - server: asana
+      method: GET
+      path: /projects/1205000000000501
+      body: {data: {gid: '1205000000000501', name: Operations, resource_type: project, archived: false, workspace: {gid: '1200000000000001', name: Acme Corp}, team: {gid: '1204000000000001', name: Everyone at Acme}}}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000501/tasks
+      body: &t05-tasks {data: [{gid: '1206000000000511', name: Vendor contract renewal, resource_type: task}, {gid: '1206000000000512', name: Vendor onboarding, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /tasks
+      body: *t05-tasks
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/tasks/search
+      body: *t05-tasks
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: task}
+      body: *t05-tasks
+    - server: asana
+      method: GET
+      path: /tasks/1206000000000511
+      body: {data: {gid: '1206000000000511', name: Vendor contract renewal, resource_type: task, completed: false, parent: null, num_subtasks: 0, projects: [{gid: '1205000000000501', name: Operations}], memberships: [{project: {gid: '1205000000000501', name: Operations}, section: {gid: '1207000000000501', name: Untitled section}}]}}
+    - server: asana
+      method: GET
+      path: /tasks/1206000000000511/subtasks
+      body: {data: []}
+    - server: asana
+      method: POST
+      path: /tasks/{task_gid}/subtasks
+      body: &t05-created {data: {gid: '1206000000000514', name: Collect legal sign-off, resource_type: task}}
+    - server: asana
+      method: POST
+      path: /tasks
+      body: *t05-created
+
+- id: asana-t06
+  prompt: >-
+    "Write API changelog" in the Developer Portal project is ready for review, please move it into the In Review section.
+  split: test
+  # Asana moves a task into a section from the section, or by adding the task to its project at that section.
+  expected_calls:
+    - any_of:
+        - server: asana
+          method: POST
+          path: /sections/{section_gid}/addTask
+          path_parameters: {section_gid: '1207000000000612'}
+          body: {data: {task: '1206000000000611'}}
+        - server: asana
+          method: POST
+          path: /tasks/{task_gid}/addProject
+          path_parameters: {task_gid: '1206000000000611'}
+          body: {data: {project: '1205000000000601', section: '1207000000000612'}}
+  solution:
+    - server: asana
+      operation: add_task_for_section
+      arguments: {section_gid: '1207000000000612', data: {task: '1206000000000611'}}
+  upstream_responses:
+    - server: asana
+      method: GET
+      path: /workspaces
+      body: *workspaces
+    - server: asana
+      method: GET
+      path: /users/me
+      body: *me
+    - server: asana
+      method: GET
+      path: /users/me/favorites
+      body: *no-favorites
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/teams
+      body: *teams
+    - server: asana
+      method: GET
+      path: /users/me/teams
+      body: *teams
+    - server: asana
+      method: GET
+      path: /projects
+      body: &t06-projects {data: [{gid: '1205000000000601', name: Developer Portal, resource_type: project}, {gid: '1205000000000602', name: Partner Portal, resource_type: project}]}
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects
+      body: *t06-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/projects/search
+      body: *t06-projects
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: project}
+      body: *t06-projects
+    - server: asana
+      method: GET
+      path: /teams/{team_gid}/projects
+      body: *t06-projects
+    - server: asana
+      method: GET
+      path: /projects/1205000000000601
+      body: {data: {gid: '1205000000000601', name: Developer Portal, resource_type: project, archived: false, workspace: {gid: '1200000000000001', name: Acme Corp}, team: {gid: '1204000000000001', name: Everyone at Acme}}}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000601/tasks
+      body: &t06-tasks {data: [{gid: '1206000000000611', name: Write API changelog, resource_type: task}, {gid: '1206000000000613', name: Write SDK quickstart, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /tasks
+      body: *t06-tasks
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/tasks/search
+      body: *t06-tasks
+    - server: asana
+      method: GET
+      path: /workspaces/{workspace_gid}/typeahead
+      query: {resource_type: task}
+      body: *t06-tasks
+    - server: asana
+      method: GET
+      path: /tasks/1206000000000611
+      body: {data: {gid: '1206000000000611', name: Write API changelog, resource_type: task, completed: false, projects: [{gid: '1205000000000601', name: Developer Portal}], memberships: [{project: {gid: '1205000000000601', name: Developer Portal}, section: {gid: '1207000000000611', name: In Progress}}]}}
+    # The Partner Portal has an In Review section of its own.
+    - server: asana
+      method: GET
+      path: /projects/1205000000000601/sections
+      body: {data: [{gid: '1207000000000610', name: To Do, resource_type: section}, {gid: '1207000000000611', name: In Progress, resource_type: section}, {gid: '1207000000000612', name: In Review, resource_type: section}, {gid: '1207000000000613', name: Done, resource_type: section}]}
+    - server: asana
+      method: GET
+      path: /projects/1205000000000602/sections
+      body: {data: [{gid: '1207000000000620', name: In Review, resource_type: section}]}
+    - server: asana
+      method: GET
+      path: /sections/1207000000000610/tasks
+      body: {data: [{gid: '1206000000000613', name: Write SDK quickstart, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /sections/1207000000000611/tasks
+      body: {data: [{gid: '1206000000000611', name: Write API changelog, resource_type: task}]}
+    - server: asana
+      method: GET
+      path: /sections/1207000000000612/tasks
+      body: &no-tasks {data: []}
+    - server: asana
+      method: GET
+      path: /sections/1207000000000613/tasks
+      body: *no-tasks
+    - server: asana
+      method: GET
+      path: /sections/1207000000000620/tasks
+      body: *no-tasks

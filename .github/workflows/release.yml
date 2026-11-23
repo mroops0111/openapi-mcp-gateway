@@ -15,20 +15,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify tag matches pyproject.toml version
+      # The gateway and its eval release together at one version, each requiring the other at exactly that version.
+      - name: Verify tag matches both packages' versions
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          if [ "$TAG" != "$VERSION" ]; then
-            echo "::error::Tag v$TAG does not match pyproject.toml version $VERSION"
-            exit 1
-          fi
+          python3 - "${GITHUB_REF_NAME#v}" <<'PY'
+          import sys, tomllib
+          tag = sys.argv[1]
+          gateway = tomllib.load(open('pyproject.toml', 'rb'))['project']
+          evaluation = tomllib.load(open('eval/pyproject.toml', 'rb'))['project']
+          found = {
+              'pyproject.toml version': gateway['version'],
+              'eval/pyproject.toml version': evaluation['version'],
+              'the eval extra': gateway['optional-dependencies']['eval'][0].split('==')[1],
+              "eval's gateway requirement": evaluation['dependencies'][0].split('==')[1],
+          }
+          wrong = [f'{place} is {version}' for place, version in found.items() if version != tag]
+          if wrong:
+              sys.exit(f'::error::Tag v{tag} does not match: ' + ', '.join(wrong))
+          PY
 
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
 
-      - run: uv build
+      - run: uv build --all-packages
 
       - uses: actions/upload-artifact@v4
         with:

@@ -123,7 +123,7 @@ def _initialize_status(test_client: TestClient, host: str, origin: str | None = 
 async def _connect(gateway: Gateway, spec_path: pathlib.Path, transport: str) -> typing.AsyncIterator[Client]:
     """Connect an MCP client over ``transport``, through the CLI for stdio and ``gateway``'s app for HTTP."""
     if transport == 'stdio':
-        cli_args = ['--spec', str(spec_path), '--name', 'petstore', '--transport', 'stdio']
+        cli_args = ['serve', '--spec', str(spec_path), '--name', 'petstore', '--transport', 'stdio']
         async with Client(
             StdioServerParameters(command=sys.executable, args=['-m', 'openapi_mcp_gateway.cli', *cli_args])
         ) as mcp_client:

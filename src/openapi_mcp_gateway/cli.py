@@ -1,3 +1,4 @@
+import importlib.metadata
 import json
 import logging
 import typing
@@ -15,8 +16,44 @@ logger = logging.getLogger(__name__)
 # How much of a server's instructions the dry-run table shows, enough to recognise them without wrapping the line.
 _INSTRUCTIONS_PREVIEW_LENGTH = 60
 
+# The entry point group through which an installed package adds a subcommand, as openapi-mcp-gateway-eval adds eval.
+COMMAND_ENTRY_POINTS = 'openapi_mcp_gateway.commands'
 
-@click.command()
+
+class _CommandGroup(click.Group):
+    """The gateway's commands, its own and those installed packages add.
+
+    An added command is loaded only when named, so a missing or broken package never stops ``serve``.
+    """
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        return sorted({*super().list_commands(ctx), *(entry_point.name for entry_point in _command_entry_points())})
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        command = super().get_command(ctx, cmd_name)
+        if command is not None:
+            return command
+        for entry_point in _command_entry_points():
+            if entry_point.name == cmd_name:
+                return entry_point.load()
+        return None
+
+
+@click.group(cls=_CommandGroup)
+def main() -> None:
+    """Mount OpenAPI APIs as MCP servers.
+
+    \b
+    Serve an API:
+        omgw serve --spec petstore.json
+
+    \b
+    Measure what a config gains for a model, with openapi-mcp-gateway[eval] installed:
+        omgw eval --help
+    """
+
+
+@main.command()
 @click.option('--spec', type=str, default=None, help='Path or URL to a single OpenAPI spec.')
 @click.option(
     '--config',
@@ -133,7 +170,7 @@ _INSTRUCTIONS_PREVIEW_LENGTH = 60
     default=False,
     help='Shortcut for --log-level WARNING.',
 )
-def main(
+def serve(
     spec: str | None,
     config_path: str | None,
     dry_run: bool,
@@ -157,43 +194,43 @@ def main(
     verbose: bool,
     quiet: bool,
 ) -> None:
-    """Run the gateway CLI, loading config from ``--spec`` or ``--config`` and then serving.
+    """Serve the gateway from --spec or --config.
 
     \b
     Single spec (no auth):
-        openapi-mcp-gateway --spec petstore.json
+        omgw serve --spec petstore.json
 
     \b
     Single spec with bearer token (via env var):
-        openapi-mcp-gateway --spec api.json --auth-upstream-type bearer --auth-upstream-token '${MY_API_TOKEN}'
+        omgw serve --spec api.json --auth-upstream-type bearer --auth-upstream-token '${MY_API_TOKEN}'
 
     \b
     Single spec with OAuth2 (URLs detected from spec):
-        openapi-mcp-gateway --spec api.json --auth-upstream-type oauth2 \\
+        omgw serve --spec api.json --auth-upstream-type oauth2 \\
             --auth-upstream-client-id '${CLIENT_ID}' --auth-upstream-client-secret '${CLIENT_SECRET}'
 
     \b
     Single spec with OAuth2 (URLs provided explicitly):
-        openapi-mcp-gateway --spec api.json --auth-upstream-type oauth2 \\
+        omgw serve --spec api.json --auth-upstream-type oauth2 \\
             --auth-upstream-client-id '${CLIENT_ID}' --auth-upstream-client-secret '${CLIENT_SECRET}' \\
             --auth-upstream-authorization-url https://example.com/oauth/authorize \\
             --auth-upstream-token-url https://example.com/oauth/token
 
     \b
     Multiple servers via config:
-        openapi-mcp-gateway --config servers.yml
+        omgw serve --config servers.yml
 
     \b
     stdio transport (Claude Desktop / IDE integration):
-        openapi-mcp-gateway --spec petstore.json --transport stdio
+        omgw serve --spec petstore.json --transport stdio
 
     \b
     Verbose JSON logs written to a file:
-        openapi-mcp-gateway --spec petstore.json -v --log-format json --log-file gateway.log
+        omgw serve --spec petstore.json -v --log-format json --log-file gateway.log
 
     \b
     Validate a config without serving (CI or an editor check):
-        openapi-mcp-gateway --config servers.yml --dry-run
+        omgw serve --config servers.yml --dry-run
     """
     if not spec and not config_path:
         raise click.UsageError('Either --spec or --config is required.')
@@ -254,6 +291,10 @@ def main(
 
     gateway = Gateway.from_config(config)
     gateway.run()
+
+
+def _command_entry_points() -> importlib.metadata.EntryPoints:
+    return importlib.metadata.entry_points(group=COMMAND_ENTRY_POINTS)
 
 
 def _build_auth_config(

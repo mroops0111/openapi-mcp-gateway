@@ -20,7 +20,7 @@
 #      Only credential fields expand ${ENV_VAR}, so base_url and token_url have to be literal.
 #   3. export AUTH0_CLIENT_ID="..." AUTH0_CLIENT_SECRET="..."
 #
-# Usage: openapi-mcp-gateway --config examples/auth0-management.yml
+# Usage: openapi-mcp-gateway serve --config examples/auth0-management.yml
 
 host: "0.0.0.0"
 port: 8000

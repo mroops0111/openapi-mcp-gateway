@@ -44,7 +44,7 @@ class TestLoggingFlags:
     def test_help_lists_logging_options(self):
         """``--help`` advertises every logging-related flag."""
         runner = CliRunner()
-        result = runner.invoke(cli.main, ['--help'])
+        result = runner.invoke(cli.main, ['serve', '--help'])
         assert result.exit_code == 0
         for flag in ('--log-level', '--log-format', '--log-file', '--verbose', '--quiet'):
             assert flag in result.output
@@ -549,17 +549,48 @@ class TestDryRunJsonOutput:
         assert any(tool['description'].startswith('GET /orders') for tool in tools)
 
 
+class TestSubcommands:
+    """Subcommands an installed package adds through the gateway's entry point group."""
+
+    def test_a_subcommand_runs_without_serving(self):
+        """An installed subcommand runs on its own, with neither --spec nor --config, and never starts the gateway."""
+        result, gateway_run = _run_with_subcommand('hello')
+        assert result.exit_code == 0, result.output
+        assert result.output == 'hello\n'
+        gateway_run.assert_not_called()
+
+    def test_help_lists_serve_and_the_installed_subcommands(self):
+        """``--help`` names the gateway's own serve beside each installed subcommand."""
+        result, _ = _run_with_subcommand('--help')
+        assert result.exit_code == 0, result.output
+        assert 'Commands:\n  hello\n  serve ' in result.output
+
+    def test_serving_needs_the_serve_subcommand(self):
+        """Options alone name no subcommand, so the gateway does not serve."""
+        result, gateway_run = _run_with_subcommand('--spec', str(PETSTORE_SPEC))
+        assert result.exit_code == 2
+        assert "No such option '--spec'" in result.output
+        gateway_run.assert_not_called()
+
+    def test_an_unknown_subcommand_is_refused(self):
+        """A name no installed package adds is a usage error, not a serve."""
+        result, gateway_run = _run_with_subcommand('nope')
+        assert result.exit_code == 2
+        assert "No such command 'nope'" in result.output
+        gateway_run.assert_not_called()
+
+
 def _run(*args, gateway_run: mock.Mock | None = None):
-    """Invoke ``cli.main`` with ``Gateway.run`` patched out, returning ``(result, mock)``."""
+    """Invoke ``serve`` with ``Gateway.run`` patched out, returning ``(result, mock)``."""
     runner = CliRunner()
     gateway_run = gateway_run or mock.Mock()
     with mock.patch.object(cli.Gateway, 'run', gateway_run):
-        result = runner.invoke(cli.main, list(args), catch_exceptions=False)
+        result = runner.invoke(cli.main, ['serve', *args], catch_exceptions=False)
     return result, gateway_run
 
 
 def _run_capture_config(*args) -> tuple[typing.Any, GatewayConfig | None]:
-    """Run the CLI without starting uvicorn, returning the effective ``GatewayConfig``."""
+    """Run ``serve`` without starting uvicorn, returning the effective ``GatewayConfig``."""
     captured: dict[str, GatewayConfig] = {}
     real_from_config = cli.Gateway.from_config
 
@@ -572,5 +603,24 @@ def _run_capture_config(*args) -> tuple[typing.Any, GatewayConfig | None]:
         mock.patch.object(cli.Gateway, 'from_config', side_effect=spy),
         mock.patch.object(cli.Gateway, 'run', mock.Mock()),
     ):
-        result = runner.invoke(cli.main, list(args), catch_exceptions=False)
+        result = runner.invoke(cli.main, ['serve', *args], catch_exceptions=False)
     return result, captured.get('config')
+
+
+def _run_with_subcommand(*args: str) -> tuple[typing.Any, mock.Mock]:
+    """Invoke the gateway's command with one installed subcommand, ``hello``, and ``Gateway.run`` patched out."""
+
+    @click.command()
+    def hello() -> None:
+        click.echo('hello')
+
+    entry_point = mock.Mock()
+    entry_point.name = 'hello'
+    entry_point.load.return_value = hello
+    gateway_run = mock.Mock()
+    with (
+        mock.patch.object(cli, '_command_entry_points', return_value=[entry_point]),
+        mock.patch.object(cli.Gateway, 'run', gateway_run),
+    ):
+        result = CliRunner().invoke(cli.main, list(args))
+    return result, gateway_run
