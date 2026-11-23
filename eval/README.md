@@ -1,11 +1,11 @@
 # Benchmarks
 
-Tests check that the gateway does what it specifies. Benchmarks measure whether that helps a model, which has no single right answer and is judged against a baseline. They live in their own package, `openapi-mcp-gateway-eval`, a uv workspace member beside the gateway, so the gateway's wheel and dependencies carry none of them. The code and its tests sit under `src/` and `tests/`, and each benchmark's data sits in a folder named after it.
+Tests check that the gateway does what it specifies. Benchmarks measure whether that helps a model, which has no single right answer and is judged against a baseline. They live in their own package, `openapi-mcp-gateway-eval`, a uv workspace member beside the gateway, so the gateway's wheel and dependencies carry none of them. The code and its tests sit under `src/` and `tests/`, and each benchmark's data sits in a folder named after it under [`benchmarks/`](../benchmarks/) at the repository root.
 
 | Benchmark | Measures | Calls a Model | Runs |
 | --- | --- | --- | --- |
-| [`search_ranking/`](search_ranking/) | whether `search_operations` ranks the requested operation near the top | no | every PR, in CI |
-| [`tool_calling/`](tool_calling/) | whether a model calls the right operations with the right arguments through the gateway, compared with one tool per operation | yes | on demand; its data is checked on every PR |
+| [`search_ranking/`](../benchmarks/search_ranking/) | whether `search_operations` ranks the requested operation near the top | no | every PR, in CI |
+| [`tool_calling/`](../benchmarks/tool_calling/) | whether a model calls the right operations with the right arguments through the gateway, compared with one tool per operation | yes | on demand; its data is checked on every PR |
 
 The same tool calling harness also runs a user's own config on their own tasks, which [Your Own Config](#your-own-config) covers.
 
@@ -106,7 +106,7 @@ eval/src/openapi_mcp_gateway_eval/
     user_configs.py                   a user's configs and tasks file as a one-scenario benchmark
 ```
 
-Each benchmark's data sits in a folder named after it, laid out the same way, which its README's Layout section lists. A unit of data, a spec or a scenario, keeps all of its files in one directory. Every instruction a model is given sits under `prompts/`, and every file a model wrote keeps the record of that run beside it as `<file>.provenance.json`.
+Each benchmark's data sits in a folder named after it under `benchmarks/`, laid out the same way, which its README's Layout section lists. A unit of data, a spec or a scenario, keeps all of its files in one directory. Every instruction a model is given sits under `prompts/`, and every file a model wrote keeps the record of that run beside it as `<file>.provenance.json`.
 
 Every record is a pydantic model, from the manifest to the report, so a wrong field fails where it is read.
 
@@ -122,7 +122,7 @@ uv run omgw benchmark search-ranking run --split dev --variant default
 uv run omgw benchmark search-ranking check                   # what CI runs, calling no model
 ```
 
-`run` ranks every query of a split under every variant. `check` checks the data and compares the gated variant with its gate scores. `generate-annotations` makes the queries and judgements anew with models, which the [README](search_ranking/README.md#data-provenance) walks through.
+`run` ranks every query of a split under every variant. `check` checks the data and compares the gated variant with its gate scores. `generate-annotations` makes the queries and judgements anew with models, which the [README](../benchmarks/search_ranking/README.md#data-provenance) walks through.
 
 The first run downloads about 30 MB of pinned specs into `~/.cache/openapi-mcp-gateway`, or the directory `OPENAPI_MCP_GATEWAY_CACHE` names. A run takes a few seconds after that.
 
@@ -173,7 +173,7 @@ uv run omgw benchmark tool-calling run --output report.json
 uv run omgw benchmark tool-calling check                     # what CI runs, calling no model
 ```
 
-`run` serves each scenario's gateway and a replay upstream on loopback ports, connects a Pydantic AI agent to the gateway over MCP, and runs every test task under every variant and model as many times as the manifest says, through Pydantic Evals. `check` proves every task can pass. `generate-config` writes the generated variants with a model running the skill, which the [README](tool_calling/README.md#data-provenance) walks through. `run` and `generate-config` need each provider's API key in its usual variable, such as `ANTHROPIC_API_KEY`.
+`run` serves each scenario's gateway and a replay upstream on loopback ports, connects a Pydantic AI agent to the gateway over MCP, and runs every test task under every variant and model as many times as the manifest says, through Pydantic Evals. `check` proves every task can pass. `generate-config` writes the generated variants with a model running the skill, which the [README](../benchmarks/tool_calling/README.md#data-provenance) walks through. `run` and `generate-config` need each provider's API key in its usual variable, such as `ANTHROPIC_API_KEY`.
 
 ### Metrics
 

@@ -1,4 +1,4 @@
-# The search ranking benchmark. See README.md for what it holds and ../README.md for how to run it.
+# The search ranking benchmark. See README.md for what it holds and ../../eval/README.md for how to run it.
 # Each spec is pinned to one revision and checked by SHA-256.
 # A change to a pin, a query, or a judgement makes a new version.
 version: 1

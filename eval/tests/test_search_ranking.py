@@ -34,7 +34,7 @@ from openapi_mcp_gateway_eval.spec_pins import SpecChecksumError, SpecPin, sha25
 
 FIXTURES_DIR = pathlib.Path(__file__).parent / 'fixtures'
 PETSTORE = FIXTURES_DIR / 'petstore.json'
-REPOSITORY_PROMPTS = pathlib.Path(__file__).parents[1] / 'search_ranking' / dataset.PROMPTS_DIRECTORY
+REPOSITORY_PROMPTS = pathlib.Path(__file__).parents[2] / 'benchmarks' / 'search_ranking' / dataset.PROMPTS_DIRECTORY
 
 # The phrase that tells the reviser's instructions apart from the query author's, which share a model.
 REVISER_PHRASE = 'revising queries you wrote'

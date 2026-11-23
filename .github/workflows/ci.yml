@@ -81,7 +81,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/openapi-mcp-gateway/specs
-          key: benchmark-specs-${{ hashFiles('eval/**/benchmark.yaml') }}
+          key: benchmark-specs-${{ hashFiles('benchmarks/**/benchmark.yaml') }}
       - run: uv sync --all-packages --extra dev --extra redis
       - run: uv run omgw benchmark search-ranking check
 
@@ -98,7 +98,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/openapi-mcp-gateway/specs
-          key: benchmark-specs-${{ hashFiles('eval/**/benchmark.yaml') }}
+          key: benchmark-specs-${{ hashFiles('benchmarks/**/benchmark.yaml') }}
       - run: uv sync --all-packages --extra dev --extra redis
       - run: uv run omgw benchmark tool-calling check
 

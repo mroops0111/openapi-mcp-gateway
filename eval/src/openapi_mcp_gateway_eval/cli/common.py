@@ -23,7 +23,10 @@ from ..tool_calling.validation import ValidationProblem
 # A file option says it is a file, as --task-file, unless its name already says what the file is, as --config.
 
 # Where each benchmark's data sits, relative to the repository root a maintainer runs the commands from.
-DEFAULT_BENCHMARK_DIRECTORIES = {'tool-calling': 'eval/tool_calling', 'search-ranking': 'eval/search_ranking'}
+DEFAULT_BENCHMARK_DIRECTORIES = {
+    'tool-calling': 'benchmarks/tool_calling',
+    'search-ranking': 'benchmarks/search_ranking',
+}
 
 # A file the user wrote, such as a config or the tasks.
 INPUT_FILE = click.Path(exists=True, dir_okay=False, path_type=pathlib.Path)

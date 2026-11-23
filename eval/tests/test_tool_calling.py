@@ -32,7 +32,7 @@ from openapi_mcp_gateway_eval.tool_calling.validation import solution_model
 
 FIXTURES_DIR = pathlib.Path(__file__).parent / 'fixtures'
 PETSTORE = FIXTURES_DIR / 'petstore.json'
-REPOSITORY_PROMPTS = pathlib.Path(__file__).parents[1] / 'tool_calling' / dataset.PROMPTS_DIRECTORY
+REPOSITORY_PROMPTS = pathlib.Path(__file__).parents[2] / 'benchmarks' / 'tool_calling' / dataset.PROMPTS_DIRECTORY
 
 MANIFEST = """\
 version: 1
