@@ -6,7 +6,7 @@ import inflection
 import pydantic
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, InputRequiredResult, ToolAnnotations
 
 from ..openapi import ExposedTool, OperationInfo, ToolOverride
 from ..scopes import McpUnrestrictedScopePolicy, ScopeRegistry
@@ -21,7 +21,7 @@ from ._shared import (
     derive_description,
     derive_name,
 )
-from ._upstream import UpstreamConnection, _build_upstream_closure
+from ._upstream import UpstreamConnection, UpstreamOperationCall
 
 
 logger = logging.getLogger(__name__)
@@ -85,20 +85,25 @@ def build_tool_function(
     With ``attach_signature=True`` (the default),
     the returned callable carries an ``inspect.Signature`` and ``__annotations__``,
     so MCPServer can derive its input schema.
-    With ``attach_signature=False``, returns the bare upstream closure for dispatch from a registry,
+    With ``attach_signature=False``, returns the bare ``UpstreamOperationCall`` for dispatch from a registry,
     as used by :class:`MetaToolGenerator`.
     """
     if input_schema is None:
         input_schema = build_input_schema(operation)
-    upstream_callable = _build_upstream_closure(
+    upstream_call = UpstreamOperationCall(
         operation, connection, input_schema=input_schema, sign_in_policy=URL_ELICITATION_SIGN_IN_POLICY
     )
     if not attach_signature:
-        return upstream_callable
+        return upstream_call
+
+    # MCPServer registers a function, reading its name and signature, so the call sits behind one.
+    async def tool_function(**kwargs: typing.Any) -> CallToolResult | InputRequiredResult:
+        return await upstream_call(**kwargs)
+
     signature, annotations = _build_tool_signature(operation)
-    upstream_callable.__signature__ = signature
-    upstream_callable.__annotations__ = annotations
-    return upstream_callable
+    tool_function.__signature__ = signature  # type: ignore[attr-defined]
+    tool_function.__annotations__ = annotations
+    return tool_function
 
 
 class ToolGenerator:

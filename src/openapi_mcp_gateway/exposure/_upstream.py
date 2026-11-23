@@ -49,6 +49,165 @@ class UpstreamConnection:
         object.__setattr__(self, 'client', UpstreamSharedHttpClient(self.base_url, self.timeout, self.transport))
 
 
+class UpstreamOperationCall:
+    """The upstream call behind one operation, shared by every exposure mode.
+
+    Everything that depends only on the operation is prepared once, here,
+    so a syntax error in a ``request`` or ``response`` JSONata expression surfaces at startup.
+    Each call then runs its steps in order.
+
+    1. **Validate**: with ``input_schema``, the schema a tool advertises, the arguments are checked against it.
+    2. **Build**: a ``request`` JSONata expression in the ``tool`` override builds the whole upstream request,
+       otherwise the arguments pass through by location as declared in the spec.
+    3. **Send**: an upstream that says the user's token expired gets the token renewed and the request sent once more.
+       ``sign_in_policy`` decides whether a refusal a renewal cannot cure asks the client
+       to send the user to sign in again, and it never does by default.
+    4. **Shape**: media is promoted out of a successful body, and a ``response`` expression reshapes what is left.
+
+    A call takes the sanitised parameter names as keyword arguments,
+    plus ``ctx`` for the MCPServer-injected :class:`Context`.
+    """
+
+    def __init__(
+        self,
+        operation: OperationInfo,
+        connection: UpstreamConnection,
+        *,
+        input_schema: dict[str, typing.Any] | None = None,
+        sign_in_policy: UpstreamSignInPolicy = NO_SIGN_IN_POLICY,
+    ) -> None:
+        self._connection = connection
+        self._sign_in_policy = sign_in_policy
+        self._method = operation.method
+        self._path = operation.path
+        path_parameters, query_parameters, header_parameters, body_parameters = _split_by_location(operation.parameters)
+        self._path_parameters = _parameters_keyed_by_sanitised_name(path_parameters)
+        self._query_parameters = _parameters_keyed_by_sanitised_name(query_parameters)
+        self._header_parameters = _parameters_keyed_by_sanitised_name(header_parameters)
+        self._body_parameters = _parameters_keyed_by_sanitised_name(body_parameters)
+        self._injected_defaults = {
+            _sanitize_name(parameter.name): parameter.schema_['default']
+            for parameter in operation.parameters
+            if parameter.send_default
+        }
+        tool_override = _get_override(operation, 'tool')
+        self._request_transform = (
+            compile_expression(tool_override.request, label=f'{operation.operation_id} request')
+            if tool_override and tool_override.request
+            else None
+        )
+        self._response_transform = (
+            compile_expression(tool_override.response, label=f'{operation.operation_id} response')
+            if tool_override and tool_override.response
+            else None
+        )
+        self._validator = (
+            Draft202012Validator(input_schema, format_checker=FormatChecker()) if input_schema is not None else None
+        )
+        # The override wins per path, so an author can correct or add to what the spec declares.
+        self._media_promoter = MediaPromoter(operation.response_media, tool_override.media if tool_override else {})
+
+    async def __call__(self, **kwargs: typing.Any) -> CallToolResult | InputRequiredResult:
+        context: Context = kwargs.pop('ctx')
+        invalid = self._validate(kwargs)
+        if invalid is not None:
+            return invalid
+        arguments = self._with_defaults(kwargs)
+
+        progress = CallProgress(context)
+        unsent = await self._sign_in_policy.await_answer(context, self._connection.reauthorizer, progress)
+        if unsent is not None:
+            return unsent
+        await progress.report(f'Sending request to {self._method.upper()} {self._path} ...')
+
+        request = self._build_request(arguments)
+        if isinstance(request, CallToolResult):
+            return request
+
+        try:
+            body = await send_with_renewal(lambda: self._send(context, request), self._connection.reauthorizer)
+        except httpx.HTTPStatusError as exception:
+            await progress.finish('Request completed (upstream error)')
+            offered = await self._sign_in_policy.ask(context, self._connection.reauthorizer, exception.response)
+            if offered is not None:
+                return offered
+            return _build_http_error_result(exception)
+        except httpx.RequestError as exception:
+            await progress.finish('Request failed (network error)')
+            return _build_network_error_result(exception)
+
+        await progress.finish('Request completed')
+        return self._shape(body, request)
+
+    def _validate(self, kwargs: dict[str, typing.Any]) -> CallToolResult | None:
+        if self._validator is None:
+            return None
+        provided = _to_jsonable({name: value for name, value in kwargs.items() if value is not None})
+        errors = sorted(self._validator.iter_errors(provided), key=lambda error: list(error.path))
+        return _build_validation_error_result(errors) if errors else None
+
+    def _with_defaults(self, kwargs: dict[str, typing.Any]) -> dict[str, typing.Any]:
+        """Add each x-mcp default the LLM omitted, since it is sent upstream only then."""
+        missing = {name: default for name, default in self._injected_defaults.items() if kwargs.get(name) is None}
+        return {**kwargs, **missing}
+
+    def _build_request(self, arguments: dict[str, typing.Any]) -> '_UpstreamRequest | CallToolResult':
+        """Build the upstream request, or return the error result of a failed ``request`` transform."""
+        if self._request_transform is not None:
+            provided = _to_jsonable({name: value for name, value in arguments.items() if value is not None})
+            try:
+                upstream_object = apply_transform(self._request_transform, provided)
+            except TransformError as error:
+                return _build_transform_error_result('request', error)
+            path, query, headers, body = _route_upstream_object(
+                upstream_object or {}, self._path, self._method, self._header_parameters
+            )
+            return _UpstreamRequest(path, query, headers, body)
+        path = self._path
+        for parameter_name, parameter in self._path_parameters.items():
+            value = arguments.get(parameter_name)
+            if value is not None:
+                path = path.replace(f'{{{parameter.name}}}', str(value))
+        headers = {
+            name: str(value)
+            for name, value in _kwargs_to_upstream_arguments(arguments, self._header_parameters).items()
+        }
+        return _UpstreamRequest(
+            path=path,
+            query=_kwargs_to_upstream_arguments(arguments, self._query_parameters),
+            headers=headers,
+            body=_to_jsonable(_kwargs_to_upstream_arguments(arguments, self._body_parameters)),
+        )
+
+    async def _send(self, context: Context, request: '_UpstreamRequest') -> typing.Any:
+        connection = self._connection
+        # Resolved on each attempt, so a retry carries the token a renewal put in place.
+        try:
+            auth_headers = await connection.auth_resolver.resolve(context)
+        except httpx.HTTPError as exception:
+            # Failing to obtain a credential is the gateway's failure, so it is not reported as the API's.
+            raise RuntimeError('The gateway could not obtain its upstream credential') from exception
+        headers = {**connection.headers, **_trace_context_headers(context), **auth_headers, **request.headers}
+        # The client is shared by every call to this server, so every header, auth included, rides on the request.
+        return await connection.client.get().request(
+            self._method, request.path, params=request.query or None, data=request.body or None, headers=headers
+        )
+
+    def _shape(self, body: typing.Any, request: '_UpstreamRequest') -> CallToolResult:
+        # A response transform reshapes JSON, so it has nothing to apply to in a binary body.
+        if isinstance(body, UpstreamBinaryBody):
+            return _build_binary_result(body)
+        # Media paths name fields of the upstream response, so they are promoted before a transform reshapes it.
+        url = f'{self._connection.base_url.rstrip("/")}{request.path}'
+        body, media_contents = self._media_promoter.promote(body, url)
+        if self._response_transform is not None:
+            try:
+                body = apply_transform(self._response_transform, body)
+            except TransformError as error:
+                return _build_transform_error_result('response', error)
+        return _build_success_result(body, media_contents)
+
+
 def _build_success_result(payload: typing.Any, media_contents: typing.Sequence[ContentBlock] = ()) -> CallToolResult:
     """Wrap an upstream success body as a ``CallToolResult``.
 
@@ -249,147 +408,11 @@ def _trace_context_headers(context: Context) -> dict[str, str]:
     return {key: str(value) for key in _TRACE_CONTEXT_META_KEYS if (value := meta.get(key)) is not None}
 
 
-def _build_upstream_closure(
-    operation: OperationInfo,
-    connection: UpstreamConnection,
-    *,
-    input_schema: dict[str, typing.Any] | None = None,
-    sign_in_policy: UpstreamSignInPolicy = NO_SIGN_IN_POLICY,
-) -> typing.Callable[..., typing.Awaitable[CallToolResult | InputRequiredResult]]:
-    """Build the async callable that issues one upstream request per invocation.
+@dataclasses.dataclass(frozen=True)
+class _UpstreamRequest:
+    """One upstream request, built from a call's arguments and ready to send."""
 
-    Shared by every exposure mode.
-    The callable accepts the sanitised parameter names as keyword arguments,
-    plus ``ctx`` for the MCPServer-injected :class:`Context`.
-
-    With ``input_schema``, the schema a tool advertises, the arguments are checked against it before any call.
-
-    When the ``tool`` override carries a ``request`` JSONata expression it builds the whole upstream request,
-    otherwise the arguments pass through by location as declared in the spec.
-    A ``response`` JSONata expression reshapes a successful body before it reaches the client.
-    Both expressions are compiled once here, so a syntax error surfaces at startup.
-
-    An upstream that says the user's token expired gets the token renewed and the request sent once more.
-    ``sign_in_policy`` decides whether a refusal a renewal cannot cure asks the client to send the user
-    to sign in again, and it never does by default.
-    """
-    path_parameters, query_parameters, header_parameters, body_parameters = _split_by_location(operation.parameters)
-    path_parameters_by_name = _parameters_keyed_by_sanitised_name(path_parameters)
-    query_parameters_by_name = _parameters_keyed_by_sanitised_name(query_parameters)
-    header_parameters_by_name = _parameters_keyed_by_sanitised_name(header_parameters)
-    body_parameters_by_name = _parameters_keyed_by_sanitised_name(body_parameters)
-    injected_defaults = {
-        _sanitize_name(parameter.name): parameter.schema_['default']
-        for parameter in operation.parameters
-        if parameter.send_default
-    }
-    method = operation.method
-    path = operation.path
-    tool_override = _get_override(operation, 'tool')
-    request_transform = (
-        compile_expression(tool_override.request, label=f'{operation.operation_id} request')
-        if tool_override and tool_override.request
-        else None
-    )
-    response_transform = (
-        compile_expression(tool_override.response, label=f'{operation.operation_id} response')
-        if tool_override and tool_override.response
-        else None
-    )
-    validator = Draft202012Validator(input_schema, format_checker=FormatChecker()) if input_schema is not None else None
-    # The override wins per path, so an author can correct or add to what the spec declares.
-    media_promoter = MediaPromoter(operation.response_media, tool_override.media if tool_override else {})
-
-    async def upstream_callable(**kwargs: typing.Any) -> CallToolResult | InputRequiredResult:
-        context: Context = kwargs.pop('ctx')
-
-        if validator is not None:
-            provided = _to_jsonable({name: value for name, value in kwargs.items() if value is not None})
-            errors = sorted(validator.iter_errors(provided), key=lambda error: list(error.path))
-            if errors:
-                return _build_validation_error_result(errors)
-
-        # An x-mcp default is sent upstream only when the LLM omitted the parameter.
-        for sanitised_name, default_value in injected_defaults.items():
-            if kwargs.get(sanitised_name) is None:
-                kwargs[sanitised_name] = default_value
-
-        progress = CallProgress(context)
-        unsent = await sign_in_policy.await_answer(context, connection.reauthorizer, progress)
-        if unsent is not None:
-            return unsent
-
-        await progress.report(f'Sending request to {method.upper()} {path} ...')
-
-        if request_transform is not None:
-            arguments = _to_jsonable({name: value for name, value in kwargs.items() if value is not None})
-            try:
-                upstream_object = apply_transform(request_transform, arguments)
-            except TransformError as error:
-                return _build_transform_error_result('request', error)
-            resolved_path, query_arguments, header_arguments, body_arguments = _route_upstream_object(
-                upstream_object or {}, path, method, header_parameters_by_name
-            )
-        else:
-            resolved_path = path
-            for parameter_name, parameter in path_parameters_by_name.items():
-                value = kwargs.get(parameter_name)
-                if value is None:
-                    continue
-                resolved_path = resolved_path.replace(f'{{{parameter.name}}}', str(value))
-            query_arguments = _kwargs_to_upstream_arguments(kwargs, query_parameters_by_name)
-            header_arguments = {
-                name: str(value)
-                for name, value in _kwargs_to_upstream_arguments(kwargs, header_parameters_by_name).items()
-            }
-            body_arguments = _to_jsonable(_kwargs_to_upstream_arguments(kwargs, body_parameters_by_name))
-
-        async def send() -> typing.Any:
-            # Resolved on each attempt, so a retry carries the token a renewal put in place.
-            try:
-                auth_headers = await connection.auth_resolver.resolve(context)
-            except httpx.HTTPError as exception:
-                # Failing to obtain a credential is the gateway's failure, so it is not reported as the API's.
-                raise RuntimeError('The gateway could not obtain its upstream credential') from exception
-            request_headers: dict[str, str] = {
-                **connection.headers,
-                **_trace_context_headers(context),
-                **auth_headers,
-                **header_arguments,
-            }
-            # The client is shared by every call to this server, so every header, auth included, rides on the request.
-            return await connection.client.get().request(
-                method,
-                resolved_path,
-                params=query_arguments or None,
-                data=body_arguments or None,
-                headers=request_headers,
-            )
-
-        try:
-            result = await send_with_renewal(send, connection.reauthorizer)
-        except httpx.HTTPStatusError as exception:
-            await progress.finish('Request completed (upstream error)')
-            offered = await sign_in_policy.ask(context, connection.reauthorizer, exception.response)
-            if offered is not None:
-                return offered
-            return _build_http_error_result(exception)
-        except httpx.RequestError as exception:
-            await progress.finish('Request failed (network error)')
-            return _build_network_error_result(exception)
-
-        await progress.finish('Request completed')
-
-        # A response transform reshapes JSON, so it has nothing to apply to in a binary body.
-        if isinstance(result, UpstreamBinaryBody):
-            return _build_binary_result(result)
-        # Media paths name fields of the upstream response, so they are promoted before a transform reshapes it.
-        result, media_contents = media_promoter.promote(result, f'{connection.base_url.rstrip("/")}{resolved_path}')
-        if response_transform is not None:
-            try:
-                result = apply_transform(response_transform, result)
-            except TransformError as error:
-                return _build_transform_error_result('response', error)
-        return _build_success_result(result, media_contents)
-
-    return upstream_callable
+    path: str
+    query: dict[str, typing.Any]
+    headers: dict[str, str]
+    body: typing.Any

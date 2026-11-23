@@ -19,7 +19,7 @@ from ._shared import (
     derive_description,
     derive_name,
 )
-from ._upstream import UpstreamConnection, _build_upstream_closure
+from ._upstream import UpstreamConnection, UpstreamOperationCall
 
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ def _build_resource_signature(
 def build_resource_read_function(operation: OperationInfo, connection: UpstreamConnection) -> typing.Callable:
     """Build the async read function for ``operation`` exposed as an MCP resource.
 
-    Reuses the upstream closure from the tool path, so auth, path substitution, and error handling stay identical.
+    Reuses the tool path's ``UpstreamOperationCall``, so auth, path substitution, and error handling stay identical.
     Signature is conditional on whether the operation has path parameters,
     which dictates how MCPServer registers the resource:
 
@@ -118,14 +118,14 @@ def build_resource_read_function(operation: OperationInfo, connection: UpstreamC
     Optional query / header / body parameters are dropped from the resource surface in both cases.
     Callers cannot pass them, and the upstream sees defaults.
     """
-    upstream_callable = _build_upstream_closure(operation, connection)
+    upstream_call = UpstreamOperationCall(operation, connection)
     path_parameters, _, _, _ = _split_by_location(operation.parameters)
     null_context = typing.cast(Context, _NullContext())
 
     async def read_function(**kwargs: typing.Any) -> str | bytes:
         context = kwargs.pop('ctx', null_context)
         # A resource read never offers a new sign-in, so the call always finishes in one round.
-        result = typing.cast(CallToolResult, await upstream_callable(ctx=context, **kwargs))
+        result = typing.cast(CallToolResult, await upstream_call(ctx=context, **kwargs))
         body = _extract_body_from_result(result)
         if result.is_error:
             raise RuntimeError(body or 'Upstream error reading resource')
@@ -142,7 +142,7 @@ class _NullContext:
 
     MCPServer registers a resource as concrete only when the read function takes no parameters,
     so concrete reads cannot declare ``ctx``.
-    This shim feeds the shared upstream closure a context-shaped object that no-ops on progress reporting,
+    This shim feeds the shared ``UpstreamOperationCall`` a context-shaped object that no-ops on progress reporting,
     and returns no header data for auth resolution.
     """
 
