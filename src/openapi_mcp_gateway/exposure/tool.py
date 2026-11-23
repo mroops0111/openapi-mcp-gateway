@@ -89,7 +89,7 @@ def build_tool_function(
     """
     if input_schema is None:
         input_schema = build_input_schema(operation)
-    upstream_callable = _build_upstream_closure(operation, connection, input_schema=input_schema)
+    upstream_callable = _build_upstream_closure(operation, connection, input_schema=input_schema, offers_sign_in=True)
     if not attach_signature:
         return upstream_callable
     signature, annotations = _build_tool_signature(operation)

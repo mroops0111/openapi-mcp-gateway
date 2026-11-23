@@ -408,6 +408,7 @@ class Gateway:
         connection = UpstreamConnection(
             base_url=base_url,
             auth_resolver=auth_resolver,
+            reauthorizer=auth.reauthorizer,
             timeout=server_config.timeout,
             transport=transport,
             headers=server_config.resolve_headers(),

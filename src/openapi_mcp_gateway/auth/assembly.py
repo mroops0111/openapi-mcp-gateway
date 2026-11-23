@@ -15,6 +15,7 @@ from ..stores.base import TokenStore
 from .mcp.client_metadata import McpClientMetadataResolver
 from .routes import AuthRoutes
 from .upstream.oauth_flow import UpstreamOAuthFlow
+from .upstream.reauthorization import UpstreamReauthorizer
 from .upstream.resolver import UpstreamAuthResolver
 
 
@@ -76,6 +77,8 @@ class ServerAuthSetup:
     """What assembling one server's auth produces, for both directions, consumed by ``Gateway``.
 
     ``resolver`` is the upstream half and is always set.
+    ``reauthorizer`` is set where the gateway holds each user's own upstream token,
+    and cures an upstream refusal of it by renewing it or sending the user to sign in again.
     The rest is the MCP half, and stays empty where nothing checks who calls the endpoint.
 
     ``provider`` is set when the gateway issues this endpoint's tokens through the SDK's routes.
@@ -94,6 +97,7 @@ class ServerAuthSetup:
     """
 
     resolver: UpstreamAuthResolver
+    reauthorizer: UpstreamReauthorizer | None = None
     provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None = None
     settings: AuthSettings | None = None
     verifier: TokenVerifier | None = None

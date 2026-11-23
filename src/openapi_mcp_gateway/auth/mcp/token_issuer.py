@@ -44,12 +44,14 @@ class McpTokenAttachment:
     ``links`` are the credentials the tokens map to, keyed by a name the attaching side chooses.
     ``links_expire_at`` is when the first of those credentials stops working, as a Unix time.
     An access token never outlives it, so the client refreshes before its calls start failing.
+    ``browser_id`` is the browser the sign-in ran in, the only one that may sign the user in again for these tokens.
     All stay empty for a token no upstream sign-in stands behind.
     """
 
     upstream_scopes: list[str] = dataclasses.field(default_factory=list)
     links: collections.abc.Mapping[str, str] = dataclasses.field(default_factory=dict)
     links_expire_at: int | None = None
+    browser_id: str | None = None
 
 
 class McpTokenIssuer:
@@ -155,7 +157,30 @@ class McpTokenIssuer:
             upstream_scopes=list(data.get('upstream_scopes', [])),
             links=links,
             links_expire_at=data.get('links_expire_at'),
+            browser_id=data.get('browser_id'),
         )
+
+    async def load_access_token_attachment(self, token: str) -> McpTokenAttachment | None:
+        """What the MCP access token ``token`` carries, or ``None`` when it is unknown here or a link is gone."""
+        data = await self.store.get('mcp_access_token', token)
+        if not self.is_from_here(data):
+            return None
+        return await self.load_attachment('mcp_access_token', token, data)
+
+    async def replace_attachment(self, token: str, attachment: McpTokenAttachment) -> bool:
+        """Make the MCP access token ``token`` and the refresh token paired with it carry ``attachment`` instead.
+
+        This is how a new upstream sign-in reaches a client without a new MCP token,
+        since the client's bearer stays unchanged while the gateway obtains the upstream credential.
+        Each token keeps its own expiry, and ``False`` says ``token`` is unknown here or already expired.
+        """
+        replaced = await self._replace_record_attachment('mcp_access_token', token, attachment)
+        if not replaced:
+            return False
+        refresh_token = await self.store.get_mapping('mcp_access_token', token, 'mcp_refresh_token')
+        if refresh_token:
+            await self._replace_record_attachment('mcp_refresh_token', refresh_token, attachment)
+        return True
 
     async def issue_tokens(
         self, client: OAuthClientInformationFull, scopes: list[str], attachment: McpTokenAttachment
@@ -275,6 +300,20 @@ class McpTokenIssuer:
         for link in data.get('links', []):
             await self.store.delete_mapping(namespace, key, link)
 
+    async def _replace_record_attachment(self, namespace: str, key: str, attachment: McpTokenAttachment) -> bool:
+        """Rewrite the record under ``key`` to carry ``attachment``, for the rest of its lifetime."""
+        data = await self.store.get(namespace, key)
+        if not self.is_from_here(data):
+            return False
+        ttl = int(data['expires_at'] - time.time())
+        if ttl <= 0:
+            return False
+        await self._delete_links(namespace, key, data)
+        record_fields = self._build_record_fields(attachment)
+        await self.store.set(namespace, key, {**data, **record_fields}, ttl=ttl)
+        await self._store_links(namespace, key, attachment, ttl)
+        return True
+
     def _build_token_record(
         self, client: OAuthClientInformationFull, scopes: list[str], attachment: McpTokenAttachment
     ) -> dict[str, typing.Any]:
@@ -292,6 +331,7 @@ class McpTokenIssuer:
             'upstream_scopes': list(attachment.upstream_scopes),
             'links': sorted(attachment.links),
             'links_expire_at': attachment.links_expire_at,
+            'browser_id': attachment.browser_id,
             'resource': self.resource,
             'origin': self._origin_fields,
         }

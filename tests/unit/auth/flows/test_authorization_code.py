@@ -13,6 +13,7 @@ from openapi_mcp_gateway.auth.flows import (
 from openapi_mcp_gateway.auth.flows.factory import resolve_upstream_oauth_flow
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenPolicy
+from openapi_mcp_gateway.auth.upstream.rejection import UpstreamRejection
 from openapi_mcp_gateway.scopes import McpAccessToken, McpUnrestrictedScopePolicy, ScopeRegistry
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
@@ -38,6 +39,7 @@ from tests.oauth import (
     query_value,
     server_of,
     sign_in,
+    state_in,
     upstream_token_response,
 )
 from tests.scope import SECURED_CEILING, secured_registry
@@ -528,3 +530,125 @@ async def _upstream_scopes_of(provider: McpAuthorizationCodeServer, mcp_access_t
     access_token = await provider.load_access_token(mcp_access_token)
     assert isinstance(access_token, McpAccessToken)
     return access_token.upstream_scopes
+
+
+class TestUpstreamReauthorization:
+    """A new upstream sign-in for a token already held runs only in the browser of the first sign-in."""
+
+    async def test_an_mcp_refresh_keeps_the_browser_the_sign_in_ran_in(self, provider, mcp_client_info):
+        """A refreshed token can still be signed in again, from the same browser."""
+        token = await sign_in(provider, mcp_client_info, upstream_expires_in=900)
+        assert token.refresh_token is not None
+        refresh = await provider.load_refresh_token(mcp_client_info, token.refresh_token)
+        assert refresh is not None
+        with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response('renewed'))):
+            rotated = await provider.exchange_refresh_token(mcp_client_info, refresh, [])
+
+        attachment = await bridge_of(provider).tokens.load_access_token_attachment(rotated.access_token)
+
+        assert attachment is not None
+        assert attachment.browser_id == BROWSER_ID
+
+    async def test_no_sign_in_is_offered_for_a_token_no_browser_is_bound_to(self, provider, memory_store):
+        await memory_store.set('mcp_access_token', 'mcp_unbound', _token_record(bridge_of(provider)))
+
+        with _calling_as(provider, 'mcp_unbound'):
+            assert await bridge_of(provider).start(UpstreamRejection('invalid_token')) is None
+
+    async def test_no_sign_in_is_offered_outside_a_call(self, provider):
+        bridge = bridge_of(provider)
+        with patch('openapi_mcp_gateway.auth.flows.authorization_code.get_access_token', return_value=None):
+            assert await bridge.start(UpstreamRejection('invalid_token')) is None
+            assert not await bridge.renew()
+            assert not await bridge.wait_for_completion(0.1)
+
+    async def test_a_renewal_refused_by_the_upstream_changes_nothing(self, provider, mcp_client_info):
+        token = await sign_in(provider, mcp_client_info)
+        refused = MagicMock(status_code=400, text='revoked')
+
+        with (
+            _calling_as(provider, token.access_token),
+            patch('httpx.AsyncClient.post', AsyncMock(return_value=refused)),
+        ):
+            assert not await bridge_of(provider).renew()
+
+        assert await bridge_of(provider).tokens.load_access_token_link(token.access_token, 'upstream_access_token')
+
+    async def test_a_link_naming_no_sign_in_is_refused(self, provider):
+        with pytest.raises(HTTPException) as raised:
+            await bridge_of(provider).begin_reauthorization('unknown', BROWSER_ID)
+
+        assert raised.value.status_code == 400
+
+    async def test_a_finished_sign_in_cannot_run_again(self, provider, mcp_client_info):
+        bridge = bridge_of(provider)
+        token = await sign_in(provider, mcp_client_info)
+        reauthorization = await _start(provider, token.access_token)
+        upstream_url = await bridge.begin_reauthorization(reauthorization.reauthorization_id, BROWSER_ID)
+        with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response('again'))):
+            await bridge.handle_reauthorization_callback('upstream-code', state_in(upstream_url), BROWSER_ID)
+
+        with pytest.raises(HTTPException):
+            await bridge.begin_reauthorization(reauthorization.reauthorization_id, BROWSER_ID)
+        with _calling_as(provider, token.access_token):
+            assert await bridge.wait_for_completion(0.1)
+
+    async def test_an_upstream_refusal_ends_the_sign_in(self, provider, mcp_client_info):
+        """The call waiting on it stops waiting, and hears the upstream's original answer."""
+        bridge = bridge_of(provider)
+        token = await sign_in(provider, mcp_client_info)
+        reauthorization = await _start(provider, token.access_token)
+        upstream_url = await bridge.begin_reauthorization(reauthorization.reauthorization_id, BROWSER_ID)
+
+        with pytest.raises(HTTPException) as raised:
+            await bridge.handle_reauthorization_error('access_denied', state_in(upstream_url), BROWSER_ID)
+
+        assert 'access_denied' in raised.value.detail
+        with _calling_as(provider, token.access_token):
+            assert not await bridge.wait_for_completion(0.1)
+
+    async def test_a_sign_in_for_a_revoked_token_fails(self, provider, mcp_client_info):
+        bridge = bridge_of(provider)
+        token = await sign_in(provider, mcp_client_info)
+        reauthorization = await _start(provider, token.access_token)
+        upstream_url = await bridge.begin_reauthorization(reauthorization.reauthorization_id, BROWSER_ID)
+        await bridge.tokens.revoke_access_token(token.access_token)
+
+        with (
+            patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response('again'))),
+            pytest.raises(HTTPException) as raised,
+        ):
+            await bridge.handle_reauthorization_callback('upstream-code', state_in(upstream_url), BROWSER_ID)
+
+        assert 'has ended' in raised.value.detail
+
+    async def test_a_callback_under_an_unknown_state_is_refused(self, provider):
+        with pytest.raises(HTTPException):
+            await bridge_of(provider).handle_reauthorization_callback('upstream-code', 'unknown', BROWSER_ID)
+
+
+def _token_record(bridge) -> dict:
+    """An MCP access token record of this server that carries no browser."""
+    return {
+        'token': 'mcp_unbound',
+        'client_id': 'client-1',
+        'scopes': ['read'],
+        'expires_at': 9999999999,
+        'origin': bridge.tokens.origin.model_dump(),
+    }
+
+
+def _calling_as(provider: McpAuthorizationCodeServer, mcp_access_token: str):
+    """Handle the rest of the block as a call made with ``mcp_access_token``."""
+    access_token = MagicMock()
+    access_token.token = mcp_access_token
+    access_token.scopes = ['api']
+    return patch('openapi_mcp_gateway.auth.flows.authorization_code.get_access_token', return_value=access_token)
+
+
+async def _start(provider: McpAuthorizationCodeServer, mcp_access_token: str):
+    """Start a new upstream sign-in for ``mcp_access_token``, which the bridge must offer."""
+    with _calling_as(provider, mcp_access_token):
+        reauthorization = await bridge_of(provider).start(UpstreamRejection('invalid_token'))
+    assert reauthorization is not None
+    return reauthorization

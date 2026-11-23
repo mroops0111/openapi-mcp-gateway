@@ -124,7 +124,8 @@ def build_resource_read_function(operation: OperationInfo, connection: UpstreamC
 
     async def read_function(**kwargs: typing.Any) -> str | bytes:
         context = kwargs.pop('ctx', null_context)
-        result = await upstream_callable(ctx=context, **kwargs)
+        # A resource read never offers a new sign-in, so the call always finishes in one round.
+        result = typing.cast(CallToolResult, await upstream_callable(ctx=context, **kwargs))
         body = _extract_body_from_result(result)
         if result.is_error:
             raise RuntimeError(body or 'Upstream error reading resource')

@@ -140,6 +140,19 @@ class Browser:
             self._client_redirect = location
             self._cookies = browser.cookies
 
+    async def sign_in_again(self, url: str) -> httpx2.Response:
+        """Open a new upstream sign-in the gateway sent the user to, and return the page it ends on."""
+        async with httpx2.AsyncClient(follow_redirects=False, cookies=self._cookies) as browser:
+            response = await browser.get(url)
+            if response.status_code != 302:
+                return response
+            location = response.headers['location']
+            self.upstream_sign_ins.append(location)
+            return await browser.get(
+                f'{self.issuer}/auth/callback',
+                params={'code': 'upstream-code', 'state': query_value(location, 'state')},
+            )
+
     async def return_to_client(self) -> AuthorizationCodeResult:
         """What the redirect to the client carries, ``iss`` included, which the SDK checks per RFC 9207."""
         assert self._client_redirect is not None

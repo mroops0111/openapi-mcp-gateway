@@ -6,13 +6,15 @@ import httpx
 import pydantic
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 from mcp.server.mcpserver import Context
-from mcp.types import CallToolResult, ContentBlock, TextContent
+from mcp.types import CallToolResult, ContentBlock, InputRequiredResult, TextContent
 
+from ..auth.upstream.reauthorization import UpstreamReauthorizer
 from ..auth.upstream.resolver import UpstreamAuthResolver, UpstreamNoCredentialAuthResolver
 from ..openapi import OperationInfo, ParameterInfo
 from ..upstream_http import UpstreamBinaryBody, UpstreamSharedHttpClient
 from ._content import binary_content
 from ._media import MediaPromoter
+from ._reauthorization import SIGN_IN_WAIT_SECONDS, offer_upstream_sign_in, read_sign_in_answer, send_with_renewal
 from ._shared import _get_override, _sanitize_name, _split_by_location
 from ._transform import TransformError, apply_transform, compile_expression
 
@@ -29,10 +31,12 @@ class UpstreamConnection:
 
     It holds where the API is, how each call authenticates, the static headers every call sends,
     and the one HTTP client every call goes through.
+    ``reauthorizer`` is set where each user has their own upstream token, which an upstream refusal can renew.
     """
 
     base_url: str
     auth_resolver: UpstreamAuthResolver = dataclasses.field(default_factory=UpstreamNoCredentialAuthResolver)
+    reauthorizer: UpstreamReauthorizer | None = None
     timeout: float = 90
     transport: httpx.AsyncBaseTransport | None = None
     # Static per-server headers, sent on every call beneath the auth and per-call headers.
@@ -249,7 +253,8 @@ def _build_upstream_closure(
     connection: UpstreamConnection,
     *,
     input_schema: dict[str, typing.Any] | None = None,
-) -> typing.Callable[..., typing.Awaitable[CallToolResult]]:
+    offers_sign_in: bool = False,
+) -> typing.Callable[..., typing.Awaitable[CallToolResult | InputRequiredResult]]:
     """Build the async callable that issues one upstream request per invocation.
 
     Shared by every exposure mode.
@@ -262,6 +267,11 @@ def _build_upstream_closure(
     otherwise the arguments pass through by location as declared in the spec.
     A ``response`` JSONata expression reshapes a successful body before it reaches the client.
     Both expressions are compiled once here, so a syntax error surfaces at startup.
+
+    An upstream that says the user's token expired gets the token renewed and the request sent once more.
+    With ``offers_sign_in``, a refusal a renewal cannot cure asks the client to send the user to sign in again,
+    and the retried call waits for that sign-in before it is sent.
+    Only a tool call can ask, since the multi-round flow belongs to the call that raised it.
     """
     path_parameters, query_parameters, header_parameters, body_parameters = _split_by_location(operation.parameters)
     path_parameters_by_name = _parameters_keyed_by_sanitised_name(path_parameters)
@@ -290,8 +300,10 @@ def _build_upstream_closure(
     # The override wins per path, so an author can correct or add to what the spec declares.
     media_promoter = MediaPromoter(operation.response_media, tool_override.media if tool_override else {})
 
-    async def upstream_callable(**kwargs: typing.Any) -> CallToolResult:
+    async def upstream_callable(**kwargs: typing.Any) -> CallToolResult | InputRequiredResult:
         context: Context = kwargs.pop('ctx')
+        reauthorizer = connection.reauthorizer
+        sign_in_answer = read_sign_in_answer(context) if offers_sign_in and reauthorizer is not None else None
 
         if validator is not None:
             provided = _to_jsonable({name: value for name, value in kwargs.items() if value is not None})
@@ -304,9 +316,11 @@ def _build_upstream_closure(
             if kwargs.get(sanitised_name) is None:
                 kwargs[sanitised_name] = default_value
 
-        await context.report_progress(0, 1, f'Sending request to {method.upper()} {path} ...')
+        if sign_in_answer == 'accept' and reauthorizer is not None:
+            await context.report_progress(0, 1, 'Waiting for the new upstream sign-in ...')
+            await reauthorizer.wait_for_completion(SIGN_IN_WAIT_SECONDS)
 
-        auth_headers = await connection.auth_resolver.resolve(context)
+        await context.report_progress(0, 1, f'Sending request to {method.upper()} {path} ...')
 
         if request_transform is not None:
             arguments = _to_jsonable({name: value for name, value in kwargs.items() if value is not None})
@@ -331,24 +345,33 @@ def _build_upstream_closure(
             }
             body_arguments = _to_jsonable(_kwargs_to_upstream_arguments(kwargs, body_parameters_by_name))
 
-        request_headers: dict[str, str] = {
-            **connection.headers,
-            **_trace_context_headers(context),
-            **auth_headers,
-            **header_arguments,
-        }
-
-        # The client is shared by every call to this server, so every header, auth included, rides on the request.
-        try:
-            result = await connection.client.get().request(
+        async def send() -> typing.Any:
+            # Resolved on each attempt, so a retry carries the token a renewal put in place.
+            auth_headers = await connection.auth_resolver.resolve(context)
+            request_headers: dict[str, str] = {
+                **connection.headers,
+                **_trace_context_headers(context),
+                **auth_headers,
+                **header_arguments,
+            }
+            # The client is shared by every call to this server, so every header, auth included, rides on the request.
+            return await connection.client.get().request(
                 method,
                 resolved_path,
                 params=query_arguments or None,
                 data=body_arguments or None,
                 headers=request_headers,
             )
+
+        try:
+            result = await send_with_renewal(send, reauthorizer)
         except httpx.HTTPStatusError as exception:
             await context.report_progress(1, 1, 'Request completed (upstream error)')
+            # A user who turned the sign-in down hears the upstream's answer rather than being asked again.
+            if offers_sign_in and reauthorizer is not None and sign_in_answer in (None, 'accept'):
+                sign_in = await offer_upstream_sign_in(context, reauthorizer, exception.response)
+                if sign_in is not None:
+                    return sign_in
             return _build_http_error_result(exception)
         except httpx.RequestError as exception:
             await context.report_progress(1, 1, 'Request failed (network error)')

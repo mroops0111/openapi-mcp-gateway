@@ -169,6 +169,15 @@ def render_error_page(message: str, status_code: int) -> HTMLResponse:
     return _page('Sign-in cannot continue', content, status_code)
 
 
+def render_signed_in_again_page(host: str) -> HTMLResponse:
+    """A page telling the user the new sign-in at ``host`` worked, and that the client can go on."""
+    content = f"""
+<h1>Signed in again</h1>
+<p>You signed in to <b>{html.escape(host)}</b> again.</p>
+<p>You can close this page and return to your MCP client.</p>"""
+    return _page('Signed in again', content)
+
+
 def redirect_without_cache(url: str, status_code: int) -> RedirectResponse:
     """A redirect no cache keeps, since each one carries a single-use ``state`` or code."""
     return RedirectResponse(url, status_code=status_code, headers={'Cache-Control': PAGE_HEADERS['Cache-Control']})
