@@ -203,7 +203,7 @@ def test_example_yaml_parses(yaml_path: pathlib.Path):
 
 
 class TestBuildGatewayConfig:
-    """Layered composition: ``build_gateway_config(*layers)`` precedence and merging."""
+    """How ``build_gateway_config(*layers)`` merges its layers, and which one wins."""
 
     def test_no_layers_returns_pydantic_defaults(self):
         """With no layers, every field falls back to its Pydantic default."""
@@ -478,7 +478,10 @@ class TestClientConfig:
 
 
 class TestOtherClients:
-    """``auth.mcp.other_clients`` admits unlisted metadata document clients, and decides whether clients may register."""
+    """``auth.mcp.other_clients`` admits unlisted metadata document clients.
+
+    It also decides whether clients may register.
+    """
 
     @pytest.mark.parametrize(
         ('mcp', 'admits_others', 'registration'),
@@ -624,6 +627,52 @@ class TestSearchFieldWeights:
             build_gateway_config(
                 {'servers': [{'name': 'b', 'spec': 'x.json', 'exposure': {'search': {'field_weights': {'name': 1}}}}]}
             )
+
+    @pytest.mark.parametrize(
+        ('server', 'message'),
+        [
+            pytest.param(
+                {'exposure': {'style': 'dynamic', 'promote_resources': True}},
+                r'exposure\.promote_resources needs exposure\.style static, so it would have no effect',
+                id='promote_resources',
+            ),
+            pytest.param(
+                {'exposure': {'style': 'dynamic'}, 'operations': {'getPet': {'resource': {}}}},
+                r'operations\.getPet\.resource needs exposure\.style static, so it would have no effect',
+                id='an operation resource',
+            ),
+        ],
+    )
+    def test_refuses_resources_under_dynamic_exposure(self, server, message):
+        """The meta-tools surface every operation uniformly, so dynamic exposure makes no resource."""
+        with pytest.raises(pydantic.ValidationError, match=message):
+            build_gateway_config({'servers': [{'name': 'b', 'spec': 'x.json', **server}]})
+
+    def test_refuses_an_operation_resource_without_promotion(self):
+        """Without ``exposure.promote_resources`` every operation is a tool, so a resource override has no effect."""
+        with pytest.raises(
+            pydantic.ValidationError,
+            match=r'operations\.getPet\.resource needs exposure\.promote_resources true, so it would have no effect',
+        ):
+            build_gateway_config(
+                {'servers': [{'name': 'b', 'spec': 'x.json', 'operations': {'getPet': {'resource': {}}}}]}
+            )
+
+    def test_accepts_an_operation_resource_under_promotion(self):
+        """Static exposure with ``exposure.promote_resources`` makes the resource an operation override declares."""
+        config = build_gateway_config(
+            {
+                'servers': [
+                    {
+                        'name': 'b',
+                        'spec': 'x.json',
+                        'exposure': {'promote_resources': True},
+                        'operations': {'getPet': {'resource': {}}},
+                    }
+                ]
+            }
+        )
+        assert config.servers[0].operations['getPet'].resource is not None
 
 
 class TestDNSRebindingProtectionConfig:

@@ -100,9 +100,12 @@ class McpTokenIssuer:
         except pydantic.ValidationError:
             return False
 
-    async def complete_authorization(self, pending: PendingAuthorization, attachment: McpTokenAttachment) -> str:
-        """Mint the MCP authorization code that ends ``pending``, and return the redirect carrying it to the client.
+    async def complete_authorization(
+        self, pending_authorization: PendingAuthorization, attachment: McpTokenAttachment
+    ) -> str:
+        """Mint the MCP authorization code that ends ``pending_authorization``.
 
+        Return the redirect that carries the code to the client.
         Per RFC 9207 the redirect names this authorization server, as its metadata advertises,
         so an MCP client talking to several authorization servers can tell which one answered.
         """
@@ -112,20 +115,22 @@ class McpTokenIssuer:
             code,
             {
                 'code': code,
-                'client_id': pending.client_id,
-                'redirect_uri': pending.redirect_uri,
-                'redirect_uri_provided_explicitly': pending.redirect_uri_provided_explicitly,
+                'client_id': pending_authorization.client_id,
+                'redirect_uri': pending_authorization.redirect_uri,
+                'redirect_uri_provided_explicitly': pending_authorization.redirect_uri_provided_explicitly,
                 'expires_at': time.time() + MCP_AUTHORIZATION_CODE_TTL,
-                'scopes': pending.scopes,
-                'code_challenge': pending.code_challenge,
+                'scopes': pending_authorization.scopes,
+                'code_challenge': pending_authorization.code_challenge,
                 **self._build_record_fields(attachment),
             },
             ttl=MCP_AUTHORIZATION_CODE_TTL,
         )
         await self._store_links('mcp_auth_code', code, attachment, MCP_AUTHORIZATION_CODE_TTL)
-        return construct_redirect_uri(pending.redirect_uri, code=code, state=pending.client_state, iss=self.issuer)
+        return construct_redirect_uri(
+            pending_authorization.redirect_uri, code=code, state=pending_authorization.client_state, iss=self.issuer
+        )
 
-    async def load_pending(self, namespace: str, key: str) -> PendingAuthorization | None:
+    async def load_pending_authorization(self, namespace: str, key: str) -> PendingAuthorization | None:
         """The sign-in stored under ``key`` in ``namespace`` by this server, or ``None`` for none or another's.
 
         A record of an older shape, such as one from before sign-ins were tied to a browser, counts as none.

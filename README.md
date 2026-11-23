@@ -253,7 +253,7 @@ servers:
 
 The gateway serves no `/authorize` or `/token` here. Its protected resource metadata names the issuer, clients authorize there, and the JWKS comes from the issuer's own metadata so key rotation needs no restart.
 
-The endpoint identifies itself as `{url}{mount_path}/mcp`, built from the gateway's `url` and the server's mount path, so the example above is `https://gw.example.com/internal/mcp`. That exact string is what an inbound token's `aud` must contain, so you need it when creating the matching client and audience mapping at the issuer.
+The endpoint identifies itself as `{url}{mount_path}/mcp`, built from the gateway's `url` and the server's mount path, so with `url: https://gw.example.com` the example above is `https://gw.example.com/internal/mcp`. That exact string is what an inbound token's `aud` must contain, so you need it when creating the matching client and audience mapping at the issuer.
 
 Two things to check before committing to this mode. Token exchange support varies:
 
@@ -284,11 +284,9 @@ Under `authorization_code`, clients such as Claude Code sign in with a [Client I
 auth:
   mcp:
     clients:
-      https://claude.ai/oauth/claude-code-client-metadata:
-        scopes: [issues:read, issues:write]
+      https://claude.ai/oauth/claude-code-client-metadata: {}
     other_clients:
       trusted_hosts: [vscode.dev]
-      scopes: [issues:read]
 ```
 
 </details>
@@ -349,9 +347,9 @@ Every registered tool carries a protocol-native `title` and `annotations` (`read
 
 Run `uv run openapi-mcp-gateway serve --help` for the CLI reference. The [Quick Start](#quick-start) covers most setups, and the full field reference is below.
 
-Configuration merges in this order, with each layer overriding the previous one. **Defaults → YAML (`--config`) → CLI flags → `Gateway.run(...)` kwargs**. A layer only overrides the fields it actually sets, so `--log-level=DEBUG` won't reset `logging.format` from your YAML. Nested objects like `logging` and per-server `auth` merge field-by-field. The `servers` list is the exception, replaced wholesale rather than merged entry-by-entry.
+Configuration merges in this order, with each layer overriding the previous one. **Defaults → YAML (`--config`) → CLI flags → `Gateway.run(...)` kwargs**. A layer only overrides the fields it actually sets, so `--log-level=DEBUG` won't reset `logging.format` from your YAML. With `--config`, only `--host`, `--port`, `--transport` and the logging flags override it. Nested objects like `logging` merge field-by-field. The `servers` list is the exception, replaced wholesale rather than merged entry-by-entry, each server's `auth` included.
 
-`${ENV_VAR}` and `${ENV_VAR:-default}` work in any string field, resolved at request time. An unrecognised key is refused at startup rather than ignored, so a typo in a field that narrows access fails closed. For OAuth2, `authorizationUrl` / `tokenUrl` / `scopes` are auto-detected from the spec's `securitySchemes`, and the `auth.*` fields below override them when the spec is incomplete.
+`${ENV_VAR}` and `${ENV_VAR:-default}` work as the whole value of credential fields and `headers`, resolved at startup. An unrecognised key is refused at startup rather than ignored, so a typo in a field that narrows access fails closed. For OAuth2, `authorizationUrl` / `tokenUrl` are auto-detected from the spec's `securitySchemes`, as are `scopes` under `client_credentials`, and the `auth.*` fields below override them when the spec is incomplete.
 
 <details>
 <summary><b>Top-Level Fields</b></summary>
@@ -383,11 +381,12 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `spec` | string | required | Path or URL to OpenAPI document (JSON or YAML) |
 | `base_url` | string | from spec | Override the upstream base URL |
 | `auth.upstream.type` | string | `none` | `none`, `bearer`, `api_key`, `oauth2`, or `passthrough`. Says where the upstream credential comes from: a fixed one, one the gateway obtains, or the caller's own forwarded |
-| `auth.upstream.token` | string |  | Required for `bearer` / `api_key` |
+| `auth.upstream.token` | string |  | Used by `bearer` / `api_key`. Unset or empty, nothing is sent |
 | `auth.upstream.api_key_header` | string | `X-API-Key` | Header name for `api_key` |
 | `auth.upstream.flow` | string | from spec | `authorization_code` for per-user delegation, `client_credentials` for a shared service token, `token_exchange` to delegate this endpoint's authorization to an external issuer. When unset the gateway prefers the spec's declared `authorizationCode` flow, falling back to whatever else it declares. |
 | `auth.upstream.client_id`, `auth.upstream.client_secret` | string |  | Required for `oauth2`. The gateway's own credential at the upstream authorization server |
-| `auth.upstream.scopes`, `auth.upstream.authorization_url`, `auth.upstream.token_url` |  | from spec | What the gateway requests from the upstream authorization server, and where. The URLs override an incomplete `securitySchemes` |
+| `auth.upstream.scopes`, `auth.upstream.authorization_url`, `auth.upstream.token_url` |  | from spec | The most the gateway requests from the upstream authorization server, and where. The URLs override an incomplete `securitySchemes` |
+| `auth.upstream.required_scopes` | list |  | For `authorization_code`. Upstream scopes every sign-in asks for, such as `offline_access` |
 | `auth.upstream.resource`, `auth.upstream.audience` | string |  | Names the API the upstream token is for, when the API and its authorization server are different parties. `resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter, `audience` is the spelling Auth0 uses. Only what you set is sent |
 | `auth.upstream.issuer` | string |  | For `authorization_code`. The upstream authorization server's issuer identifier, exactly as its metadata publishes it. Enables the [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207) `iss` check on its authorization responses |
 | `auth.mcp.issuer` | string |  | Required for `token_exchange`. The authorization server that mints tokens for this MCP endpoint |
@@ -402,11 +401,11 @@ Configuration merges in this order, with each layer overriding the previous one.
 | `timeout` | float | `90` | HTTP timeout in seconds |
 | `headers` | map |  | Static headers sent on every upstream call, such as an API version the whole API requires. Values take `${ENV_VAR}`, and an unset variable leaves the header out. A header the call itself sends wins. `Authorization` is refused, since it belongs to `auth` |
 | `instructions` | string |  | Guidance about the server as a whole, such as when to use it rather than another server or which tool to call first. Sent in the MCP `initialize` result, which clients place in the model's context. Unset leaves the field out |
-| `exposure.style` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`search_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand, and ignores `promote_resources`. |
-| `exposure.promote_resources` | bool | `false` | Promotes eligible GETs (no required non-path parameter) to MCP resources. A per-operation `resource` declaration applies either way. |
+| `exposure.style` | string | `static` | `static` registers one MCP tool per operation. `dynamic` registers three meta-tools (`search_operations`, `get_operation`, `call_operation`) for the LLM to walk on demand, and refuses `promote_resources` and a per-operation `resource`. |
+| `exposure.promote_resources` | bool | `false` | Promotes eligible GETs (no required non-path parameter) to MCP resources. A per-operation `resource` declaration needs it too, so `operations.<id>.resource` without it is refused. |
 | `exposure.search.field_weights` | map |  | Per-field search weights for `dynamic` exposure, over `name`, `summary`, `description`, `path`, `tags`, and `parameters`. Unset fields keep their defaults, listed under [Search Ranking](#dynamic-exposure). Refused under `static` exposure |
 | `exposure.search.semantic` | map |  | Search by meaning through an embedding model, with `model` (such as `openai:text-embedding-3-small` or `ollama:bge-m3`), and optionally `dimensions`, `cache_directory`, and `retrieval` (`semantic` or `hybrid`). Needs the `embeddings` extra, see [Search Ranking](#dynamic-exposure) |
-| `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation. Useful when you do not control the upstream spec. |
+| `operations` | map | `{}` | YAML-side `x-mcp-integration` overrides, keyed by `operationId`. Fully replaces (does not merge) the spec-side `x-mcp-integration` on that operation, unless it sets only `security`. Useful when you do not control the upstream spec. |
 
 </details>
 
@@ -686,7 +685,7 @@ Gateway.from_fastapi(app, name="myapp").run()
 <details>
 <summary><b>Auth in the FastAPI Integration</b></summary>
 
-Because the gateway runs in-process and routes through `httpx.ASGITransport`, gateway and upstream share the same OAuth audience, so the MCP client's `Authorization` header passes through verbatim (`auth.upstream.type: passthrough`, set automatically for this integration only). For `client_credentials` schemes the gateway mints upstream tokens from its own credentials instead.
+Because the gateway runs in-process and routes through `httpx.ASGITransport`, gateway and upstream share the same OAuth audience, so the MCP client's `Authorization` header passes through verbatim (`auth.upstream.type: passthrough`, set automatically for this integration only). Pass an explicit `auth=AuthConfig(...)` with credentials to have the gateway mint upstream tokens instead.
 
 </details>
 
@@ -721,7 +720,7 @@ app = FastAPI(lifespan=lifespan)
 gateway.mount(app)  # mounts /petstore/mcp plus its OAuth and .well-known routes
 ```
 
-Set `GatewayConfig.url` to the host app's public URL so discovery documents and OAuth redirect URLs point at the right origin. The upstream OAuth callback for a server named `<server>` is fixed at `/<server>/auth/callback`, so keep it clear of your app's own callback paths.
+Set `GatewayConfig.url` to the host app's public URL so discovery documents and OAuth redirect URLs point at the right origin. The upstream OAuth callback for a server named `<server>` is fixed at `{mount_path}/auth/callback`, which is `/<server>/auth/callback` unless `path_prefix` is set, so keep it clear of your app's own callback paths.
 
 </details>
 

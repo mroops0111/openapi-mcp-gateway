@@ -106,30 +106,39 @@ class Browser:
 
     ``issuer`` is the gateway's issuer for the server, under which its consent and callback pages sit.
     ``expect_consent`` says whether the gateway must show the consent page, which a sign-in fails on otherwise.
+    ``upstream_sign_ins`` are the upstream authorize URLs it was sent to, in order.
+    ``consent_pages`` are the consent pages it was shown, in order.
     """
 
     def __init__(self, issuer: str, expect_consent: bool = True) -> None:
         self.issuer = issuer.rstrip('/')
         self.expect_consent = expect_consent
+        self.upstream_sign_ins: list[str] = []
+        self.consent_pages: list[str] = []
         self._client_redirect: str | None = None
+        self._cookies = httpx2.Cookies()
 
     async def sign_in(self, authorization_url: str) -> None:
-        async with httpx2.AsyncClient(follow_redirects=False) as browser:
+        """Follow one sign-in, keeping the cookies it set for the next one, as one browser would."""
+        async with httpx2.AsyncClient(follow_redirects=False, cookies=self._cookies) as browser:
             location = (await browser.get(authorization_url)).headers['location']
             shows_consent = location.startswith(f'{self.issuer}/auth/consent')
             assert shows_consent == self.expect_consent, f'consent page shown: {shows_consent}'
             if shows_consent:
                 page = await browser.get(location)
+                self.consent_pages.append(page.text)
                 decision = {'csrf_token': csrf_token_in(page.text), 'decision': 'approve'}
                 location = (await browser.post(location, data=decision)).headers['location']
             if not location.startswith(CLIENT_CALLBACK):
                 # The upstream signs the user in and sends them back to the gateway's callback.
+                self.upstream_sign_ins.append(location)
                 callback = await browser.get(
                     f'{self.issuer}/auth/callback',
                     params={'code': 'upstream-code', 'state': query_value(location, 'state')},
                 )
                 location = callback.headers['location']
             self._client_redirect = location
+            self._cookies = browser.cookies
 
     async def return_to_client(self) -> AuthorizationCodeResult:
         """What the redirect to the client carries, ``iss`` included, which the SDK checks per RFC 9207."""

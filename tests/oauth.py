@@ -15,6 +15,7 @@ from openapi_mcp_gateway.auth.mcp.client_metadata import McpClientMetadataResolv
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenPolicy
 from openapi_mcp_gateway.auth.upstream.authorization_code import UpstreamAuthorizationCodeClient
 from openapi_mcp_gateway.gateway import Gateway
+from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, ScopeRegistry
 from openapi_mcp_gateway.settings import GatewayConfig
 from openapi_mcp_gateway.stores.base import TokenStore
 from tests.constants import GATEWAY_URL
@@ -41,15 +42,18 @@ def authorization_code_server(
     policy: McpTokenPolicy | None = None,
     clients: McpClientDirectory | None = None,
     server_name: str = 'petstore',
+    scope_registry: ScopeRegistry | None = None,
 ) -> McpAuthorizationCodeServer:
     """The MCP authorization server ``AuthorizationCodeFlowHandler`` builds, joined to ``upstream`` by its Bridge.
 
     ``clients`` defaults to Dynamic Client Registration into ``store``.
+    ``scope_registry`` chooses each sign-in's upstream scopes, every one ``upstream`` names unless it says otherwise.
     """
     server, _ = build_authorization_code_server(
         store,
         issuer,
         upstream,
+        scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy()),
         policy or McpTokenPolicy(),
         clients or McpDynamicClientRegistry(store, issuer),
         server_name,
@@ -172,11 +176,11 @@ async def begin_upstream(
     scopes: list[str] | None = None,
 ) -> str:
     """Start a sign-in and take it past the consent page in ``BROWSER_ID``, returning the upstream authorize URL."""
-    pending = await provider.claim_authorization(
+    pending_authorization = await provider.claim_authorization(
         request_id_in(await authorize(provider, client, state, scopes)), BROWSER_ID
     )
-    assert pending is not None
-    return await provider.continue_after_consent(pending)
+    assert pending_authorization is not None
+    return await provider.continue_after_consent(pending_authorization)
 
 
 async def complete_upstream(

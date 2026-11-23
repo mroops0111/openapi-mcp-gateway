@@ -12,6 +12,7 @@ import pytest
 from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import InvalidScopeError, OAuthToken
+from mcp.types import CallToolResult
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
@@ -19,7 +20,7 @@ from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
 from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, connect
-from tests.oauth import authorization_code_gateway, bridge_of, server_of, sign_in, upstream_token_response
+from tests.oauth import authorization_code_gateway, query_value, server_of, sign_in, upstream_token_response
 from tests.serving import serve, serve_gateway
 from tests.spec import write_spec
 from tests.tool_result import text_of
@@ -321,28 +322,30 @@ class TestAuthorizationServer:
             make_gateway(other_clients={'scopes': ['pets:raed']})
 
 
+@pytest.fixture
+def secured_spec(petstore_json_path: pathlib.Path, tmp_path: pathlib.Path) -> pathlib.Path:
+    """The petstore fixture with each operation's upstream scopes declared."""
+    spec = json.loads(petstore_json_path.read_text())
+    for path_item in spec['paths'].values():
+        for operation in path_item.values():
+            if isinstance(operation, dict) and operation.get('operationId') in UPSTREAM_SECURITY:
+                operation['security'] = UPSTREAM_SECURITY[operation['operationId']]
+    return write_spec(tmp_path, spec, 'secured-petstore.json')
+
+
+@pytest.fixture
+def make_enforcing_gateway(make_gateway, secured_spec) -> typing.Callable[..., Gateway]:
+    """A gateway enforcing the upstream grant, asking for at most both pet scopes unless ``upstream`` says otherwise."""
+
+    def make(style: str = 'static', url: str = GATEWAY_URL, **upstream: typing.Any) -> Gateway:
+        settings = {'enforce_scopes': True, 'scopes': ['read:pets', 'write:pets'], **upstream}
+        return make_gateway(spec=secured_spec, style=style, upstream=settings, url=url)
+
+    return make
+
+
 class TestUpstreamGrant:
     """With ``enforce_scopes``, an operation also needs the upstream scopes its ``security`` declares."""
-
-    @pytest.fixture
-    def secured_spec(self, petstore_json_path: pathlib.Path, tmp_path: pathlib.Path) -> pathlib.Path:
-        """The petstore fixture with each operation's upstream scopes declared."""
-        spec = json.loads(petstore_json_path.read_text())
-        for path_item in spec['paths'].values():
-            for operation in path_item.values():
-                if isinstance(operation, dict) and operation.get('operationId') in UPSTREAM_SECURITY:
-                    operation['security'] = UPSTREAM_SECURITY[operation['operationId']]
-        return write_spec(tmp_path, spec, 'secured-petstore.json')
-
-    @pytest.fixture
-    def make_enforcing_gateway(self, make_gateway, secured_spec) -> typing.Callable[..., Gateway]:
-        """A gateway enforcing the upstream grant, requesting both pet scopes unless ``upstream`` says otherwise."""
-
-        def make(style: str = 'static', **upstream: typing.Any) -> Gateway:
-            settings = {'enforce_scopes': True, 'scopes': ['read:pets', 'write:pets'], **upstream}
-            return make_gateway(spec=secured_spec, style=style, upstream=settings)
-
-        return make
 
     @pytest.mark.parametrize(
         ('upstream_scope', 'expected'),
@@ -362,7 +365,7 @@ class TestUpstreamGrant:
     async def test_a_short_grant_is_a_tool_error_rather_than_a_challenge(
         self, make_enforcing_gateway, upstream_requests, style, tool, arguments
     ):
-        """Stepping up at the gateway cannot change what the upstream granted, so no client is challenged."""
+        """The client already holds the MCP scopes, so stepping up cannot change what the upstream granted."""
         async with _connect(make_enforcing_gateway(style), DELETER, MODERN, 'read:pets') as session:
             result = await session.client.call_tool(tool, arguments)
         assert result.is_error
@@ -371,30 +374,87 @@ class TestUpstreamGrant:
         assert upstream_requests == []
 
     async def test_missing_mcp_scopes_are_challenged_first(self, make_enforcing_gateway):
-        """A client can step up for the MCP scopes and not for the upstream grant, so it hears about them first."""
+        """A client steps up for the MCP scopes, so it hears about them before the upstream grant."""
         async with _connect(make_enforcing_gateway(), STEPPER, MODERN, 'read:pets') as session:
             with pytest.raises(MCPError):
                 await session.client.call_tool('delete_pet', {'petId': '1'})
         assert session.refusal.headers['www-authenticate'] == DELETE_CHALLENGE
 
-    def test_without_requested_scopes_the_gateway_requests_what_the_operations_declare(self, make_enforcing_gateway):
-        gateway = make_enforcing_gateway(scopes=[])
-        assert bridge_of(_provider(gateway)).upstream.scopes == ['read:pets', 'write:pets']
+    async def test_a_tool_the_client_may_step_up_for_stays_listed_before_the_upstream_grants_it(
+        self, make_enforcing_gateway
+    ):
+        """The sign-in a step-up starts asks the upstream for what ``delete_pet`` needs, so hiding it would stall."""
+        async with _connect(make_enforcing_gateway(), STEPPER, MODERN, 'write:pets') as session:
+            assert 'delete_pet' in await _tool_names(session)
+
+    @pytest.mark.parametrize('mode', [MODERN, LEGACY])
+    async def test_a_tool_no_sign_in_can_open_is_not_exposed(self, make_enforcing_gateway, caplog, mode):
+        """No sign-in within ``read:pets`` opens ``create_pet`` or ``delete_pet``, so a step-up would stall."""
+        with caplog.at_level(logging.WARNING):
+            gateway = make_enforcing_gateway(scopes=['read:pets'])
+        assert 'no sign-in can open 2 operation(s)' in caplog.text
+        async with _connect(gateway, STEPPER, mode, 'read:pets') as session:
+            names = await _tool_names(session)
+        assert 'list_pets' in names
+        assert not {'create_pet', 'delete_pet'} & set(names)
 
     def test_startup_warns_about_operations_the_requested_scopes_cannot_open(self, make_gateway, secured_spec, caplog):
-        """The check runs without ``enforce_scopes`` as well, since the upstream refuses the call anyway."""
+        """Without ``enforce_scopes`` the gateway does not check the grant, so the call may still succeed."""
         with caplog.at_level(logging.WARNING):
             make_gateway(spec=secured_spec, upstream={'scopes': ['read:pets']})
         assert '"deleter" can reach 1 operation(s) the requested upstream scopes cannot open' in caplog.text
         assert '"reader"' not in caplog.text
 
-    def test_enforcing_a_flow_without_a_user_grant_is_refused(self, client_credentials_spec_path):
-        auth = {
-            'upstream': {'type': 'oauth2', 'client_id': 'gateway', 'client_secret': 'secret', 'enforce_scopes': True}
-        }
+    @pytest.mark.parametrize(('key', 'value'), [('enforce_scopes', True), ('required_scopes', ['offline_access'])])
+    def test_a_flow_without_a_user_grant_refuses_the_sign_in_settings(self, client_credentials_spec_path, key, value):
+        auth = {'upstream': {'type': 'oauth2', 'client_id': 'gateway', 'client_secret': 'secret', key: value}}
         server = {'name': 'svc', 'spec': str(client_credentials_spec_path), 'auth': auth}
-        with pytest.raises(ValueError, match=r'enforce_scopes needs auth\.upstream\.flow authorization_code'):
+        with pytest.raises(ValueError, match=rf'auth\.upstream\.{key} needs auth\.upstream\.flow authorization_code'):
             Gateway.from_config(GatewayConfig.model_validate({'url': GATEWAY_URL, 'servers': [server]}))
+
+
+class TestUpstreamDownscoping:
+    """Each sign-in asks the upstream for what the operations its MCP scopes open declare, within the ceiling."""
+
+    @pytest.mark.parametrize(
+        ('client_id', 'requested'),
+        [(READER, 'read:pets'), (WRITER, 'write:pets'), (DELETER, 'read:pets write:pets')],
+    )
+    @pytest.mark.parametrize('ceiling', [['read:pets', 'write:pets'], []], ids=['listed', 'declared'])
+    async def test_a_sign_in_asks_for_what_its_mcp_scopes_need(
+        self, make_enforcing_gateway, client_id, requested, ceiling
+    ):
+        """Without ``auth.upstream.scopes``, the ceiling is every scope the operations declare."""
+        browser = await _sign_in_with_the_sdk(lambda url: make_enforcing_gateway(url=url, scopes=ceiling), client_id)
+        assert [query_value(url, 'scope') for url in browser.upstream_sign_ins] == [requested]
+
+    async def test_a_required_scope_is_asked_for_at_every_sign_in(self, make_enforcing_gateway):
+        browser = await _sign_in_with_the_sdk(
+            lambda url: make_enforcing_gateway(url=url, required_scopes=['offline_access']), READER
+        )
+        assert query_value(browser.upstream_sign_ins[0], 'scope') == 'offline_access read:pets'
+
+    async def test_without_enforce_scopes_every_sign_in_asks_for_the_whole_list(self, make_gateway, secured_spec):
+        upstream = {'scopes': ['read:pets', 'write:pets']}
+        browser = await _sign_in_with_the_sdk(
+            lambda url: make_gateway(spec=secured_spec, upstream=upstream, url=url), READER
+        )
+        assert query_value(browser.upstream_sign_ins[0], 'scope') == 'read:pets write:pets'
+
+    async def test_a_step_up_asks_the_upstream_for_what_the_wider_grant_needs(
+        self, make_enforcing_gateway, upstream_requests
+    ):
+        """The consent page marks the upstream scope the step-up adds, and the call then reaches the upstream."""
+        browser, result = await _step_up_with_the_sdk(
+            lambda url: make_enforcing_gateway(url=url), STEPPER, 'delete_pet', {'petId': '1'}
+        )
+        assert not result.is_error
+        assert [query_value(url, 'scope') for url in browser.upstream_sign_ins] == [
+            'write:pets',
+            'read:pets write:pets',
+        ]
+        assert 'read:pets</code><span class="new">New</span>' in browser.consent_pages[-1]
+        assert [request.method for request in upstream_requests] == ['DELETE']
 
 
 @dataclasses.dataclass
@@ -452,6 +512,33 @@ async def _connect(
 async def _tool_names(session: _Session) -> list[str]:
     """The tools ``tools/list`` shows the session's token, in registration order."""
     return [tool.name for tool in (await session.client.list_tools()).tools]
+
+
+async def _sign_in_with_the_sdk(build: typing.Callable[[str], Gateway], client_id: str) -> Browser:
+    """Sign ``client_id`` in with the SDK's own client to the gateway ``build`` makes, and return the browser used."""
+    with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())):
+        async with serve_gateway(build) as base_url:
+            endpoint = f'{base_url}/petstore/mcp'
+            browser = Browser(f'{base_url}/petstore')
+            async with connect(endpoint, authorization_code_auth(endpoint, browser, client_id)):
+                pass
+    return browser
+
+
+async def _step_up_with_the_sdk(
+    build: typing.Callable[[str], Gateway], client_id: str, tool: str, arguments: dict[str, typing.Any]
+) -> tuple[Browser, CallToolResult]:
+    """Sign ``client_id`` in with the SDK's own client and call ``tool``, which its default scopes cannot use.
+
+    The upstream grants whatever each sign-in asks for, so only the MCP scopes stand in the way of the first call.
+    """
+    with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response())):
+        async with serve_gateway(build) as base_url:
+            endpoint = f'{base_url}/petstore/mcp'
+            browser = Browser(f'{base_url}/petstore')
+            async with connect(endpoint, authorization_code_auth(endpoint, browser, client_id)) as client:
+                result = await client.call_tool(tool, arguments)
+    return browser, result
 
 
 async def _sign_in_through_the_sdk(make_gateway: typing.Callable[..., Gateway], client_id: str) -> OAuthToken:

@@ -232,14 +232,14 @@ class TestConsentHandOver:
 
     async def test_a_failed_hand_over_keeps_the_sign_in(self, provider, mcp_client_info):
         consent_url = await authorize(provider, mcp_client_info)
-        pending = await provider.claim_authorization(request_id_in(consent_url), BROWSER_ID)
-        assert pending is not None
+        pending_authorization = await provider.claim_authorization(request_id_in(consent_url), BROWSER_ID)
+        assert pending_authorization is not None
 
         failing = AsyncMock(side_effect=RuntimeError('store unavailable'))
         with patch.object(bridge_of(provider), 'continue_after_consent', failing), pytest.raises(RuntimeError):
-            await provider.continue_after_consent(pending)
+            await provider.continue_after_consent(pending_authorization)
 
-        assert await provider.load_shown_authorization(pending.request_id, BROWSER_ID) is not None
+        assert await provider.load_shown_authorization(pending_authorization.request_id, BROWSER_ID) is not None
 
 
 class TestConfigurableTokenTtl:

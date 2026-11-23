@@ -8,7 +8,7 @@ from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamTokenSourceAuthResolver,
 )
 from openapi_mcp_gateway.auth.upstream.token_source import UpstreamClientCredentialsTokenSource
-from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy
+from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, ScopeRegistry
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.client_metadata import serving_resolver
@@ -40,7 +40,7 @@ class TestClientCredentialsFlowHandler:
                     spec=spec,
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000',
-                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
                     client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=flow,
@@ -76,7 +76,7 @@ class TestClientCredentialsAudienceWiring:
                     spec=spec,
                     store=MemoryTokenStore(),
                     gateway_url='http://localhost:8000',
-                    mcp_scope_policy=McpUnrestrictedScopePolicy(),
+                    scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
                     client_metadata_resolver=serving_resolver({}),
                 ),
                 upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),

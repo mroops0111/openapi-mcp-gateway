@@ -65,7 +65,8 @@ class AnyScopeSetRequirement(ScopeRequirement):
     Each set is one security requirement the gateway's upstream OAuth token could meet,
     so the scopes inside a set are all needed, and any one set is enough.
     No set at all means no requirement of the operation names a credential the gateway holds.
-    The upstream grant cannot change by stepping up at the gateway, so it is never challenged.
+    It is never challenged, since a client steps up for MCP scopes alone.
+    The sign-in that step-up starts is what asks the upstream for more.
     """
 
     def __init__(self, scope_sets: collections.abc.Iterable[collections.abc.Iterable[str]], operation_id: str) -> None:

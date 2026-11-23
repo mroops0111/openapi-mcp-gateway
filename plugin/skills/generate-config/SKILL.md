@@ -45,6 +45,9 @@ Match features to the user's situation, do not reach for all of them.
 - **A Messy API That Makes Poor Tools.** Shape it. Hide the knobs the model should not set, and trim the response.
 - **Several Agents Sharing One Credential.** Keep the static token or `client_credentials` upstream and declare each agent under `auth.mcp.clients` with its own `client_secret` and `scopes`, plus `auth.mcp.operation_scopes`. Each agent then obtains a token as itself and reaches only the operations its scopes open, which the shared upstream credential cannot tell apart.
 - **Multiple Users, or a Provider That Mandates It.** Use `oauth2`, so each user signs in with their own credentials. `authorization_code` is the default and fits nearly every case.
+- **Least Privilege at the Upstream.** Set `auth.upstream.enforce_scopes: true` only under `authorization_code`, when the spec's operations declare `security` and the user wants each sign-in to grant the upstream no more than the agent can reach. Leave it off otherwise. Off, no scope hierarchy matters.
+  - **Scope Hierarchies.** When it is on, look up the upstream's official OAuth scope documentation, such as GitHub's "Scopes for OAuth apps", for scopes that include others. Record each in `auth.upstream.scope_implies`, with the source URL in a YAML comment. Never infer one from scope names. `repo` covers `repo_deployment`, but Slack's `chat:write` does not cover `chat:write.public`. When no documentation states a hierarchy, set none. A missing entry only refuses more than the upstream would, and the startup warnings show where.
+  - **Every Sign-In.** Put a scope every sign-in needs, whatever it opens, such as `offline_access` or `openid`, in `auth.upstream.required_scopes`, not in `auth.upstream.scopes`.
 - **An API Behind an Identity Provider You Run.** Point the OAuth URLs at that provider and set `auth.upstream.audience` to the API, so the provider mints a token the API will accept rather than one for its own default audience. Reach for `auth.upstream.flow: token_exchange` only when the provider should also issue for the MCP endpoint itself, which needs RFC 8693 support on its side.
 
 ## Process
@@ -123,10 +126,12 @@ servers:
         # oauth2 also takes flow: authorization_code (default) / client_credentials / token_exchange
         # client_id, client_secret, scopes and the rest below are for oauth2 only
         client_id: ${SOME_ID}
-        scopes: [...] # with enforce_scopes and none listed, the scopes the operations' security declares
+        scopes: [...] # the most it asks for; with enforce_scopes and none listed, what the operations' security declares
+        # required_scopes: [offline_access], for authorization_code, asked for at every sign-in
         audience: https://the-api.example.com # when the API and its AS differ
         # enforce_scopes: true, for authorization_code, an operation also needs the upstream scopes
-        #   its OpenAPI security declares, checked against what the upstream granted the user
+        #   its OpenAPI security declares, checked against what the upstream granted the user,
+        #   and each sign-in asks only for what its MCP scopes need, plus required_scopes
         # scope_implies: {repo: [public_repo]}, an upstream scope covering narrower ones
       mcp: # who may call this MCP endpoint; leave it out to keep the endpoint open
         # issuer: for token_exchange, the authorization server that mints tokens for this endpoint
@@ -187,6 +192,8 @@ uvx openapi-mcp-gateway serve --config <config.yml> --dry-run
 ```
 
 It loads every spec, applies the policy, and compiles the shaping, then exits without serving and prints a summary of what would run, the resolved filter included. Exit 0 means the config is valid. An unrecognised key is a hard error, so a misspelled field is caught here rather than silently ignored. On failure, read the named side (request or response), fix the JSONata, and re-run until it validates clean.
+
+Under `enforce_scopes`, read the scope warnings too. A ceiling scope no operation declares is often a broad scope that needs `scope_implies` or belongs in `required_scopes`. An operation no sign-in can open needs a scope added to `auth.upstream.scopes`, or a hierarchy entry. Check the upstream documentation before acting on either.
 
 One config shape cannot be validated offline. `auth.upstream.flow: token_exchange` contacts the issuer during startup to discover its JWKS and token endpoints, so `--dry-run` needs that provider reachable. Say so rather than reporting the config unverified.
 
