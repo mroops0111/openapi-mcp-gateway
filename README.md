@@ -276,7 +276,7 @@ And because the issuer is the authorization server for this endpoint, MCP client
 </details>
 
 <details>
-<summary><b>Which MCP Clients May Sign In</b></summary>
+<summary><b>Allowed MCP Clients</b></summary>
 
 Under `authorization_code`, clients such as Claude Code sign in with a [Client ID Metadata Document](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#client-id-metadata-documents) URL as their `client_id`, which `clients` may list. `other_clients` admits the rest, from `trusted_hosts` when set, or none when `false`, and left out it is open only while `clients` lists none.
 
@@ -340,7 +340,7 @@ Removing a client from `auth.mcp.clients` revokes its tokens once the gateway re
 </details>
 
 <details>
-<summary><b>When the Upstream Refuses a Token</b></summary>
+<summary><b>Upstream Token Refusals</b></summary>
 
 Under `authorization_code` the gateway reads the upstream's [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750#section-3) challenge on a refused tool call and cures what it can.
 
