@@ -14,6 +14,7 @@ from ..openapi import OperationInfo, ParameterInfo
 from ..upstream_http import UpstreamBinaryBody, UpstreamSharedHttpClient
 from ._content import binary_content
 from ._media import MediaPromoter
+from ._progress import CallProgress
 from ._reauthorization import NO_SIGN_IN_OFFER, UpstreamSignInOffer, send_with_renewal
 from ._shared import _get_override, _sanitize_name, _split_by_location
 from ._transform import TransformError, apply_transform, compile_expression
@@ -313,9 +314,12 @@ def _build_upstream_closure(
             if kwargs.get(sanitised_name) is None:
                 kwargs[sanitised_name] = default_value
 
-        await sign_in_offer.await_answer(context, connection.reauthorizer)
+        progress = CallProgress(context)
+        unsent = await sign_in_offer.await_answer(context, connection.reauthorizer, progress)
+        if unsent is not None:
+            return unsent
 
-        await context.report_progress(0, 1, f'Sending request to {method.upper()} {path} ...')
+        await progress.report(f'Sending request to {method.upper()} {path} ...')
 
         if request_transform is not None:
             arguments = _to_jsonable({name: value for name, value in kwargs.items() if value is not None})
@@ -342,7 +346,11 @@ def _build_upstream_closure(
 
         async def send() -> typing.Any:
             # Resolved on each attempt, so a retry carries the token a renewal put in place.
-            auth_headers = await connection.auth_resolver.resolve(context)
+            try:
+                auth_headers = await connection.auth_resolver.resolve(context)
+            except httpx.HTTPError as exception:
+                # Failing to obtain a credential is the gateway's failure, so it is not reported as the API's.
+                raise RuntimeError('The gateway could not obtain its upstream credential') from exception
             request_headers: dict[str, str] = {
                 **connection.headers,
                 **_trace_context_headers(context),
@@ -361,16 +369,16 @@ def _build_upstream_closure(
         try:
             result = await send_with_renewal(send, connection.reauthorizer)
         except httpx.HTTPStatusError as exception:
-            await context.report_progress(1, 1, 'Request completed (upstream error)')
+            await progress.finish('Request completed (upstream error)')
             offered = await sign_in_offer.offer(context, connection.reauthorizer, exception.response)
             if offered is not None:
                 return offered
             return _build_http_error_result(exception)
         except httpx.RequestError as exception:
-            await context.report_progress(1, 1, 'Request failed (network error)')
+            await progress.finish('Request failed (network error)')
             return _build_network_error_result(exception)
 
-        await context.report_progress(1, 1, 'Request completed')
+        await progress.finish('Request completed')
 
         # A response transform reshapes JSON, so it has nothing to apply to in a binary body.
         if isinstance(result, UpstreamBinaryBody):

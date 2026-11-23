@@ -99,16 +99,34 @@ class TestNarrowGrant:
         assert elicitations[0].url.startswith(f'{base_url}/petstore/auth/reauthorize?id=')
         assert 'write' in query_value(browser.upstream_sign_ins[-1], 'scope').split()
 
-    async def test_a_declined_sign_in_returns_the_upstream_error(
-        self, petstore_json_path, token_endpoint, upstream_bearers
-    ):
+    async def test_a_declined_sign_in_ends_the_call_unsent(self, petstore_json_path, token_endpoint, upstream_bearers):
+        """The upstream is not asked again for what it already refused."""
         bearers = upstream_bearers(INSUFFICIENT_SCOPE)
         async with _signed_in(petstore_json_path) as (_, _, call):
             result = await call(_answer('decline'))
 
         assert result.is_error
-        assert '403' in text_of(result)
-        assert bearers == [FIRST_TOKEN, FIRST_TOKEN]
+        assert 'turned down' in text_of(result)
+        assert bearers == [FIRST_TOKEN]
+
+    async def test_a_sign_in_never_finished_ends_the_call_unsent(
+        self, petstore_json_path, token_endpoint, upstream_bearers
+    ):
+        """A call asks once, so a user who accepted but never signed in hears the refusal rather than a new ask."""
+        bearers = upstream_bearers(INSUFFICIENT_SCOPE)
+        asked: list[str] = []
+        async with _signed_in(petstore_json_path) as (_, _, call):
+
+            async def accept_without_signing_in(params: ElicitRequestURLParams) -> ElicitResult:
+                asked.append(params.url)
+                return ElicitResult(action='accept')
+
+            result = await call(accept_without_signing_in)
+
+        assert result.is_error
+        assert 'not finished' in text_of(result)
+        assert len(asked) == 1
+        assert bearers == [FIRST_TOKEN]
 
     async def test_another_browser_cannot_finish_the_sign_in(
         self, petstore_json_path, token_endpoint, upstream_bearers

@@ -62,7 +62,7 @@ def _bearer_parameters(challenge: str) -> dict[str, str] | None:
     while (parameter := _CHALLENGE_PARAMETER.search(rest, position)) is not None:
         between = rest[position : parameter.start()]
         # A bare word between parameters starts the next challenge's scheme.
-        if between.strip(' ,'):
+        if between.strip(' \t,'):
             break
         name, quoted, bare = parameter.groups()
         parameters.setdefault(name.lower(), _QUOTED_ESCAPE.sub(r'\1', quoted) if quoted is not None else bare)

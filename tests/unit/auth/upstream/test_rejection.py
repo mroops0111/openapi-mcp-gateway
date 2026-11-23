@@ -27,6 +27,12 @@ class TestReadUpstreamRejection:
                 'Basic realm="api", Bearer error="insufficient_scope", scope=write',
                 UpstreamRejection('insufficient_scope', ('write',)),
             ),
+            # HTTP counts a tab as whitespace too.
+            (
+                403,
+                'Bearer\terror="insufficient_scope",\tscope="write"',
+                UpstreamRejection('insufficient_scope', ('write',)),
+            ),
         ],
     )
     def test_a_curable_challenge_is_read(self, status, challenge, expected):

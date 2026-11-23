@@ -1,6 +1,8 @@
+import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from mcp.server.auth.provider import TokenError
 from starlette.exceptions import HTTPException
@@ -621,6 +623,80 @@ class TestUpstreamReauthorization:
             await bridge.handle_reauthorization_callback('upstream-code', state_in(upstream_url), BROWSER_ID)
 
         assert 'has ended' in raised.value.detail
+
+    async def test_calls_refused_together_spend_the_refresh_token_once(self, provider, mcp_client_info):
+        """A rotated refresh token cannot be spent twice, so the calls after the first use its result."""
+        token = await sign_in(provider, mcp_client_info)
+        refresh = AsyncMock(return_value=upstream_token_response('renewed'))
+
+        with _calling_as(provider, token.access_token), patch('httpx.AsyncClient.post', refresh):
+            results = await asyncio.gather(*(bridge_of(provider).renew() for _ in range(3)))
+
+        assert results == [True, True, True]
+        refresh.assert_awaited_once()
+
+    async def test_an_unreachable_token_endpoint_renews_nothing(self, provider, mcp_client_info):
+        token = await sign_in(provider, mcp_client_info)
+        unreachable = AsyncMock(side_effect=httpx.ConnectError('down'))
+
+        with _calling_as(provider, token.access_token), patch('httpx.AsyncClient.post', unreachable):
+            assert not await bridge_of(provider).renew()
+
+    async def test_a_sign_in_without_a_new_refresh_token_keeps_the_old_one(self, provider, mcp_client_info):
+        """Some upstreams send a refresh token on first consent only."""
+        bridge = bridge_of(provider)
+        token = await sign_in(provider, mcp_client_info)
+        reauthorization = await _start(provider, token.access_token)
+        upstream_url = await bridge.begin_reauthorization(reauthorization.reauthorization_id, BROWSER_ID)
+        no_refresh_token = upstream_token_response('again')
+        del no_refresh_token.json.return_value['refresh_token']
+
+        with patch('httpx.AsyncClient.post', AsyncMock(return_value=no_refresh_token)):
+            await bridge.handle_reauthorization_callback('upstream-code', state_in(upstream_url), BROWSER_ID)
+
+        links = (await bridge.tokens.load_access_token_attachment(token.access_token)).links  # type: ignore[union-attr]
+        assert links == {'upstream_access_token': 'again', 'upstream_refresh_token': 'upstream-refresh-token'}
+
+    async def test_a_stored_sign_in_of_another_shape_reads_as_expired(self, provider, memory_store):
+        await memory_store.set(
+            'upstream_reauthorization', 'old', {'origin': bridge_of(provider).tokens.origin.model_dump()}
+        )
+
+        with pytest.raises(HTTPException) as raised:
+            await bridge_of(provider).begin_reauthorization('old', BROWSER_ID)
+
+        assert raised.value.status_code == 400
+
+    async def test_a_sign_in_reaches_the_tokens_a_refresh_rotated_to_meanwhile(self, provider, mcp_client_info):
+        """The sign-in follows its grant, so a client refreshing while the user signs in loses nothing."""
+        bridge = bridge_of(provider)
+        token = await sign_in(provider, mcp_client_info)
+        reauthorization = await _start(provider, token.access_token)
+        upstream_url = await bridge.begin_reauthorization(reauthorization.reauthorization_id, BROWSER_ID)
+        assert token.refresh_token is not None
+        refresh = await provider.load_refresh_token(mcp_client_info, token.refresh_token)
+        assert refresh is not None
+        rotated = await provider.exchange_refresh_token(mcp_client_info, refresh, [])
+
+        with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response('again'))):
+            await bridge.handle_reauthorization_callback('upstream-code', state_in(upstream_url), BROWSER_ID)
+
+        assert await bridge.tokens.load_access_token_link(rotated.access_token, 'upstream_access_token') == 'again'
+        with _calling_as(provider, rotated.access_token):
+            assert await bridge.wait_for_completion(0.1)
+
+    async def test_calls_refused_together_share_one_sign_in(self, provider, mcp_client_info):
+        """The user signs in once, asked for what every refused call needs."""
+        token = await sign_in(provider, mcp_client_info)
+        with _calling_as(provider, token.access_token):
+            first = await bridge_of(provider).start(UpstreamRejection('insufficient_scope', ('read',)))
+            second = await bridge_of(provider).start(UpstreamRejection('insufficient_scope', ('write',)))
+
+        assert first is not None
+        assert second is not None
+        assert second.url == first.url
+        upstream_url = await bridge_of(provider).begin_reauthorization(second.reauthorization_id, BROWSER_ID)
+        assert {'read', 'write'} <= set(query_value(upstream_url, 'scope').split())
 
     async def test_a_callback_under_an_unknown_state_is_refused(self, provider):
         with pytest.raises(HTTPException):
