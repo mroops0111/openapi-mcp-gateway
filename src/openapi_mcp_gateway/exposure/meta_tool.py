@@ -101,7 +101,7 @@ class MetaToolGenerator:
     """Register the ``search_operations`` / ``get_operation`` / ``call_operation`` meta-tools, for dynamic exposure.
 
     The LLM searches, then gets, then calls, to discover and invoke a specific operation.
-    Per-operation callables come from the same upstream closure the static path uses,
+    Per-operation callables are the same ``UpstreamOperationCall`` the static path uses,
     so auth, path substitution, and request shape stay identical across modes.
     Each operation's scope requirement is recorded in ``scope_registry`` under its name,
     and search and get show only the operations the caller's token can use.
