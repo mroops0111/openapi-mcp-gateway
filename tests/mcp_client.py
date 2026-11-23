@@ -130,15 +130,25 @@ class Browser:
                 decision = {'csrf_token': csrf_token_in(page.text), 'decision': 'approve'}
                 location = (await browser.post(location, data=decision)).headers['location']
             if not location.startswith(CLIENT_CALLBACK):
-                # The upstream signs the user in and sends them back to the gateway's callback.
-                self.upstream_sign_ins.append(location)
-                callback = await browser.get(
-                    f'{self.issuer}/auth/callback',
-                    params={'code': 'upstream-code', 'state': query_value(location, 'state')},
-                )
-                location = callback.headers['location']
+                location = (await self._return_from_upstream(browser, location)).headers['location']
             self._client_redirect = location
             self._cookies = browser.cookies
+
+    async def sign_in_again(self, url: str) -> httpx2.Response:
+        """Open a new upstream sign-in the gateway sent the user to, and return the page it ends on."""
+        async with httpx2.AsyncClient(follow_redirects=False, cookies=self._cookies) as browser:
+            response = await browser.get(url)
+            if response.status_code != 302:
+                return response
+            return await self._return_from_upstream(browser, response.headers['location'])
+
+    async def _return_from_upstream(self, browser: httpx2.AsyncClient, upstream_url: str) -> httpx2.Response:
+        """Play the upstream signing the user in at ``upstream_url`` and sending them back to the gateway."""
+        self.upstream_sign_ins.append(upstream_url)
+        return await browser.get(
+            f'{self.issuer}/auth/callback',
+            params={'code': 'upstream-code', 'state': query_value(upstream_url, 'state')},
+        )
 
     async def return_to_client(self) -> AuthorizationCodeResult:
         """What the redirect to the client carries, ``iss`` included, which the SDK checks per RFC 9207."""

@@ -59,6 +59,21 @@ class TestStoreBasicCRUD:
         assert result == data
 
 
+class TestStoreSetIfAbsent:
+    """``set_if_absent`` lets one caller win, which a lock across gateway instances needs."""
+
+    async def test_only_the_first_caller_stores(self, store):
+        assert await store.set_if_absent('ns', 'lock', 'first', ttl=30)
+        assert not await store.set_if_absent('ns', 'lock', 'second', ttl=30)
+        assert await store.get('ns', 'lock') == 'first'
+
+    async def test_a_deleted_entry_can_be_stored_again(self, store):
+        await store.set_if_absent('ns', 'lock', 'first', ttl=30)
+        await store.delete('ns', 'lock')
+
+        assert await store.set_if_absent('ns', 'lock', 'second', ttl=30)
+
+
 class TestStoreTTL:
     """Time-to-live semantics for both store backends."""
 

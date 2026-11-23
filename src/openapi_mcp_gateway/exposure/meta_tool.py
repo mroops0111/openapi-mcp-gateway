@@ -9,7 +9,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.shared.inbound import MCP_NAME_HEADER, MCP_PARAM_HEADER_PREFIX, X_MCP_HEADER_KEY, decode_header_value
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, InputRequiredResult
 
 from ..openapi import ExposedTool, OperationInfo, schema_description
 from ..scopes import McpUnrestrictedScopePolicy, RequestTarget, ScopeRegistry, current_grant
@@ -202,7 +202,7 @@ class MetaToolGenerator:
             name: typing.Annotated[str, pydantic.Field(json_schema_extra={X_MCP_HEADER_KEY: OPERATION_PARAM_HEADER})],
             arguments: dict[str, typing.Any],
             ctx: Context,
-        ) -> CallToolResult:
+        ) -> CallToolResult | InputRequiredResult:
             operation = registry.get(name)
             if operation is None:
                 raise _unknown_operation_error(name)
@@ -232,7 +232,7 @@ class _RegisteredOperation:
     path: str
     tags: list[str]
     input_schema: dict[str, typing.Any]
-    callable_: typing.Callable[..., typing.Awaitable[CallToolResult]]
+    callable_: typing.Callable[..., typing.Awaitable[CallToolResult | InputRequiredResult]]
 
     def search_fields(self) -> dict[str, str]:
         """Return the text search ranks this operation by, keyed by field name."""

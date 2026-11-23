@@ -528,3 +528,23 @@ async def _upstream_scopes_of(provider: McpAuthorizationCodeServer, mcp_access_t
     access_token = await provider.load_access_token(mcp_access_token)
     assert isinstance(access_token, McpAccessToken)
     return access_token.upstream_scopes
+
+
+class TestBridgeRefresh:
+    """An MCP refresh carries what a later upstream sign-in needs."""
+
+    async def test_an_mcp_refresh_keeps_the_browser_and_the_grant(self, provider, mcp_client_info):
+        token = await sign_in(provider, mcp_client_info, upstream_expires_in=900)
+        before = await bridge_of(provider).tokens.load_access_token_attachment(token.access_token)
+        assert token.refresh_token is not None
+        refresh = await provider.load_refresh_token(mcp_client_info, token.refresh_token)
+        assert refresh is not None
+        with patch('httpx.AsyncClient.post', AsyncMock(return_value=upstream_token_response('renewed'))):
+            rotated = await provider.exchange_refresh_token(mcp_client_info, refresh, [])
+
+        after = await bridge_of(provider).tokens.load_access_token_attachment(rotated.access_token)
+
+        assert before is not None
+        assert after is not None
+        assert after.browser_id == BROWSER_ID
+        assert after.grant_id == before.grant_id

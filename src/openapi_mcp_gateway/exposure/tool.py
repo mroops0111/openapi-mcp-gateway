@@ -10,6 +10,7 @@ from mcp.types import ToolAnnotations
 
 from ..openapi import ExposedTool, OperationInfo, ToolOverride
 from ..scopes import McpUnrestrictedScopePolicy, ScopeRegistry
+from ._reauthorization import URL_ELICITATION_SIGN_IN_POLICY
 from ._shaping import shape_operation
 from ._shared import (
     _get_override,
@@ -89,7 +90,9 @@ def build_tool_function(
     """
     if input_schema is None:
         input_schema = build_input_schema(operation)
-    upstream_callable = _build_upstream_closure(operation, connection, input_schema=input_schema)
+    upstream_callable = _build_upstream_closure(
+        operation, connection, input_schema=input_schema, sign_in_policy=URL_ELICITATION_SIGN_IN_POLICY
+    )
     if not attach_signature:
         return upstream_callable
     signature, annotations = _build_tool_signature(operation)

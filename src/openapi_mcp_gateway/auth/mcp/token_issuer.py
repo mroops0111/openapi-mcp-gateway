@@ -23,6 +23,9 @@ MCP_DEFAULT_SCOPE = 'api'
 # How long an MCP authorization code may wait to be redeemed, in seconds.
 MCP_AUTHORIZATION_CODE_TTL = 300
 
+# The key space of sign-ins, each mapped to its current refresh token and to what else follows the sign-in.
+MCP_GRANT_NAMESPACE = 'mcp_grant'
+
 
 @dataclasses.dataclass(frozen=True)
 class McpTokenPolicy:
@@ -44,12 +47,17 @@ class McpTokenAttachment:
     ``links`` are the credentials the tokens map to, keyed by a name the attaching side chooses.
     ``links_expire_at`` is when the first of those credentials stops working, as a Unix time.
     An access token never outlives it, so the client refreshes before its calls start failing.
+    ``browser_id`` is the browser the sign-in ran in, the only one that may sign the user in again for these tokens.
+    ``grant_id`` names the sign-in itself, and stays the same on every token refreshed from it,
+    the refresh token family of RFC 9700, so a later sign-in can reach whichever tokens are current.
     All stay empty for a token no upstream sign-in stands behind.
     """
 
     upstream_scopes: list[str] = dataclasses.field(default_factory=list)
     links: collections.abc.Mapping[str, str] = dataclasses.field(default_factory=dict)
     links_expire_at: int | None = None
+    browser_id: str | None = None
+    grant_id: str | None = None
 
 
 class McpTokenIssuer:
@@ -155,7 +163,40 @@ class McpTokenIssuer:
             upstream_scopes=list(data.get('upstream_scopes', [])),
             links=links,
             links_expire_at=data.get('links_expire_at'),
+            browser_id=data.get('browser_id'),
+            grant_id=data.get('grant_id'),
         )
+
+    async def load_access_token_attachment(self, token: str) -> McpTokenAttachment | None:
+        """What the MCP access token ``token`` carries, or ``None`` when it is unknown here or a link is gone."""
+        data = await self.store.get('mcp_access_token', token)
+        if not self.is_from_here(data):
+            return None
+        return await self.load_attachment('mcp_access_token', token, data)
+
+    async def load_grant_attachment(self, grant_id: str) -> McpTokenAttachment | None:
+        """What the current refresh token of the sign-in ``grant_id`` carries, or ``None`` once that has ended."""
+        refresh_token = await self.store.get_mapping(MCP_GRANT_NAMESPACE, grant_id, 'mcp_refresh_token')
+        data = await self.store.get('mcp_refresh_token', refresh_token) if refresh_token else None
+        if not self.is_from_here(data) or refresh_token is None:
+            return None
+        return await self.load_attachment('mcp_refresh_token', refresh_token, data)
+
+    async def replace_grant_attachment(self, grant_id: str, attachment: McpTokenAttachment) -> bool:
+        """Make the current tokens of the sign-in ``grant_id`` carry ``attachment``, whatever rotated since it began.
+
+        This is how a renewed or new upstream credential reaches a client without a new MCP token.
+        Each token keeps its own expiry, and ``False`` says the sign-in has ended, its refresh token expired or revoked.
+        """
+        refresh_token = await self.store.get_mapping(MCP_GRANT_NAMESPACE, grant_id, 'mcp_refresh_token')
+        if not refresh_token or not await self._replace_record_attachment(
+            'mcp_refresh_token', refresh_token, attachment
+        ):
+            return False
+        access_token = await self.store.get_mapping('mcp_refresh_token', refresh_token, 'mcp_access_token')
+        if access_token:
+            await self._replace_record_attachment('mcp_access_token', access_token, attachment)
+        return True
 
     async def issue_tokens(
         self, client: OAuthClientInformationFull, scopes: list[str], attachment: McpTokenAttachment
@@ -182,6 +223,11 @@ class McpTokenIssuer:
         await self.store.set_mapping(
             'mcp_refresh_token', refresh_token, 'mcp_access_token', token.access_token, ttl=refresh_ttl
         )
+        # The sign-in follows its refresh token through each rotation, so a later sign-in finds the current one.
+        if attachment.grant_id:
+            await self.store.set_mapping(
+                MCP_GRANT_NAMESPACE, attachment.grant_id, 'mcp_refresh_token', refresh_token, ttl=refresh_ttl
+            )
         return token.model_copy(update={'refresh_token': refresh_token})
 
     async def issue_access_token(
@@ -275,6 +321,22 @@ class McpTokenIssuer:
         for link in data.get('links', []):
             await self.store.delete_mapping(namespace, key, link)
 
+    async def _replace_record_attachment(self, namespace: str, key: str, attachment: McpTokenAttachment) -> bool:
+        """Rewrite the record under ``key`` to carry ``attachment``, for the rest of its lifetime."""
+        data = await self.store.get(namespace, key)
+        if not self.is_from_here(data):
+            return False
+        ttl = int(data['expires_at'] - time.time())
+        if ttl <= 0:
+            return False
+        # The new links go in before the record and stale ones go last, so a concurrent call always finds a token.
+        await self._store_links(namespace, key, attachment, ttl)
+        record_fields = self._build_record_fields(attachment)
+        await self.store.set(namespace, key, {**data, **record_fields}, ttl=ttl)
+        for link in set(data.get('links', [])) - set(attachment.links):
+            await self.store.delete_mapping(namespace, key, link)
+        return True
+
     def _build_token_record(
         self, client: OAuthClientInformationFull, scopes: list[str], attachment: McpTokenAttachment
     ) -> dict[str, typing.Any]:
@@ -292,6 +354,8 @@ class McpTokenIssuer:
             'upstream_scopes': list(attachment.upstream_scopes),
             'links': sorted(attachment.links),
             'links_expire_at': attachment.links_expire_at,
+            'browser_id': attachment.browser_id,
+            'grant_id': attachment.grant_id,
             'resource': self.resource,
             'origin': self._origin_fields,
         }

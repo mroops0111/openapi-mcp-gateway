@@ -143,7 +143,7 @@ servers:
 
 That one file serves 13 tools with 3 concrete resources and 3 resource templates at `/petstore/mcp`, three meta-tools fronting ~1,200 endpoints at `/github/mcp`, and per-user OAuth2 against Asana's IdP at `/asana/mcp`. No spec edits anywhere. Run it with `uv run openapi-mcp-gateway serve --config servers.yml`.
 
-### 5. Local Desktop Client (stdio)
+### 5. Local Desktop Client (Stdio)
 
 For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
 
@@ -276,7 +276,7 @@ And because the issuer is the authorization server for this endpoint, MCP client
 </details>
 
 <details>
-<summary><b>Which MCP Clients May Sign In</b></summary>
+<summary><b>Allowed MCP Clients</b></summary>
 
 Under `authorization_code`, clients such as Claude Code sign in with a [Client ID Metadata Document](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#client-id-metadata-documents) URL as their `client_id`, which `clients` may list. `other_clients` admits the rest, from `trusted_hosts` when set, or none when `false`, and left out it is open only while `clients` lists none.
 
@@ -339,6 +339,18 @@ Removing a client from `auth.mcp.clients` revokes its tokens once the gateway re
 
 </details>
 
+<details>
+<summary><b>Upstream Token Refusals</b></summary>
+
+Under `authorization_code` the gateway reads the upstream's [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750#section-3) challenge on a refused tool call and cures what it can.
+
+- **Expired Token**: on `401` with `error="invalid_token"`, the gateway renews the upstream token with its refresh token and sends the request once more. The user sees nothing.
+- **Missing Scope**: on `403` with `error="insufficient_scope"` and a `scope` within `auth.upstream.scopes`, the client shows the user a link to sign in to the upstream again, as a [URL-mode elicitation](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation#url-mode-elicitation-requests). Once the user signs in, the call goes on with the same MCP token.
+
+The link works only in the browser the user first signed in with, and the call waits up to 50 seconds for the sign-in. A declined or unfinished sign-in ends the call with an error that says so, and a call made after the user finishes goes through. A client without URL elicitation, a scope beyond `auth.upstream.scopes` and a resource read all get the upstream error as it is. Many upstreams send no such challenge, and their refusals reach the client unchanged.
+
+</details>
+
 ## Tool Results
 
 Every registered tool carries a protocol-native `title` and `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), so an agent can judge a tool before calling it. Results carry `structuredContent`, so a client reads a typed body and structured error payloads without re-parsing text. A binary response, such as an image or a PDF, arrives as a content block rather than decoded text. None of this needs configuration.
@@ -347,7 +359,14 @@ Every registered tool carries a protocol-native `title` and `annotations` (`read
 
 Run `uv run openapi-mcp-gateway serve --help` for the CLI reference. The [Quick Start](#quick-start) covers most setups, and the full field reference is below.
 
-Configuration merges in this order, with each layer overriding the previous one. **Defaults → YAML (`--config`) → CLI flags → `Gateway.run(...)` kwargs**. A layer only overrides the fields it actually sets, so `--log-level=DEBUG` won't reset `logging.format` from your YAML. With `--config`, only `--host`, `--port`, `--transport` and the logging flags override it. Nested objects like `logging` merge field-by-field. The `servers` list is the exception, replaced wholesale rather than merged entry-by-entry, each server's `auth` included.
+Configuration merges in this order, with each layer overriding the previous one:
+
+1. Defaults
+2. YAML (`--config`)
+3. CLI flags
+4. `Gateway.run(...)` kwargs
+
+A layer only overrides the fields it actually sets, so `--log-level=DEBUG` won't reset `logging.format` from your YAML. With `--config`, only `--host`, `--port`, `--transport` and the logging flags override it. Nested objects like `logging` merge field-by-field. The `servers` list is the exception, replaced wholesale rather than merged entry-by-entry, each server's `auth` included.
 
 `${ENV_VAR}` and `${ENV_VAR:-default}` work as the whole value of credential fields and `headers`, resolved at startup. An unrecognised key is refused at startup rather than ignored, so a typo in a field that narrows access fails closed. For OAuth2, `authorizationUrl` / `tokenUrl` are auto-detected from the spec's `securitySchemes`, as are `scopes` under `client_credentials`, and the `auth.*` fields below override them when the spec is incomplete.
 
@@ -579,7 +598,7 @@ Auth, path templating, and per-operation request shape match static mode, so onl
 
 `search_operations` scores each operation's `name`, `summary`, `description`, `path`, and `tags` separately, then weighs them. Words match across camelCase, snake_case, and paths, and across forms such as `branch` and `branches` or `merge` and `merged`. Synonyms do not match, so `close an issue` does not find an operation described only as "update an issue".
 
-| Field | Default weight |
+| Field | Default Weight |
 | --- | --- |
 | `summary` | `3` |
 | `name` | `2` |
@@ -615,7 +634,7 @@ Configure via the `logging.*` YAML keys or via CLI flags (`--log-level`, `--log-
 
 `--dry-run` validates a config and prints what it would expose without starting a server. `--output json` emits the same facts as data, on stdout with logging kept to stderr, and `Gateway.describe()` returns the identical document from Python. Names in the output are the sanitised ones the model is shown, so an operation with no `operationId` appears under a name derived from its method and path.
 
-### Authoring Configs with AI
+### Authoring Configs With AI
 
 `generate-config` is a companion Claude Code skill that writes a `config.yml` from a plain-language request, deriving the operations, auth, and shaping for you. This repo doubles as its plugin marketplace:
 
@@ -689,7 +708,7 @@ Because the gateway runs in-process and routes through `httpx.ASGITransport`, ga
 
 </details>
 
-### Mounting into an Existing App
+### Mounting Into an Existing App
 
 To serve MCP alongside your own routes, build a `Gateway` and mount it onto your app. `mount` attaches every MCP sub-app at its configured path and also registers the OAuth authorization-server and `.well-known` discovery routes those servers own, so an OAuth flow works end to end. Enter `gateway.lifespan()` in your app's lifespan, or MCP requests fail.
 
