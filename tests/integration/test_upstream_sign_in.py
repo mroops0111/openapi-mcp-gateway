@@ -6,11 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import httpx2
 import pytest
-from mcp import MCPError, UrlElicitationRequiredError
 from mcp.client import ClientRequestContext
 from mcp.types import CallToolResult, ElicitRequestParams, ElicitRequestURLParams, ElicitResult
 
-from openapi_mcp_gateway.exposure import _upstream
+from openapi_mcp_gateway.exposure import _reauthorization
 from tests.mcp_client import Browser, authorization_code_auth, connect
 from tests.oauth import authorization_code_gateway, query_value, upstream_token_response
 from tests.serving import serve_gateway
@@ -166,29 +165,22 @@ class TestExpiredToken:
 
 
 class TestLegacyClient:
-    """A 2025-11-25 client gets ``URLElicitationRequiredError``, and retries by hand once the user signed in."""
+    """A 2025-11-25 client cannot carry input requests, so it gets the upstream error as before."""
 
-    async def test_the_retry_goes_on_after_the_user_signs_in_again(
-        self, petstore_json_path, token_endpoint, upstream_bearers
-    ):
+    async def test_the_upstream_error_is_returned(self, petstore_json_path, token_endpoint, upstream_bearers):
         bearers = upstream_bearers(INSUFFICIENT_SCOPE)
-        async with _signed_in(petstore_json_path, mode=LEGACY) as (_, browser, call):
-            with pytest.raises(MCPError) as raised:
-                await call(_never_asked)
-            required = UrlElicitationRequiredError.from_error(raised.value.error)
-            assert required.elicitations[0].elicitation_id
-            page = await browser.sign_in_again(required.elicitations[0].url)
-            assert page.status_code == 200, page.text
+        async with _signed_in(petstore_json_path, mode=LEGACY) as (_, _, call):
             result = await call(_never_asked)
 
-        assert not result.is_error, text_of(result)
-        assert bearers == [FIRST_TOKEN, SECOND_TOKEN]
+        assert result.is_error
+        assert '403' in text_of(result)
+        assert bearers == [FIRST_TOKEN]
 
 
 @pytest.fixture(autouse=True)
 def short_sign_in_wait(monkeypatch):
     """Keep a retried call from waiting long for a sign-in no browser finishes."""
-    monkeypatch.setattr(_upstream, 'SIGN_IN_WAIT_SECONDS', 0.5)
+    monkeypatch.setattr(_reauthorization, 'SIGN_IN_WAIT_SECONDS', 0.5)
 
 
 @contextlib.asynccontextmanager
@@ -218,13 +210,8 @@ async def _signed_in(
                     return await elicitation(params)
 
                 options['elicitation_callback'] = callback
-            # A protocol error is raised once the client has closed, so it is not wrapped in the client's task group.
             async with connect(endpoint, auth, **options) as client:
-                try:
-                    return await client.call_tool('list_pets', {})
-                except MCPError as error:
-                    refusal = error
-            raise refusal
+                return await client.call_tool('list_pets', {})
 
         yield base_url, browser, call
 

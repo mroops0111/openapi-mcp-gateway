@@ -13,6 +13,10 @@ class _StubContext:
 
     def __init__(self, headers: dict[str, str]) -> None:
         self.request_context = _StubRequestContext(headers)
+        # A first call from a client that declared nothing, so no new upstream sign-in is ever offered.
+        self.input_responses = None
+        self.protocol_version = None
+        self.client_capabilities = None
 
     async def report_progress(self, *_args: typing.Any, **_kwargs: typing.Any) -> None:
         return None

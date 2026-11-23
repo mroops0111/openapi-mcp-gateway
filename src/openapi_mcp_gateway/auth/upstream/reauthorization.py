@@ -10,7 +10,7 @@ class UpstreamReauthorization:
 
     ``url`` is the gateway page that starts it, which the user opens in the browser they signed in with.
     ``message`` tells the user why, as the client shows it before opening ``url``.
-    ``reauthorization_id`` names it, as a 2025-11-25 client's ``elicitationId``.
+    ``reauthorization_id`` names it in ``url``.
     """
 
     reauthorization_id: str
@@ -41,3 +41,16 @@ class UpstreamReauthorizer(abc.ABC):
     @abc.abstractmethod
     async def wait_for_completion(self, timeout: float) -> bool:
         """Wait up to ``timeout`` seconds for the sign-in started for the call's token, and say whether it finished."""
+
+
+class UpstreamNoReauthorizer(UpstreamReauthorizer):
+    """For a flow with no per-user upstream token, which leaves every upstream refusal as it is."""
+
+    async def renew(self) -> bool:
+        return False
+
+    async def start(self, rejection: UpstreamRejection) -> UpstreamReauthorization | None:
+        return None
+
+    async def wait_for_completion(self, timeout: float) -> bool:
+        return False
