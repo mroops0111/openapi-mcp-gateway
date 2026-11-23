@@ -185,7 +185,8 @@ class McpTokenIssuer:
     async def replace_grant_attachment(self, grant_id: str, attachment: McpTokenAttachment) -> bool:
         """Make the current tokens of the sign-in ``grant_id`` carry ``attachment``, whatever rotated since it began.
 
-        ``False`` says the sign-in has ended, its refresh token expired or revoked.
+        This is how a renewed or new upstream credential reaches a client without a new MCP token.
+        Each token keeps its own expiry, and ``False`` says the sign-in has ended, its refresh token expired or revoked.
         """
         refresh_token = await self.store.get_mapping(MCP_GRANT_NAMESPACE, grant_id, 'mcp_refresh_token')
         if not refresh_token or not await self._replace_record_attachment(
@@ -195,21 +196,6 @@ class McpTokenIssuer:
         access_token = await self.store.get_mapping('mcp_refresh_token', refresh_token, 'mcp_access_token')
         if access_token:
             await self._replace_record_attachment('mcp_access_token', access_token, attachment)
-        return True
-
-    async def replace_attachment(self, token: str, attachment: McpTokenAttachment) -> bool:
-        """Make the MCP access token ``token`` and the refresh token paired with it carry ``attachment`` instead.
-
-        This is how a new upstream sign-in reaches a client without a new MCP token,
-        since the client's bearer stays unchanged while the gateway obtains the upstream credential.
-        Each token keeps its own expiry, and ``False`` says ``token`` is unknown here or already expired.
-        """
-        replaced = await self._replace_record_attachment('mcp_access_token', token, attachment)
-        if not replaced:
-            return False
-        refresh_token = await self.store.get_mapping('mcp_access_token', token, 'mcp_refresh_token')
-        if refresh_token:
-            await self._replace_record_attachment('mcp_refresh_token', refresh_token, attachment)
         return True
 
     async def issue_tokens(

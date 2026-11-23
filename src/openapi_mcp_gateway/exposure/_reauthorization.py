@@ -95,8 +95,8 @@ class UpstreamUrlElicitationSignInOffer(UpstreamSignInOffer):
     """For a tool call, which asks through a URL-mode elicitation in an ``InputRequiredResult``.
 
     Only a 2026-07-28 client that declares URL elicitation is asked, and only once per call.
-    A retry the upstream refuses again, whatever the user answered, hears the upstream's error,
-    so a sign-in refused at the upstream or one granting too little never loops.
+    A retry the upstream refuses even after the sign-in hears the upstream's error,
+    so a sign-in granting too little never loops.
     """
 
     async def await_answer(

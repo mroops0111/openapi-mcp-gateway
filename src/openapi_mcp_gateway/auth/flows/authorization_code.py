@@ -1,11 +1,7 @@
 import logging
 import secrets
 import time
-import urllib.parse
-import weakref
 
-import anyio
-import httpx
 import pydantic
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -38,17 +34,23 @@ from ..mcp.client import McpClientDirectory, McpClientDirectoryChain, McpDynamic
 from ..mcp.consent import PENDING_AUTHORIZATION_TTL, BrowserCookie, PendingAuthorization
 from ..mcp.consent_page import redirect_without_cache, render_error_page, render_signed_in_again_page
 from ..mcp.record_origin import McpRecordOrigin
-from ..mcp.token_issuer import MCP_GRANT_NAMESPACE, McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
+from ..mcp.token_issuer import McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
 from ..settings_mapping import (
     build_mcp_client_directory,
     build_mcp_client_metadata_directory,
     build_mcp_token_policy,
 )
-from ..upstream.authorization_code import UpstreamAuthorizationCodeClient, UpstreamTokenResponse
-from ..upstream.reauthorization import UpstreamReauthorization, UpstreamReauthorizer
-from ..upstream.rejection import UpstreamRejection
+from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamTokenSource
+from .reauthorization import REAUTHORIZE_PATH, AuthorizationCodeReauthorizer
+from .upstream_links import (
+    UPSTREAM_ACCESS_TOKEN_LINK,
+    UPSTREAM_REFRESH_TOKEN_LINK,
+    build_upstream_links,
+    expiry_of,
+    renewed_attachment,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -57,20 +59,8 @@ logger = logging.getLogger(__name__)
 # Where the upstream sends the browser back, under the server's own path.
 CALLBACK_PATH = '/auth/callback'
 
-# The names under which each MCP token links the upstream tokens behind it.
-UPSTREAM_ACCESS_TOKEN_LINK = 'upstream_access_token'  # noqa: S105
-UPSTREAM_REFRESH_TOKEN_LINK = 'upstream_refresh_token'  # noqa: S105
-
 # Where a sign-in waits while the browser is at the upstream, keyed by the ``state`` sent there.
 UPSTREAM_AUTH_STATE_NAMESPACE = 'upstream_auth_state'
-
-# Where the user starts a new upstream sign-in for an MCP token the client already holds, under the server's own path.
-REAUTHORIZE_PATH = '/auth/reauthorize'
-
-# Where such a sign-in waits, keyed by its id, and the ``state`` it sends to the upstream.
-# A grant has at most one waiting at a time, which its record in ``MCP_GRANT_NAMESPACE`` maps to.
-UPSTREAM_REAUTHORIZATION_NAMESPACE = 'upstream_reauthorization'
-UPSTREAM_REAUTHORIZATION_STATE_NAMESPACE = 'upstream_reauthorization_state'
 
 
 # The upstream authorization errors that mean the same to the MCP client, and so reach it unchanged.
@@ -79,30 +69,8 @@ _UPSTREAM_FORWARDED_ERRORS = frozenset({'access_denied', 'temporarily_unavailabl
 # Why the upstream's redirect cannot be finished, as the user reads it.
 _INCOMPLETE_CALLBACK = 'The sign-in service sent you back without an answer.'
 
-# How often a call waiting for a new upstream sign-in checks whether it finished, in seconds.
-_REAUTHORIZATION_POLL_INTERVAL = 1.0
 
-
-class PendingReauthorization(pydantic.BaseModel):
-    """A new upstream sign-in for MCP tokens the client already holds.
-
-    ``grant_id`` is the first sign-in behind those tokens, whose current tokens get the new upstream credential,
-    however often the client refreshed meanwhile.
-    ``browser_id`` is the browser the token's first sign-in ran in, the only one that may finish this one,
-    which is how the spec's phishing guidance is met without the gateway knowing who the user is.
-    ``scopes`` are what the sign-in asks the upstream for.
-    ``completed`` turns true once the new upstream token is in place.
-    """
-
-    reauthorization_id: str
-    grant_id: str
-    browser_id: str
-    scopes: list[str]
-    origin: McpRecordOrigin
-    completed: bool = False
-
-
-class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSource, UpstreamReauthorizer):
+class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSource):
     """Joins the gateway's MCP sign-in to the user's upstream sign-in, for ``authorization_code``.
 
     Once the gateway's consent page is approved, the browser goes on to the upstream.
@@ -114,7 +82,6 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
     ``tokens`` is the MCP side's issuer rather than its server, so neither holds the other.
     ``scope_registry`` chooses what each sign-in asks the upstream for, from the MCP scopes it will grant.
     ``store`` keeps the sign-ins waiting at the upstream, which belong to neither side alone.
-    ``reauthorize_url`` is the gateway page where the user starts a new upstream sign-in for a token already held.
     """
 
     def __init__(
@@ -123,15 +90,11 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         upstream: UpstreamAuthorizationCodeClient,
         scope_registry: ScopeRegistry,
         store: TokenStore,
-        reauthorize_url: str,
     ) -> None:
         self.tokens = tokens
         self.upstream = upstream
         self.scope_registry = scope_registry
         self._store = store
-        self._reauthorize_url = reauthorize_url
-        # One lock per upstream refresh token, so calls refused together spend it once.
-        self._renewal_locks: weakref.WeakValueDictionary[str, anyio.Lock] = weakref.WeakValueDictionary()
 
     # McpAuthorizationCodeContinuation
 
@@ -186,7 +149,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
                 error='invalid_grant',
                 error_description='The upstream sign-in expired and could not be renewed; sign in again',
             ) from exc
-        return _renewed_attachment(attachment, refreshed, upstream_refresh_token)
+        return renewed_attachment(attachment, refreshed, upstream_refresh_token)
 
     # UpstreamTokenSource
 
@@ -196,230 +159,6 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         if mcp_access_token is None:
             return None
         return await self.tokens.load_access_token_link(mcp_access_token.token, UPSTREAM_ACCESS_TOKEN_LINK)
-
-    # UpstreamReauthorizer
-
-    async def renew(self) -> bool:
-        """Refresh the upstream token behind the call's MCP token with the refresh token the upstream issued.
-
-        Calls refused together wait for one another, and a call that finds the token already renewed
-        while it waited uses that one, since a rotated refresh token cannot be spent twice.
-        This holds within one gateway process.
-        """
-        mcp_access_token = get_access_token()
-        if mcp_access_token is None:
-            return False
-        attachment = await self.tokens.load_access_token_attachment(mcp_access_token.token)
-        upstream_refresh_token = attachment.links.get(UPSTREAM_REFRESH_TOKEN_LINK) if attachment else None
-        if attachment is None or not upstream_refresh_token:
-            return False
-        refused_access_token = attachment.links.get(UPSTREAM_ACCESS_TOKEN_LINK)
-        lock = self._renewal_locks.setdefault(upstream_refresh_token, anyio.Lock())
-        async with lock:
-            current = await self.tokens.load_access_token_attachment(mcp_access_token.token)
-            if current is None:
-                return False
-            if current.links.get(UPSTREAM_ACCESS_TOKEN_LINK) != refused_access_token:
-                return True
-            try:
-                refreshed = await self.upstream.refresh(upstream_refresh_token)
-            except (HTTPException, httpx.HTTPError, ValueError) as exc:
-                # A token endpoint that is down or answers garbage leaves the upstream's refusal as the answer.
-                logger.info('Upstream token renewal failed: error=%s', exc)
-                return False
-            renewed = _renewed_attachment(current, refreshed, upstream_refresh_token)
-            return await self.tokens.replace_attachment(mcp_access_token.token, renewed)
-
-    async def start(self, rejection: UpstreamRejection) -> UpstreamReauthorization | None:
-        """Record a new upstream sign-in for the call's MCP token, and return the page that starts it.
-
-        It asks for what a first sign-in with the token's MCP scopes would, what the upstream granted so far,
-        and what the refusal names, so a new sign-in never narrows the grant.
-        Calls refused while one is waiting share it, so the user signs in once for all of them,
-        and it asks for what each of them needs.
-        """
-        mcp_access_token = get_access_token()
-        if mcp_access_token is None:
-            return None
-        attachment = await self.tokens.load_access_token_attachment(mcp_access_token.token)
-        if attachment is None or attachment.browser_id is None or attachment.grant_id is None:
-            return None
-        if not self._may_ask_for(rejection.scopes):
-            logger.info('Upstream sign-in not offered: reason=beyond_scopes scopes=%s', list(rejection.scopes))
-            return None
-        scopes = list(
-            dict.fromkeys(
-                [
-                    *self.select_next_sign_in_scopes(mcp_access_token.scopes),
-                    *attachment.upstream_scopes,
-                    *rejection.scopes,
-                ]
-            )
-        )
-        waiting = await self._waiting_reauthorization(attachment.grant_id)
-        if waiting is not None:
-            scopes = list(dict.fromkeys([*waiting.scopes, *scopes]))
-        pending_reauthorization = PendingReauthorization(
-            reauthorization_id=waiting.reauthorization_id if waiting else secrets.token_urlsafe(32),
-            grant_id=attachment.grant_id,
-            browser_id=attachment.browser_id,
-            scopes=scopes,
-            origin=self.tokens.origin,
-        )
-        reauthorization_id = pending_reauthorization.reauthorization_id
-        await self._store.set(
-            UPSTREAM_REAUTHORIZATION_NAMESPACE,
-            reauthorization_id,
-            pending_reauthorization.model_dump(),
-            ttl=PENDING_AUTHORIZATION_TTL,
-        )
-        await self._store.set_mapping(
-            MCP_GRANT_NAMESPACE,
-            attachment.grant_id,
-            UPSTREAM_REAUTHORIZATION_NAMESPACE,
-            reauthorization_id,
-            ttl=PENDING_AUTHORIZATION_TTL,
-        )
-        logger.info('Upstream sign-in offered: reason=%s scopes=%s', rejection.error, scopes)
-        return UpstreamReauthorization(
-            reauthorization_id=reauthorization_id,
-            url=f'{self._reauthorize_url}?{urllib.parse.urlencode({"id": reauthorization_id})}',
-            message=f'Sign in to {self.upstream.host} again so this call can go on.',
-        )
-
-    async def wait_for_completion(self, timeout: float) -> bool:
-        mcp_access_token = get_access_token()
-        if mcp_access_token is None:
-            return False
-        attachment = await self.tokens.load_access_token_attachment(mcp_access_token.token)
-        if attachment is None or attachment.grant_id is None:
-            return False
-        reauthorization_id = await self._store.get_mapping(
-            MCP_GRANT_NAMESPACE, attachment.grant_id, UPSTREAM_REAUTHORIZATION_NAMESPACE
-        )
-        if not reauthorization_id:
-            return False
-        with anyio.move_on_after(timeout):
-            while True:
-                data = await self._store.get(UPSTREAM_REAUTHORIZATION_NAMESPACE, reauthorization_id)
-                if not self.tokens.is_from_here(data):
-                    return False
-                if data.get('completed'):
-                    return True
-                await anyio.sleep(_REAUTHORIZATION_POLL_INTERVAL)
-        return False
-
-    async def _waiting_reauthorization(self, grant_id: str) -> PendingReauthorization | None:
-        """The new sign-in still waiting for the user under ``grant_id``, if any."""
-        reauthorization_id = await self._store.get_mapping(
-            MCP_GRANT_NAMESPACE, grant_id, UPSTREAM_REAUTHORIZATION_NAMESPACE
-        )
-        data = (
-            await self._store.get(UPSTREAM_REAUTHORIZATION_NAMESPACE, reauthorization_id)
-            if reauthorization_id
-            else None
-        )
-        if not self.tokens.is_from_here(data) or data.get('completed'):
-            return None
-        try:
-            return PendingReauthorization.model_validate(data)
-        except pydantic.ValidationError:
-            return None
-
-    def _may_ask_for(self, scopes: tuple[str, ...]) -> bool:
-        """Whether a sign-in may ask the upstream for ``scopes``, which ``auth.upstream.scopes`` caps when set."""
-        if not scopes or not self.upstream.scopes:
-            return True
-        ceiling = [*self.upstream.required_scopes, *self.upstream.scopes]
-        return set(scopes) <= self.scope_registry.upstream_policy.held_scopes(ceiling)
-
-    # The page that starts a new upstream sign-in, and the upstream's redirect back from it
-
-    async def begin_reauthorization(self, reauthorization_id: str, browser_id: str | None) -> str:
-        """Send the browser to the upstream for the sign-in ``reauthorization_id`` names, under a fresh ``state``."""
-        pending_reauthorization = await self._pending_reauthorization(reauthorization_id, browser_id)
-        state = secrets.token_urlsafe(32)
-        await self._store.set(
-            UPSTREAM_REAUTHORIZATION_STATE_NAMESPACE,
-            state,
-            {'reauthorization_id': reauthorization_id},
-            ttl=PENDING_AUTHORIZATION_TTL,
-        )
-        return self.upstream.build_authorize_url(state, pending_reauthorization.scopes)
-
-    async def is_reauthorization(self, state: str) -> bool:
-        """Whether the upstream's callback under ``state`` finishes a new sign-in for a token already held."""
-        return await self._store.get(UPSTREAM_REAUTHORIZATION_STATE_NAMESPACE, state) is not None
-
-    async def handle_reauthorization_callback(
-        self, code: str, state: str, browser_id: str | None, iss: str | None = None
-    ) -> None:
-        """Redeem the upstream ``code`` and put the new upstream token behind the current tokens of the grant."""
-        reauthorization_id = await self._reauthorization_under(state)
-        pending_reauthorization = await self._pending_reauthorization(reauthorization_id, browser_id)
-        self.upstream.validate_issuer(iss)
-
-        upstream_token = await self.upstream.exchange_code(code)
-        # Some upstreams, Google among them, send a refresh token on first consent only, so the old one is kept.
-        upstream_refresh_token = upstream_token.refresh_token
-        if not upstream_refresh_token:
-            current = await self.tokens.load_grant_attachment(pending_reauthorization.grant_id)
-            upstream_refresh_token = current.links.get(UPSTREAM_REFRESH_TOKEN_LINK) if current else None
-        attachment = McpTokenAttachment(
-            upstream_scopes=upstream_token.resolve_granted_scopes(pending_reauthorization.scopes),
-            links=_build_upstream_links(upstream_token.access_token, upstream_refresh_token),
-            links_expire_at=_expiry_of(upstream_token.expires_in),
-            browser_id=pending_reauthorization.browser_id,
-            grant_id=pending_reauthorization.grant_id,
-        )
-        await self._store.delete(UPSTREAM_REAUTHORIZATION_STATE_NAMESPACE, state)
-        if not await self.tokens.replace_grant_attachment(pending_reauthorization.grant_id, attachment):
-            await self._store.delete(UPSTREAM_REAUTHORIZATION_NAMESPACE, reauthorization_id)
-            raise HTTPException(400, 'The MCP sign-in this was for has ended')
-        completed = pending_reauthorization.model_copy(update={'completed': True})
-        await self._store.set(
-            UPSTREAM_REAUTHORIZATION_NAMESPACE,
-            reauthorization_id,
-            completed.model_dump(),
-            ttl=PENDING_AUTHORIZATION_TTL,
-        )
-        logger.info('Upstream signed in again: expires_in=%s', upstream_token.expires_in)
-
-    async def handle_reauthorization_error(self, error: str, state: str, browser_id: str | None) -> None:
-        """End a new sign-in the upstream refused, so the call waiting on it stops waiting."""
-        reauthorization_id = await self._reauthorization_under(state)
-        await self._pending_reauthorization(reauthorization_id, browser_id)
-        await self._store.delete(UPSTREAM_REAUTHORIZATION_STATE_NAMESPACE, state)
-        await self._store.delete(UPSTREAM_REAUTHORIZATION_NAMESPACE, reauthorization_id)
-        logger.info('Upstream OAuth refused the new sign-in: error=%s', error)
-        raise HTTPException(400, f'The sign-in service answered {error}')
-
-    async def _reauthorization_under(self, state: str) -> str:
-        data = await self._store.get(UPSTREAM_REAUTHORIZATION_STATE_NAMESPACE, state)
-        if not data:
-            raise HTTPException(400, 'This sign-in has expired or was already finished')
-        return data['reauthorization_id']
-
-    async def _pending_reauthorization(self, reauthorization_id: str, browser_id: str | None) -> PendingReauthorization:
-        """The new sign-in ``reauthorization_id`` names, which only the browser behind its token may run.
-
-        Raises ``HTTPException`` when it is unknown, finished, or opened in another browser.
-        """
-        data = await self._store.get(UPSTREAM_REAUTHORIZATION_NAMESPACE, reauthorization_id)
-        if not self.tokens.is_from_here(data) or data.get('completed'):
-            logger.warning('Upstream sign-in rejected: reason=invalid_reauthorization')
-            raise HTTPException(400, 'This sign-in has expired or was already finished')
-        try:
-            pending_reauthorization = PendingReauthorization.model_validate(data)
-        except pydantic.ValidationError:
-            # A record of another shape, such as one an older gateway stored, cannot be finished.
-            raise HTTPException(400, 'This sign-in has expired or was already finished') from None
-        if browser_id is None or pending_reauthorization.browser_id != browser_id:
-            logger.warning('Upstream sign-in rejected: reason=other_browser')
-            raise HTTPException(
-                403, 'Open this link in the browser you first signed in with, so the gateway knows it is you'
-            )
-        return pending_reauthorization
 
     # The upstream's redirect back
 
@@ -442,8 +181,8 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
             pending_authorization,
             McpTokenAttachment(
                 upstream_scopes=upstream_token.resolve_granted_scopes(pending_authorization.next_sign_in_scopes),
-                links=_build_upstream_links(upstream_token.access_token, upstream_token.refresh_token),
-                links_expire_at=_expiry_of(upstream_token.expires_in),
+                links=build_upstream_links(upstream_token.access_token, upstream_token.refresh_token),
+                links_expire_at=expiry_of(upstream_token.expires_in),
                 browser_id=pending_authorization.browser_id,
                 grant_id=secrets.token_urlsafe(32),
             ),
@@ -499,13 +238,18 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
 
 
 class AuthorizationCodeCallbackRoutes(AuthRoutes):
-    """The page the upstream sends the browser back to, which finishes the sign-in ``AuthorizationCodeBridge`` began.
+    """The pages the upstream sends the browser back to, and where a new upstream sign-in starts.
 
-    The browser cookie ties the callback to the browser that approved the consent page.
+    The upstream knows one callback, so it finishes both a first sign-in ``AuthorizationCodeBridge`` began
+    and a new one ``AuthorizationCodeReauthorizer`` began, told apart by the ``state`` each sent.
+    The browser cookie ties each to the browser that started it.
     """
 
-    def __init__(self, bridge: AuthorizationCodeBridge, cookie: BrowserCookie) -> None:
+    def __init__(
+        self, bridge: AuthorizationCodeBridge, reauthorizer: AuthorizationCodeReauthorizer, cookie: BrowserCookie
+    ) -> None:
         self._bridge = bridge
+        self._reauthorizer = reauthorizer
         self._cookie = cookie
 
     def register(self, mcp: MCPServer) -> None:
@@ -518,7 +262,7 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
         if not reauthorization_id:
             return render_error_page('This link names no sign-in.', 400)
         try:
-            redirect_uri = await self._bridge.begin_reauthorization(reauthorization_id, self._cookie.read(request))
+            redirect_uri = await self._reauthorizer.begin(reauthorization_id, self._cookie.read(request))
         except HTTPException as exc:
             return render_error_page(exc.detail, exc.status_code)
         return redirect_without_cache(redirect_uri, 302)
@@ -531,7 +275,7 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
         query = request.query_params
         state = query.get('state')
         browser_id = self._cookie.read(request)
-        if state and await self._bridge.is_reauthorization(state):
+        if state and await self._reauthorizer.owns(state):
             return await self._finish_reauthorization(request, state, browser_id)
         try:
             if state and (error := query.get('error')):
@@ -551,14 +295,14 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
         query = request.query_params
         try:
             if error := query.get('error'):
-                await self._bridge.handle_reauthorization_error(error, state, browser_id)
+                await self._reauthorizer.handle_error(error, state, browser_id)
             elif code := query.get('code'):
-                await self._bridge.handle_reauthorization_callback(code, state, browser_id, query.get('iss'))
+                await self._reauthorizer.handle_callback(code, state, browser_id, query.get('iss'))
             else:
                 return render_error_page(_INCOMPLETE_CALLBACK, 400)
         except HTTPException as exc:
             return render_error_page(exc.detail, exc.status_code)
-        return render_signed_in_again_page(self._bridge.upstream.host)
+        return render_signed_in_again_page(self._reauthorizer.upstream.host)
 
 
 class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
@@ -634,7 +378,9 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             clients,
             entry.name,
             flow_context.mcp_resource_url,
-            f'{server_url_base}{REAUTHORIZE_PATH}',
+        )
+        reauthorizer = AuthorizationCodeReauthorizer(
+            bridge.tokens, upstream, flow_context.scope_registry, f'{server_url_base}{REAUTHORIZE_PATH}'
         )
         # One cookie for both pages, since the callback must read what the consent page set.
         cookie = BrowserCookie(secure=issuer.startswith('https://'))
@@ -658,14 +404,14 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
 
         return ServerAuthSetup(
             resolver=UpstreamTokenSourceAuthResolver(bridge),
-            reauthorizer=bridge,
+            reauthorizer=reauthorizer,
             provider=server,
             settings=settings,
             mcp_tokens_carry_upstream_grant=True,
             authorization_server_metadata=_build_authorization_server_metadata(settings, clients),
             routes=[
                 McpAuthorizationCodeRoutes(server, flow_context.scope_registry.mcp_policy, cookie),
-                AuthorizationCodeCallbackRoutes(bridge, cookie),
+                AuthorizationCodeCallbackRoutes(bridge, reauthorizer, cookie),
             ],
             mcp_summary='gateway (authorization_code)',
         )
@@ -680,12 +426,10 @@ def build_authorization_code_server(
     clients: McpClientDirectory,
     server_name: str,
     resource: str,
-    reauthorize_url: str,
 ) -> tuple[McpAuthorizationCodeServer, AuthorizationCodeBridge]:
     """Build the gateway's MCP authorization server for one server, joined to ``upstream`` by the returned Bridge.
 
     ``scope_registry`` chooses what each sign-in asks the upstream for.
-    ``reauthorize_url`` is where the user starts a new upstream sign-in for a token already held.
 
     ``issuer`` is the server's own issuer identifier, and every record is tied to it and to the upstream's server.
     ``resource`` is the canonical URI of the server's MCP endpoint, which every token is issued for.
@@ -696,7 +440,7 @@ def build_authorization_code_server(
         policy=policy,
         resource=resource,
     )
-    bridge = AuthorizationCodeBridge(tokens, upstream, scope_registry, store, reauthorize_url)
+    bridge = AuthorizationCodeBridge(tokens, upstream, scope_registry, store)
     return McpAuthorizationCodeServer(tokens, clients, bridge, server_name=server_name), bridge
 
 
@@ -743,29 +487,3 @@ def _build_client_directory(
         )
         directories.append(McpDynamicClientRegistry(flow_context.store, issuer))
     return McpClientDirectoryChain(directories)
-
-
-def _expiry_of(expires_in: int | None) -> int | None:
-    """When a token lasting ``expires_in`` seconds from now stops working, or ``None`` for one that never does."""
-    return None if expires_in is None else int(time.time()) + expires_in
-
-
-def _renewed_attachment(
-    attachment: McpTokenAttachment, refreshed: UpstreamTokenResponse, upstream_refresh_token: str
-) -> McpTokenAttachment:
-    """``attachment`` after the upstream refreshed its token, keeping the refresh token when no new one came."""
-    return McpTokenAttachment(
-        upstream_scopes=refreshed.resolve_granted_scopes(attachment.upstream_scopes),
-        links=_build_upstream_links(refreshed.access_token, refreshed.refresh_token or upstream_refresh_token),
-        links_expire_at=_expiry_of(refreshed.expires_in),
-        browser_id=attachment.browser_id,
-        grant_id=attachment.grant_id,
-    )
-
-
-def _build_upstream_links(access_token: str, refresh_token: str | None) -> dict[str, str]:
-    """The links an MCP token carries to the upstream tokens behind it."""
-    links = {UPSTREAM_ACCESS_TOKEN_LINK: access_token}
-    if refresh_token:
-        links[UPSTREAM_REFRESH_TOKEN_LINK] = refresh_token
-    return links
