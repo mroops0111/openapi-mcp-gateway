@@ -111,14 +111,14 @@ class UpstreamUrlElicitationSignInOffer(UpstreamSignInOffer):
         if answer is None:
             return None
         if answer != 'accept':
-            return _unsent('The user turned down signing in to the upstream again, so the request was not sent.')
+            return _unsent_result('The user turned down signing in to the upstream again, so the request was not sent.')
         async with anyio.create_task_group() as group:
             group.start_soon(_report_waiting, progress)
             finished = await reauthorizer.wait_for_completion(SIGN_IN_WAIT_SECONDS)
             group.cancel_scope.cancel()
         if finished:
             return None
-        return _unsent(
+        return _unsent_result(
             'The new upstream sign-in was not finished, so the request was not sent. '
             'Call this tool again once the user has signed in.'
         )
@@ -134,8 +134,8 @@ class UpstreamUrlElicitationSignInOffer(UpstreamSignInOffer):
         reauthorization = await reauthorizer.start(rejection)
         if reauthorization is None:
             return None
-        params = ElicitRequestURLParams(message=reauthorization.message, url=reauthorization.url)
-        return InputRequiredResult(input_requests={SIGN_IN_INPUT_REQUEST: ElicitRequest(params=params)})
+        sign_in_request = ElicitRequestURLParams(message=reauthorization.message, url=reauthorization.url)
+        return InputRequiredResult(input_requests={SIGN_IN_INPUT_REQUEST: ElicitRequest(params=sign_in_request)})
 
 
 # The offer of a tool call, which holds no state, so every tool shares it.
@@ -148,7 +148,7 @@ async def _report_waiting(progress: CallProgress) -> None:
         await anyio.sleep(_SIGN_IN_PROGRESS_INTERVAL)
 
 
-def _unsent(message: str) -> CallToolResult:
+def _unsent_result(message: str) -> CallToolResult:
     return CallToolResult(content=[TextContent(type='text', text=message)], is_error=True)
 
 

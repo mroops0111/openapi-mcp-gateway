@@ -9,8 +9,9 @@ class TokenStore(abc.ABC):
     The gateway keeps its records in these namespaces:
 
     - **MCP Side**: ``mcp_client``, ``mcp_access_token``, ``mcp_refresh_token``, ``mcp_auth_request``,
-      ``mcp_auth_code`` and ``mcp_consent``
-    - **Upstream Side**: ``upstream_auth_state``
+      ``mcp_auth_code``, ``mcp_consent`` and ``mcp_grant``
+    - **Upstream Side**: ``upstream_auth_state``, ``upstream_reauthorization``, ``upstream_reauthorization_state``,
+      ``upstream_refresh_claim`` and ``upstream_refresh_answer``
 
     A mapping's target namespace may also be a link name with no records of its own,
     such as ``upstream_access_token`` for the upstream token an MCP token links.
@@ -54,6 +55,17 @@ class TokenStore(abc.ABC):
         data = await self.get(namespace, key)
         await self.delete(namespace, key)
         return data
+
+    async def set_if_absent(self, namespace: str, key: str, data: typing.Any, ttl: int | None = None) -> bool:
+        """Store ``data`` under ``(namespace, key)`` only when nothing is stored there, and say whether it was.
+
+        A backend shared by several processes overrides this with one atomic step,
+        so two callers never both succeed, which is what a lock across instances needs.
+        """
+        if await self.get(namespace, key) is not None:
+            return False
+        await self.set(namespace, key, data, ttl=ttl)
+        return True
 
     async def delete_mapping(self, from_ns: str, from_key: str, to_ns: str) -> None:
         """Delete the mapping from ``(from_ns, from_key)`` into ``to_ns``.

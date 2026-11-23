@@ -43,10 +43,11 @@ from ..settings_mapping import (
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamTokenSource
-from .reauthorization import REAUTHORIZE_PATH, AuthorizationCodeReauthorizer
-from .upstream_links import (
+from .authorization_code_reauthorization import REAUTHORIZE_PATH, AuthorizationCodeReauthorizer
+from .authorization_code_upstream_token import (
     UPSTREAM_ACCESS_TOKEN_LINK,
     UPSTREAM_REFRESH_TOKEN_LINK,
+    UpstreamTokenRefresher,
     build_upstream_links,
     expiry_of,
     renewed_attachment,
@@ -80,6 +81,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
     which is what the MCP authorization spec requires of a server calling an upstream API.
 
     ``tokens`` is the MCP side's issuer rather than its server, so neither holds the other.
+    ``refresher`` renews the upstream token on an MCP refresh, once however many callers ask.
     ``scope_registry`` chooses what each sign-in asks the upstream for, from the MCP scopes it will grant.
     ``store`` keeps the sign-ins waiting at the upstream, which belong to neither side alone.
     """
@@ -88,11 +90,13 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         self,
         tokens: McpTokenIssuer,
         upstream: UpstreamAuthorizationCodeClient,
+        refresher: UpstreamTokenRefresher,
         scope_registry: ScopeRegistry,
         store: TokenStore,
     ) -> None:
         self.tokens = tokens
         self.upstream = upstream
+        self.refresher = refresher
         self.scope_registry = scope_registry
         self._store = store
 
@@ -138,17 +142,17 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         try:
             if not upstream_refresh_token:
                 raise HTTPException(400, 'The upstream issued no refresh token')
-            refreshed = await self.upstream.refresh(upstream_refresh_token)
-        except HTTPException as exc:
+            refreshed = await self.refresher.refresh(upstream_refresh_token)
+        except HTTPException as exception:
             if remaining > 0:
                 return attachment
             logger.warning(
-                'OAuth refresh rejected: reason=upstream_expired client_id=%s detail=%s', client_id, exc.detail
+                'OAuth refresh rejected: reason=upstream_expired client_id=%s detail=%s', client_id, exception.detail
             )
             raise TokenError(
                 error='invalid_grant',
                 error_description='The upstream sign-in expired and could not be renewed; sign in again',
-            ) from exc
+            ) from exception
         return renewed_attachment(attachment, refreshed, upstream_refresh_token)
 
     # UpstreamTokenSource
@@ -262,9 +266,9 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
         if not reauthorization_id:
             return render_error_page('This link names no sign-in.', 400)
         try:
-            redirect_uri = await self._reauthorizer.begin(reauthorization_id, self._cookie.read(request))
-        except HTTPException as exc:
-            return render_error_page(exc.detail, exc.status_code)
+            redirect_uri = await self._reauthorizer.begin_sign_in(reauthorization_id, self._cookie.read(request))
+        except HTTPException as exception:
+            return render_error_page(exception.detail, exception.status_code)
         return redirect_without_cache(redirect_uri, 302)
 
     async def finish_upstream(self, request: Request) -> Response:
@@ -275,7 +279,7 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
         query = request.query_params
         state = query.get('state')
         browser_id = self._cookie.read(request)
-        if state and await self._reauthorizer.owns(state):
+        if state and await self._reauthorizer.is_sign_in_state(state):
             return await self._finish_reauthorization(request, state, browser_id)
         try:
             if state and (error := query.get('error')):
@@ -286,8 +290,8 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
                 redirect_uri = await self._bridge.handle_upstream_callback(code, state, browser_id, query.get('iss'))
             else:
                 return render_error_page(_INCOMPLETE_CALLBACK, 400)
-        except HTTPException as exc:
-            return render_error_page(exc.detail, exc.status_code)
+        except HTTPException as exception:
+            return render_error_page(exception.detail, exception.status_code)
         return redirect_without_cache(redirect_uri, 302)
 
     async def _finish_reauthorization(self, request: Request, state: str, browser_id: str | None) -> Response:
@@ -295,13 +299,13 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
         query = request.query_params
         try:
             if error := query.get('error'):
-                await self._reauthorizer.handle_error(error, state, browser_id)
+                await self._reauthorizer.handle_upstream_error(error, state, browser_id)
             elif code := query.get('code'):
-                await self._reauthorizer.handle_callback(code, state, browser_id, query.get('iss'))
+                await self._reauthorizer.handle_upstream_callback(code, state, browser_id, query.get('iss'))
             else:
                 return render_error_page(_INCOMPLETE_CALLBACK, 400)
-        except HTTPException as exc:
-            return render_error_page(exc.detail, exc.status_code)
+        except HTTPException as exception:
+            return render_error_page(exception.detail, exception.status_code)
         return render_signed_in_again_page(self._reauthorizer.upstream.host)
 
 
@@ -380,7 +384,11 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             flow_context.mcp_resource_url,
         )
         reauthorizer = AuthorizationCodeReauthorizer(
-            bridge.tokens, upstream, flow_context.scope_registry, f'{server_url_base}{REAUTHORIZE_PATH}'
+            bridge.tokens,
+            upstream,
+            bridge.refresher,
+            flow_context.scope_registry,
+            f'{server_url_base}{REAUTHORIZE_PATH}',
         )
         # One cookie for both pages, since the callback must read what the consent page set.
         cookie = BrowserCookie(secure=issuer.startswith('https://'))
@@ -440,7 +448,7 @@ def build_authorization_code_server(
         policy=policy,
         resource=resource,
     )
-    bridge = AuthorizationCodeBridge(tokens, upstream, scope_registry, store)
+    bridge = AuthorizationCodeBridge(tokens, upstream, UpstreamTokenRefresher(upstream, store), scope_registry, store)
     return McpAuthorizationCodeServer(tokens, clients, bridge, server_name=server_name), bridge
 
 

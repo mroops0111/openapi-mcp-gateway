@@ -61,6 +61,10 @@ class RedisTokenStore(TokenStore):
         raw = await self._redis.getdel(self._key(namespace, key))
         return None if raw is None else json.loads(raw)
 
+    async def set_if_absent(self, namespace: str, key: str, data: typing.Any, ttl: int | None = None) -> bool:
+        stored = await self._redis.set(self._key(namespace, key), json.dumps(data), ex=ttl, nx=True)
+        return bool(stored)
+
     async def delete_mapping(self, from_ns: str, from_key: str, to_ns: str) -> None:
         await self.delete(f'{from_ns}__to__{to_ns}', from_key)
 

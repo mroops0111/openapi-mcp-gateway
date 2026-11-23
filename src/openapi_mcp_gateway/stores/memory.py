@@ -57,6 +57,13 @@ class MemoryTokenStore(TokenStore):
         await self.delete(namespace, key)
         return data
 
+    async def set_if_absent(self, namespace: str, key: str, data: typing.Any, ttl: int | None = None) -> bool:
+        # Neither call suspends, so no other task can store in between.
+        if await self.get(namespace, key) is not None:
+            return False
+        await self.set(namespace, key, data, ttl=ttl)
+        return True
+
     async def delete_mapping(self, from_ns: str, from_key: str, to_ns: str) -> None:
         await self.delete(f'{from_ns}__to__{to_ns}', from_key)
 
