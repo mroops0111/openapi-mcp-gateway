@@ -339,6 +339,18 @@ Removing a client from `auth.mcp.clients` revokes its tokens once the gateway re
 
 </details>
 
+<details>
+<summary><b>When the Upstream Refuses a Token</b></summary>
+
+Under `authorization_code` the gateway reads the upstream's [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750#section-3) challenge on a refused tool call and cures what it can.
+
+- **Expired Token**: on `401` with `error="invalid_token"`, the gateway renews the upstream token with its refresh token and sends the request once more. The user sees nothing.
+- **Missing Scope**: on `403` with `error="insufficient_scope"` and a `scope` within `auth.upstream.scopes`, the client shows the user a link to sign in to the upstream again, as a [URL-mode elicitation](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation#url-mode-elicitation-requests). Once the user signs in, the call goes on with the same MCP token.
+
+The link works only in the browser the user first signed in with. A client without URL elicitation, a declined sign-in, a scope beyond `auth.upstream.scopes` and a resource read all get the upstream error as it is. Many upstreams send no such challenge, and their refusals reach the client unchanged.
+
+</details>
+
 ## Tool Results
 
 Every registered tool carries a protocol-native `title` and `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), so an agent can judge a tool before calling it. Results carry `structuredContent`, so a client reads a typed body and structured error payloads without re-parsing text. A binary response, such as an image or a PDF, arrives as a content block rather than decoded text. None of this needs configuration.
