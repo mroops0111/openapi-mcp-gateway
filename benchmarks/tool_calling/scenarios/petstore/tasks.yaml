@@ -11,7 +11,7 @@
     - server: petstore
       operation: add_pet
       arguments: {name: Biscuit, photoUrls: [], category: {name: Dogs}, status: available}
-  responses:
+  upstream_responses:
     # The listings before Biscuit joins them, which a model may check first.
     - server: petstore
       method: GET
@@ -44,7 +44,7 @@
     - server: petstore
       operation: update_pet_with_form
       arguments: {petId: 31, status: sold}
-  responses:
+  upstream_responses:
     # The shop's pets by status, which a model may list one status or several at a time.
     - server: petstore
       method: GET
@@ -113,7 +113,7 @@
     - server: petstore
       operation: delete_order
       arguments: {orderId: 5}
-  responses:
+  upstream_responses:
     # The order itself, which a model may look up before cancelling it.
     - server: petstore
       method: GET
@@ -147,7 +147,7 @@
     - server: petstore
       operation: update_pet_with_form
       arguments: {petId: 52, status: pending}
-  responses:
+  upstream_responses:
     # The shop's pets by status, which a model may list one status or several at a time.
     - server: petstore
       method: GET
@@ -230,7 +230,7 @@
     - server: petstore
       operation: update_pet_with_form
       arguments: {petId: 88, status: sold}
-  responses:
+  upstream_responses:
     - server: petstore
       method: GET
       path: /store/order/7
@@ -282,7 +282,7 @@
     - server: petstore
       operation: update_pet_with_form
       arguments: {petId: 64, status: available}
-  responses:
+  upstream_responses:
     - server: petstore
       method: GET
       path: /store/order/9

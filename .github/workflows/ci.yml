@@ -22,8 +22,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --all-packages --extra dev --extra redis
-      - run: uv run ruff check src/ tests/ benchmarks/
-      - run: uv run ruff format --check src/ tests/ benchmarks/
+      - run: uv run ruff check src/ tests/ eval/
+      - run: uv run ruff format --check src/ tests/ eval/
 
   typecheck:
     name: Type Check
@@ -34,7 +34,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --all-packages --extra dev --extra redis
-      - run: uv run basedpyright src/ tests/ benchmarks/src/ benchmarks/tests/
+      - run: uv run basedpyright src/ tests/ eval/src/ eval/tests/
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -52,7 +52,7 @@ jobs:
       - run: uv sync --all-packages --extra dev --extra redis
       # Fails below the coverage floor set under [tool.coverage.report] in pyproject.toml.
       - run: uv run pytest tests/ -v --tb=short --cov
-      - run: uv run pytest benchmarks/tests/ -v --tb=short
+      - run: uv run pytest eval/tests/ -v --tb=short
 
   smoke:
     name: Smoke (External Deps)
@@ -83,7 +83,7 @@ jobs:
           path: ~/.cache/openapi-mcp-gateway/specs
           key: benchmark-specs-${{ hashFiles('benchmarks/**/benchmark.yaml') }}
       - run: uv sync --all-packages --extra dev --extra redis
-      - run: uv run openapi-mcp-gateway-benchmarks search-ranking check benchmarks/search_ranking
+      - run: uv run omgw benchmark search-ranking check
 
   tool-calling-benchmark:
     name: Tool Calling Benchmark
@@ -100,7 +100,7 @@ jobs:
           path: ~/.cache/openapi-mcp-gateway/specs
           key: benchmark-specs-${{ hashFiles('benchmarks/**/benchmark.yaml') }}
       - run: uv sync --all-packages --extra dev --extra redis
-      - run: uv run openapi-mcp-gateway-benchmarks tool-calling check benchmarks/tool_calling
+      - run: uv run omgw benchmark tool-calling check
 
   build:
     name: Build

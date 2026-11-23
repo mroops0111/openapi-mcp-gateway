@@ -6,7 +6,7 @@ You are writing an openapi-mcp-gateway config for the user's request, with the g
 
 Add to the config what the request calls for. No one can answer questions, so where the skill says to confirm with the user, decide as the request suggests.
 
-Verify the config with `openapi-mcp-gateway --config {config_file} --dry-run`, which is installed.
+Verify the config with `openapi-mcp-gateway serve --config {config_file} --dry-run`, which is installed.
 
 ## Input
 

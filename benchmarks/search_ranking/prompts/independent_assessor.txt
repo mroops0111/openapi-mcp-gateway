@@ -14,11 +14,11 @@ Every request must have at least one operation graded 2. Search the operation li
 
 ## Input
 
-- {operations_input} lists every operation, one per line, as name, method, path, and summary. Where a spec has no summary, the column holds the start of the operation's description, or nothing, and the operation is read from its name and path.
-- {queries_input} holds {query_count} requests, one per line, each as an id and a text.
+- The operation list at the end of these instructions lists every operation, one per line, as name, method, path, and summary. Where a spec has no summary, the column holds the start of the operation's description, or nothing, and the operation is read from its name and path.
+- The requests at the end of these instructions holds {query_count} requests, one per line, each as an id and a text.
 
-Only look at those. Do not open anything else, including any answers someone else wrote, and do not run any search engine or ranking script. Your judgements must be your own. {search_note}
+Only look at those. Do not open anything else, including any answers someone else wrote, and do not run any search engine or ranking script. Your judgements must be your own. The find_operations tool searches the same list for a word, which helps check names and find candidates.
 
 ## Output
 
-{output_instructions}
+Return every query in your structured answer. Every key of relevant must be an exact name from the operation list, which find_operations helps check.

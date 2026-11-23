@@ -8,7 +8,7 @@
 # Prerequisites:
 #   export TMDB_TOKEN="<your v4 read access token>"   # https://www.themoviedb.org/settings/api
 #
-# Usage (from the repo root): openapi-mcp-gateway --config examples/movie-shaping.yml
+# Usage (from the repo root): openapi-mcp-gateway serve --config examples/movie-shaping.yml
 
 host: "127.0.0.1"
 port: 8000

@@ -22,7 +22,7 @@
     - server: asana
       operation: create_task
       arguments: {data: {name: Password reset email links expire immediately, projects: ['1202000000000011']}}
-  responses:
+  upstream_responses:
     - server: github
       method: GET
       path: /repos/acme/web/issues
@@ -117,7 +117,7 @@
     - server: asana
       operation: create_task
       arguments: {data: {name: Rate limit headers missing on 429 responses, projects: ['1202000000000021']}}
-  responses:
+  upstream_responses:
     - server: github
       method: GET
       path: /repos/acme/api/issues/330
@@ -229,7 +229,7 @@
     - server: asana
       operation: update_task
       arguments: {task_gid: '1203000000000203', data: {completed: true}}
-  responses:
+  upstream_responses:
     - server: asana
       method: GET
       path: /workspaces
@@ -397,7 +397,7 @@
     - server: asana
       operation: create_subtask_for_task
       arguments: {task_gid: '1203000000000301', data: {name: Cache rendered navigation menu}}
-  responses:
+  upstream_responses:
     - server: github
       method: GET
       path: /repos/acme/web/pulls
@@ -533,7 +533,7 @@
     - server: asana
       operation: update_task
       arguments: {task_gid: '1203000000000501', data: {due_on: '2026-12-04'}}
-  responses:
+  upstream_responses:
     - server: github
       method: GET
       path: /repos/acme/api/milestones
@@ -672,7 +672,7 @@
     - server: asana
       operation: update_task
       arguments: {task_gid: '1203000000000601', data: {assignee: '1201000000000061'}}
-  responses:
+  upstream_responses:
     - server: github
       method: GET
       path: /repos/acme/web/issues/520

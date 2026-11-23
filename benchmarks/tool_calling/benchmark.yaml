@@ -39,7 +39,7 @@ models:
 
 scenarios: [petstore, notion, asana, discord, github, stripe, github-asana]
 
-repetitions: 3
+repeat: 3
 request_limit: 20
 # A model may fix a tool call the gateway refused this many times, rather than failing the run at its first slip.
 tool_retries: 3

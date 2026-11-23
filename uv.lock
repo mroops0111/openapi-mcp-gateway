@@ -14,7 +14,7 @@ resolution-markers = [
 [manifest]
 members = [
     "openapi-mcp-gateway",
-    "openapi-mcp-gateway-benchmarks",
+    "openapi-mcp-gateway-eval",
 ]
 
 [[package]]
@@ -1280,6 +1280,9 @@ dev = [
 embeddings = [
     { name = "pydantic-ai-slim", extra = ["openai"] },
 ]
+eval = [
+    { name = "openapi-mcp-gateway-eval" },
+]
 oidc = [
     { name = "pyjwt", extra = ["crypto"] },
 ]
@@ -1299,6 +1302,7 @@ requires-dist = [
     { name = "jsonata-python", specifier = ">=0.7.0" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "mcp", specifier = ">=2.0.0" },
+    { name = "openapi-mcp-gateway-eval", marker = "extra == 'eval'", editable = "eval" },
     { name = "pydantic", specifier = ">=2.14.2" },
     { name = "pydantic-ai-slim", extras = ["openai"], marker = "extra == 'embeddings'", specifier = ">=2.69.0" },
     { name = "pydantic-settings", specifier = ">=2.16.2" },
@@ -1313,12 +1317,12 @@ requires-dist = [
     { name = "snowballstemmer", specifier = ">=3.1.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
-provides-extras = ["redis", "oidc", "embeddings", "dev"]
+provides-extras = ["redis", "oidc", "embeddings", "eval", "dev"]
 
 [[package]]
-name = "openapi-mcp-gateway-benchmarks"
-version = "0.1.0"
-source = { editable = "benchmarks" }
+name = "openapi-mcp-gateway-eval"
+version = "0.8.0"
+source = { editable = "eval" }
 dependencies = [
     { name = "click" },
     { name = "httpx" },

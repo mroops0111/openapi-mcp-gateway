@@ -23,7 +23,7 @@
     - server: asana
       operation: create_task
       arguments: {data: {name: Draft launch checklist, projects: ['1205000000000101'], due_on: '2026-12-01'}}
-  responses:
+  upstream_responses:
     - server: asana
       method: GET
       path: /workspaces
@@ -114,7 +114,7 @@
     - server: asana
       operation: create_task
       arguments: {data: {name: Book venue for offsite, projects: ['1205000000000701'], assignee: '1201000000000071'}}
-  responses:
+  upstream_responses:
     - server: asana
       method: GET
       path: /workspaces
@@ -223,7 +223,7 @@
     - server: asana
       operation: update_task
       arguments: {task_gid: '1206000000000311', data: {completed: true}}
-  responses:
+  upstream_responses:
     - server: asana
       method: GET
       path: /workspaces
@@ -358,7 +358,7 @@
     - server: asana
       operation: update_task
       arguments: {task_gid: '1206000000000411', data: {assignee: '1201000000000041', due_on: '2026-11-20'}}
-  responses:
+  upstream_responses:
     - server: asana
       method: GET
       path: /workspaces
@@ -500,7 +500,7 @@
     - server: asana
       operation: create_subtask_for_task
       arguments: {task_gid: '1206000000000511', data: {name: Collect legal sign-off}}
-  responses:
+  upstream_responses:
     - server: asana
       method: GET
       path: /workspaces
@@ -601,7 +601,7 @@
     - server: asana
       operation: add_task_for_section
       arguments: {section_gid: '1207000000000612', data: {task: '1206000000000611'}}
-  responses:
+  upstream_responses:
     - server: asana
       method: GET
       path: /workspaces

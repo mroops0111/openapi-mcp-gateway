@@ -7,10 +7,10 @@
 Each scenario keeps all of its data in one directory, and every instruction a model is given is kept as data too.
 
 ```
-benchmark.yaml                                       spec pins, models, repetitions, the system prompt, and the generator
+benchmark.yaml                                       spec pins, models, the repeat count, the system prompt, and the generator
 prompts/config_generator.txt                         what the config generator is told on top of the skill
 scenarios/<name>/scenario.yaml                       the intent and the servers
-scenarios/<name>/tasks.yaml                          tasks with expected calls, a solution, and responses
+scenarios/<name>/tasks.yaml                          tasks with expected calls, a solution, and upstream responses
 scenarios/<name>/variants/<variant>.yaml             one gateway config fragment per server
 scenarios/<name>/variants/<variant>.provenance.json  the generator's run, beside each generated variant
 ```
@@ -65,7 +65,7 @@ A model may fix a tool call the gateway refused up to `tool_retries` times, thre
 
 ## Upstream
 
-No real API is called. A replay server stands in for every upstream, answering each request from the task's responses, else from the spec's own example, else from a fixed sample of the response schema, so a model may call any operation, not only the expected ones. It records every request for the grader.
+No real API is called. A replay server stands in for every upstream, answering each request from the task's upstream responses, else from the spec's own example, else from a fixed sample of the response schema, so a model may call any operation, not only the expected ones. It records every request for the grader.
 
 ## Report
 
@@ -96,13 +96,13 @@ Each scenario has 2 **dev** tasks and 4 **test** tasks. Try a change on dev. Onl
 
 ## Data Provenance
 
-Claude agents wrote every task by hand, and `tool-calling generate` writes every generated variant with a model running the skill.
+Claude agents wrote every task by hand, and `tool-calling generate-config` writes every generated variant with a model running the skill.
 
 - **Task writers** were Claude agents launched from one Claude Code session on 2026-11-15, configured as `claude-opus-5-5`. They saw the intent and the operation list, and wrote the tasks. Each checked its tasks by running every solution through the real gateway against the stand-in upstream. Hand-written tasks have no provenance file.
 - **The config generator** is the model the manifest names under `config_generator`, running the generate-config skill in a workspace holding the scenario's pinned specs. It is told [`prompts/config_generator.txt`](prompts/config_generator.txt) on top of the skill, and is sent back until its config loads. It sees the intent, and never the tasks. Each generated variant keeps its run beside it as `<variant>.provenance.json`, with the model, the hash of its instructions, the skill's hash, the request, the finishing time, and the token usage. Every raw exchange stays in the work directory. A generated config is regenerated, never edited.
 
 ```bash
-uv run openapi-mcp-gateway-benchmarks tool-calling generate benchmarks/tool_calling work --scenario github
+uv run omgw benchmark tool-calling generate-config --scenario github
 ```
 
 ## Validation
@@ -122,7 +122,7 @@ The data has five known biases, each worth weighing before citing a number.
 - **Well-known APIs.** Models have likely seen GitHub's and Stripe's documentation in training, so a model may reach an operation from memory rather than through the tools. A scenario over an API models are unlikely to know is planned.
 - **Stripe writes carry no body.** The gateway reads only JSON request bodies, and Stripe's are form-encoded, so no Stripe tool accepts body fields. Stripe's tasks are therefore writes that need only ids in the path, such as refunding a charge or cancelling a subscription. A refund through `POST /v1/refunds`, which the grader accepts, needs the charge in its body, so a variant that serves only that endpoint cannot refund.
 - **Notion's broken parameter.** Notion's spec declares a header parameter with no name on one operation, which the gateway now skips with a warning.
-- **Synthetic responses.** A response built from a schema is plausible but not real, so a task that depends on data a real API would return carries that data in its responses.
+- **Synthetic responses.** A response built from a schema is plausible but not real, so a task that depends on data a real API would return carries that data in its upstream responses.
 
 ## Versioning
 

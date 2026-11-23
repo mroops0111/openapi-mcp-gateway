@@ -19,7 +19,7 @@
     - server: discord
       operation: add_guild_member_role
       arguments: {guild_id: '81384788765712384', user_id: '200000000000000011', role_id: '300000000000000021'}
-  responses:
+  upstream_responses:
     - server: discord
       method: GET
       path: /guilds/81384788765712384/members/search
@@ -133,7 +133,7 @@
     - server: discord
       operation: ban_user_from_guild
       arguments: {guild_id: '81384788765712384', user_id: '200000000000000031', delete_message_seconds: 86400}
-  responses:
+  upstream_responses:
     - server: discord
       method: GET
       path: /guilds/81384788765712384/members/search
@@ -198,7 +198,7 @@
     - server: discord
       operation: update_guild_member
       arguments: {guild_id: '81384788765712384', user_id: '200000000000000041', nick: Gamer}
-  responses:
+  upstream_responses:
     - server: discord
       method: GET
       path: /guilds/81384788765712384/members/search
@@ -265,7 +265,7 @@
     - server: discord
       operation: delete_message
       arguments: {channel_id: '400000000000000051', message_id: '500000000000000062'}
-  responses:
+  upstream_responses:
     - server: discord
       method: GET
       path: /guilds/81384788765712384/channels
@@ -389,7 +389,7 @@
     - server: discord
       operation: create_guild_role
       arguments: {guild_id: '81384788765712384', name: Event Staff, hoist: true, mentionable: true}
-  responses:
+  upstream_responses:
     # No Event Staff role exists yet.
     - server: discord
       method: GET
@@ -439,7 +439,7 @@
     - server: discord
       operation: create_pin
       arguments: {channel_id: '400000000000000050', message_id: '500000000000000072'}
-  responses:
+  upstream_responses:
     - server: discord
       method: GET
       path: /guilds/81384788765712384/channels

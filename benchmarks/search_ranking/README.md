@@ -11,6 +11,8 @@ benchmark.yaml                              spec pins, variants, and the CI gate
 gate_scores.json                            the gated scores CI compares against
 prompts/query_author.txt                    the query author's instructions, as a template
 prompts/independent_assessor.txt            the independent assessor's instructions, as a template
+prompts/adjudicator.txt                     the adjudicator's instructions, as a template
+prompts/reviser.txt                         the reviser's instructions, as a template
 specs/<spec>/annotations.jsonl              each query's two annotations and any adjudication
 specs/<spec>/annotations.provenance.json    the annotators' runs, when models were run through Pydantic AI
 specs/<spec>/queries.jsonl                  queries, in BEIR's format
@@ -91,32 +93,30 @@ Per spec, 10 queries of each style are drawn into **dev** by a fixed seed, and t
 
 ## Data Provenance
 
-Claude agents annotated version 1 by hand, and `search-ranking generate` can annotate the data again with models run through Pydantic AI.
+Claude agents annotated version 1 by hand, and `search-ranking generate-annotations` makes the data anew with models run through Pydantic AI.
 
-- **Version 1** was annotated by two Claude agents launched from one Claude Code session on 2026-11-14, configured as `claude-opus-5-5`. They worked from the same operation lists the first stage writes today, byte for byte. Their instructions said what the templates in [`prompts/`](prompts/) say, under other headings, with two differences. Each spec's copy named that spec's areas and gave examples from its own operations, and the files were named by hand. Running stages 3 and 5 below on their raw output reproduces the annotations exactly, except `asana-q077`, which stage 8 had reworded, and the one adjudication, which stage 7 added. A hand-run annotation has no provenance file.
-- **A generated annotation** runs stages 1 to 4 with both annotators run through Pydantic AI. Each annotator gets the same template as a hand-run one, with its operation list in the prompt and a tool that searches the list for a word, never the ranker. It answers in structured output, and is sent back to fix an answer that names an operation the spec does not serve, or that skips a query or a style. Collect keeps the annotators' runs beside the annotations as `annotations.provenance.json`, with each model, the hash of its instructions, the finishing time, and the token usage. Every raw exchange stays in the work directory.
+- **Version 1** was annotated by two Claude agents launched from one Claude Code session on 2026-11-14, configured as `claude-opus-5-5`. They read the same operation lists the pipeline writes today, and instructions that said what the query author's and the assessor's templates in [`prompts/`](prompts/) say, under other headings. Each spec's copy named that spec's areas and gave examples from its own operations. One query was adjudicated by hand, and `asana-q077` was reworded by hand after the style check. A hand-run annotation has no provenance file.
+- **A generated annotation** runs four roles in turn on each spec, each a Pydantic AI agent whose run starts with no history. Each gets its spec's operation list in the prompt and a tool that searches the list for a word, never the ranker.
 
 ```bash
-uv run openapi-mcp-gateway-benchmarks search-ranking generate benchmarks/search_ranking work \
-  --author-model anthropic:claude-sonnet-5-5 --assessor-model openai:<model>
+uv run omgw benchmark search-ranking generate-annotations \
+  --author-model anthropic:claude-sonnet-5-5 --assessor-model openai:<model> --adjudicator-model google:<model>
 ```
 
-Annotating the data again takes eight stages. Three are done by hand or by `generate`, the two annotators' work and any adjudication. The other five are commands, so the same specs and the same templates always give the annotators the same files, and the same annotator output always gives the same data. The commands write their working files into a directory of your choosing, here `work/`, outside the repository.
+The four roles run in this order, each from its template in [`prompts/`](prompts/).
 
-1. **Prepare authoring.** `search-ranking annotations prepare-authoring benchmarks/search_ranking work` writes each spec's `operations.tsv`, listing every operation as the gateway serves it, and `query_author_instructions.txt`, rendered from [`prompts/query_author.txt`](prompts/query_author.txt).
-2. **Author the queries.** Give one annotator each spec's instructions, with no access to anything but its operation list. It writes `query_author.jsonl`.
-3. **Prepare assessment.** `search-ranking annotations prepare-assessment benchmarks/search_ranking work` gives each query its id, by its line in the author's file, and writes `queries.jsonl` without the author's judgements and `independent_assessor_instructions.txt`, rendered from [`prompts/independent_assessor.txt`](prompts/independent_assessor.txt).
-4. **Assess the queries.** Give a second annotator each spec's assessor instructions, with no access to the author's judgements. It writes `independent_assessor.jsonl`.
-5. **Collect.** `search-ranking annotations collect benchmarks/search_ranking work` checks that both annotators named only operations the spec serves, graded only 1 and 2, and gave every query an answer, then writes each spec's `annotations.jsonl`.
-6. **Build.** `search-ranking annotations build benchmarks/search_ranking` merges the annotations into the queries and judgements, and reports the agreement. It stops at any query whose annotators share no answer.
-7. **Adjudicate.** For each query the build stopped at, a third look adds an `adjudication` with its judgements and a note, and the build runs again.
-8. **Check.** `search-ranking check benchmarks/search_ranking --update` refuses any paraphrase or indirect query that repeats its answer's words. Reword each one it names in its spec's `annotations.jsonl`, build again, and rerun until it passes, which also writes the new gate scores.
+1. **Query author.** It writes 80 queries across three styles, with its own judgements.
+2. **Independent assessor.** It judges every query from its id and text alone.
+3. **Adjudicator.** It settles each query the two share no answer for, having read both, and notes why.
+4. **Reviser.** The author's model rewords each paraphrase or indirect query that repeats more than half of its answer's terms.
 
-The two annotators should be independent, which a new annotation can make stronger than version 1 did.
+Each role is sent back, up to three times, to fix an answer its checks refuse, such as a name the spec does not serve, a skipped query, or a reworded query that still repeats its answer. Specs run four at a time, and nothing is written until every spec has finished. The command then builds the queries and judgements, reports the agreement, runs the style check, and writes the new gate scores. Each spec's `annotations.provenance.json` keeps every role's model, the hash of its instructions, the finishing time, and the token usage. Every raw exchange stays in the work directory, a temporary one unless `--work-directory` names another.
 
-- **Different models.** Two instances of one model share its mistakes. Run the assessor on another provider's model where one is available.
-- **No ranker.** Neither annotator may run search or see its output, so the queries say nothing about how the ranker behaves.
-- **No answers.** The assessor never sees the author's file, only the queries the third stage wrote.
+The annotators should be independent, which a new annotation can make stronger than version 1 did.
+
+- **Different models.** Two instances of one model share its mistakes. Run the assessor on another provider's model, and the adjudicator on a third, where they are available.
+- **No ranker.** No annotator may run search or see its output, so the queries say nothing about how the ranker behaves.
+- **No answers.** The assessor never sees the author's judgements, since its run starts with no history and is given only each query's id and text.
 
 ## Validation
 
@@ -130,7 +130,7 @@ The two annotators should be independent, which a new annotation can make strong
 
 The data has six known biases, each worth weighing before citing a number.
 
-- **One model annotated twice.** Both annotators were Claude agents in one session, configured as `claude-opus-5-5`, on 2026-11-14. Two instances of one model share its mistakes, so their agreement says less about correctness than two independent annotators would. A second annotation from another provider's model is planned, which `generate` now makes one command.
+- **One model annotated twice.** Both annotators were Claude agents in one session, configured as `claude-opus-5-5`, on 2026-11-14. Two instances of one model share its mistakes, so their agreement says less about correctness than two independent annotators would. A second annotation from another provider's model is planned, which `generate-annotations` now makes one command.
 - **One annotator wrote the queries.** Annotator A wrote each query with an answer in mind, which favours queries with one clear answer over genuinely ambiguous ones.
 - **No parameters shown.** Both annotators saw each operation's name, method, path, and summary, and no parameters or full descriptions, so operations that differ only in their parameters may be told apart less well.
 - **Well-known APIs.** The annotating model has likely seen GitHub's and Stripe's documentation in training, so its queries may lean on their official vocabulary, and its judgements there may rest on what it remembers as well as on the list. Search itself calls no model, so this shapes the data, not the ranker's scores.

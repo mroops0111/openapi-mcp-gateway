@@ -12,7 +12,7 @@
     - server: github
       operation: pulls_request_reviewers
       arguments: {owner: acme, repo: api, pull_number: 87, reviewers: [alice-chen]}
-  responses:
+  upstream_responses:
     - server: github
       method: GET
       path: /repos/acme/api/pulls
@@ -117,7 +117,7 @@
     - server: github
       operation: issues_update
       arguments: {owner: acme, repo: mobile, issue_number: 77, state: open}
-  responses:
+  upstream_responses:
     - server: github
       method: GET
       path: /repos/acme/mobile/issues
@@ -169,7 +169,7 @@
     - server: github
       operation: issues_update
       arguments: {owner: acme, repo: web, issue_number: 214, state: closed, state_reason: completed}
-  responses:
+  upstream_responses:
     - server: github
       method: GET
       path: /repos/acme/web/issues
@@ -233,7 +233,7 @@
     - server: github
       operation: pulls_create_review
       arguments: {owner: acme, repo: mobile, pull_number: 142, event: APPROVE, body: "LGTM, thanks!"}
-  responses:
+  upstream_responses:
     - server: github
       method: GET
       path: /repos/acme/mobile/pulls
@@ -305,7 +305,7 @@
     - server: github
       operation: issues_create_comment
       arguments: {owner: acme, repo: api, issue_number: 305, body: "Thanks for the report! Which version are you running?"}
-  responses:
+  upstream_responses:
     - server: github
       method: GET
       path: /repos/acme/api/issues
@@ -369,7 +369,7 @@
     - server: github
       operation: issues_add_assignees
       arguments: {owner: acme, repo: api, issue_number: 318, assignees: [dev-sam]}
-  responses:
+  upstream_responses:
     - server: github
       method: GET
       path: /repos/acme/api/issues

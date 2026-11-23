@@ -7,7 +7,7 @@
 #      (matches default url when host is 0.0.0.0; set top-level url in config if you need another base)
 #   3. export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
 #
-# Usage: openapi-mcp-gateway --config examples/asana.yml
+# Usage: openapi-mcp-gateway serve --config examples/asana.yml
 
 host: "0.0.0.0"
 port: 8000

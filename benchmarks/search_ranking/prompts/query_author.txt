@@ -24,10 +24,10 @@ Write three styles, as close to a third each as possible: {literal_count} litera
 
 ## Input
 
-{operations_input} lists every operation, one per line, as name, method, path, and summary. Where a spec has no summary, the column holds the start of the operation's description, or nothing, and the operation is read from its name and path.
+The operation list at the end of these instructions lists every operation, one per line, as name, method, path, and summary. Where a spec has no summary, the column holds the start of the operation's description, or nothing, and the operation is read from its name and path.
 
-This is the only thing you may look at. Do not look at any source code, and do not run any search engine or script that ranks operations. The benchmark is only fair if the queries are written without knowing how the ranker behaves. {search_note}
+This is the only thing you may look at. Do not look at any source code, and do not run any search engine or script that ranks operations. The benchmark is only fair if the queries are written without knowing how the ranker behaves. The find_operations tool searches the same list for a word, which helps check names and find candidates.
 
 ## Output
 
-{output_instructions}
+Return every query in your structured answer. Every key of relevant must be an exact name from the operation list, which find_operations helps check.

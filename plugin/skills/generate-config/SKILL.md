@@ -26,7 +26,7 @@ Most of the work is choosing which operations to expose and how to authenticate.
 This skill carries the config keys you need. The Stage 2 guidance covers the `tool` block, and the Stage 3 skeleton shows the whole config shape. For the CLI flags and their allowed values, such as the transports and auth types, run:
 
 ```bash
-uvx openapi-mcp-gateway --help
+uvx openapi-mcp-gateway serve --help
 ```
 
 Do not invent a key you have not seen in one of those.
@@ -183,7 +183,7 @@ For API-key auth with a custom header, name the header, since it defaults to `X-
 Both JSONata expressions compile when the gateway loads the config, so a broken expression fails validation with a message naming the side that broke. Validate with:
 
 ```bash
-uvx openapi-mcp-gateway --config <config.yml> --dry-run
+uvx openapi-mcp-gateway serve --config <config.yml> --dry-run
 ```
 
 It loads every spec, applies the policy, and compiles the shaping, then exits without serving and prints a summary of what would run, the resolved filter included. Exit 0 means the config is valid. An unrecognised key is a hard error, so a misspelled field is caught here rather than silently ignored. On failure, read the named side (request or response), fix the JSONata, and re-run until it validates clean.
@@ -193,7 +193,7 @@ One config shape cannot be validated offline. `auth.upstream.flow: token_exchang
 Hand the finished config to the user with a one-line summary of each tool, the environment variables they must set, and the exact run command:
 
 ```bash
-uvx openapi-mcp-gateway --config <their-config>.yml
+uvx openapi-mcp-gateway serve --config <their-config>.yml
 ```
 
 ## Notes

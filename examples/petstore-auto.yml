@@ -9,7 +9,7 @@
 #   - 3 concrete resources (GET /store/inventory, /user/login, /user/logout)
 #   - 3 resource templates (GET /pet/{petId}, /store/order/{orderId}, /user/{username})
 #
-# Usage: openapi-mcp-gateway --config examples/petstore-auto.yml
+# Usage: openapi-mcp-gateway serve --config examples/petstore-auto.yml
 
 host: "127.0.0.1"
 port: 8000

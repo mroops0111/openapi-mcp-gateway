@@ -29,7 +29,7 @@
           - type: text
             text:
               content: 'Action item: Priya to share the revised hiring plan by Friday.'
-  responses:
+  upstream_responses:
   # The database itself, which a model may read for its properties before querying it.
   - server: notion
     method: GET
@@ -215,7 +215,7 @@
         Status:
           select:
             name: Done
-  responses:
+  upstream_responses:
   # The database itself, which names the options Status takes.
   # Its options carry no id, so a model sets one by name as the expected call reads.
   - server: notion
@@ -354,7 +354,7 @@
         Status:
           select:
             name: In progress
-  responses:
+  upstream_responses:
   - server: notion
     method: GET
     path: /v1/databases/{id}
@@ -509,7 +509,7 @@
           - type: text
             text:
               content: Write a runbook for rolling back the payments service.
-  responses:
+  upstream_responses:
   - server: notion
     method: GET
     path: /v1/databases/{id}
@@ -695,7 +695,7 @@
           - type: text
             text:
               content: 'Blocked: waiting on final copy from marketing.'
-  responses:
+  upstream_responses:
   - server: notion
     method: GET
     path: /v1/databases/{id}
@@ -811,7 +811,7 @@
           - type: text
             text:
               content: Book a room for the next offsite.
-  responses:
+  upstream_responses:
   - server: notion
     method: GET
     path: /v1/databases/{id}

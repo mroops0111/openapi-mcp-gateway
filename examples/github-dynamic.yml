@@ -9,7 +9,7 @@
 #   1. Create a PAT: https://github.com/settings/tokens
 #   2. export GITHUB_TOKEN="ghp_..."
 #
-# Usage: openapi-mcp-gateway --config examples/github-dynamic.yml
+# Usage: openapi-mcp-gateway serve --config examples/github-dynamic.yml
 
 host: "0.0.0.0"
 port: 8000

@@ -11,7 +11,7 @@
 Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, or expose an existing FastAPI app the same way. One YAML file runs multiple APIs in one process, each with its own mount path and auth, and none of it needs Python.
 
 ```bash
-uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
+uvx openapi-mcp-gateway serve --spec https://petstore3.swagger.io/api/v3/openapi.json
 # Server live at http://127.0.0.1:8000/api/mcp
 ```
 
@@ -30,9 +30,10 @@ uvx openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json
 uv add openapi-mcp-gateway
 uv add "openapi-mcp-gateway[redis]"  # optional, Redis token store for multi-replica OAuth
 uv add "openapi-mcp-gateway[embeddings]"  # optional, search by meaning under dynamic exposure
+uv add "openapi-mcp-gateway[eval]"  # optional, measure what a config gains a model
 ```
 
-Requires Python 3.11+. To skip the install entirely, `uvx openapi-mcp-gateway` runs the published package directly.
+Requires Python 3.11+. The command is `openapi-mcp-gateway`, or `omgw` for short. To skip the install entirely, `uvx openapi-mcp-gateway` runs the published package directly.
 
 ### Container Image
 
@@ -52,7 +53,7 @@ Every example below uses `uv run`, which assumes the install above.
 ### 1. Public API, No Auth
 
 ```bash
-uv run openapi-mcp-gateway --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
+uv run openapi-mcp-gateway serve --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
 ```
 
 Connect an MCP client to `http://127.0.0.1:8000/petstore/mcp`.
@@ -61,7 +62,7 @@ Connect an MCP client to `http://127.0.0.1:8000/petstore/mcp`.
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
-uv run openapi-mcp-gateway \
+uv run openapi-mcp-gateway serve \
     --spec https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json \
     --name github \
     --auth-upstream-type bearer \
@@ -92,7 +93,7 @@ Rather than asking you to paste an upstream token into config, the gateway obtai
 
 ```bash
 export ASANA_CLIENT_ID="..." ASANA_CLIENT_SECRET="..."
-uv run openapi-mcp-gateway \
+uv run openapi-mcp-gateway serve \
     --spec https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml \
     --name asana \
     --auth-upstream-type oauth2 \
@@ -140,7 +141,7 @@ servers:
         scopes: [openid, email, profile, users:read, workspaces:read]
 ```
 
-That one file serves 13 tools with 3 concrete resources and 3 resource templates at `/petstore/mcp`, three meta-tools fronting ~1,200 endpoints at `/github/mcp`, and per-user OAuth2 against Asana's IdP at `/asana/mcp`. No spec edits anywhere. Run it with `uv run openapi-mcp-gateway --config servers.yml`.
+That one file serves 13 tools with 3 concrete resources and 3 resource templates at `/petstore/mcp`, three meta-tools fronting ~1,200 endpoints at `/github/mcp`, and per-user OAuth2 against Asana's IdP at `/asana/mcp`. No spec edits anywhere. Run it with `uv run openapi-mcp-gateway serve --config servers.yml`.
 
 ### 5. Local Desktop Client (stdio)
 
@@ -152,7 +153,7 @@ For Claude Desktop, IDE integrations, or any MCP client that prefers stdio:
     "petstore": {
       "command": "uvx",
       "args": [
-        "openapi-mcp-gateway",
+        "openapi-mcp-gateway", "serve",
         "--spec", "/abs/path/to/openapi.json",
         "--transport", "stdio"
       ]
@@ -346,7 +347,7 @@ Every registered tool carries a protocol-native `title` and `annotations` (`read
 
 ## Configuration
 
-Run `uv run openapi-mcp-gateway --help` for the CLI reference. The [Quick Start](#quick-start) covers most setups, and the full field reference is below.
+Run `uv run openapi-mcp-gateway serve --help` for the CLI reference. The [Quick Start](#quick-start) covers most setups, and the full field reference is below.
 
 Configuration merges in this order, with each layer overriding the previous one. **Defaults → YAML (`--config`) → CLI flags → `Gateway.run(...)` kwargs**. A layer only overrides the fields it actually sets, so `--log-level=DEBUG` won't reset `logging.format` from your YAML. Nested objects like `logging` and per-server `auth` merge field-by-field. The `servers` list is the exception, replaced wholesale rather than merged entry-by-entry.
 
@@ -624,6 +625,14 @@ Configure via the `logging.*` YAML keys or via CLI flags (`--log-level`, `--log-
 /plugin install openapi-mcp-gateway
 
 /generate-config connect our GitHub so my assistant can manage issues
+```
+
+### Measuring a Config
+
+`omgw eval run` runs your own tasks under your config and under one tool per operation, and reports how often a model gets them right and what it cost. No real API is called. It needs the `eval` extra, and [eval/README.md](eval/README.md#your-own-config) covers the tasks file.
+
+```bash
+omgw eval run --task-file tasks.yaml --config config.yml --model anthropic:claude-haiku-5-5
 ```
 
 ## Python API

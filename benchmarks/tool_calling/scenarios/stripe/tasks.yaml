@@ -17,7 +17,7 @@
     - server: stripe
       operation: delete_subscriptions_subscription_exposed_id
       arguments: {subscription_exposed_id: sub_1JaneOrtiz}
-  responses:
+  upstream_responses:
     # The customer, by listing, by email, by search, or by id.
     - server: stripe
       method: GET
@@ -111,7 +111,7 @@
     - server: stripe
       operation: post_invoices_invoice_void
       arguments: {invoice: in_1KitchenSupply4471}
-  responses:
+  upstream_responses:
     # The customer, by listing, by email, by search, or by id.
     - server: stripe
       method: GET
@@ -205,7 +205,7 @@
     - server: stripe
       operation: post_invoices_invoice_send
       arguments: {invoice: in_1MarcoOpen}
-  responses:
+  upstream_responses:
     # The customer, by listing, by email, by search, or by id.
     - server: stripe
       method: GET
@@ -314,7 +314,7 @@
     - server: stripe
       operation: post_charges_charge_refund
       arguments: {charge: ch_PriyaRecent}
-  responses:
+  upstream_responses:
     # The customer, by listing, by email, by search, or by id.
     - server: stripe
       method: GET
@@ -456,7 +456,7 @@
     - server: stripe
       operation: post_subscriptions_subscription_resume
       arguments: {subscription: sub_TomPaused}
-  responses:
+  upstream_responses:
     # The customer, by listing, by email, by search, or by id.
     - server: stripe
       method: GET
@@ -573,7 +573,7 @@
     - server: stripe
       operation: post_invoices_invoice_finalize
       arguments: {invoice: in_1WholesaleQ4}
-  responses:
+  upstream_responses:
     # The customer, by listing, by email, by search, or by id.
     - server: stripe
       method: GET
