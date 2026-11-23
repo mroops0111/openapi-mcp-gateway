@@ -429,17 +429,8 @@ class Gateway:
 
         resource_names: list[str] = []
         tool_call_target: RequestTarget = NameHeaderTarget()
+        _warn_on_ignored_resource_declarations(server_config, operations)
         if server_config.exposure.style == 'dynamic':
-            resource_optins = [operation.operation_id for operation in operations if operation.resource_exposed]
-            if resource_optins:
-                logger.warning(
-                    'Server "%s": dynamic exposure ignores x-mcp-integration.resource declarations '
-                    'on %d operation(s) (%s). '
-                    'The meta-tools surface every operation uniformly.',
-                    server_config.name,
-                    len(resource_optins),
-                    ', '.join(resource_optins[:5]) + ('...' if len(resource_optins) > 5 else ''),
-                )
             search = server_config.exposure.search
             exposed_tools = MetaToolGenerator(
                 mcp=mcp,
@@ -776,6 +767,25 @@ def _with_requested_upstream_scopes(server_config: ServerConfig, scopes: list[st
         )
     upstream = server_config.auth.upstream.model_copy(update={'scopes': scopes})
     return server_config.model_copy(update={'auth': server_config.auth.model_copy(update={'upstream': upstream})})
+
+
+def _warn_on_ignored_resource_declarations(server_config: ServerConfig, operations: list[OperationInfo]) -> None:
+    """Warn about the spec's ``x-mcp-integration.resource`` declarations that no resource comes of.
+
+    Only static exposure with ``exposure.promote_resources`` registers resources.
+    An ``operations.<operationId>.resource`` the operator wrote is refused at load instead.
+    """
+    if server_config.exposure.promote_resources:
+        return
+    declared = [operation.operation_id for operation in operations if operation.resource_exposed]
+    if declared:
+        logger.warning(
+            'Server "%s": %d operation(s) declare x-mcp-integration.resource (%s), '
+            'but only exposure.style static with exposure.promote_resources makes resources, so they stay tools.',
+            server_config.name,
+            len(declared),
+            ', '.join(declared[:5]) + ('...' if len(declared) > 5 else ''),
+        )
 
 
 def _partition_operations(

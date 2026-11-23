@@ -648,6 +648,32 @@ class TestSearchFieldWeights:
         with pytest.raises(pydantic.ValidationError, match=message):
             build_gateway_config({'servers': [{'name': 'b', 'spec': 'x.json', **server}]})
 
+    def test_refuses_an_operation_resource_without_promotion(self):
+        """Without ``exposure.promote_resources`` every operation is a tool, so a resource override has no effect."""
+        with pytest.raises(
+            pydantic.ValidationError,
+            match=r'operations\.getPet\.resource needs exposure\.promote_resources true, so it would have no effect',
+        ):
+            build_gateway_config(
+                {'servers': [{'name': 'b', 'spec': 'x.json', 'operations': {'getPet': {'resource': {}}}}]}
+            )
+
+    def test_accepts_an_operation_resource_under_promotion(self):
+        """Static exposure with ``exposure.promote_resources`` makes the resource an operation override declares."""
+        config = build_gateway_config(
+            {
+                'servers': [
+                    {
+                        'name': 'b',
+                        'spec': 'x.json',
+                        'exposure': {'promote_resources': True},
+                        'operations': {'getPet': {'resource': {}}},
+                    }
+                ]
+            }
+        )
+        assert config.servers[0].operations['getPet'].resource is not None
+
 
 class TestDNSRebindingProtectionConfig:
     """Which ``Host`` and ``Origin`` values the MCP endpoints accept."""

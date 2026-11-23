@@ -677,18 +677,20 @@ class ServerConfig(pydantic.BaseModel):
         return headers
 
     @pydantic.model_validator(mode='after')
-    def _refuse_resources_under_dynamic_exposure(self) -> typing.Self:
-        """Refuse an ``operations.<operationId>.resource`` that dynamic exposure would ignore.
+    def _refuse_resources_that_cannot_take_effect(self) -> typing.Self:
+        """Refuse an ``operations.<operationId>.resource`` that no resource would come of.
 
-        The meta-tools surface every operation uniformly, so no operation becomes a resource there.
+        Only static exposure with ``exposure.promote_resources`` registers resources.
+        The dynamic meta-tools surface every operation uniformly, and without promotion every operation is a tool.
         A spec's own ``x-mcp-integration.resource`` is only warned about, since the operator did not write it.
         """
-        if self.exposure.style != 'dynamic':
+        if self.exposure.promote_resources:
             return self
         named = [operation_id for operation_id, override in self.operations.items() if override.resource is not None]
         if named:
             fields = ', '.join(f'operations.{operation_id}.resource' for operation_id in named)
-            raise ValueError(f'{fields} needs exposure.style static, so it would have no effect here.')
+            needed = 'exposure.style static' if self.exposure.style == 'dynamic' else 'exposure.promote_resources true'
+            raise ValueError(f'{fields} needs {needed}, so it would have no effect here.')
         return self
 
     def resolve_headers(self) -> dict[str, str]:
