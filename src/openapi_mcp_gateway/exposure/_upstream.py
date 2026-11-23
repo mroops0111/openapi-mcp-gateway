@@ -15,7 +15,7 @@ from ..upstream_http import UpstreamBinaryBody, UpstreamSharedHttpClient
 from ._content import binary_content
 from ._media import MediaPromoter
 from ._progress import CallProgress
-from ._reauthorization import NO_SIGN_IN_OFFER, UpstreamSignInOffer, send_with_renewal
+from ._reauthorization import NO_SIGN_IN_POLICY, UpstreamSignInPolicy, send_with_renewal
 from ._shared import _get_override, _sanitize_name, _split_by_location
 from ._transform import TransformError, apply_transform, compile_expression
 
@@ -254,7 +254,7 @@ def _build_upstream_closure(
     connection: UpstreamConnection,
     *,
     input_schema: dict[str, typing.Any] | None = None,
-    sign_in_offer: UpstreamSignInOffer = NO_SIGN_IN_OFFER,
+    sign_in_policy: UpstreamSignInPolicy = NO_SIGN_IN_POLICY,
 ) -> typing.Callable[..., typing.Awaitable[CallToolResult | InputRequiredResult]]:
     """Build the async callable that issues one upstream request per invocation.
 
@@ -270,7 +270,7 @@ def _build_upstream_closure(
     Both expressions are compiled once here, so a syntax error surfaces at startup.
 
     An upstream that says the user's token expired gets the token renewed and the request sent once more.
-    ``sign_in_offer`` decides whether a refusal a renewal cannot cure asks the client to send the user
+    ``sign_in_policy`` decides whether a refusal a renewal cannot cure asks the client to send the user
     to sign in again, and it never does by default.
     """
     path_parameters, query_parameters, header_parameters, body_parameters = _split_by_location(operation.parameters)
@@ -315,7 +315,7 @@ def _build_upstream_closure(
                 kwargs[sanitised_name] = default_value
 
         progress = CallProgress(context)
-        unsent = await sign_in_offer.await_answer(context, connection.reauthorizer, progress)
+        unsent = await sign_in_policy.await_answer(context, connection.reauthorizer, progress)
         if unsent is not None:
             return unsent
 
@@ -370,7 +370,7 @@ def _build_upstream_closure(
             result = await send_with_renewal(send, connection.reauthorizer)
         except httpx.HTTPStatusError as exception:
             await progress.finish('Request completed (upstream error)')
-            offered = await sign_in_offer.offer(context, connection.reauthorizer, exception.response)
+            offered = await sign_in_policy.ask(context, connection.reauthorizer, exception.response)
             if offered is not None:
                 return offered
             return _build_http_error_result(exception)

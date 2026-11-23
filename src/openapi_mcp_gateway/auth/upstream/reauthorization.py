@@ -5,8 +5,8 @@ from .rejection import UpstreamRejection
 
 
 @dataclasses.dataclass(frozen=True)
-class UpstreamReauthorization:
-    """A new upstream sign-in waiting for the user, started for the token of the call being handled.
+class UpstreamSignInOffer:
+    """A new upstream sign-in offered to the user, for the token of the call being handled.
 
     ``url`` is the gateway page that starts it, which the user opens in the browser they signed in with.
     ``message`` tells the user why, as the client shows it before opening ``url``.
@@ -27,30 +27,30 @@ class UpstreamReauthorizer(abc.ABC):
     """
 
     @abc.abstractmethod
-    async def renew(self) -> bool:
+    async def renew_token(self) -> bool:
         """Refresh the upstream token behind the call, without the user, and say whether a new one is in place."""
 
     @abc.abstractmethod
-    async def start(self, rejection: UpstreamRejection) -> UpstreamReauthorization | None:
-        """Start a new upstream sign-in that cures ``rejection``, or return ``None`` when none can.
+    async def offer_sign_in(self, rejection: UpstreamRejection) -> UpstreamSignInOffer | None:
+        """Offer a new upstream sign-in that cures ``rejection``, or return ``None`` when none can.
 
         A sign-in cannot cure a refusal for scopes beyond what the server may ask the upstream for,
         nor run for a token whose sign-in no browser is bound to.
         """
 
     @abc.abstractmethod
-    async def wait_for_completion(self, timeout: float) -> bool:
-        """Wait up to ``timeout`` seconds for the sign-in started for the call's token, and say whether it finished."""
+    async def wait_for_sign_in(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds for the sign-in offered for the call's token, and say whether it finished."""
 
 
 class UpstreamNoReauthorizer(UpstreamReauthorizer):
     """For a flow with no per-user upstream token, which leaves every upstream refusal as it is."""
 
-    async def renew(self) -> bool:
+    async def renew_token(self) -> bool:
         return False
 
-    async def start(self, rejection: UpstreamRejection) -> UpstreamReauthorization | None:
+    async def offer_sign_in(self, rejection: UpstreamRejection) -> UpstreamSignInOffer | None:
         return None
 
-    async def wait_for_completion(self, timeout: float) -> bool:
+    async def wait_for_sign_in(self, timeout: float) -> bool:
         return False

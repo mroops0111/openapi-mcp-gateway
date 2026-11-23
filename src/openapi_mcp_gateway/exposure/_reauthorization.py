@@ -45,16 +45,16 @@ async def send_with_renewal(
         return await attempt()
     except httpx.HTTPStatusError as exception:
         rejection = read_upstream_rejection(exception.response)
-        if rejection is None or rejection.error != INVALID_TOKEN or not await reauthorizer.renew():
+        if rejection is None or rejection.error != INVALID_TOKEN or not await reauthorizer.renew_token():
             raise
     return await attempt()
 
 
-class UpstreamSignInOffer(abc.ABC):
+class UpstreamSignInPolicy(abc.ABC):
     """Whether a call may ask the client to send the user to sign in to the upstream again, and how.
 
     A call that can ask spans two rounds.
-    The first ends in the offer, and the client's retry carries the user's answer to it.
+    The first ends in asking, and the client's retry carries the user's answer.
     """
 
     @abc.abstractmethod
@@ -67,13 +67,13 @@ class UpstreamSignInOffer(abc.ABC):
         """
 
     @abc.abstractmethod
-    async def offer(
+    async def ask(
         self, context: Context, reauthorizer: UpstreamReauthorizer, response: httpx.Response
     ) -> InputRequiredResult | None:
         """Ask for a new sign-in that cures ``response``, or return ``None`` to report the upstream error as it is."""
 
 
-class UpstreamNoSignInOffer(UpstreamSignInOffer):
+class UpstreamNoSignInPolicy(UpstreamSignInPolicy):
     """For a request that finishes in one round, such as a resource read, which has no way to ask."""
 
     async def await_answer(
@@ -81,17 +81,17 @@ class UpstreamNoSignInOffer(UpstreamSignInOffer):
     ) -> CallToolResult | None:
         return None
 
-    async def offer(
+    async def ask(
         self, context: Context, reauthorizer: UpstreamReauthorizer, response: httpx.Response
     ) -> InputRequiredResult | None:
         return None
 
 
-# The offer of a call that never asks, the default for any request but a tool call.
-NO_SIGN_IN_OFFER = UpstreamNoSignInOffer()
+# The policy of a request that never asks, the default for any request but a tool call.
+NO_SIGN_IN_POLICY = UpstreamNoSignInPolicy()
 
 
-class UpstreamUrlElicitationSignInOffer(UpstreamSignInOffer):
+class UpstreamUrlElicitationSignInPolicy(UpstreamSignInPolicy):
     """For a tool call, which asks through a URL-mode elicitation in an ``InputRequiredResult``.
 
     Only a 2026-07-28 client that declares URL elicitation is asked, and only once per call.
@@ -114,7 +114,7 @@ class UpstreamUrlElicitationSignInOffer(UpstreamSignInOffer):
             return _unsent_result('The user turned down signing in to the upstream again, so the request was not sent.')
         async with anyio.create_task_group() as group:
             group.start_soon(_report_waiting, progress)
-            finished = await reauthorizer.wait_for_completion(SIGN_IN_WAIT_SECONDS)
+            finished = await reauthorizer.wait_for_sign_in(SIGN_IN_WAIT_SECONDS)
             group.cancel_scope.cancel()
         if finished:
             return None
@@ -123,7 +123,7 @@ class UpstreamUrlElicitationSignInOffer(UpstreamSignInOffer):
             'Call this tool again once the user has signed in.'
         )
 
-    async def offer(
+    async def ask(
         self, context: Context, reauthorizer: UpstreamReauthorizer, response: httpx.Response
     ) -> InputRequiredResult | None:
         rejection = read_upstream_rejection(response)
@@ -131,15 +131,15 @@ class UpstreamUrlElicitationSignInOffer(UpstreamSignInOffer):
             return None
         if not _speaks_multi_round_trip(context) or not _accepts_url_elicitation(context):
             return None
-        reauthorization = await reauthorizer.start(rejection)
-        if reauthorization is None:
+        offer = await reauthorizer.offer_sign_in(rejection)
+        if offer is None:
             return None
-        sign_in_request = ElicitRequestURLParams(message=reauthorization.message, url=reauthorization.url)
+        sign_in_request = ElicitRequestURLParams(message=offer.message, url=offer.url)
         return InputRequiredResult(input_requests={SIGN_IN_INPUT_REQUEST: ElicitRequest(params=sign_in_request)})
 
 
-# The offer of a tool call, which holds no state, so every tool shares it.
-URL_ELICITATION_SIGN_IN_OFFER = UpstreamUrlElicitationSignInOffer()
+# The policy of a tool call, which holds no state, so every tool shares it.
+URL_ELICITATION_SIGN_IN_POLICY = UpstreamUrlElicitationSignInPolicy()
 
 
 async def _report_waiting(progress: CallProgress) -> None:

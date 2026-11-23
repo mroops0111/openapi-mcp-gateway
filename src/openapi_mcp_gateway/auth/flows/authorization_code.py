@@ -258,9 +258,9 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
 
     def register(self, mcp: MCPServer) -> None:
         mcp.custom_route(CALLBACK_PATH, methods=['GET'])(self.finish_upstream)
-        mcp.custom_route(REAUTHORIZE_PATH, methods=['GET'])(self.start_reauthorization)
+        mcp.custom_route(REAUTHORIZE_PATH, methods=['GET'])(self.begin_sign_in)
 
-    async def start_reauthorization(self, request: Request) -> Response:
+    async def begin_sign_in(self, request: Request) -> Response:
         """Open the new upstream sign-in a client asked the user to start, in the browser that ran the first one."""
         reauthorization_id = request.query_params.get('id')
         if not reauthorization_id:

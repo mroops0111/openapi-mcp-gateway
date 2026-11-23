@@ -40,21 +40,21 @@ class TestOffer:
         await memory_store.set('mcp_access_token', 'mcp_unbound', _unbound_token_record(reauthorizer))
 
         with _calling_as('mcp_unbound'):
-            assert await reauthorizer.start(EXPIRED_TOKEN) is None
+            assert await reauthorizer.offer_sign_in(EXPIRED_TOKEN) is None
 
     async def test_nothing_happens_outside_a_call(self, reauthorizer):
         with patch(
             'openapi_mcp_gateway.auth.flows.authorization_code_reauthorization.get_access_token', return_value=None
         ):
-            assert await reauthorizer.start(EXPIRED_TOKEN) is None
-            assert not await reauthorizer.renew()
-            assert not await reauthorizer.wait_for_completion(0.1)
+            assert await reauthorizer.offer_sign_in(EXPIRED_TOKEN) is None
+            assert not await reauthorizer.renew_token()
+            assert not await reauthorizer.wait_for_sign_in(0.1)
 
     async def test_calls_refused_together_share_one_sign_in(self, reauthorizer, token):
         """The user signs in once, asked for what every refused call needs."""
         with _calling_as(token.access_token):
-            first = await reauthorizer.start(UpstreamRejection('insufficient_scope', ('read',)))
-            second = await reauthorizer.start(UpstreamRejection('insufficient_scope', ('write',)))
+            first = await reauthorizer.offer_sign_in(UpstreamRejection('insufficient_scope', ('read',)))
+            second = await reauthorizer.offer_sign_in(UpstreamRejection('insufficient_scope', ('write',)))
 
         assert first is not None
         assert second is not None
@@ -70,7 +70,7 @@ class TestRenewal:
         refused = MagicMock(status_code=400, text='revoked')
 
         with _calling_as(token.access_token), patch('httpx.AsyncClient.post', AsyncMock(return_value=refused)):
-            assert not await reauthorizer.renew()
+            assert not await reauthorizer.renew_token()
 
         assert await reauthorizer.tokens.load_access_token_link(token.access_token, 'upstream_access_token')
 
@@ -78,14 +78,14 @@ class TestRenewal:
         unreachable = AsyncMock(side_effect=httpx.ConnectError('down'))
 
         with _calling_as(token.access_token), patch('httpx.AsyncClient.post', unreachable):
-            assert not await reauthorizer.renew()
+            assert not await reauthorizer.renew_token()
 
     async def test_calls_refused_together_spend_the_refresh_token_once(self, reauthorizer, token):
         """A rotated refresh token cannot be spent twice, so the calls after the first use its result."""
         refresh = AsyncMock(return_value=upstream_token_response('renewed'))
 
         with _calling_as(token.access_token), patch('httpx.AsyncClient.post', refresh):
-            results = await asyncio.gather(*(reauthorizer.renew() for _ in range(3)))
+            results = await asyncio.gather(*(reauthorizer.renew_token() for _ in range(3)))
 
         assert results == [True, True, True]
         refresh.assert_awaited_once()
@@ -115,7 +115,7 @@ class TestSignIn:
         with pytest.raises(HTTPException):
             await reauthorizer.begin_sign_in(reauthorization_id, BROWSER_ID)
         with _calling_as(token.access_token):
-            assert await reauthorizer.wait_for_completion(0.1)
+            assert await reauthorizer.wait_for_sign_in(0.1)
 
     async def test_an_upstream_refusal_ends_the_sign_in(self, reauthorizer, token):
         """The call waiting on it stops waiting."""
@@ -126,7 +126,7 @@ class TestSignIn:
 
         assert 'access_denied' in raised.value.detail
         with _calling_as(token.access_token):
-            assert not await reauthorizer.wait_for_completion(0.1)
+            assert not await reauthorizer.wait_for_sign_in(0.1)
 
     async def test_a_sign_in_for_a_revoked_token_fails(self, reauthorizer, token):
         _, upstream_url = await _open_sign_in(reauthorizer, token)
@@ -157,7 +157,7 @@ class TestSignIn:
             await reauthorizer.tokens.load_access_token_link(rotated.access_token, 'upstream_access_token') == 'again'
         )
         with _calling_as(rotated.access_token):
-            assert await reauthorizer.wait_for_completion(0.1)
+            assert await reauthorizer.wait_for_sign_in(0.1)
 
     async def test_a_sign_in_without_a_new_refresh_token_keeps_the_old_one(self, reauthorizer, token):
         """Some upstreams send a refresh token on first consent only."""
@@ -189,7 +189,7 @@ async def _open_sign_in(reauthorizer: AuthorizationCodeReauthorizer, token: OAut
     Returns the sign-in's id and the upstream authorize URL the browser is sent to.
     """
     with _calling_as(token.access_token):
-        reauthorization = await reauthorizer.start(EXPIRED_TOKEN)
+        reauthorization = await reauthorizer.offer_sign_in(EXPIRED_TOKEN)
     assert reauthorization is not None
     upstream_url = await reauthorizer.begin_sign_in(reauthorization.reauthorization_id, BROWSER_ID)
     return reauthorization.reauthorization_id, upstream_url
