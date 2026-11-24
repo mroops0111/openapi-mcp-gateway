@@ -1,10 +1,9 @@
 import typing
 from unittest.mock import patch
 
-import pydantic
 import pytest
 
-from openapi_mcp_gateway.auth.assembly import AuthTypeContext, McpSetting
+from openapi_mcp_gateway.auth.assembly import AuthTypeContext, McpSetting, UpstreamSetting
 from openapi_mcp_gateway.auth.factory import AUTH_TYPE_HANDLERS, build_auth
 from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
 from openapi_mcp_gateway.auth.upstream.resolver import (
@@ -111,8 +110,8 @@ class TestOtherTypes:
 
     def test_a_token_alongside_none_is_refused(self):
         """Previously the token was quietly ignored, which read as auth that was never applied."""
-        with pytest.raises(pydantic.ValidationError, match='no effect'):
-            AuthConfig(upstream=UpstreamAuthConfig(type='none', token='ignored'))
+        with pytest.raises(ValueError, match='no effect'):
+            build_auth(_context(AuthConfig(upstream=UpstreamAuthConfig(type='none', token='ignored'))))
 
 
 class TestDispatch:
@@ -174,6 +173,62 @@ class TestUpstreamPrincipal:
         context = _build_context(auth)
         handler = AUTH_TYPE_HANDLERS[context.entry.auth.upstream.type]()
         assert handler.select(context).upstream_principal == principal
+
+
+class TestUpstreamSettingsWithoutEffect:
+    """An ``auth.upstream`` field the selected strategy never reads is refused, naming what would read it.
+
+    A known key in the wrong place is the same mistake as an unknown one.
+    Both leave an operator believing they configured something.
+    """
+
+    def test_every_upstream_setting_is_an_upstream_field(self):
+        """``UpstreamSetting`` and ``auth.upstream`` must not drift apart, or a strategy could name a missing field."""
+        assert set(typing.get_args(UpstreamSetting)) == set(UpstreamAuthConfig.model_fields) - {'type'}
+
+    @pytest.mark.parametrize(
+        ('upstream', 'refusal'),
+        [
+            ({**BEARER, 'api_key_header': 'X-Custom'}, r'api_key_header needs auth\.upstream\.type api_key,'),
+            (
+                {**CLIENT_CREDENTIALS, 'token': 'ignored'},
+                r'token needs auth\.upstream\.type bearer, or auth\.upstream\.type api_key,',
+            ),
+            ({**BEARER, 'audience': 'https://api'}, r'audience needs auth\.upstream\.type oauth2,'),
+            ({**BEARER, 'flow': 'client_credentials'}, r'flow needs auth\.upstream\.type oauth2,'),
+            ({**CLIENT_CREDENTIALS, 'issuer': ISSUER}, r'issuer needs auth\.upstream\.flow authorization_code,'),
+            (
+                {**CLIENT_CREDENTIALS, 'enforce_scopes': True},
+                r'enforce_scopes needs auth\.upstream\.flow authorization_code,',
+            ),
+            (
+                {**CLIENT_CREDENTIALS, 'authorization_url': 'https://idp/authorize'},
+                r'authorization_url needs auth\.upstream\.flow authorization_code,',
+            ),
+            (
+                {**CLIENT_CREDENTIALS, 'flow': None, 'required_scopes': ['openid']},
+                r'required_scopes needs auth\.upstream\.flow authorization_code,',
+            ),
+        ],
+    )
+    def test_a_setting_nothing_reads_is_refused(self, upstream, refusal):
+        """An unset flow is checked against the flow the spec resolves it to."""
+        with pytest.raises(ValueError, match=rf'Server "srv": auth\.upstream\.{refusal} so it would have no effect'):
+            _build({'upstream': upstream})
+
+    @pytest.mark.parametrize(
+        'auth',
+        [
+            {'upstream': BEARER},
+            {'upstream': {'type': 'api_key', 'token': 'k', 'api_key_header': 'X-Custom'}},
+            {'upstream': {**AUTHORIZATION_CODE, 'issuer': ISSUER, 'required_scopes': ['openid']}},
+            {'upstream': {**CLIENT_CREDENTIALS, 'scopes': ['api'], 'audience': API_URL}},
+            {'upstream': {'type': 'none'}},
+        ],
+    )
+    def test_a_setting_the_strategy_reads_is_accepted(self, auth):
+        """Refusing the inapplicable must not refuse the ordinary."""
+        assert _build(auth)
 
 
 class TestMcpSettingsWithoutEffect:

@@ -406,54 +406,6 @@ class AuthConfig(pydantic.BaseModel):
             raise ValueError('. '.join(moved) + '.')
         return data
 
-    @pydantic.model_validator(mode='after')
-    def _reject_settings_that_cannot_take_effect(self) -> typing.Self:
-        """Refuse an ``auth.upstream`` field this combination will never read.
-
-        An unknown key is already refused,
-        and a known key in the wrong place is the same mistake wearing a better disguise.
-        Both leave an operator believing they configured something.
-        ``auth.mcp`` is checked once the server is assembled, against what its MCP half reads.
-
-        Only explicitly-set fields are checked, so defaults never trip this.
-        """
-        upstream = self.upstream
-        oauth = upstream.type == 'oauth2'
-        # ``authorization_code`` can be inferred from a spec, so an unset flow leaves its fields plausible.
-        receives_grant = upstream.flow == 'authorization_code' or (oauth and upstream.flow is None)
-
-        upstream_applicable: dict[str, tuple[bool, str]] = {
-            'token': (upstream.type in ('bearer', 'api_key'), 'auth.upstream.type bearer or api_key'),
-            'api_key_header': (upstream.type == 'api_key', 'auth.upstream.type api_key'),
-            'flow': (oauth, 'auth.upstream.type oauth2'),
-        }
-        oauth_fields = sorted(upstream.model_fields_set - {'type', *upstream_applicable})
-        if oauth_fields and not oauth:
-            named = ', '.join(oauth_fields)
-            raise ValueError(
-                f'auth.upstream ({named}) needs auth.upstream.type oauth2, so it would have no effect here.'
-            )
-        receives_grant_reason = {
-            # Only authorization_code receives an authorization response, the one place ``iss`` arrives.
-            'issuer': 'the only flow with an authorization response to check',
-            # Only authorization_code records each user's upstream grant on the token it mints.
-            'enforce_scopes': "the only flow that records each user's upstream grant",
-            'scope_implies': "the only flow that records each user's upstream grant",
-        }
-        for field, reason in receives_grant_reason.items():
-            upstream_applicable[field] = (receives_grant, f'auth.upstream.flow authorization_code, {reason}')
-        self._refuse_inapplicable(upstream, 'auth.upstream', upstream_applicable)
-        return self
-
-    @staticmethod
-    def _refuse_inapplicable(
-        section: pydantic.BaseModel, location: str, applicable: dict[str, tuple[bool, str]]
-    ) -> None:
-        """Refuse a field set in ``section`` that ``applicable`` marks as unread, naming what it needs."""
-        for field, (is_applicable, requirement) in applicable.items():
-            if field in section.model_fields_set and not is_applicable:
-                raise ValueError(f'{location}.{field} needs {requirement}, so it would have no effect here.')
-
 
 class CORSConfig(pydantic.BaseModel):
     """Starlette CORS middleware settings for the gateway HTTP app."""

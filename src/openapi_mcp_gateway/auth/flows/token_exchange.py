@@ -12,6 +12,7 @@ from ..assembly import (
     OAuthFlowHandler,
     ServerAuthSetup,
     UpstreamPrincipal,
+    UpstreamSetting,
 )
 from ..mcp.external_issuer import McpExternalIssuerTokenVerifier, fetch_mcp_external_issuer_metadata
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
@@ -61,6 +62,10 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     @property
     def upstream_principal(self) -> UpstreamPrincipal:
         return 'user'
+
+    @property
+    def upstream_settings(self) -> frozenset[UpstreamSetting]:
+        return frozenset({'client_id', 'client_secret', 'scopes', 'resource', 'audience'})
 
     @property
     def reads_spec_oauth_flow(self) -> bool:

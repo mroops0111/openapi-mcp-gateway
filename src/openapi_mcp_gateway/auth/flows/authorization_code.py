@@ -23,6 +23,7 @@ from ..assembly import (
     OAuthFlowHandler,
     ServerAuthSetup,
     UpstreamPrincipal,
+    UpstreamSetting,
 )
 from ..mcp.authorization_code import (
     McpAuthorizationCodeContinuation,
@@ -319,6 +320,24 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     @property
     def upstream_principal(self) -> UpstreamPrincipal:
         return 'user'
+
+    @property
+    def upstream_settings(self) -> frozenset[UpstreamSetting]:
+        return frozenset(
+            {
+                'client_id',
+                'client_secret',
+                'authorization_url',
+                'token_url',
+                'scopes',
+                'required_scopes',
+                'issuer',
+                'resource',
+                'audience',
+                'enforce_scopes',
+                'scope_implies',
+            }
+        )
 
     @property
     def mcp_settings(self) -> frozenset[McpSetting]:

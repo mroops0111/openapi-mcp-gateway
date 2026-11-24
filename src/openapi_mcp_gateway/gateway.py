@@ -711,21 +711,13 @@ def _check_upstream_grant(
 ) -> list[OperationInfo]:
     """Return the operations to expose, once ``auth`` shows whether the flow records a user grant.
 
-    Raises ``ValueError`` when ``enforce_scopes`` or ``required_scopes`` is set but the flow records no user grant,
-    or when ``enforce_scopes`` leaves no operation any sign-in can open.
-    Only after the flow check does it warn about what ``enforce_scopes`` does with the spec,
-    so a server that cannot start is not first reported as running unrestricted.
+    Raises ``ValueError`` when ``enforce_scopes`` leaves no operation any sign-in can open.
+    A flow that records no user grant never reads ``enforce_scopes``, so ``build_auth`` has already refused it.
     Under ``enforce_scopes``, an operation no sign-in can open is left out, since every call to it is refused.
     Without it the gateway does not check the grant, so such an operation is only warned about.
     """
     upstream = server_config.auth.upstream
     if not auth.mcp_tokens_carry_upstream_grant:
-        for key in ('enforce_scopes', 'required_scopes'):
-            if getattr(upstream, key):
-                raise ValueError(
-                    f'Server "{server_config.name}": auth.upstream.{key} needs auth.upstream.flow authorization_code, '
-                    f'but the spec resolves to {auth.flow_type}. Set auth.upstream.flow, or remove {key}.'
-                )
         return operations
     if not upstream.enforce_scopes:
         spec_security.warn_on_unrequested_scopes(

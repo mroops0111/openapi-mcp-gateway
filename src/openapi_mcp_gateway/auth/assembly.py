@@ -27,6 +27,24 @@ MCP_ENDPOINT_PATH = '/mcp'
 # ``user`` is each signed-in user's own, and ``caller`` is whatever the caller's header carries.
 UpstreamPrincipal = typing.Literal['gateway', 'user', 'caller']
 
+# The ``auth.upstream`` fields besides ``type``, which each upstream strategy names as the ones it reads.
+UpstreamSetting = typing.Literal[
+    'token',
+    'api_key_header',
+    'flow',
+    'client_id',
+    'client_secret',
+    'authorization_url',
+    'token_url',
+    'scopes',
+    'required_scopes',
+    'issuer',
+    'resource',
+    'audience',
+    'enforce_scopes',
+    'scope_implies',
+]
+
 # The ``auth.mcp`` fields, which a strategy building the MCP half names as the ones it reads.
 McpSetting = typing.Literal[
     'issuer',
@@ -154,11 +172,13 @@ class UpstreamSelection:
     """What an upstream strategy settles before it builds anything, so a config mistake is refused first.
 
     ``upstream_principal`` is whose identity the upstream sees.
+    ``upstream_settings`` are the ``auth.upstream`` fields the strategy reads, and any other one set is refused.
     ``mcp_settings_reader`` is set where the strategy builds the MCP half itself.
     Otherwise an ``McpTokenAuthority`` builds it.
     """
 
     upstream_principal: UpstreamPrincipal
+    upstream_settings: frozenset[UpstreamSetting] = frozenset()
     mcp_settings_reader: McpSettingsReader | None = None
 
 
@@ -171,6 +191,11 @@ class AuthTypeHandler(abc.ABC, typing.Generic[SelectionT]):
 
     ``build`` receives what ``select`` settled, so nothing is resolved twice.
     """
+
+    @property
+    def upstream_settings(self) -> frozenset[UpstreamSetting]:
+        """The ``auth.upstream`` fields this type reads whatever else is selected. None, by default."""
+        return frozenset()
 
     @abc.abstractmethod
     def select(self, context: AuthTypeContext) -> SelectionT:
@@ -250,6 +275,11 @@ class OAuthFlowHandler(abc.ABC):
     @abc.abstractmethod
     def upstream_principal(self) -> UpstreamPrincipal:
         """Whose identity the upstream sees under this flow."""
+
+    @property
+    def upstream_settings(self) -> frozenset[UpstreamSetting]:
+        """The ``auth.upstream`` fields this flow reads beyond ``flow``. None, by default."""
+        return frozenset()
 
     @property
     def reads_spec_oauth_flow(self) -> bool:

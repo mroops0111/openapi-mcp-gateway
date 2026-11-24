@@ -1,6 +1,6 @@
 import logging
 
-from ..assembly import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup, UpstreamPrincipal
+from ..assembly import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup, UpstreamPrincipal, UpstreamSetting
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamClientCredentialsTokenSource
 
@@ -20,6 +20,10 @@ class UpstreamClientCredentialsFlowHandler(OAuthFlowHandler):
     @property
     def upstream_principal(self) -> UpstreamPrincipal:
         return 'gateway'
+
+    @property
+    def upstream_settings(self) -> frozenset[UpstreamSetting]:
+        return frozenset({'client_id', 'client_secret', 'token_url', 'scopes', 'resource', 'audience'})
 
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry

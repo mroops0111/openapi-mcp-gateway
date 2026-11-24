@@ -425,50 +425,6 @@ class TestUnknownKeysAreRefused:
         assert config.servers[0].exposure.promote_resources is True
 
 
-class TestSettingsThatCannotTakeEffect:
-    """A known ``auth.upstream`` key in the wrong place is refused, like an unknown one.
-
-    Both leave an operator believing they configured something.
-    ``auth.mcp`` is checked once the server is assembled, by ``build_auth``.
-    """
-
-    @pytest.mark.parametrize(
-        ('payload', 'offending'),
-        [
-            ({'upstream': {'type': 'bearer', 'token': 't', 'api_key_header': 'X-Custom'}}, 'api_key_header'),
-            ({'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'token': 'ignored'}}, 'token'),
-            ({'upstream': {'type': 'bearer', 'token': 't', 'audience': 'https://api'}}, 'upstream'),
-            (
-                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'issuer': ISSUER}},
-                'upstream.issuer',
-            ),
-            (
-                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'enforce_scopes': True}},
-                'upstream.enforce_scopes',
-            ),
-        ],
-    )
-    def test_inapplicable_settings_are_refused(self, payload, offending):
-        """Each names the field and what it would need, rather than only rejecting the input."""
-        with pytest.raises(pydantic.ValidationError, match=rf'{offending}.*no effect'):
-            AuthConfig.model_validate(payload)
-
-    @pytest.mark.parametrize(
-        'payload',
-        [
-            {'upstream': {'type': 'bearer', 'token': 't'}},
-            {'upstream': {'type': 'api_key', 'token': 'k', 'api_key_header': 'X-Custom'}},
-            {'upstream': {'type': 'oauth2', 'client_id': 'c'}},
-            {'upstream': {'type': 'oauth2', 'issuer': ISSUER}},
-            {'upstream': {'type': 'oauth2', 'flow': 'authorization_code', 'issuer': ISSUER}},
-            {'upstream': {'type': 'none'}},
-        ],
-    )
-    def test_applicable_settings_are_accepted(self, payload):
-        """Refusing the inapplicable must not refuse the ordinary."""
-        assert AuthConfig.model_validate(payload)
-
-
 class TestClientConfig:
     """A client declared under ``auth.mcp.clients`` refuses a default it could never be granted."""
 
