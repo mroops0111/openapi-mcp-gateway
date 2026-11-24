@@ -48,7 +48,7 @@ class TestAuthoritySelection:
         assert any(isinstance(extension, McpClientCredentialsExtension) for extension in setup.extensions)
         assert setup.authorization_server_metadata is not None
         assert setup.authorization_server_metadata.grant_types_supported == ['client_credentials']
-        assert not setup.mcp_tokens_carry_upstream_grant
+        assert not setup.upstream_grant_source.records_user_grant
         assert setup.mcp_summary == 'gateway (client_credentials)'
         # The upstream half survives the MCP half being attached.
         assert setup.flow_type == upstream.get('flow')

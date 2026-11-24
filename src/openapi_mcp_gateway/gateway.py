@@ -439,6 +439,7 @@ class Gateway:
                 field_weight_overrides=search.field_weights.model_dump(exclude_none=True) if search else None,
                 scope_registry=scope_registry,
                 semantic_search=_semantic_search_options(server_config.name, search.semantic if search else None),
+                grant_source=auth.upstream_grant_source,
             ).register(operations)
             tool_call_target = DynamicOperationTarget()
         else:
@@ -547,7 +548,7 @@ class Gateway:
             instructions=instructions,
             lifespan=lifespan,
             cache_hints=_cache_hints(scope_registry),
-            middleware=[ScopeFilterMiddleware(scope_registry)],
+            middleware=[ScopeFilterMiddleware(scope_registry, auth.upstream_grant_source)],
         )
 
     async def _run_shutdown_hooks(self) -> None:
@@ -717,7 +718,7 @@ def _check_upstream_grant(
     Without it the gateway does not check the grant, so such an operation is only warned about.
     """
     upstream = server_config.auth.upstream
-    if not auth.mcp_tokens_carry_upstream_grant:
+    if not auth.upstream_grant_source.records_user_grant:
         return operations
     if not upstream.enforce_scopes:
         spec_security.warn_on_unrequested_scopes(

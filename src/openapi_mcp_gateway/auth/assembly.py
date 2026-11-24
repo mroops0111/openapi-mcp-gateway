@@ -9,7 +9,7 @@ from mcp.server.extension import Extension
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
 from ..openapi import OpenAPISpec
-from ..scopes import ScopeRegistry
+from ..scopes import ScopeRegistry, UpstreamGrantSource, UpstreamNoGrantSource
 from ..settings import AuthConfig, ServerConfig
 from ..stores.base import TokenStore
 from .mcp.client_metadata import McpClientMetadataResolver
@@ -105,8 +105,7 @@ class ServerAuthSetup:
     ``settings`` and ``protected_resource`` accompany either one and drive the discovery documents.
     ``protected_resource`` is the RFC 9728 document this server publishes, naming whoever mints its tokens.
     ``routes`` are mounted as they are, so the gateway never knows which flow asked for them.
-    ``mcp_tokens_carry_upstream_grant`` says each MCP token records what the upstream granted the user behind it,
-    which checking an operation's upstream scopes needs.
+    ``upstream_grant_source`` is where a call finds the upstream grant it is checked against.
     ``authorization_server_metadata`` is the RFC 8414 document of the gateway's own authorization server,
     set wherever the gateway issues this endpoint's tokens, whether through ``provider`` or its own routes.
     ``extensions`` are the MCP extensions the server advertises, such as how a client may obtain a token.
@@ -123,7 +122,7 @@ class ServerAuthSetup:
     verifier: TokenVerifier | None = None
     protected_resource: ProtectedResourceMetadata | None = None
     routes: list[AuthRoutes] = dataclasses.field(default_factory=list)
-    mcp_tokens_carry_upstream_grant: bool = False
+    upstream_grant_source: UpstreamGrantSource = dataclasses.field(default_factory=UpstreamNoGrantSource)
     authorization_server_metadata: OAuthMetadata | None = None
     extensions: list[Extension] = dataclasses.field(default_factory=list)
     mcp_summary: str = 'open'

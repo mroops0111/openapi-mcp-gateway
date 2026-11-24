@@ -12,7 +12,14 @@ from mcp.shared.inbound import MCP_NAME_HEADER, MCP_PARAM_HEADER_PREFIX, X_MCP_H
 from mcp.types import CallToolResult, InputRequiredResult
 
 from ..openapi import ExposedTool, OperationInfo, schema_description
-from ..scopes import McpUnrestrictedScopePolicy, RequestTarget, ScopeRegistry, current_grant
+from ..scopes import (
+    McpUnrestrictedScopePolicy,
+    RequestTarget,
+    ScopeRegistry,
+    UpstreamGrantSource,
+    UpstreamNoGrantSource,
+    current_grant,
+)
 from ._bm25 import BM25FIndex
 from ._semantic import SemanticIndex, SemanticSearchOptions
 from ._shaping import shape_operation
@@ -114,10 +121,12 @@ class MetaToolGenerator:
         field_weight_overrides: typing.Mapping[str, float] | None = None,
         scope_registry: ScopeRegistry | None = None,
         semantic_search: SemanticSearchOptions | None = None,
+        grant_source: UpstreamGrantSource | None = None,
     ):
         self.mcp = mcp
         self.connection = connection
         self.scope_registry = scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy())
+        self.grant_source = grant_source or UpstreamNoGrantSource()
         # Overrides replace the default weight of the fields they name and leave the rest as they are.
         self.field_weights = {**DEFAULT_FIELD_WEIGHTS, **(field_weight_overrides or {})}
         self.semantic_search = semantic_search
@@ -208,7 +217,7 @@ class MetaToolGenerator:
                 raise _unknown_operation_error(name)
             # A 2026-07-28 client lacking MCP scopes was already refused over HTTP with a scope challenge.
             # This refusal covers older clients, which send no Mcp-Param-Operation header, and a short upstream grant.
-            refusal = self.scope_registry.refusal(name, current_grant())
+            refusal = self.scope_registry.refusal(name, await self.grant_source.read_call_grant())
             if refusal is not None:
                 raise ToolError(refusal)
             return await operation.callable_(**arguments, ctx=ctx)

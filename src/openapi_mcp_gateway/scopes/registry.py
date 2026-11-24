@@ -58,11 +58,12 @@ class ScopeRegistry:
 
         The MCP scopes are checked first, since a client steps up for those,
         and the sign-in a step-up starts is what asks the upstream for more.
+        An upstream grant not yet found out is not checked, as ``TokenGrant`` says.
         """
         requirements = self._requirements_of(name)
         if not requirements.mcp.is_met(grant.mcp_scopes):
             return requirements.mcp.refusal
-        if not requirements.upstream.is_met(self.upstream_policy.held_scopes(grant.upstream_scopes)):
+        if not self._meets_upstream(requirements.upstream, grant):
             return requirements.upstream.refusal
         return None
 
@@ -74,13 +75,14 @@ class ScopeRegistry:
         While the MCP scopes it needs are not yet held, the upstream grant is not checked,
         since the sign-in a step-up starts asks the upstream for what they need.
         Once they are held, stepping up cannot change the upstream grant, so it is checked as it stands.
+        An upstream grant not yet found out leaves the name in sight, as the call checks it.
         """
         requirements = self._requirements_of(name)
         if not requirements.mcp.is_met(grant.mcp_reachable_scopes):
             return False
         if not requirements.mcp.is_met(grant.mcp_scopes):
             return True
-        return requirements.upstream.is_met(self.upstream_policy.held_scopes(grant.upstream_scopes))
+        return self._meets_upstream(requirements.upstream, grant)
 
     def requested_upstream_scopes(
         self,
@@ -107,6 +109,11 @@ class ScopeRegistry:
                 ceiling, required_scopes, opened_operations
             )
         return list(self._requested_scopes[key])
+
+    def _meets_upstream(self, requirement: ScopeRequirement, grant: TokenGrant) -> bool:
+        if grant.upstream_scopes is None:
+            return True
+        return requirement.is_met(self.upstream_policy.held_scopes(grant.upstream_scopes))
 
     def _requirements_of(self, name: str) -> '_NameRequirements':
         if name in self._requirements:

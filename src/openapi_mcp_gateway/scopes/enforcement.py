@@ -12,7 +12,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .grant import current_grant, grant_of
+from .grant import UpstreamGrantSource, current_grant, grant_of
 from .registry import ScopeRegistry
 from .requirement import ScopeRequirement
 
@@ -127,13 +127,15 @@ class ScopeFilterMiddleware:
     Those clients cannot read what ``ScopeChallengeMiddleware`` sends.
     """
 
-    def __init__(self, scope_registry: ScopeRegistry) -> None:
+    def __init__(self, scope_registry: ScopeRegistry, grant_source: UpstreamGrantSource) -> None:
         self._scope_registry = scope_registry
+        self._grant_source = grant_source
 
     async def __call__(self, ctx: ServerRequestContext[typing.Any, typing.Any], call_next: CallNext) -> HandlerResult:
         guarded = _GUARDED_REQUESTS.get(ctx.method)
         if guarded is not None:
-            refusal = self._scope_registry.refusal(str((ctx.params or {}).get(guarded.name_param, '')), current_grant())
+            name = str((ctx.params or {}).get(guarded.name_param, ''))
+            refusal = self._scope_registry.refusal(name, await self._grant_source.read_call_grant())
             if refusal is not None:
                 return guarded.refuse(refusal)
         # Handlers return the wire form by the time middleware sees it, so a list is filtered as JSON.

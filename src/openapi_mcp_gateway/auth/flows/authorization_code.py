@@ -13,7 +13,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import Response
 
-from ...scopes import ScopeRegistry
+from ...scopes import ScopeRegistry, UpstreamRecordedGrantSource
 from ...stores.base import TokenStore
 from ..assembly import (
     AuthRoutes,
@@ -434,7 +434,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             reauthorizer=reauthorizer,
             provider=server,
             settings=settings,
-            mcp_tokens_carry_upstream_grant=True,
+            upstream_grant_source=UpstreamRecordedGrantSource(),
             authorization_server_metadata=_build_authorization_server_metadata(settings, clients),
             routes=[
                 McpAuthorizationCodeRoutes(server, flow_context.scope_registry.mcp_policy, cookie),

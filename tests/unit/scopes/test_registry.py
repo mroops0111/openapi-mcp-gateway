@@ -88,6 +88,14 @@ class TestScopeRegistryWithUpstreamScopes:
         grant = TokenGrant(frozenset(mcp_scopes), frozenset(upstream_scopes), frozenset({'pets:delete'}))
         assert scope_registry.lists('delete_pet', grant) is listed
 
+    def test_an_upstream_grant_not_yet_found_out_is_not_checked(self):
+        """A flow that learns the grant only on the call fills it in before the call is checked."""
+        scope_registry = ScopeRegistry(tag_scopes(DELETE_PET), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
+        scope_registry.register('delete_pet', DELETE_PET)
+        grant = TokenGrant(frozenset({'pets:delete'}), None, frozenset({'pets:delete'}))
+        assert scope_registry.lists('delete_pet', grant) is True
+        assert scope_registry.refusal('delete_pet', grant) is None
+
     def test_the_lists_are_cached_per_token_once_the_grant_is_enforced(self):
         scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
         assert scope_registry.list_cache_scope == 'private'

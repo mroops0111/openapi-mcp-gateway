@@ -527,6 +527,7 @@ async def _upstream_scopes_of(provider: McpAuthorizationCodeServer, mcp_access_t
     """The upstream grant the MCP access token ``mcp_access_token`` records."""
     access_token = await provider.load_access_token(mcp_access_token)
     assert isinstance(access_token, McpAccessToken)
+    assert access_token.upstream_scopes is not None
     return access_token.upstream_scopes
 
 
