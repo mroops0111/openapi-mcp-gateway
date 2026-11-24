@@ -653,8 +653,6 @@ Configure via the `logging.*` YAML keys or via CLI flags (`--log-level`, `--log-
 omgw eval run --task-file tasks.yaml --config config.yml --model anthropic:claude-haiku-5-5
 ```
 
-On the repo's tool calling benchmark with Claude Haiku, dynamic exposure passed every task on 8% of the input tokens one tool per operation sends, and one tool per operation could not run GitHub with Asana at all. The [results](eval/README.md#results) give every variant.
-
 ## Python API
 
 The gateway works as a library, either standalone or wrapped around an app you already run.
