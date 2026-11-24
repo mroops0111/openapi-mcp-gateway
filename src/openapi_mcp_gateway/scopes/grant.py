@@ -38,6 +38,10 @@ class TokenGrant(typing.NamedTuple):
         return self.mcp_scopes if self.mcp_grantable_scopes is None else self.mcp_grantable_scopes
 
 
+class UpstreamGrantUnavailableError(Exception):
+    """The upstream grant of a call could not be found out, so the call is refused with this message."""
+
+
 class UpstreamGrantSource(abc.ABC):
     """Where the upstream grant a tool call or resource read is checked against comes from.
 
@@ -51,7 +55,10 @@ class UpstreamGrantSource(abc.ABC):
         """Whether each user's own upstream grant is known, which checking an operation's upstream scopes needs."""
 
     async def read_call_grant(self) -> TokenGrant:
-        """The grant of the call being handled, as its token carries it, by default."""
+        """The grant of the call being handled, as its token carries it, by default.
+
+        Raises ``UpstreamGrantUnavailableError`` when the grant cannot be found out, such as a refused exchange.
+        """
         return current_grant()
 
 

@@ -15,7 +15,12 @@ from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamTokenSourceAuthResolver,
 )
 from openapi_mcp_gateway.auth.upstream.token_exchange import UpstreamExchangedToken, UpstreamTokenExchangeClient
-from openapi_mcp_gateway.scopes import McpAccessToken, McpUnrestrictedScopePolicy, ScopeRegistry
+from openapi_mcp_gateway.scopes import (
+    McpAccessToken,
+    McpUnrestrictedScopePolicy,
+    ScopeRegistry,
+    UpstreamGrantUnavailableError,
+)
 from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.client_metadata import serving_resolver
@@ -165,6 +170,17 @@ class TestTokenExchangeBridge:
 
         assert grant.mcp_scopes == {'pets:read'}
         assert grant.upstream_scopes == {'read:pets'}
+
+    async def test_a_refused_exchange_leaves_the_grant_unavailable(self):
+        """An issuer that will not grant every scope may refuse the whole exchange, as Keycloak does."""
+        upstream = MagicMock()
+        upstream.exchange = AsyncMock(side_effect=RuntimeError('Token exchange failed (400): invalid_scope'))
+
+        with (
+            authenticated_as(_caller(['pets:write'])),
+            pytest.raises(UpstreamGrantUnavailableError, match='invalid_scope'),
+        ):
+            await _bridge(upstream).read_call_grant()
 
     async def test_a_call_grant_and_its_token_share_one_exchange(self):
         """The grant is read before the call and the token on it, and the exchange client serves both from one answer."""

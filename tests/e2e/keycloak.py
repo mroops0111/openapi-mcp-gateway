@@ -42,14 +42,18 @@ def run_keycloak() -> typing.Iterator[str]:
 
 
 @contextlib.contextmanager
-def create_realm(base_url: str, name: str, mcp_endpoint: str) -> typing.Iterator[str]:
+def create_realm(
+    base_url: str, name: str, mcp_endpoint: str, exchangeable_scopes: typing.Sequence[str] = tuple(UPSTREAM_SCOPES)
+) -> typing.Iterator[str]:
     """Create the realm ``name`` for a gateway serving ``mcp_endpoint``, and yield its issuer.
 
     The gateway exchanges tokens as a client named by its endpoint's canonical URI,
     which an audience mapper also puts in every agent's token, as the README's Keycloak notes describe.
+    That client may exchange for ``exchangeable_scopes`` only.
     """
+    realm = _build_realm(name, mcp_endpoint, exchangeable_scopes)
     with httpx.Client(base_url=base_url, headers={'Authorization': f'Bearer {_admin_token(base_url)}'}) as admin:
-        admin.post('/admin/realms', json=_build_realm(name, mcp_endpoint)).raise_for_status()
+        admin.post('/admin/realms', json=realm).raise_for_status()
         try:
             yield f'{base_url}/realms/{name}'
         finally:
@@ -70,7 +74,7 @@ def _admin_token(base_url: str) -> str:
     return response.json()['access_token']
 
 
-def _build_realm(name: str, mcp_endpoint: str) -> dict[str, typing.Any]:
+def _build_realm(name: str, mcp_endpoint: str, exchangeable_scopes: typing.Sequence[str]) -> dict[str, typing.Any]:
     mcp_scopes = sorted({scope for scopes in AGENT_SCOPES.values() for scope in scopes})
     return {
         'realm': name,
@@ -84,7 +88,7 @@ def _build_realm(name: str, mcp_endpoint: str) -> dict[str, typing.Any]:
             {
                 **_confidential_client(mcp_endpoint),
                 'attributes': {'standard.token.exchange.enabled': 'true'},
-                'optionalClientScopes': UPSTREAM_SCOPES,
+                'optionalClientScopes': list(exchangeable_scopes),
             },
             _confidential_client(UPSTREAM_AUDIENCE),
             *(

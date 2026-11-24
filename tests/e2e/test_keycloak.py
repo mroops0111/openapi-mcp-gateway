@@ -12,9 +12,10 @@ from mcp.client.auth.exceptions import OAuthTokenError
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 from tests.e2e.conftest import GatewayAddress
-from tests.e2e.keycloak import CLIENT_SECRET, UPSTREAM_AUDIENCE, UPSTREAM_SCOPES
+from tests.e2e.keycloak import CLIENT_SECRET, UPSTREAM_AUDIENCE, UPSTREAM_SCOPES, create_realm
 from tests.mcp_client import client_credentials_auth, connect
 from tests.serving import serve
+from tests.tool_result import text_of
 
 
 pytestmark = pytest.mark.e2e
@@ -120,6 +121,20 @@ class TestTokenExchange:
 
         assert not result.is_error
         assert set(_upstream_claims(upstream_requests[0])['scope'].split()) == {'read:pets', 'write:pets'}
+
+    async def test_a_scope_keycloak_will_not_exchange_for_is_refused_before_the_upstream(
+        self, keycloak, secured_spec, gateway_address, upstream_requests
+    ):
+        """No step-up can widen what the issuer exchanges, so the gateway refuses rather than call the upstream."""
+        endpoint = f'{gateway_address.url}/petstore/mcp'
+        with create_realm(keycloak, 'mcp-read-only-exchange', endpoint, exchangeable_scopes=['read:pets']) as issuer:
+            gateway = _token_exchange_gateway(secured_spec, gateway_address, issuer)
+            async with _connect(gateway, gateway_address, issuer, 'writer') as client:
+                result = await client.call_tool('create_pet', {'name': 'Rex'})
+
+        assert result.is_error
+        assert 'write:pets' in text_of(result)
+        assert upstream_requests == []
 
 
 class TestSharedCredential:

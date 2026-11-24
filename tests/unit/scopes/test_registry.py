@@ -4,6 +4,8 @@ from openapi_mcp_gateway.scopes import (
     McpUnrestrictedScopePolicy,
     ScopeRegistry,
     TokenGrant,
+    UpstreamGrantSource,
+    UpstreamGrantUnavailableError,
     UpstreamSpecSecurityScopePolicy,
 )
 from tests.scope import (
@@ -96,9 +98,27 @@ class TestScopeRegistryWithUpstreamScopes:
         assert scope_registry.lists('delete_pet', grant) is True
         assert scope_registry.refusal('delete_pet', grant) is None
 
+    async def test_a_grant_that_cannot_be_found_out_refuses_the_call(self):
+        """An issuer refusing the whole exchange answers the call with its reason, not a server error."""
+        scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
+        scope_registry.register('delete_pet', DELETE_PET)
+
+        assert await scope_registry.call_refusal('delete_pet', _UnavailableGrantSource()) == 'exchange refused'
+
     def test_the_lists_are_cached_per_token_once_the_grant_is_enforced(self):
         scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
         assert scope_registry.list_cache_scope == 'private'
+
+
+class _UnavailableGrantSource(UpstreamGrantSource):
+    """A grant source whose every call finds the grant out of reach."""
+
+    @property
+    def records_user_grant(self) -> bool:
+        return True
+
+    async def read_call_grant(self) -> TokenGrant:
+        raise UpstreamGrantUnavailableError('exchange refused')
 
 
 def _mcp_grant(mcp_scopes: set[str], grantable: set[str] | None = None) -> TokenGrant:

@@ -3,7 +3,7 @@ import logging
 
 from mcp.server.auth.middleware.auth_context import get_access_token
 
-from ...scopes import ScopeRegistry, TokenGrant, UpstreamGrantSource, current_grant
+from ...scopes import ScopeRegistry, TokenGrant, UpstreamGrantSource, UpstreamGrantUnavailableError, current_grant
 from ...settings import AuthConfig
 from ..assembly import (
     McpSetting,
@@ -64,7 +64,12 @@ class TokenExchangeBridge(UpstreamTokenSource, UpstreamGrantSource):
 
     async def read_call_grant(self) -> TokenGrant:
         grant = current_grant()
-        exchanged = await self._exchange_for_caller()
+        try:
+            exchanged = await self._exchange_for_caller()
+        except RuntimeError as error:
+            # An issuer that will not grant every scope asked for may refuse the whole exchange rather than narrow it,
+            # as Keycloak does, so the refusal is the call's answer rather than a server error.
+            raise UpstreamGrantUnavailableError(str(error)) from error
         if exchanged is None:
             return grant
         return grant._replace(upstream_scopes=frozenset(exchanged.scopes))

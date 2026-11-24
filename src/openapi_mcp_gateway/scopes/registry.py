@@ -4,7 +4,7 @@ import typing
 from mcp.shared.uri_template import UriTemplate
 
 from ..openapi import OperationInfo
-from .grant import TokenGrant, UpstreamGrantSource, current_grant
+from .grant import TokenGrant, UpstreamGrantSource, UpstreamGrantUnavailableError, current_grant
 from .policy import McpScopePolicy, UpstreamScopePolicy, UpstreamUnrestrictedScopePolicy
 from .requirement import ScopeRequirement, UnrestrictedRequirement
 
@@ -72,6 +72,7 @@ class ScopeRegistry:
 
         ``grant_source`` is asked for the upstream grant only once the MCP scopes are met,
         and only where ``name`` needs an upstream grant at all, since finding it out may mean an exchange.
+        A grant that cannot be found out refuses the call with the reason.
         """
         requirements = self._requirements_of(name)
         grant = current_grant()
@@ -79,7 +80,11 @@ class ScopeRegistry:
             return requirements.mcp.refusal
         if requirements.upstream.is_met(frozenset()):
             return None
-        return self.refusal(name, await grant_source.read_call_grant())
+        try:
+            grant = await grant_source.read_call_grant()
+        except UpstreamGrantUnavailableError as error:
+            return str(error)
+        return self.refusal(name, grant)
 
     def lists(self, name: str, grant: TokenGrant) -> bool:
         """Whether ``name`` shows in the lists and searches a token with ``grant`` is answered with.
