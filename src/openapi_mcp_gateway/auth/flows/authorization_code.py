@@ -14,6 +14,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from ...scopes import ScopeRegistry, UpstreamRecordedGrantSource
+from ...settings import AuthConfig
 from ...stores.base import TokenStore
 from ..assembly import (
     AuthRoutes,
@@ -348,6 +349,9 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     @property
     def mcp_settings_requirement(self) -> str:
         return 'auth.upstream.flow authorization_code, where users sign in to the gateway'
+
+    def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
+        auth.mcp.refuse_scope_settings_for_gateway_tokens(server_name)
 
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry

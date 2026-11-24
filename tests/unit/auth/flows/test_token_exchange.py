@@ -173,9 +173,7 @@ def _build_token_exchange(entry: ServerConfig):
         token_endpoint=TOKEN_URL,
     )
     with (
-        patch(
-            'openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata', return_value=metadata
-        ),
+        patch('openapi_mcp_gateway.auth.authorities.fetch_mcp_external_issuer_metadata', return_value=metadata),
         patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client'),
     ):
         return TokenExchangeFlowHandler().build(

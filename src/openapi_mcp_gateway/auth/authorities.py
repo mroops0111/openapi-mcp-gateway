@@ -15,6 +15,11 @@ from .mcp.client_credentials import (
     McpClientCredentialsGrant,
     McpClientCredentialsRoutes,
 )
+from .mcp.external_issuer import (
+    McpExternalIssuerMetadata,
+    McpExternalIssuerTokenVerifier,
+    fetch_mcp_external_issuer_metadata,
+)
 from .mcp.record_origin import McpRecordOrigin
 from .mcp.token_issuer import McpGatewayIssuerTokenVerifier, McpTokenIssuer
 from .settings_mapping import build_mcp_client_directory, build_mcp_token_policy
@@ -72,6 +77,7 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
 
     def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
         auth.mcp.refuse_client_settings_without_sign_in(server_name)
+        auth.mcp.refuse_scope_settings_for_gateway_tokens(server_name)
 
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
         entry = context.entry
@@ -115,11 +121,114 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
         )
 
 
+class McpExternalIssuerAuthority(McpTokenAuthority, McpSettingsReader):
+    """Accept the tokens an authorization server the gateway does not own mints for this endpoint.
+
+    The gateway only verifies them, as a resource server, and the issuer alone decides what each token holds.
+    It applies to an upstream that sees only the gateway's identity once ``auth.mcp.issuer`` is set,
+    and ``token_exchange`` builds its MCP half with it too.
+    """
+
+    @property
+    def upstream_principal(self) -> UpstreamPrincipal:
+        return 'gateway'
+
+    @property
+    def mcp_settings(self) -> frozenset[McpSetting]:
+        return frozenset({'issuer', 'required_scopes'})
+
+    @property
+    def mcp_settings_requirement(self) -> str:
+        return "auth.mcp.issuer on an upstream that sees only the gateway's identity"
+
+    def applies_to(self, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
+        return upstream_principal == self.upstream_principal and bool(auth.mcp.resolve_issuer())
+
+    def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
+        return self.attach_discovered(setup, context, self.discover(context))
+
+    def discover(self, context: AuthTypeContext) -> McpExternalIssuerMetadata:
+        """The metadata ``auth.mcp.issuer`` publishes, fetched at startup.
+
+        Raises ``ValueError`` when no issuer is set.
+        """
+        issuer = context.entry.auth.mcp.resolve_issuer()
+        if not issuer:
+            raise ValueError(
+                f'Server "{context.entry.name}": auth.mcp.issuer is unset, '
+                'so no authorization server mints tokens for this MCP endpoint.'
+            )
+        return fetch_mcp_external_issuer_metadata(issuer)
+
+    def attach_discovered(
+        self, setup: ServerAuthSetup, context: AuthTypeContext, metadata: McpExternalIssuerMetadata
+    ) -> ServerAuthSetup:
+        """Return ``setup`` with the MCP half that verifies the tokens the issuer behind ``metadata`` mints."""
+        # RFC 8707 §2: the canonical URI of this MCP server.
+        # A client asks the issuer for this, so it is what the issuer stamps into the token's audience.
+        resource = context.mcp_resource_url
+        mcp_endpoint_scopes = list(context.entry.auth.mcp.required_scopes)
+        verifier = McpExternalIssuerTokenVerifier(
+            issuer=metadata.issuer,
+            audience=resource,
+            jwks_uri=metadata.jwks_uri,
+            required_scopes=mcp_endpoint_scopes,
+        )
+        return dataclasses.replace(
+            setup,
+            verifier=verifier,
+            settings=AuthSettings(
+                issuer_url=pydantic.AnyHttpUrl(metadata.issuer),
+                resource_server_url=pydantic.AnyHttpUrl(resource),
+                validate_token_resource=True,
+                required_scopes=mcp_endpoint_scopes or None,
+            ),
+            # Validated from strings so a path-less issuer keeps its exact form.
+            # RFC 8414 §2 compares issuers by exact string, and ``AnyHttpUrl`` would append a slash.
+            protected_resource=ProtectedResourceMetadata.model_validate(
+                {
+                    'resource': resource,
+                    'authorization_servers': [metadata.issuer],
+                    # RFC 9728 defines this as what a client must obtain for this endpoint,
+                    # so it is the inbound list, and a registering client reads it to know what to ask for.
+                    'scopes_supported': mcp_endpoint_scopes or None,
+                }
+            ),
+            mcp_summary=f'issuer ({metadata.issuer})',
+        )
+
+
 # The extension point, tried in order, so the default that always applies comes last.
-MCP_TOKEN_AUTHORITIES: tuple[type[McpTokenAuthority], ...] = (McpClientCredentialsAuthority, McpNoTokenAuthority)
+MCP_TOKEN_AUTHORITIES: tuple[type[McpTokenAuthority], ...] = (
+    McpExternalIssuerAuthority,
+    McpClientCredentialsAuthority,
+    McpNoTokenAuthority,
+)
 
 
-def select_mcp_token_authority(auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> McpTokenAuthority:
-    """The first authority ``auth`` selects for an upstream that sees ``upstream_principal``."""
-    authorities = (authority_class() for authority_class in MCP_TOKEN_AUTHORITIES)
-    return next(authority for authority in authorities if authority.applies_to(auth, upstream_principal))
+def select_mcp_token_authority(
+    auth: AuthConfig, upstream_principal: UpstreamPrincipal, server_name: str
+) -> McpTokenAuthority:
+    """The one authority ``auth`` selects for an upstream that sees ``upstream_principal``, or the default.
+
+    Raises ``ValueError`` when two authorities both apply, since only one may issue an endpoint's tokens.
+    """
+    *specific_classes, default_class = MCP_TOKEN_AUTHORITIES
+    applying = [
+        authority
+        for authority in (authority_class() for authority_class in specific_classes)
+        if authority.applies_to(auth, upstream_principal)
+    ]
+    if len(applying) > 1:
+        named = ' and '.join(_describe_selection(authority) for authority in applying)
+        raise ValueError(
+            f'Server "{server_name}": {named} each issue this endpoint\'s tokens, so set only one of them.'
+        )
+    return applying[0] if applying else default_class()
+
+
+def _describe_selection(authority: McpTokenAuthority) -> str:
+    """What selects ``authority``, as an error names it."""
+    if isinstance(authority, McpSettingsReader):
+        return authority.mcp_settings_requirement
+    return type(authority).__name__

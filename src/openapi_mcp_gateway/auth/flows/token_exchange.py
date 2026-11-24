@@ -1,9 +1,6 @@
 import logging
 
-import pydantic
 from mcp.server.auth.middleware.auth_context import get_access_token
-from mcp.server.auth.settings import AuthSettings
-from mcp.shared.auth import ProtectedResourceMetadata
 
 from ..assembly import (
     McpSetting,
@@ -14,7 +11,7 @@ from ..assembly import (
     UpstreamPrincipal,
     UpstreamSetting,
 )
-from ..mcp.external_issuer import McpExternalIssuerTokenVerifier, fetch_mcp_external_issuer_metadata
+from ..authorities import McpExternalIssuerAuthority
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_exchange import UpstreamTokenExchangeClient
 from ..upstream.token_source import UpstreamTokenSource
@@ -109,27 +106,14 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
                 'and authorization servers require a confidential client for that grant.'
             )
 
-        metadata = fetch_mcp_external_issuer_metadata(issuer)
+        authority = McpExternalIssuerAuthority()
+        metadata = authority.discover(flow_context.auth_context)
         if not metadata.token_endpoint:
             raise ValueError(
                 f'Server "{entry.name}": issuer "{issuer}" publishes no token_endpoint, '
                 "so the gateway cannot exchange the caller's token for an upstream one."
             )
 
-        # RFC 8707 §2: the canonical URI of this MCP server.
-        # A client asks the issuer for this, so it is what the issuer stamps into the token's audience.
-        canonical_uri = flow_context.mcp_resource_url
-
-        # The two scope lists point in opposite directions and must not be conflated.
-        # Demanding the upstream scopes of the caller would lock out every client that did not match,
-        # since the deployment picks what to request from the issuer but not what a caller registered with.
-        mcp_endpoint_scopes = list(entry.auth.mcp.required_scopes)
-        verifier = McpExternalIssuerTokenVerifier(
-            issuer=metadata.issuer,
-            audience=canonical_uri,
-            jwks_uri=metadata.jwks_uri,
-            required_scopes=mcp_endpoint_scopes,
-        )
         bridge = TokenExchangeBridge(
             UpstreamTokenExchangeClient(
                 token_endpoint=metadata.token_endpoint,
@@ -139,40 +123,13 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
                 scopes=entry.auth.upstream.scopes,
             )
         )
-
-        settings = AuthSettings(
-            issuer_url=pydantic.AnyHttpUrl(metadata.issuer),
-            resource_server_url=pydantic.AnyHttpUrl(canonical_uri),
-            validate_token_resource=True,
-            required_scopes=mcp_endpoint_scopes or None,
-        )
-
         logger.debug(
-            'Token exchange flow set up for "%s": issuer=%s resource=%s exchange_target=%s '
-            'required_scopes=%s upstream_scopes=%s',
+            'Token exchange flow set up for "%s": issuer=%s exchange_target=%s upstream_scopes=%s',
             entry.name,
             metadata.issuer,
-            canonical_uri,
             audience_params,
-            mcp_endpoint_scopes,
             entry.auth.upstream.scopes,
         )
-
-        return ServerAuthSetup(
-            resolver=UpstreamTokenSourceAuthResolver(bridge),
-            settings=settings,
-            verifier=verifier,
-            # Validated from strings so a path-less issuer keeps its exact form.
-            # RFC 8414 §2 compares issuers by exact string, and ``AnyHttpUrl`` would append a slash.
-            protected_resource=ProtectedResourceMetadata.model_validate(
-                {
-                    'resource': canonical_uri,
-                    'authorization_servers': [metadata.issuer],
-                    # RFC 9728 defines this as what a client must obtain for this endpoint,
-                    # so it is the inbound list, and a registering client reads it to know what to ask for.
-                    'scopes_supported': mcp_endpoint_scopes or None,
-                }
-            ),
-            mcp_summary=f'issuer ({metadata.issuer})',
-            on_shutdown=bridge.aclose,
-        )
+        upstream_setup = ServerAuthSetup(resolver=UpstreamTokenSourceAuthResolver(bridge), on_shutdown=bridge.aclose)
+        # The MCP half is the external issuer's, as on a server whose upstream sees only the gateway.
+        return authority.attach_discovered(upstream_setup, flow_context.auth_context, metadata)

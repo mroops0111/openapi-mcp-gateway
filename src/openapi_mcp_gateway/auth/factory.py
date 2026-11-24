@@ -183,7 +183,9 @@ def build_auth(context: AuthTypeContext) -> ServerAuthSetup:
         entry.name, entry.auth.upstream.model_fields_set - {'type'} - selection.upstream_settings
     )
     authority = (
-        None if selection.mcp_settings_reader else select_mcp_token_authority(entry.auth, selection.upstream_principal)
+        None
+        if selection.mcp_settings_reader
+        else select_mcp_token_authority(entry.auth, selection.upstream_principal, entry.name)
     )
     reader = selection.mcp_settings_reader or (authority if isinstance(authority, McpSettingsReader) else None)
     mcp_settings_read = reader.mcp_settings if reader else frozenset()

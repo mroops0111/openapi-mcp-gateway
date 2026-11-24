@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 
 from openapi_mcp_gateway.auth.authorities import (
@@ -10,8 +12,10 @@ from openapi_mcp_gateway.auth.mcp.client_credentials import (
     McpClientCredentialsExtension,
     McpClientCredentialsRoutes,
 )
+from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata, McpExternalIssuerTokenVerifier
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpGatewayIssuerTokenVerifier
 from openapi_mcp_gateway.settings import AuthConfig
+from tests.constants import ISSUER, JWKS_URL, TOKEN_URL
 from tests.flow import auth_context, build_spec, server_entry, spec_with_client_credentials
 
 
@@ -51,6 +55,33 @@ class TestAuthoritySelection:
         assert not setup.upstream_grant_source.records_user_grant
         assert setup.mcp_summary == 'gateway (client_credentials)'
         # The upstream half survives the MCP half being attached.
+        assert setup.flow_type == upstream.get('flow')
+
+    @pytest.mark.parametrize(
+        'upstream',
+        [
+            {'type': 'none'},
+            {'type': 'bearer', 'token': 't'},
+            {'type': 'oauth2', 'flow': 'client_credentials', 'client_id': 'cid', 'client_secret': 'sec'},
+        ],
+    )
+    def test_a_shared_credential_server_with_an_issuer_verifies_its_tokens(self, upstream):
+        """The gateway is only a resource server here, so it publishes no authorization server of its own."""
+        spec = spec_with_client_credentials() if upstream['type'] == 'oauth2' else build_spec()
+        entry = _build_entry({'upstream': upstream, 'mcp': {'issuer': ISSUER, 'required_scopes': ['mcp']}})
+        metadata = McpExternalIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
+        with (
+            patch('openapi_mcp_gateway.auth.authorities.fetch_mcp_external_issuer_metadata', return_value=metadata),
+            patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client'),
+        ):
+            setup = build_auth(auth_context(entry, spec))
+
+        assert isinstance(setup.verifier, McpExternalIssuerTokenVerifier)
+        assert setup.authorization_server_metadata is None
+        assert setup.protected_resource is not None
+        assert [str(server) for server in setup.protected_resource.authorization_servers] == [ISSUER]
+        assert setup.protected_resource.scopes_supported == ['mcp']
+        assert setup.mcp_summary == f'issuer ({ISSUER})'
         assert setup.flow_type == upstream.get('flow')
 
     def test_discovery_names_the_endpoint_scopes(self):

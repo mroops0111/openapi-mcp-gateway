@@ -19,6 +19,7 @@ ALLOWED_AUTH_IMPORTS = {
     'auth.authorities': {'auth.assembly', 'auth.mcp', 'auth.settings_mapping'},
     'auth.flows': {
         'auth.assembly',
+        'auth.authorities',
         'auth.flows',
         'auth.mcp',
         'auth.routes',

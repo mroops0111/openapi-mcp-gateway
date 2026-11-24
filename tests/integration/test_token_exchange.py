@@ -168,9 +168,7 @@ def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = N
         ],
     )
     with (
-        patch(
-            'openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata', return_value=metadata
-        ),
+        patch('openapi_mcp_gateway.auth.authorities.fetch_mcp_external_issuer_metadata', return_value=metadata),
         patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client', return_value=jwk_client or MagicMock()),
     ):
         gateway = Gateway.from_config(config)

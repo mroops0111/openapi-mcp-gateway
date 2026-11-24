@@ -300,25 +300,10 @@ class McpAuthConfig(pydantic.BaseModel):
 
     @pydantic.model_validator(mode='after')
     def _reject_scope_settings_that_cannot_take_effect(self) -> typing.Self:
-        """Refuse operation scopes no client could receive, and endpoint scopes that would stop no one.
-
-        With ``operation_scopes`` set, every token is minted from the scopes a client is configured with,
-        so an endpoint-wide ``required_scopes`` checks only what the gateway itself just granted.
-        """
+        """Refuse client scopes no operation scope could use, and a client list that admits no one."""
         if self.other_clients is False and not self.clients:
             raise ValueError(
                 'auth.mcp.other_clients is false and auth.mcp.clients lists no client, so no client could sign in.'
-            )
-        if self.operation_scopes is not None and not self.clients and not self.other_clients:
-            raise ValueError(
-                'auth.mcp.operation_scopes needs auth.mcp.clients or auth.mcp.other_clients, '
-                'since only a client configured there is granted scopes, so it would have no effect here.'
-            )
-        if self.operation_scopes is not None and 'required_scopes' in self.model_fields_set:
-            raise ValueError(
-                'auth.mcp.required_scopes cannot be combined with auth.mcp.operation_scopes. '
-                'Every token is minted from a client in auth.mcp.clients or auth.mcp.other_clients, '
-                'so an endpoint-wide scope would stop no one.'
             )
         scoped_clients = sorted(client_id for client_id, client in self.clients.items() if client.scopes)
         if self.operation_scopes is None and scoped_clients:
@@ -332,6 +317,25 @@ class McpAuthConfig(pydantic.BaseModel):
                 'so they would have no effect here.'
             )
         return self
+
+    def refuse_scope_settings_for_gateway_tokens(self, server_name: str) -> None:
+        """Refuse operation scopes no client could receive, and endpoint scopes that would stop no one.
+
+        It holds where the gateway mints the tokens, from the scopes a configured client is granted.
+        An endpoint-wide ``required_scopes`` would then check only what the gateway itself just granted.
+        A token another issuer mints carries whatever that issuer grants, so neither rule applies to it.
+        """
+        if self.operation_scopes is not None and not self.clients and not self.other_clients:
+            raise ValueError(
+                f'Server "{server_name}": auth.mcp.operation_scopes needs auth.mcp.clients or auth.mcp.other_clients, '
+                'since only a client configured there is granted scopes, so it would have no effect here.'
+            )
+        if self.operation_scopes is not None and 'required_scopes' in self.model_fields_set:
+            raise ValueError(
+                f'Server "{server_name}": auth.mcp.required_scopes cannot be combined with auth.mcp.operation_scopes. '
+                'Every token is minted from a client in auth.mcp.clients or auth.mcp.other_clients, '
+                'so an endpoint-wide scope would stop no one.'
+            )
 
     def resolve_other_clients(self) -> OtherClientsConfig | None:
         """The rule for unlisted Client ID Metadata Document clients, or ``None`` when none may sign in."""

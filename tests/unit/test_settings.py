@@ -498,11 +498,6 @@ class TestScopeSettings:
     @pytest.mark.parametrize(
         ('auth', 'refusal'),
         [
-            ({'mcp': {'operation_scopes': {'auto': 'tags'}}}, 'auth.mcp.operation_scopes needs auth.mcp.clients'),
-            (
-                {'mcp': {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {}}, 'required_scopes': ['api']}},
-                'cannot be combined with auth.mcp.operation_scopes',
-            ),
             ({'mcp': {'clients': {'agent': {'scopes': ['pets:read']}}}}, r'clients \(agent\) grant scopes'),
             (
                 {'mcp': {'clients': {'agent': {'scopes': ['pets read']}}}},

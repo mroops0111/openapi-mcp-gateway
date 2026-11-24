@@ -241,7 +241,10 @@ class TestMcpSettingsWithoutEffect:
     @pytest.mark.parametrize(
         ('auth', 'refusal'),
         [
-            ({'upstream': BEARER, 'mcp': {'required_scopes': ['x']}}, r'required_scopes needs auth\.mcp\.clients on'),
+            (
+                {'upstream': BEARER, 'mcp': {'required_scopes': ['x']}},
+                r'required_scopes needs auth\.mcp\.issuer on .*, or auth\.mcp\.clients on',
+            ),
             ({'upstream': BEARER, 'mcp': {'access_token_ttl': 60}}, r'access_token_ttl needs auth\.mcp\.clients on'),
             (
                 {'upstream': CLIENT_CREDENTIALS, 'mcp': {'access_token_ttl': 60}},
@@ -252,7 +255,7 @@ class TestMcpSettingsWithoutEffect:
                 r'issuer needs auth\.upstream\.flow token_exchange',
             ),
             (
-                {'upstream': {**CLIENT_CREDENTIALS, 'flow': None}, 'mcp': {'issuer': ISSUER}},
+                {'upstream': {'type': 'passthrough'}, 'mcp': {'issuer': ISSUER}},
                 r'issuer needs auth\.upstream\.flow token_exchange',
             ),
             (
@@ -279,6 +282,7 @@ class TestMcpSettingsWithoutEffect:
         [
             {'upstream': AUTHORIZATION_CODE, 'mcp': {'access_token_ttl': 60, 'refresh_token_ttl': 600}},
             {'upstream': TOKEN_EXCHANGE, 'mcp': {**TOKEN_EXCHANGE_MCP, 'required_scopes': ['x']}},
+            {'upstream': {**CLIENT_CREDENTIALS, 'flow': None}, 'mcp': {'issuer': ISSUER, 'required_scopes': ['x']}},
             {
                 'upstream': BEARER,
                 'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'access_token_ttl': 600},
@@ -295,11 +299,36 @@ class TestMcpSettingsWithoutEffect:
     def test_a_setting_the_mcp_half_reads_is_accepted(self, auth):
         assert _build(auth)
 
+    @pytest.mark.parametrize(
+        ('auth', 'refusal'),
+        [
+            (
+                {'upstream': AUTHORIZATION_CODE, 'mcp': {'operation_scopes': {'auto': 'tags'}}},
+                r'auth\.mcp\.operation_scopes needs auth\.mcp\.clients',
+            ),
+            (
+                {
+                    'upstream': AUTHORIZATION_CODE,
+                    'mcp': {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {}}, 'required_scopes': ['api']},
+                },
+                r'auth\.mcp\.required_scopes cannot be combined with auth\.mcp\.operation_scopes',
+            ),
+            (
+                {'upstream': BEARER, 'mcp': {'issuer': ISSUER, 'clients': {'agent': {'client_secret': 's'}}}},
+                r"auth\.mcp\.issuer on .* and auth\.mcp\.clients on .* each issue this endpoint's tokens",
+            ),
+        ],
+    )
+    def test_scope_settings_the_token_issuer_cannot_honour_are_refused(self, auth, refusal):
+        """Where the gateway mints the tokens, a client must be granted the scopes, and only one party mints them."""
+        with pytest.raises(ValueError, match=rf'Server "srv": {refusal}'):
+            _build(auth)
+
     def test_the_refusal_comes_before_anything_is_built(self):
         """``token_exchange`` fetches its issuer's metadata when built, so a misplaced setting must stop it first."""
         context = _build_context({'upstream': TOKEN_EXCHANGE, 'mcp': {**TOKEN_EXCHANGE_MCP, 'access_token_ttl': 60}})
         with (
-            patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata') as fetch,
+            patch('openapi_mcp_gateway.auth.authorities.fetch_mcp_external_issuer_metadata') as fetch,
             pytest.raises(ValueError, match=r'access_token_ttl needs'),
         ):
             build_auth(context)
@@ -325,9 +354,7 @@ def _build(auth: dict):
     """
     metadata = McpExternalIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
     with (
-        patch(
-            'openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata', return_value=metadata
-        ),
+        patch('openapi_mcp_gateway.auth.authorities.fetch_mcp_external_issuer_metadata', return_value=metadata),
         patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client'),
     ):
         return build_auth(_build_context(auth))
