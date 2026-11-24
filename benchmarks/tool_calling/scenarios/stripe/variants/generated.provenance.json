@@ -1,18 +1,18 @@
 [
   {
     "model": "anthropic:claude-sonnet-5-5",
-    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
-    "finished_at": "2026-11-17T09:59:16+00:00",
+    "instructions_sha256": "ccb6a0871b081af46f55120a32156692666d123c6e3f5dfd82551c849d65fd8f",
+    "finished_at": "2026-11-23T16:24:40+00:00",
     "pydantic_ai_version": "2.69.0",
-    "input_tokens": 71729,
-    "output_tokens": 2577,
+    "input_tokens": 76913,
+    "output_tokens": 2087,
     "model_requests": 7,
     "scenario": "stripe",
     "variant": "generated",
     "skill": "generate-config",
-    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "skill_sha256": "706503c62a7727102a0818bf151eba6c429d0de25c159ba6a1e3f5f3d4e66884",
     "request": "Handle a shop's billing: customers, their subscriptions and invoices, and refunds.",
     "gateway_version": "0.8.0",
-    "summary": "The config in `config.yaml` passes `--dry-run` with 24 Stripe tools, all as-is with no shaping. Stripe's own spec (`stripe.json`) supports bearer auth, so I set that up with `${STRIPE_SECRET_KEY}`. You'll need to set that variable to a Stripe secret key, and a restricted key limited to these resources is safest. I kept the placeholder `base_url` (`https://upstream.invalid`) as you asked. Change it to `https://api.stripe.com/` before running it for real, or calls will fail. The tools cover:\n- **Customers:** list, search, get, create and update. I left out deleting customers and the payment-method and bank-account endpoints.\n- **Subscriptions:** list, search, get, create, update and cancel.\n- **Invoices:** list, search, get, view line items, create, finalize, send, pay and void. I left out deleting invoices and editing individual lines.\n- **Refunds:** list, get, create and cancel.\n\nI kept the list to what billing needs, so the rest of Stripe's roughly 600 operations stay hidden. You can add more later by extending `policy.allow`."
+    "summary": "`config.yaml` now validates with `--dry-run`. It exposes 27 of the Stripe spec's operations as tools, all unshaped, and leaves out the rest of the spec.\n\n- **Customers:** list, search, get, create and update. I left out customer deletion and the payment-method, bank-account and card operations.\n- **Subscriptions:** list, search, get, create, update, cancel, pause and resume.\n- **Invoices:** list, search, get, view lines, create and update. It also covers finalize, pay, send and void.\n- **Refunds:** list, get, create and cancel.\n\nI added short `instructions` telling the model to find the customer first, then look up subscriptions and invoices.\n\nI kept the placeholder `base_url` and `auth: none` as you asked. Before real use, set `base_url` to `https://api.stripe.com` and switch auth to `bearer` with `token: ${STRIPE_API_KEY}`. A restricted key limited to these resources would be safest."
   }
 ]

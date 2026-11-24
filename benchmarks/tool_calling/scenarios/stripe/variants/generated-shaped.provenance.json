@@ -1,18 +1,18 @@
 [
   {
     "model": "anthropic:claude-sonnet-5-5",
-    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
-    "finished_at": "2026-11-17T10:15:00+00:00",
+    "instructions_sha256": "ccb6a0871b081af46f55120a32156692666d123c6e3f5dfd82551c849d65fd8f",
+    "finished_at": "2026-11-23T16:25:58+00:00",
     "pydantic_ai_version": "2.69.0",
-    "input_tokens": 97440,
-    "output_tokens": 5041,
-    "model_requests": 8,
+    "input_tokens": 611667,
+    "output_tokens": 9690,
+    "model_requests": 20,
     "scenario": "stripe",
     "variant": "generated-shaped",
     "skill": "generate-config",
-    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "skill_sha256": "706503c62a7727102a0818bf151eba6c429d0de25c159ba6a1e3f5f3d4e66884",
     "request": "Handle a shop's billing: customers, their subscriptions and invoices, and refunds. Also shape the operations, so that each tool is easy for a model to call correctly.",
     "gateway_version": "0.8.0",
-    "summary": "`config.yaml` now passes `--dry-run`, with 20 tools. The `base_url` is still the `https://upstream.invalid` placeholder, as you asked me to keep it. Before you run it, change it to `https://api.stripe.com`, which is the server the spec names. Also set `STRIPE_SECRET_KEY` to a Stripe secret or restricted key. It's sent as a bearer token.\n\n- **Customers:** list, get, create and update. I left out delete.\n- **Subscriptions:** list, get, create, update and cancel.\n- **Invoices:** list, get, create, finalize, send, pay and void.\n- **Refunds:** list, get, create and cancel.\n\nI picked these from the 8 MB spec with `policy.allow` so the model isn't offered hundreds of unrelated Stripe operations.\n\nI shaped the operations in two ways:\n- **List responses:** the four list tools (customers, subscriptions, invoices, refunds) now return only the key fields plus `has_more`, instead of full Stripe objects.\n- **Refund creation:** it takes only `charge` or `payment_intent`, an optional `amount` (in the smallest currency unit) and an optional `reason`. I hid the marketplace and advanced options so the model can't set them by mistake.\n\nI also added server instructions telling the model to look up the customer first and to confirm before any refund, payment, void or cancellation. The `--dry-run` only checks that the config loads and the shaping compiles. I haven't tested any call against Stripe."
+    "summary": "`config.yaml` now validates with `--dry-run`: 26 tools, exit 0. It covers customers, subscriptions, invoices and refunds, and is scoped with `policy.allow`.\n\n- **Customers:** list, search, get, create and update.\n- **Subscriptions:** list, search, get, create, update, cancel, pause and resume.\n- **Invoices:** list, search, get, create, lines, finalize, pay, send and void.\n- **Refunds:** list, get, create and cancel.\n\nI left out deleting customers and invoices. I also left out the other 580+ Stripe operations (payouts, Connect, Terminal, Treasury and so on).\n\n**Shaping:**\n- **List and search tools:** the list and search tools for customers, subscriptions, invoices and refunds return a short summary of each item instead of Stripe's full objects. They also have descriptions that name the filters (status, customer, query syntax).\n- **Refund creation:** `post_refunds` takes only `payment_intent` or `charge`, an optional `amount` and an optional `reason` enum. The `amount` description says to omit it for a full refund.\n- **Descriptions:** the destructive tools (cancel subscription, void invoice, pay invoice, refund) have descriptions that say what they do and whether they can be undone.\n- **Server instructions:** a short `instructions` block tells the model to use the smallest currency unit, to search for a customer first, and how to page through results.\n\n**Not done:**\n- **Auth and base URL:** I kept `base_url: https://upstream.invalid` and `auth: none` as instructed, so it can't reach Stripe yet. Before running it, set `base_url: https://api.stripe.com` and use `type: bearer` with `token: ${STRIPE_API_KEY}`, ideally a restricted key.\n- **Leftover file:** `plain.yaml` is a scratch file from debugging. I couldn't delete it with the tools available, so please remove it.\n- **Operation ids:** policy and `operations` use the spec's raw ids (`GetCustomers`). The tool names the model sees are snake_case (`get_customers`)."
   }
 ]

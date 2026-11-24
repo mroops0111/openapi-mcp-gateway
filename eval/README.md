@@ -189,8 +189,23 @@ Each variant is compared with the baseline per model on success rate, input toke
 
 ### Results
 
-No results are published yet. The first come with version 1's final generated configs, and are cited with that version.
+Test split, 3 runs per task, openapi-mcp-gateway 0.8.0, Pydantic AI 2.69.0, run on 2026-11-24 with `claude-haiku` (`anthropic:claude-haiku-5-5`). OpenAI's and Google's models follow in a later run.
+
+| Variant | Small | Medium | Large | GitHub With Asana | All | Input Tokens | Cost |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `baseline` | 100% | 100% | 100% | 0% | 86% | 940,145 | $4.94 |
+| `pydantic-ai-tool-search` | 100% | 46% | 100% | 8% | 71% | 271,522 | $3.02 |
+| `dynamic` | 100% | 100% | 100% | 100% | 100% | 76,348 | $0.22 |
+| `generated` | 96% | 100% | 88% | 75% | 92% | 130,028 | $0.20 |
+| `generated-shaped` | 100% | 100% | 88% | 25% | 86% | 67,565 | $0.12 |
+
+Success is the share of runs that passed, small is Petstore and Notion, medium is Asana and Discord, and large is GitHub and Stripe. Input tokens are the mean per run, and cost is the variant's total over its 84 runs.
+
+- **Dynamic exposure** passed every run, on 8% of the baseline's input tokens. The gain in success rate is significant, and comes from GitHub with Asana alone.
+- **The baseline** cannot run GitHub with Asana on Claude Haiku. Its tools come to more than a million tokens, past the model's context window, so every run fails.
+- **Pydantic AI's tool search** saves fewer tokens and loses runs on Asana, Discord, and GitHub with Asana. On Discord the model makes fewer than one tool call a run.
+- **Generated configs** cut the baseline's input tokens by more than 85%, and fall short where the generator left an operation out. Both Stripe variants refund only through `POST /v1/refunds` and list no charges, so in stripe-t04 the model never finds the payment to refund. Both GitHub with Asana variants hide the milestone list github-asana-t05 reads.
 
 ### Cost
 
-The baseline is what costs. One tool per operation sends every tool's definition with every request, about 340,000 tokens for GitHub and 590,000 for GitHub with Asana, where dynamic exposure sends three. The manifest caches the tool definitions on Anthropic models, which leaves the counted tokens as they are and cuts what a rerun of them costs.
+The baseline is what costs. One tool per operation sends every tool's definition with every request, about 340,000 tokens for GitHub and more than a million for GitHub with Asana, where dynamic exposure sends three. The manifest caches the tool definitions on Anthropic models, which leaves the counted tokens as they are and cuts what a rerun of them costs.
