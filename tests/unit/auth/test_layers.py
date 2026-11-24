@@ -16,10 +16,11 @@ ALLOWED_AUTH_IMPORTS = {
     'auth.mcp': {'auth.mcp', 'auth.routes'},
     'auth.assembly': {'auth.routes', 'auth.upstream', 'auth.mcp'},
     'auth.settings_mapping': {'auth.mcp'},
-    'auth.authorities': {'auth.assembly', 'auth.mcp', 'auth.settings_mapping'},
+    'auth.external_issuer_setup': {'auth.assembly', 'auth.mcp'},
+    'auth.authorities': {'auth.assembly', 'auth.external_issuer_setup', 'auth.mcp', 'auth.settings_mapping'},
     'auth.flows': {
         'auth.assembly',
-        'auth.authorities',
+        'auth.external_issuer_setup',
         'auth.flows',
         'auth.mcp',
         'auth.routes',

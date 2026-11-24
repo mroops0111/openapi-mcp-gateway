@@ -90,6 +90,19 @@ class AuthTypeContext(typing.NamedTuple):
         return f'{self.issuer_url.rstrip("/")}{MCP_ENDPOINT_PATH}'
 
 
+@dataclasses.dataclass(frozen=True)
+class UpstreamDescription:
+    """How an upstream strategy reaches the upstream, as ``describe`` and the dry-run table report it.
+
+    ``summary`` labels it as ``mechanism (detail)``.
+    ``resolved_settings`` are the ``auth.upstream`` fields the strategy settled, keyed as the config names them,
+    such as a flow picked from the spec. Each strategy lists only the fields it has, and never a credential.
+    """
+
+    summary: str = 'none'
+    resolved_settings: typing.Mapping[UpstreamSetting, str] = dataclasses.field(default_factory=dict)
+
+
 @dataclasses.dataclass
 class ServerAuthSetup:
     """What assembling one server's auth produces, for both directions, consumed by ``Gateway``.
@@ -110,8 +123,7 @@ class ServerAuthSetup:
     set wherever the gateway issues this endpoint's tokens, whether through ``provider`` or its own routes.
     ``extensions`` are the MCP extensions the server advertises, such as how a client may obtain a token.
     ``mcp_summary`` labels who issues this endpoint's tokens, as ``mechanism (detail)``.
-    ``upstream_summary`` labels how the upstream is reached in the same form,
-    and ``upstream_api_key_header`` names the header an API key travels in, where one does.
+    ``upstream_description`` says how the upstream is reached, for reporting only.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
@@ -126,12 +138,8 @@ class ServerAuthSetup:
     authorization_server_metadata: OAuthMetadata | None = None
     extensions: list[Extension] = dataclasses.field(default_factory=list)
     mcp_summary: str = 'open'
-    upstream_summary: str = 'none'
-    upstream_api_key_header: str | None = None
+    upstream_description: UpstreamDescription = dataclasses.field(default_factory=UpstreamDescription)
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
-    # The flow that was resolved, which is not always the one the config named.
-    # Set by the factory, so that every handler stays unaware of it.
-    flow_type: str | None = None
 
     def __post_init__(self) -> None:
         if self.provider is not None and self.verifier is not None:
@@ -210,7 +218,7 @@ class OAuthFlowContext:
     """What an ``OAuthFlowHandler`` assembles from, which is what every auth type gets plus the resolved flow.
 
     Populated by ``build_oauth_flow`` before it dispatches to a concrete handler.
-    ``upstream_oauth_flow`` is unset for a flow that reads none from the spec, as ``reads_spec_oauth_flow`` says.
+    ``upstream_oauth_flow`` is unset for a flow that reads none from the spec, as ``OAuthFlowHandler.reads_spec_oauth_flow`` says.
     """
 
     auth_context: AuthTypeContext
@@ -270,6 +278,10 @@ class OAuthFlowHandler(abc.ABC):
     A flow that builds the MCP half is also an ``McpSettingsReader``.
     """
 
+    # Whether the flow runs one the spec declares against the upstream, as every flow does by default.
+    # It is a fact of the class, so selecting a flow reads it without building a handler.
+    reads_spec_oauth_flow: typing.ClassVar[bool] = True
+
     @property
     @abc.abstractmethod
     def upstream_principal(self) -> UpstreamPrincipal:
@@ -279,11 +291,6 @@ class OAuthFlowHandler(abc.ABC):
     def upstream_settings(self) -> frozenset[UpstreamSetting]:
         """The ``auth.upstream`` fields this flow reads beyond ``flow``. None, by default."""
         return frozenset()
-
-    @property
-    def reads_spec_oauth_flow(self) -> bool:
-        """Whether the flow runs one the spec declares against the upstream, as every flow does by default."""
-        return True
 
     @abc.abstractmethod
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:

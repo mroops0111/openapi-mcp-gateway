@@ -469,11 +469,10 @@ class Gateway:
                 scope_registry=scope_registry,
                 tool_call_target=tool_call_target,
                 base_url=base_url,
-                upstream_auth_summary=auth.upstream_summary,
+                upstream_auth_summary=auth.upstream_description.summary,
                 mcp_auth_summary=auth.mcp_summary,
                 auth_type=server_config.auth.upstream.type,
-                auth_api_key_header=auth.upstream_api_key_header,
-                auth_flow=auth.flow_type,
+                auth_upstream_settings=auth.upstream_description.resolved_settings,
                 policy_summary=_policy_summary(server_config.policy),
                 exposure=server_config.exposure.style,
                 instructions=server_config.instructions,
@@ -488,7 +487,7 @@ class Gateway:
             base_url,
             len(exposed_tools),
             len(resource_names),
-            _format_log_label(auth.upstream_summary),
+            _format_log_label(auth.upstream_description.summary),
             _format_log_label(auth.mcp_summary),
         )
 

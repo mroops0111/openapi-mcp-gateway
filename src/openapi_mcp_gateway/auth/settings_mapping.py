@@ -24,6 +24,25 @@ def build_mcp_token_policy(config: McpAuthConfig) -> McpTokenPolicy:
     )
 
 
+def refuse_unusable_mcp_token_scopes(config: McpAuthConfig, server_name: str) -> None:
+    """Refuse operation scopes no client could receive, and endpoint scopes that would stop no one.
+
+    It holds wherever the gateway mints the tokens, from the scopes a configured client is granted.
+    An endpoint-wide ``required_scopes`` would then check only what the gateway itself just granted.
+    """
+    if config.operation_scopes is not None and not config.clients and not config.other_clients:
+        raise ValueError(
+            f'Server "{server_name}": auth.mcp.operation_scopes needs auth.mcp.clients or auth.mcp.other_clients, '
+            'since only a client configured there is granted scopes, so it would have no effect here.'
+        )
+    if config.operation_scopes is not None and 'required_scopes' in config.model_fields_set:
+        raise ValueError(
+            f'Server "{server_name}": auth.mcp.required_scopes cannot be combined with auth.mcp.operation_scopes. '
+            'Every token is minted from a client in auth.mcp.clients or auth.mcp.other_clients, '
+            'so an endpoint-wide scope would stop no one.'
+        )
+
+
 def build_mcp_client_directory(
     clients: collections.abc.Mapping[str, ClientConfig], mcp_endpoint_scopes: collections.abc.Sequence[str]
 ) -> McpPreRegisteredClientDirectory:

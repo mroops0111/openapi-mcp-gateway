@@ -1,11 +1,9 @@
 import typing
-from unittest.mock import patch
 
 import pytest
 
 from openapi_mcp_gateway.auth.assembly import AuthTypeContext, McpSetting, UpstreamSetting
 from openapi_mcp_gateway.auth.factory import AUTH_TYPE_HANDLERS, build_auth
-from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
@@ -23,10 +21,11 @@ from openapi_mcp_gateway.settings import (
 )
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.client_metadata import serving_resolver
-from tests.constants import API_URL, GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
+from tests.constants import API_URL, GATEWAY_URL, ISSUER
 from tests.flow import (
     auth_context,
     build_spec,
+    discovered_external_issuer,
     server_entry,
     spec_with_authorization_code,
     spec_with_client_credentials,
@@ -339,7 +338,7 @@ class TestMcpSettingsWithoutEffect:
         """``token_exchange`` fetches its issuer's metadata when built, so a misplaced setting must stop it first."""
         context = _build_context({'upstream': TOKEN_EXCHANGE, 'mcp': {**TOKEN_EXCHANGE_MCP, 'access_token_ttl': 60}})
         with (
-            patch('openapi_mcp_gateway.auth.authorities.fetch_mcp_external_issuer_metadata') as fetch,
+            discovered_external_issuer() as fetch,
             pytest.raises(ValueError, match=r'access_token_ttl needs'),
         ):
             build_auth(context)
@@ -363,11 +362,7 @@ def _build(auth: dict):
 
     Issuer discovery is stubbed, so ``token_exchange`` builds offline.
     """
-    metadata = McpExternalIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
-    with (
-        patch('openapi_mcp_gateway.auth.authorities.fetch_mcp_external_issuer_metadata', return_value=metadata),
-        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client'),
-    ):
+    with discovered_external_issuer():
         return build_auth(_build_context(auth))
 
 

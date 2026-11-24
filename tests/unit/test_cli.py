@@ -424,7 +424,7 @@ class TestDryRunJsonOutput:
         assert 'policy' not in server, 'the caller holds the config already'
         assert 'summary' not in server['auth']
         assert server['auth']['upstream']['type'] == 'none'
-        assert server['auth']['upstream']['flow'] is None, 'absent, not empty'
+        assert server['auth']['upstream'] == {'type': 'none'}, 'a field the server does not have is left out'
 
     def test_instructions_are_reported_as_the_client_receives_them(self, tmp_path: pathlib.Path):
         """The full text is what the model reads, like a tool description, and an unset value reads null."""
@@ -534,7 +534,7 @@ class TestDryRunJsonOutput:
         assert 'SUPER-SECRET-VALUE' not in result.stdout
         auth = json.loads(result.stdout)['servers'][0]['auth']
         assert auth == {
-            'upstream': {'type': 'api_key', 'flow': None, 'api_key_header': 'X-Company-Key'},
+            'upstream': {'type': 'api_key', 'api_key_header': 'X-Company-Key'},
             'mcp': {'issuer': None, 'grant_types': None, 'required_scopes': None},
         }
 

@@ -41,6 +41,7 @@ from ..settings_mapping import (
     build_mcp_client_directory,
     build_mcp_client_metadata_directory,
     build_mcp_token_policy,
+    refuse_unusable_mcp_token_scopes,
 )
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
 from ..upstream.authorization_code_refresh import UpstreamTokenRefresher
@@ -351,7 +352,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
         return 'auth.upstream.flow authorization_code, where users sign in to the gateway'
 
     def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
-        auth.mcp.refuse_scope_settings_for_gateway_tokens(server_name)
+        refuse_unusable_mcp_token_scopes(auth.mcp, server_name)
 
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry

@@ -7,6 +7,7 @@ from .assembly import (
     AuthTypeHandler,
     McpSettingsReader,
     ServerAuthSetup,
+    UpstreamDescription,
     UpstreamPrincipal,
     UpstreamSelection,
     UpstreamSetting,
@@ -63,7 +64,10 @@ class UpstreamStaticCredentialHandler(AuthTypeHandler[UpstreamSelection]):
             if token
             else UpstreamNoCredentialAuthResolver()
         )
-        return ServerAuthSetup(resolver=resolver, upstream_summary=self.describe(context))
+        return ServerAuthSetup(
+            resolver=resolver,
+            upstream_description=UpstreamDescription(self.describe(context), self.resolve_settings(context)),
+        )
 
     @abc.abstractmethod
     def describe(self, context: AuthTypeContext) -> str:
@@ -77,6 +81,10 @@ class UpstreamStaticCredentialHandler(AuthTypeHandler[UpstreamSelection]):
     def resolve_header_name(self, context: AuthTypeContext) -> str:
         """Header the credential travels in. Overridden where the config names it."""
         return DEFAULT_AUTHORIZATION_HEADER
+
+    def resolve_settings(self, context: AuthTypeContext) -> dict[UpstreamSetting, str]:
+        """The ``auth.upstream`` fields this credential settles, as ``UpstreamDescription`` reports them. None, by default."""
+        return {}
 
 
 class UpstreamBearerTokenHandler(UpstreamStaticCredentialHandler):
@@ -103,9 +111,8 @@ class UpstreamApiKeyHandler(UpstreamStaticCredentialHandler):
     def describe(self, context: AuthTypeContext) -> str:
         return f'api_key ({self.resolve_header_name(context)})'
 
-    def build(self, context: AuthTypeContext, selection: UpstreamSelection) -> ServerAuthSetup:
-        setup = super().build(context, selection)
-        return dataclasses.replace(setup, upstream_api_key_header=self.resolve_header_name(context))
+    def resolve_settings(self, context: AuthTypeContext) -> dict[UpstreamSetting, str]:
+        return {'api_key_header': self.resolve_header_name(context)}
 
 
 class UpstreamPassthroughHandler(AuthTypeHandler[UpstreamSelection]):
@@ -120,7 +127,9 @@ class UpstreamPassthroughHandler(AuthTypeHandler[UpstreamSelection]):
         return UpstreamSelection(upstream_principal='caller')
 
     def build(self, context: AuthTypeContext, selection: UpstreamSelection) -> ServerAuthSetup:
-        return ServerAuthSetup(resolver=UpstreamPassthroughAuthResolver(), upstream_summary='passthrough')
+        return ServerAuthSetup(
+            resolver=UpstreamPassthroughAuthResolver(), upstream_description=UpstreamDescription('passthrough')
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -139,7 +148,7 @@ class OAuth2Handler(AuthTypeHandler[OAuthUpstreamSelection]):
 
     def select(self, context: AuthTypeContext) -> OAuthUpstreamSelection:
         flow_selection = select_oauth_flow(context)
-        handler = flow_selection.handler_class()
+        handler = flow_selection.handler
         return OAuthUpstreamSelection(
             upstream_principal=handler.upstream_principal,
             upstream_settings=self.upstream_settings | handler.upstream_settings,
@@ -149,7 +158,11 @@ class OAuth2Handler(AuthTypeHandler[OAuthUpstreamSelection]):
 
     def build(self, context: AuthTypeContext, selection: OAuthUpstreamSelection) -> ServerAuthSetup:
         setup = build_oauth_flow(context, selection.flow_selection)
-        return dataclasses.replace(setup, upstream_summary=f'oauth2 ({selection.flow_selection.flow_type})')
+        # The flow that was resolved, which is not always the one the config named.
+        flow_type = selection.flow_selection.flow_type
+        return dataclasses.replace(
+            setup, upstream_description=UpstreamDescription(f'oauth2 ({flow_type})', {'flow': flow_type})
+        )
 
 
 # The extension point for ``auth.upstream.type``, mirrored one level down by ``OAUTH_FLOW_HANDLERS`` for the flow.

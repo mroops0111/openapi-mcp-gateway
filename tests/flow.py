@@ -1,11 +1,16 @@
+import contextlib
+import typing
+from unittest.mock import MagicMock, patch
+
 from openapi_mcp_gateway.auth.assembly import AuthTypeContext, ServerAuthSetup
 from openapi_mcp_gateway.auth.flows import build_oauth_flow, select_oauth_flow
+from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
 from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, ScopeRegistry
 from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.client_metadata import serving_resolver
-from tests.constants import API_URL, AUTHORIZE_URL, TOKEN_URL
+from tests.constants import API_URL, AUTHORIZE_URL, ISSUER, JWKS_URL, TOKEN_URL
 
 
 def build_spec(security_schemes: dict | None = None) -> OpenAPISpec:
@@ -95,3 +100,19 @@ def server_entry(auth: AuthConfig, name: str = 'srv') -> ServerConfig:
 def build_selected_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
     """The OAuth flow ``context`` selects, built as ``OAuth2Handler`` builds it."""
     return build_oauth_flow(context, select_oauth_flow(context))
+
+
+@contextlib.contextmanager
+def discovered_external_issuer(jwk_client: MagicMock | None = None) -> typing.Iterator[MagicMock]:
+    """Stub out discovery of ``ISSUER`` and its signing keys, so a server it mints tokens for builds offline.
+
+    Yields the stubbed metadata fetch, which answers with ``ISSUER``'s documents.
+    """
+    metadata = McpExternalIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
+    with (
+        patch(
+            'openapi_mcp_gateway.auth.external_issuer_setup.fetch_mcp_external_issuer_metadata', return_value=metadata
+        ) as fetch,
+        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client', return_value=jwk_client or MagicMock()),
+    ):
+        yield fetch

@@ -1,12 +1,14 @@
 import abc
 import dataclasses
+import typing
 
 import pydantic
 from mcp.server.auth.settings import AuthSettings
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
-from ..settings import AuthConfig
+from ..settings import AuthConfig, McpAuthConfig, is_url_client_id
 from .assembly import AuthTypeContext, McpSetting, McpSettingsReader, ServerAuthSetup, UpstreamPrincipal
+from .external_issuer_setup import McpExternalIssuerSetup
 from .mcp.client_credentials import (
     AUTHORIZE_PATH,
     TOKEN_ENDPOINT_AUTH_METHODS,
@@ -15,14 +17,9 @@ from .mcp.client_credentials import (
     McpClientCredentialsGrant,
     McpClientCredentialsRoutes,
 )
-from .mcp.external_issuer import (
-    McpExternalIssuerMetadata,
-    McpExternalIssuerTokenVerifier,
-    fetch_mcp_external_issuer_metadata,
-)
 from .mcp.record_origin import McpRecordOrigin
 from .mcp.token_issuer import McpGatewayIssuerTokenVerifier, McpTokenIssuer
-from .settings_mapping import build_mcp_client_directory, build_mcp_token_policy
+from .settings_mapping import build_mcp_client_directory, build_mcp_token_policy, refuse_unusable_mcp_token_scopes
 
 
 class McpTokenAuthority(abc.ABC):
@@ -76,8 +73,8 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
         return upstream_principal == self.upstream_principal and bool(auth.mcp.clients)
 
     def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
-        auth.mcp.refuse_client_settings_without_sign_in(server_name)
-        auth.mcp.refuse_scope_settings_for_gateway_tokens(server_name)
+        _refuse_client_settings_without_sign_in(auth.mcp, server_name)
+        refuse_unusable_mcp_token_scopes(auth.mcp, server_name)
 
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
         entry = context.entry
@@ -124,10 +121,12 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
 class McpExternalIssuerAuthority(McpTokenAuthority, McpSettingsReader):
     """Accept the tokens an authorization server the gateway does not own mints for this endpoint.
 
-    The gateway only verifies them, as a resource server, and the issuer alone decides what each token holds.
     It applies to an upstream that sees only the gateway's identity once ``auth.mcp.issuer`` is set,
-    and ``token_exchange`` builds its MCP half with it too.
+    and builds the MCP half ``McpExternalIssuerSetup`` describes.
     """
+
+    def __init__(self) -> None:
+        self._issuer_setup = McpExternalIssuerSetup()
 
     @property
     def upstream_principal(self) -> UpstreamPrincipal:
@@ -135,7 +134,7 @@ class McpExternalIssuerAuthority(McpTokenAuthority, McpSettingsReader):
 
     @property
     def mcp_settings(self) -> frozenset[McpSetting]:
-        return frozenset({'issuer', 'required_scopes', 'operation_scopes'})
+        return self._issuer_setup.mcp_settings
 
     @property
     def mcp_settings_requirement(self) -> str:
@@ -145,63 +144,12 @@ class McpExternalIssuerAuthority(McpTokenAuthority, McpSettingsReader):
         return upstream_principal == self.upstream_principal and bool(auth.mcp.resolve_issuer())
 
     def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
-        auth.mcp.refuse_scope_settings_for_issuer_tokens(server_name)
+        self._issuer_setup.refuse_unusable_settings(auth, server_name)
 
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
-        return self.attach_discovered(setup, context, self.discover(context))
-
-    def discover(self, context: AuthTypeContext) -> McpExternalIssuerMetadata:
-        """The metadata ``auth.mcp.issuer`` publishes, fetched at startup.
-
-        Raises ``ValueError`` when no issuer is set.
-        """
-        issuer = context.entry.auth.mcp.resolve_issuer()
-        if not issuer:
-            raise ValueError(
-                f'Server "{context.entry.name}": auth.mcp.issuer is unset, '
-                'so no authorization server mints tokens for this MCP endpoint.'
-            )
-        return fetch_mcp_external_issuer_metadata(issuer)
-
-    def attach_discovered(
-        self, setup: ServerAuthSetup, context: AuthTypeContext, metadata: McpExternalIssuerMetadata
-    ) -> ServerAuthSetup:
-        """Return ``setup`` with the MCP half that verifies the tokens the issuer behind ``metadata`` mints."""
-        # RFC 8707 §2: the canonical URI of this MCP server.
-        # A client asks the issuer for this, so it is what the issuer stamps into the token's audience.
-        resource = context.mcp_resource_url
-        mcp_endpoint_scopes = list(context.entry.auth.mcp.required_scopes)
-        verifier = McpExternalIssuerTokenVerifier(
-            issuer=metadata.issuer,
-            audience=resource,
-            jwks_uri=metadata.jwks_uri,
-            required_scopes=mcp_endpoint_scopes,
-            # The issuer alone knows the most it would grant, so every scope an operation names stays in reach.
-            # A client then sees each tool and steps up for it, and the issuer decides whether to grant it.
-            mcp_grantable_scopes=list(context.scope_registry.mcp_policy.mcp_defined_scopes) or None,
-        )
-        return dataclasses.replace(
-            setup,
-            verifier=verifier,
-            settings=AuthSettings(
-                issuer_url=pydantic.AnyHttpUrl(metadata.issuer),
-                resource_server_url=pydantic.AnyHttpUrl(resource),
-                validate_token_resource=True,
-                required_scopes=mcp_endpoint_scopes or None,
-            ),
-            # Validated from strings so a path-less issuer keeps its exact form.
-            # RFC 8414 §2 compares issuers by exact string, and ``AnyHttpUrl`` would append a slash.
-            protected_resource=ProtectedResourceMetadata.model_validate(
-                {
-                    'resource': resource,
-                    'authorization_servers': [metadata.issuer],
-                    # RFC 9728 defines this as what a client must obtain for this endpoint,
-                    # so it is the inbound list, and a registering client reads it to know what to ask for.
-                    'scopes_supported': mcp_endpoint_scopes or None,
-                }
-            ),
-            mcp_summary=f'issuer ({metadata.issuer})',
-        )
+        # Selected only once auth.mcp.issuer is set, as applies_to checks.
+        issuer = typing.cast(str, context.entry.auth.mcp.resolve_issuer())
+        return self._issuer_setup.attach(setup, context, self._issuer_setup.discover(issuer))
 
 
 # The extension point, tried in order, so the default that always applies comes last.
@@ -238,3 +186,28 @@ def _describe_selection(authority: McpTokenAuthority) -> str:
     if isinstance(authority, McpSettingsReader):
         return authority.mcp_settings_requirement
     return type(authority).__name__
+
+
+def _refuse_client_settings_without_sign_in(config: McpAuthConfig, server_name: str) -> None:
+    """Refuse what only a user signing in reads, for a server where agents obtain tokens as themselves.
+
+    Each client needs a secret, since it is its only proof of identity.
+    A redirect, default scopes and the consent page all belong to a sign-in that never happens.
+    A request with no scope is granted all of ``scopes``, so ``default_scopes`` would have nothing to narrow.
+    """
+    problems = [
+        f'auth.mcp.clients.{client_id}.{field} {reason}'
+        for client_id, client in config.clients.items()
+        for field, reason in client.find_settings_without_sign_in()
+    ]
+    problems += [
+        f'auth.mcp.clients.{client_id} names a Client ID Metadata Document, whose client signs a user in'
+        for client_id in config.clients
+        if is_url_client_id(client_id)
+    ]
+    if problems:
+        raise ValueError(
+            f'Server "{server_name}": agents here obtain tokens with their own credentials, and no user signs in. '
+            + '. '.join(problems)
+            + '.'
+        )

@@ -318,42 +318,6 @@ class McpAuthConfig(pydantic.BaseModel):
             )
         return self
 
-    def refuse_scope_settings_for_gateway_tokens(self, server_name: str) -> None:
-        """Refuse operation scopes no client could receive, and endpoint scopes that would stop no one.
-
-        It holds where the gateway mints the tokens, from the scopes a configured client is granted.
-        An endpoint-wide ``required_scopes`` would then check only what the gateway itself just granted.
-        A token another issuer mints carries whatever that issuer grants, so neither rule applies to it.
-        """
-        if self.operation_scopes is not None and not self.clients and not self.other_clients:
-            raise ValueError(
-                f'Server "{server_name}": auth.mcp.operation_scopes needs auth.mcp.clients or auth.mcp.other_clients, '
-                'since only a client configured there is granted scopes, so it would have no effect here.'
-            )
-        if self.operation_scopes is not None and 'required_scopes' in self.model_fields_set:
-            raise ValueError(
-                f'Server "{server_name}": auth.mcp.required_scopes cannot be combined with auth.mcp.operation_scopes. '
-                'Every token is minted from a client in auth.mcp.clients or auth.mcp.other_clients, '
-                'so an endpoint-wide scope would stop no one.'
-            )
-
-    def refuse_scope_settings_for_issuer_tokens(self, server_name: str) -> None:
-        """Refuse an external issuer whose clients would be told no scope to ask for first.
-
-        It holds where another issuer mints the tokens, whose clients read ``scopes_supported``
-        from the protected resource metadata, and ``required_scopes`` is what that lists.
-        With none listed, the MCP SDK falls back to every scope the issuer advertises,
-        which the issuer refuses for any client it restricts.
-        """
-        if self.resolve_issuer() and not self.required_scopes:
-            raise ValueError(
-                f'Server "{server_name}": auth.mcp.issuer needs auth.mcp.required_scopes, '
-                'the scopes every client asks the issuer for first. '
-                'Without them the protected resource metadata lists no scopes_supported, '
-                'and the MCP SDK then asks for every scope the issuer advertises, '
-                'which the issuer refuses for any client it restricts.'
-            )
-
     def resolve_other_clients(self) -> OtherClientsConfig | None:
         """The rule for unlisted Client ID Metadata Document clients, or ``None`` when none may sign in."""
         if self.other_clients is None:
@@ -373,30 +337,6 @@ class McpAuthConfig(pydantic.BaseModel):
     def resolve_issuer(self) -> str | None:
         """External authorization server issuer after env-var substitution."""
         return _resolve_env_var(self.issuer)
-
-    def refuse_client_settings_without_sign_in(self, server_name: str) -> None:
-        """Refuse what only a user signing in reads, for a server where agents obtain tokens as themselves.
-
-        Each client needs a secret, since it is its only proof of identity.
-        A redirect, default scopes and the consent page all belong to a sign-in that never happens.
-        A request with no scope is granted all of ``scopes``, so ``default_scopes`` would have nothing to narrow.
-        """
-        problems = [
-            f'auth.mcp.clients.{client_id}.{field} {reason}'
-            for client_id, client in self.clients.items()
-            for field, reason in client.find_settings_without_sign_in()
-        ]
-        problems += [
-            f'auth.mcp.clients.{client_id} names a Client ID Metadata Document, whose client signs a user in'
-            for client_id in self.clients
-            if is_url_client_id(client_id)
-        ]
-        if problems:
-            raise ValueError(
-                f'Server "{server_name}": agents here obtain tokens with their own credentials, and no user signs in. '
-                + '. '.join(problems)
-                + '.'
-            )
 
 
 class AuthConfig(pydantic.BaseModel):

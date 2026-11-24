@@ -1,6 +1,5 @@
 import dataclasses
 import logging
-import typing
 
 from ...openapi import OpenAPISpec
 from ...settings import ServerConfig
@@ -23,9 +22,12 @@ OAUTH_FLOW_HANDLERS: dict[str, type[OAuthFlowHandler]] = {
 
 @dataclasses.dataclass(frozen=True)
 class OAuthFlowSelection:
-    """The OAuth flow settled for one server, before anything is built."""
+    """The OAuth flow settled for one server, before anything is built.
 
-    handler_class: type[OAuthFlowHandler]
+    ``handler`` is the one instance that both checks the config and builds the flow.
+    """
+
+    handler: OAuthFlowHandler
     flow_type: str
     upstream_oauth_flow: UpstreamOAuthFlow | None
 
@@ -42,9 +44,10 @@ def select_oauth_flow(context: AuthTypeContext) -> OAuthFlowSelection:
     4. Apply config-supplied URL overrides on top of the spec-declared values.
     """
     entry = context.entry
-    named_handler_class = OAUTH_FLOW_HANDLERS.get(entry.auth.upstream.flow or '')
-    if named_handler_class is not None and not named_handler_class().reads_spec_oauth_flow:
-        return OAuthFlowSelection(named_handler_class, typing.cast(str, entry.auth.upstream.flow), None)
+    named_flow_type = entry.auth.upstream.flow
+    named_handler_class = OAUTH_FLOW_HANDLERS.get(named_flow_type) if named_flow_type else None
+    if named_flow_type and named_handler_class and not named_handler_class.reads_spec_oauth_flow:
+        return OAuthFlowSelection(named_handler_class(), named_flow_type, None)
     upstream_oauth_flow = resolve_upstream_oauth_flow(entry, context.spec)
     handler_class = OAUTH_FLOW_HANDLERS.get(upstream_oauth_flow.flow_type)
     if handler_class is None:
@@ -52,13 +55,13 @@ def select_oauth_flow(context: AuthTypeContext) -> OAuthFlowSelection:
             f'Server "{entry.name}": unsupported OAuth flow type "{upstream_oauth_flow.flow_type}". '
             f'Supported flows: {sorted(OAUTH_FLOW_HANDLERS)}'
         )
-    return OAuthFlowSelection(handler_class, upstream_oauth_flow.flow_type, upstream_oauth_flow)
+    return OAuthFlowSelection(handler_class(), upstream_oauth_flow.flow_type, upstream_oauth_flow)
 
 
 def build_oauth_flow(context: AuthTypeContext, selection: OAuthFlowSelection) -> ServerAuthSetup:
     """Build the OAuth flow ``selection`` settled for ``context.entry``."""
     flow_context = OAuthFlowContext(context, selection.upstream_oauth_flow)
-    return dataclasses.replace(selection.handler_class().build(flow_context), flow_type=selection.flow_type)
+    return selection.handler.build(flow_context)
 
 
 def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> UpstreamOAuthFlow:

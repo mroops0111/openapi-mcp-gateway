@@ -10,7 +10,7 @@ from openapi_mcp_gateway.auth.flows import (
     TokenExchangeFlowHandler,
 )
 from openapi_mcp_gateway.auth.flows.token_exchange import TokenExchangeBridge
-from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata, McpExternalIssuerTokenVerifier
+from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerTokenVerifier
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UPSTREAM_CREDENTIAL_UNAVAILABLE,
     UpstreamNoCredentialAuthResolver,
@@ -31,12 +31,13 @@ from openapi_mcp_gateway.scopes import (
 from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.client_metadata import serving_resolver
-from tests.constants import API_URL, ISSUER, JWKS_URL, TOKEN_URL
+from tests.constants import API_URL, ISSUER, TOKEN_URL
 from tests.context import authenticated_as
 from tests.flow import (
     auth_context,
     build_selected_oauth_flow,
     build_spec,
+    discovered_external_issuer,
     server_entry,
     spec_with_authorization_code,
 )
@@ -245,15 +246,7 @@ def _token_exchange_entry(**overrides) -> ServerConfig:
 
 def _build_token_exchange(entry: ServerConfig):
     """Run the handler with issuer discovery stubbed out."""
-    metadata = McpExternalIssuerMetadata(
-        issuer=ISSUER,
-        jwks_uri=JWKS_URL,
-        token_endpoint=TOKEN_URL,
-    )
-    with (
-        patch('openapi_mcp_gateway.auth.authorities.fetch_mcp_external_issuer_metadata', return_value=metadata),
-        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client'),
-    ):
+    with discovered_external_issuer():
         return TokenExchangeFlowHandler().build(
             OAuthFlowContext(
                 AuthTypeContext(

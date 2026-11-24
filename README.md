@@ -640,7 +640,7 @@ Configure via the `logging.*` YAML keys or via CLI flags (`--log-level`, `--log-
 
 ### Inspecting a Config
 
-`--dry-run` validates a config and prints what it would expose without starting a server. `--output json` emits the same facts as data, on stdout with logging kept to stderr, and `Gateway.describe()` returns the identical document from Python. Names in the output are the sanitised ones the model is shown, so an operation with no `operationId` appears under a name derived from its method and path.
+`--dry-run` validates a config and prints what it would expose without starting a server. `--output json` emits the same facts as data, on stdout with logging kept to stderr, and `Gateway.describe()` returns the identical document from Python. Names in the output are the sanitised ones the model is shown, so an operation with no `operationId` appears under a name derived from its method and path. `auth.upstream` holds `type` and only the fields that server resolved, such as the `flow` picked from the spec or the `api_key_header`, and never a credential.
 
 ### Authoring Configs With AI
 

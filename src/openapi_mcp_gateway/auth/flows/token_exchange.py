@@ -15,7 +15,7 @@ from ..assembly import (
     UpstreamPrincipal,
     UpstreamSetting,
 )
-from ..authorities import McpExternalIssuerAuthority
+from ..external_issuer_setup import McpExternalIssuerSetup
 from ..upstream.resolver import UPSTREAM_CREDENTIAL_UNAVAILABLE, UpstreamTokenSourceAuthResolver
 from ..upstream.token_exchange import (
     UpstreamExchangedToken,
@@ -108,6 +108,13 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     so revoking a user at the issuer takes effect without waiting for a gateway-minted token to expire.
     """
 
+    # No spec can declare token_exchange, and it talks to no upstream authorization server.
+    # Consulting the spec would only report a misleading missing flow.
+    reads_spec_oauth_flow = False
+
+    def __init__(self) -> None:
+        self._issuer_setup = McpExternalIssuerSetup()
+
     @property
     def upstream_principal(self) -> UpstreamPrincipal:
         return 'user'
@@ -128,21 +135,15 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
         )
 
     @property
-    def reads_spec_oauth_flow(self) -> bool:
-        # No spec can declare token_exchange, and it talks to no upstream authorization server.
-        # Consulting the spec would only report a misleading missing flow.
-        return False
-
-    @property
     def mcp_settings(self) -> frozenset[McpSetting]:
-        return frozenset({'issuer', 'required_scopes', 'operation_scopes'})
+        return self._issuer_setup.mcp_settings
 
     @property
     def mcp_settings_requirement(self) -> str:
         return 'auth.upstream.flow token_exchange, where another authorization server issues MCP tokens'
 
     def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
-        auth.mcp.refuse_scope_settings_for_issuer_tokens(server_name)
+        self._issuer_setup.refuse_unusable_settings(auth, server_name)
 
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
         entry = flow_context.entry
@@ -172,8 +173,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
                 'and authorization servers require a confidential client for that grant.'
             )
 
-        authority = McpExternalIssuerAuthority()
-        metadata = authority.discover(flow_context.auth_context)
+        metadata = self._issuer_setup.discover(issuer)
         if not metadata.token_endpoint:
             raise ValueError(
                 f'Server "{entry.name}": issuer "{issuer}" publishes no token_endpoint, '
@@ -202,4 +202,4 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             resolver=UpstreamTokenSourceAuthResolver(bridge), upstream_grant_source=bridge, on_shutdown=bridge.aclose
         )
         # The MCP half is the external issuer's, as on a server whose upstream sees only the gateway.
-        return authority.attach_discovered(upstream_setup, flow_context.auth_context, metadata)
+        return self._issuer_setup.attach(upstream_setup, flow_context.auth_context, metadata)

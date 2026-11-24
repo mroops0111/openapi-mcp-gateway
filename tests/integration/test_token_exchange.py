@@ -1,12 +1,11 @@
 import pathlib
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import jwt
 import pytest
 from starlette.testclient import TestClient
 
-from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import (
     AuthConfig,
@@ -19,9 +18,8 @@ from tests.constants import (
     API_URL,
     GATEWAY_URL,
     ISSUER,
-    JWKS_URL,
-    TOKEN_URL,
 )
+from tests.flow import discovered_external_issuer
 
 
 class TestTokenExchangeDiscovery:
@@ -139,7 +137,6 @@ class TestRejectedTokenResponse:
 
 def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = None) -> TestClient:
     """Test client over a petstore server that validates tokens from ``ISSUER``, an issuer it does not own."""
-    metadata = McpExternalIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
     config = GatewayConfig(
         url=GATEWAY_URL,
         servers=[
@@ -160,9 +157,6 @@ def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = N
             ),
         ],
     )
-    with (
-        patch('openapi_mcp_gateway.auth.authorities.fetch_mcp_external_issuer_metadata', return_value=metadata),
-        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client', return_value=jwk_client or MagicMock()),
-    ):
+    with discovered_external_issuer(jwk_client):
         gateway = Gateway.from_config(config)
         return TestClient(gateway._build_app(transport='streamable-http'))

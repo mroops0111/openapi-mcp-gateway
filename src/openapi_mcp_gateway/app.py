@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import types
 import typing
 import urllib.parse
 
@@ -23,7 +24,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .auth.assembly import MCP_ENDPOINT_PATH
+from .auth.assembly import MCP_ENDPOINT_PATH, UpstreamSetting
 from .openapi import ExposedTool, OpenAPISpec
 from .scopes import RequestTarget, ScopeChallengeMiddleware, ScopeRegistry
 from .settings import DNSRebindingProtectionConfig, GatewayConfig
@@ -67,8 +68,8 @@ class _ServerBundle(typing.NamedTuple):
     tools: tuple[ExposedTool, ...] = ()
     resource_names: tuple[str, ...] = ()
     auth_type: str = 'none'
-    auth_flow: str | None = None
-    auth_api_key_header: str | None = None
+    # The ``auth.upstream`` fields the server's auth settled, holding only those it has and never a credential.
+    auth_upstream_settings: typing.Mapping[UpstreamSetting, str] = types.MappingProxyType({})
 
     # Prose for the dry-run table only.
     # ``describe`` reports the structured fields above instead,
@@ -89,11 +90,7 @@ class _ServerBundle(typing.NamedTuple):
             'base_url': self.base_url,
             # Shaped like ``auth`` in the config, with each value as resolved rather than as written.
             'auth': {
-                'upstream': {
-                    'type': self.auth_type,
-                    'flow': self.auth_flow,
-                    'api_key_header': self.auth_api_key_header,
-                },
+                'upstream': {'type': self.auth_type, **self.auth_upstream_settings},
                 'mcp': self._describe_mcp_auth(),
             },
             'exposure': self.exposure,
