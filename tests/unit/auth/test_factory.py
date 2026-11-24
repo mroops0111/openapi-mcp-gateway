@@ -199,7 +199,7 @@ class TestUpstreamSettingsWithoutEffect:
             ({**CLIENT_CREDENTIALS, 'issuer': ISSUER}, r'issuer needs auth\.upstream\.flow authorization_code,'),
             (
                 {**CLIENT_CREDENTIALS, 'enforce_scopes': True},
-                r'enforce_scopes needs auth\.upstream\.flow authorization_code,',
+                r'enforce_scopes needs auth\.upstream\.flow authorization_code or token_exchange,',
             ),
             (
                 {**CLIENT_CREDENTIALS, 'authorization_url': 'https://idp/authorize'},
@@ -207,7 +207,7 @@ class TestUpstreamSettingsWithoutEffect:
             ),
             (
                 {**CLIENT_CREDENTIALS, 'flow': None, 'required_scopes': ['openid']},
-                r'required_scopes needs auth\.upstream\.flow authorization_code,',
+                r'required_scopes needs auth\.upstream\.flow authorization_code or token_exchange,',
             ),
         ],
     )

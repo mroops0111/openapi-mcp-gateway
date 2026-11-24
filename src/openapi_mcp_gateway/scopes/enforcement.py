@@ -135,7 +135,7 @@ class ScopeFilterMiddleware:
         guarded = _GUARDED_REQUESTS.get(ctx.method)
         if guarded is not None:
             name = str((ctx.params or {}).get(guarded.name_param, ''))
-            refusal = self._scope_registry.refusal(name, await self._grant_source.read_call_grant())
+            refusal = await self._scope_registry.call_refusal(name, self._grant_source)
             if refusal is not None:
                 return guarded.refuse(refusal)
         # Handlers return the wire form by the time middleware sees it, so a list is filtered as JSON.

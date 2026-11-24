@@ -1,4 +1,6 @@
 import asyncio
+import collections.abc
+import dataclasses
 import logging
 import time
 
@@ -16,6 +18,18 @@ TOKEN_EXCHANGE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange'  #
 ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token'  # noqa: S105
 
 
+@dataclasses.dataclass(frozen=True)
+class UpstreamExchangedToken:
+    """An upstream token an exchange returned, with the scopes the issuer granted on it.
+
+    RFC 8693 §2.2.1 lets a response leave ``scope`` out when it equals what was asked for,
+    so ``scopes`` are then the ones requested.
+    """
+
+    access_token: str
+    scopes: tuple[str, ...]
+
+
 class UpstreamTokenExchangeClient:
     """Exchange a caller's access token for one the upstream API accepts, per RFC 8693.
 
@@ -29,6 +43,7 @@ class UpstreamTokenExchangeClient:
     Results are cached per subject token, since one MCP session makes many tool calls.
     The cache is keyed by the token itself rather than by user,
     so a re-authenticated caller never picks up credentials minted for an older session.
+    The scopes asked for follow from the subject token, so they need no place in the key.
     Expired entries are dropped on each new exchange, so callers whose tokens rotate do not grow the cache forever.
     Concurrent first calls with one subject token share one exchange, while calls for other callers do not wait on it.
 
@@ -42,22 +57,23 @@ class UpstreamTokenExchangeClient:
         token_endpoint: str,
         client_id: str,
         client_secret: str,
-        scopes: list[str] | None = None,
         audience_params: dict[str, str] | None = None,
         refresh_skew_seconds: float = DEFAULT_REFRESH_SKEW_SECONDS,
     ) -> None:
         self.token_endpoint = token_endpoint
         self.client_id = client_id
         self.client_secret = client_secret
-        self.scopes = scopes or []
         self.audience_params = audience_params or {}
         self.refresh_skew_seconds = refresh_skew_seconds
-        self._cache: dict[str, tuple[str, float]] = {}
+        self._cache: dict[str, tuple[UpstreamExchangedToken, float]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._http_client: httpx.AsyncClient | None = None
 
-    async def exchange(self, subject_token: str) -> str:
-        """Return an upstream token for ``subject_token``, from cache when one is still fresh."""
+    async def exchange(self, subject_token: str, scopes: collections.abc.Sequence[str]) -> UpstreamExchangedToken:
+        """Return an upstream token for ``subject_token`` asking for ``scopes``, from cache when one is still fresh.
+
+        No ``scope`` is sent when ``scopes`` is empty, so the issuer applies its own default.
+        """
         cached = self._cached(subject_token)
         if cached is not None:
             return cached
@@ -68,7 +84,7 @@ class UpstreamTokenExchangeClient:
                 if cached is not None:
                     return cached
                 self._drop_expired()
-                return await self._request_exchange(subject_token)
+                return await self._request_exchange(subject_token, scopes)
         finally:
             if not lock.locked():
                 self._locks.pop(subject_token, None)
@@ -86,16 +102,18 @@ class UpstreamTokenExchangeClient:
         for subject_token in [token for token, (_, expires_at) in self._cache.items() if now >= expires_at]:
             del self._cache[subject_token]
 
-    def _cached(self, subject_token: str) -> str | None:
+    def _cached(self, subject_token: str) -> UpstreamExchangedToken | None:
         entry = self._cache.get(subject_token)
         if entry is None:
             return None
-        token, expires_at = entry
+        exchanged, expires_at = entry
         if time.monotonic() >= expires_at - self.refresh_skew_seconds:
             return None
-        return token
+        return exchanged
 
-    async def _request_exchange(self, subject_token: str) -> str:
+    async def _request_exchange(
+        self, subject_token: str, scopes: collections.abc.Sequence[str]
+    ) -> UpstreamExchangedToken:
         request_data: dict[str, str] = {
             **self.audience_params,
             'grant_type': TOKEN_EXCHANGE_GRANT_TYPE,
@@ -104,8 +122,8 @@ class UpstreamTokenExchangeClient:
             'client_id': self.client_id,
             'client_secret': self.client_secret,
         }
-        if self.scopes:
-            request_data['scope'] = ' '.join(self.scopes)
+        if scopes:
+            request_data['scope'] = ' '.join(scopes)
 
         if self._http_client is None:
             self._http_client = httpx.AsyncClient()
@@ -114,7 +132,7 @@ class UpstreamTokenExchangeClient:
             'Token exchange: endpoint=%s audience_params=%s scopes=%s',
             self.token_endpoint,
             self.audience_params,
-            self.scopes,
+            scopes,
         )
         response = await self._http_client.post(
             self.token_endpoint,
@@ -141,12 +159,16 @@ class UpstreamTokenExchangeClient:
             logger.warning('Token exchange response missing access_token: endpoint=%s', self.token_endpoint)
             raise RuntimeError('Token exchange response missing access_token')
 
+        granted = payload.get('scope')
+        exchanged = UpstreamExchangedToken(
+            access_token, tuple(str(granted).split()) if granted is not None else tuple(scopes)
+        )
         expires_in = parse_expires_in(payload.get('expires_in')) or DEFAULT_TOKEN_LIFETIME_SECONDS
-        self._cache[subject_token] = (access_token, time.monotonic() + expires_in)
+        self._cache[subject_token] = (exchanged, time.monotonic() + expires_in)
         logger.info(
             'Token exchange succeeded: endpoint=%s expires_in=%s scope=%r',
             self.token_endpoint,
             expires_in,
-            payload.get('scope'),
+            granted,
         )
-        return access_token
+        return exchanged

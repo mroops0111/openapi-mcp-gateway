@@ -14,11 +14,13 @@ from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamTokenSourceAuthResolver,
 )
-from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, ScopeRegistry
+from openapi_mcp_gateway.auth.upstream.token_exchange import UpstreamExchangedToken, UpstreamTokenExchangeClient
+from openapi_mcp_gateway.scopes import McpAccessToken, McpUnrestrictedScopePolicy, ScopeRegistry
 from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.client_metadata import serving_resolver
 from tests.constants import API_URL, ISSUER, JWKS_URL, TOKEN_URL
+from tests.context import authenticated_as
 from tests.flow import (
     auth_context,
     build_selected_oauth_flow,
@@ -26,6 +28,7 @@ from tests.flow import (
     server_entry,
     spec_with_authorization_code,
 )
+from tests.scope import SECURED_CEILING, secured_registry
 
 
 class TestTokenExchangeFlowHandler:
@@ -84,7 +87,7 @@ class TestTokenExchangeFlowHandler:
         assert setup.verifier.required_scopes == ('mcp.access',)
         assert isinstance(setup.resolver, UpstreamTokenSourceAuthResolver)
         assert isinstance(setup.resolver._token_source, TokenExchangeBridge)
-        assert setup.resolver._token_source.upstream.scopes == ['email', 'profile']
+        assert setup.resolver._token_source._ceiling == ['email', 'profile']
 
     def test_advertised_scopes_are_the_ones_a_caller_must_hold(self):
         """RFC 9728 ``scopes_supported`` tells a client what to register for, so it is the inbound set.
@@ -123,26 +126,60 @@ class TestTokenExchangeBridge:
 
     async def test_the_callers_token_is_exchanged(self):
         """The token the transport verified is what reaches the issuer's token endpoint."""
-        upstream = MagicMock()
-        upstream.exchange = AsyncMock(return_value='upstream-token')
-        caller = MagicMock()
-        caller.token = 'caller-token'
+        upstream = _exchange_client(UpstreamExchangedToken('upstream-token', ()))
 
-        with patch('openapi_mcp_gateway.auth.flows.token_exchange.get_access_token', return_value=caller):
-            token = await TokenExchangeBridge(upstream).get_token()
+        with authenticated_as(_caller(['pets:read'])):
+            token = await _bridge(upstream).get_token()
 
         assert token == 'upstream-token'
-        upstream.exchange.assert_awaited_once_with('caller-token')
+        assert upstream.exchange.await_args is not None
+        assert upstream.exchange.await_args.args[0] == 'caller-token'
 
     async def test_no_token_without_an_authenticated_caller(self):
         """Nothing is exchanged, so the upstream refuses the call rather than the gateway serving it anonymously."""
-        upstream = MagicMock()
-        upstream.exchange = AsyncMock()
+        upstream = _exchange_client(UpstreamExchangedToken('upstream-token', ()))
 
-        with patch('openapi_mcp_gateway.auth.flows.token_exchange.get_access_token', return_value=None):
-            assert await TokenExchangeBridge(upstream).get_token() is None
+        with authenticated_as(None):
+            assert await _bridge(upstream).get_token() is None
 
         upstream.exchange.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ('mcp_scopes', 'asked'),
+        [(['pets:read'], ['read:pets']), (['pets:delete'], ['read:pets', 'write:pets']), (['openid'], [])],
+    )
+    async def test_each_exchange_asks_for_what_the_callers_mcp_scopes_open(self, mcp_scopes, asked):
+        """An exchange asks the issuer for no more than a sign-in under the same MCP scopes would."""
+        upstream = _exchange_client(UpstreamExchangedToken('upstream-token', ()))
+
+        with authenticated_as(_caller(mcp_scopes)):
+            await _bridge(upstream).get_token()
+
+        upstream.exchange.assert_awaited_once_with('caller-token', asked)
+
+    async def test_the_call_grant_is_what_the_exchange_granted(self):
+        upstream = _exchange_client(UpstreamExchangedToken('upstream-token', ('read:pets',)))
+
+        with authenticated_as(_caller(['pets:read'])):
+            grant = await _bridge(upstream).read_call_grant()
+
+        assert grant.mcp_scopes == {'pets:read'}
+        assert grant.upstream_scopes == {'read:pets'}
+
+    async def test_a_call_grant_and_its_token_share_one_exchange(self):
+        """The grant is read before the call and the token on it, and the exchange client serves both from one answer."""
+        upstream = UpstreamTokenExchangeClient(token_endpoint=TOKEN_URL, client_id='gateway', client_secret='secret')
+        response = MagicMock(status_code=200)
+        response.json.return_value = {'access_token': 'upstream-token', 'scope': 'read:pets', 'expires_in': 3600}
+        upstream._http_client = MagicMock()
+        upstream._http_client.post = AsyncMock(return_value=response)
+        bridge = _bridge(upstream)
+
+        with authenticated_as(_caller(['pets:read'])):
+            await bridge.read_call_grant()
+            await bridge.get_token()
+
+        upstream._http_client.post.assert_awaited_once()
 
 
 def _token_exchange_entry(**overrides) -> ServerConfig:
@@ -189,3 +226,20 @@ def _build_token_exchange(entry: ServerConfig):
                 upstream_oauth_flow=None,
             )
         )
+
+
+def _bridge(upstream: typing.Any) -> TokenExchangeBridge:
+    """A bridge over the secured petstore, whose ceiling is every scope its operations declare."""
+    return TokenExchangeBridge(upstream, secured_registry(), SECURED_CEILING, [])
+
+
+def _exchange_client(exchanged: UpstreamExchangedToken) -> MagicMock:
+    """An exchange client answering every exchange with ``exchanged``."""
+    upstream = MagicMock()
+    upstream.exchange = AsyncMock(return_value=exchanged)
+    return upstream
+
+
+def _caller(mcp_scopes: list[str]) -> McpAccessToken:
+    """The token the transport verified for a caller holding ``mcp_scopes``."""
+    return McpAccessToken(token='caller-token', client_id='agent', scopes=mcp_scopes, upstream_scopes=None)

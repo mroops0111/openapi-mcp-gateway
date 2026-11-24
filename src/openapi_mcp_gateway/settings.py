@@ -64,10 +64,10 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
 
-    # The upstream scopes every sign-in asks for, whatever the operations it opens need,
+    # The upstream scopes every sign-in or token exchange asks for, whatever the operations it opens need,
     # such as ``offline_access`` for a refresh token or ``openid`` for the user's identity.
-    # ``scopes`` is the most a sign-in asks for beyond them.
-    # Only ``authorization_code`` signs the user in, so no other flow reads them.
+    # ``scopes`` is the most a sign-in or exchange asks for beyond them.
+    # Only ``authorization_code`` and ``token_exchange`` obtain a token per user, so no other flow reads them.
     required_scopes: list[str] = pydantic.Field(default_factory=list)
 
     # The upstream authorization server's issuer identifier, exactly as its metadata publishes it.

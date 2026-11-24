@@ -114,6 +114,7 @@ class McpExternalIssuerTokenVerifier(TokenVerifier):
     with the signing keys read from the JWKS the issuer's metadata names.
     ``PyJWKClient`` caches the issuer's signing keys and refetches on an unknown ``kid``, so rotation needs no restart.
 
+    ``mcp_grantable_scopes`` is what each token may step up to, or only what it holds when ``None``.
     ``audience`` is the gateway's own canonical URI, never the upstream API's.
     The MCP spec requires a server to accept only tokens minted for itself,
     which is why the upstream is reached with a separately exchanged token rather than this one.
@@ -125,11 +126,13 @@ class McpExternalIssuerTokenVerifier(TokenVerifier):
         audience: str,
         jwks_uri: str,
         required_scopes: typing.Sequence[str] = (),
+        mcp_grantable_scopes: typing.Sequence[str] | None = None,
     ) -> None:
         self.issuer = issuer.rstrip('/')
         self.audience = audience
         self.jwks_uri = jwks_uri
         self.required_scopes = tuple(required_scopes)
+        self.mcp_grantable_scopes = None if mcp_grantable_scopes is None else list(mcp_grantable_scopes)
         self._jwk_client = _build_jwk_client(jwks_uri)
 
     async def verify_token(self, token: str) -> McpAccessToken | None:
@@ -195,9 +198,9 @@ class McpExternalIssuerTokenVerifier(TokenVerifier):
             expires_at=int(expires_at) if expires_at is not None else None,
             resource=self.audience,
             subject=str(subject) if subject is not None else None,
-            # The issuer, not the gateway, decides what the token may step up to, and records no upstream grant.
+            # The token records no upstream grant, which an exchange finds out on the call.
             upstream_scopes=None,
-            mcp_grantable_scopes=list(scopes),
+            mcp_grantable_scopes=list(scopes) if self.mcp_grantable_scopes is None else self.mcp_grantable_scopes,
         )
 
 

@@ -22,7 +22,6 @@ from tests.constants import GATEWAY_URL
 from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, connect
 from tests.oauth import authorization_code_gateway, query_value, server_of, sign_in, upstream_token_response
 from tests.serving import serve, serve_gateway
-from tests.spec import write_spec
 from tests.tool_result import text_of
 
 
@@ -57,14 +56,6 @@ READ_CHALLENGE = DELETE_CHALLENGE.replace('pets:delete', 'pets:read')
 
 # A pet read through the resource the petstore's ``getPetById`` is promoted to.
 PET_RESOURCE = 'petstore://pets/7'
-
-# The upstream scopes each petstore operation declares in its OpenAPI ``security``, keyed by operationId.
-UPSTREAM_SECURITY = {
-    'listPets': [{'oauth2': ['read:pets']}],
-    'getPetById': [{'oauth2': ['read:pets']}],
-    'createPet': [{'oauth2': ['write:pets']}],
-    'deletePet': [{'oauth2': ['read:pets', 'write:pets']}],
-}
 
 # Why a token whose upstream grant lacks what ``deletePet`` declares is refused.
 DELETE_UPSTREAM_REFUSAL = (
@@ -320,17 +311,6 @@ class TestAuthorizationServer:
     def test_other_clients_granted_an_undefined_scope_are_refused_at_startup(self, make_gateway):
         with pytest.raises(ValueError, match=r'other_clients: pets:raed'):
             make_gateway(other_clients={'scopes': ['pets:raed']})
-
-
-@pytest.fixture
-def secured_spec(petstore_json_path: pathlib.Path, tmp_path: pathlib.Path) -> pathlib.Path:
-    """The petstore fixture with each operation's upstream scopes declared."""
-    spec = json.loads(petstore_json_path.read_text())
-    for path_item in spec['paths'].values():
-        for operation in path_item.values():
-            if isinstance(operation, dict) and operation.get('operationId') in UPSTREAM_SECURITY:
-                operation['security'] = UPSTREAM_SECURITY[operation['operationId']]
-    return write_spec(tmp_path, spec, 'secured-petstore.json')
 
 
 @pytest.fixture

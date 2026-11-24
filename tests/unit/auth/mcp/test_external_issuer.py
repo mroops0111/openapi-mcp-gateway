@@ -11,6 +11,7 @@ from openapi_mcp_gateway.auth.mcp.external_issuer import (
     McpTokenVerificationError,
     fetch_mcp_external_issuer_metadata,
 )
+from openapi_mcp_gateway.scopes import grant_of
 from tests.constants import ATTACKER_URL, GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
 
 
@@ -93,6 +94,21 @@ class TestExternalIssuerTokenVerifier:
         assert result.subject == 'user-123'
         assert result.scopes == ['read', 'write']
         assert result.resource == GATEWAY_RESOURCE
+
+    @pytest.mark.parametrize(
+        ('grantable', 'reachable'),
+        [(['read', 'write', 'admin'], {'read', 'write', 'admin'}), (None, {'read'})],
+        ids=['every operation scope', 'only what it holds'],
+    )
+    async def test_a_token_reaches_what_the_endpoint_lets_it_step_up_to(self, signing_key, grantable, reachable):
+        """The issuer alone knows what it would grant, so the endpoint names how far a step-up may go."""
+        verifier = _verifier(signing_key, mcp_grantable_scopes=grantable)
+
+        result = await verifier.verify_token(_issue(signing_key, scope='read'))
+
+        assert result is not None
+        assert grant_of(result).mcp_reachable_scopes == reachable
+        assert result.upstream_scopes is None
 
     async def test_non_jwt_returns_none(self, signing_key):
         """An opaque credential is not this verifier's to judge, so it reports no opinion.

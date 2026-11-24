@@ -217,7 +217,7 @@ class MetaToolGenerator:
                 raise _unknown_operation_error(name)
             # A 2026-07-28 client lacking MCP scopes was already refused over HTTP with a scope challenge.
             # This refusal covers older clients, which send no Mcp-Param-Operation header, and a short upstream grant.
-            refusal = self.scope_registry.refusal(name, await self.grant_source.read_call_grant())
+            refusal = await self.scope_registry.call_refusal(name, self.grant_source)
             if refusal is not None:
                 raise ToolError(refusal)
             return await operation.callable_(**arguments, ctx=ctx)

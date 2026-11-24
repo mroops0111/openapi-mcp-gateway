@@ -135,7 +135,7 @@ class McpExternalIssuerAuthority(McpTokenAuthority, McpSettingsReader):
 
     @property
     def mcp_settings(self) -> frozenset[McpSetting]:
-        return frozenset({'issuer', 'required_scopes'})
+        return frozenset({'issuer', 'required_scopes', 'operation_scopes'})
 
     @property
     def mcp_settings_requirement(self) -> str:
@@ -173,6 +173,9 @@ class McpExternalIssuerAuthority(McpTokenAuthority, McpSettingsReader):
             audience=resource,
             jwks_uri=metadata.jwks_uri,
             required_scopes=mcp_endpoint_scopes,
+            # The issuer alone knows the most it would grant, so every scope an operation names stays in reach.
+            # A client then sees each tool and steps up for it, and the issuer decides whether to grant it.
+            mcp_grantable_scopes=list(context.scope_registry.mcp_policy.mcp_defined_scopes) or None,
         )
         return dataclasses.replace(
             setup,
