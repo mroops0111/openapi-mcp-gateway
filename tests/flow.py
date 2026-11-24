@@ -1,4 +1,5 @@
-from openapi_mcp_gateway.auth.assembly import AuthTypeContext
+from openapi_mcp_gateway.auth.assembly import AuthTypeContext, ServerAuthSetup
+from openapi_mcp_gateway.auth.flows import build_oauth_flow, select_oauth_flow
 from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, ScopeRegistry
 from openapi_mcp_gateway.settings import AuthConfig, ServerConfig
@@ -89,3 +90,8 @@ def auth_context(entry: ServerConfig, spec: OpenAPISpec) -> AuthTypeContext:
 def server_entry(auth: AuthConfig, name: str = 'srv') -> ServerConfig:
     """Minimal ``ServerConfig`` carrying ``auth`` for factory tests."""
     return ServerConfig(name=name, spec='dummy.json', base_url=API_URL, auth=auth)
+
+
+def build_selected_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
+    """The OAuth flow ``context`` selects, built as ``OAuth2Handler`` builds it."""
+    return build_oauth_flow(context, select_oauth_flow(context))

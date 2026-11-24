@@ -468,14 +468,10 @@ class Gateway:
                 scope_registry=scope_registry,
                 tool_call_target=tool_call_target,
                 base_url=base_url,
-                upstream_auth_summary=_summarize_upstream_auth(server_config.auth, auth),
+                upstream_auth_summary=auth.upstream_summary,
                 mcp_auth_summary=auth.mcp_summary,
                 auth_type=server_config.auth.upstream.type,
-                auth_api_key_header=(
-                    server_config.auth.upstream.api_key_header
-                    if server_config.auth.upstream.type == 'api_key'
-                    else None
-                ),
+                auth_api_key_header=auth.upstream_api_key_header,
                 auth_flow=auth.flow_type,
                 policy_summary=_policy_summary(server_config.policy),
                 exposure=server_config.exposure.style,
@@ -491,7 +487,7 @@ class Gateway:
             base_url,
             len(exposed_tools),
             len(resource_names),
-            _format_log_label(_summarize_upstream_auth(server_config.auth, auth)),
+            _format_log_label(auth.upstream_summary),
             _format_log_label(auth.mcp_summary),
         )
 
@@ -905,18 +901,6 @@ def _scoped_clients(server_config: ServerConfig) -> dict[str, list[str]]:
     if mcp.operation_scopes is not None and other_clients is not None:
         scopes['other_clients'] = other_clients.scopes
     return scopes
-
-
-def _summarize_upstream_auth(auth: AuthConfig, setup: ServerAuthSetup) -> str:
-    """A short label of how the upstream is reached, as ``mechanism (detail)`` like ``mcp_summary``.
-
-    It names the header for api_key and the OAuth flow that was resolved, which the config may leave unset.
-    """
-    if auth.upstream.type == 'api_key':
-        return f'api_key ({auth.upstream.api_key_header})'
-    if auth.upstream.type == 'oauth2' and setup.flow_type:
-        return f'oauth2 ({setup.flow_type})'
-    return auth.upstream.type
 
 
 def _format_log_label(label: str) -> str:

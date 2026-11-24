@@ -53,18 +53,6 @@ def detect_upstream_oauth_flows(spec: OpenAPISpec) -> list[UpstreamOAuthFlow]:
     return flows
 
 
-def detect_primary_upstream_oauth_flow(spec: OpenAPISpec) -> UpstreamOAuthFlow | None:
-    """Pick one OAuth2 flow, preferring ``authorization_code``, or return ``None`` if the spec declares none."""
-    flows = detect_upstream_oauth_flows(spec)
-    if not flows:
-        return None
-
-    for flow in flows:
-        if flow.flow_type == 'authorization_code':
-            return flow
-    return flows[0]
-
-
 def detect_unsupported_upstream_oauth_flows(spec: OpenAPISpec) -> list[str]:
     """Return spec-declared OAuth2 flow names that the gateway does not implement.
 

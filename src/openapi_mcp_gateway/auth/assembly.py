@@ -93,6 +93,8 @@ class ServerAuthSetup:
     set wherever the gateway issues this endpoint's tokens, whether through ``provider`` or its own routes.
     ``extensions`` are the MCP extensions the server advertises, such as how a client may obtain a token.
     ``mcp_summary`` labels who issues this endpoint's tokens, as ``mechanism (detail)``.
+    ``upstream_summary`` labels how the upstream is reached in the same form,
+    and ``upstream_api_key_header`` names the header an API key travels in, where one does.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
@@ -107,6 +109,8 @@ class ServerAuthSetup:
     authorization_server_metadata: OAuthMetadata | None = None
     extensions: list[Extension] = dataclasses.field(default_factory=list)
     mcp_summary: str = 'open'
+    upstream_summary: str = 'none'
+    upstream_api_key_header: str | None = None
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
     # The flow that was resolved, which is not always the one the config named.
     # Set by the factory, so that every handler stays unaware of it.
@@ -158,15 +162,22 @@ class UpstreamSelection:
     mcp_settings_reader: McpSettingsReader | None = None
 
 
-class AuthTypeHandler(abc.ABC):
-    """Strategy that turns one ``auth.upstream.type`` into the components the gateway wires up."""
+# What one ``AuthTypeHandler`` settles in ``select``, handed back to its ``build``.
+SelectionT = typing.TypeVar('SelectionT', bound=UpstreamSelection)
+
+
+class AuthTypeHandler(abc.ABC, typing.Generic[SelectionT]):
+    """Strategy that turns one ``auth.upstream.type`` into the components the gateway wires up.
+
+    ``build`` receives what ``select`` settled, so nothing is resolved twice.
+    """
 
     @abc.abstractmethod
-    def select(self, context: AuthTypeContext) -> UpstreamSelection:
+    def select(self, context: AuthTypeContext) -> SelectionT:
         """Settle what this handler would build, without any I/O."""
 
     @abc.abstractmethod
-    def build(self, context: AuthTypeContext) -> ServerAuthSetup:
+    def build(self, context: AuthTypeContext, selection: SelectionT) -> ServerAuthSetup:
         """Return the resolver, and for OAuth also the provider or verifier and their settings."""
 
 
@@ -175,7 +186,7 @@ class OAuthFlowContext:
     """What an ``OAuthFlowHandler`` assembles from, which is what every auth type gets plus the resolved flow.
 
     Populated by ``build_oauth_flow`` before it dispatches to a concrete handler.
-    ``upstream_oauth_flow`` is unset for ``token_exchange``, which runs no flow against the upstream.
+    ``upstream_oauth_flow`` is unset for a flow that reads none from the spec, as ``reads_spec_oauth_flow`` says.
     """
 
     auth_context: AuthTypeContext
@@ -218,7 +229,7 @@ class OAuthFlowContext:
         return self.auth_context.mcp_resource_url
 
     def require_upstream_oauth_flow(self) -> UpstreamOAuthFlow:
-        """The upstream OAuth flow, which every flow but ``token_exchange`` runs."""
+        """The upstream OAuth flow, which every flow reading one from the spec runs."""
         if self.upstream_oauth_flow is None:
             raise ValueError(
                 f'Server "{self.entry.name}": this flow needs an upstream OAuth flow, and none was resolved.'
@@ -239,6 +250,11 @@ class OAuthFlowHandler(abc.ABC):
     @abc.abstractmethod
     def upstream_principal(self) -> UpstreamPrincipal:
         """Whose identity the upstream sees under this flow."""
+
+    @property
+    def reads_spec_oauth_flow(self) -> bool:
+        """Whether the flow runs one the spec declares against the upstream, as every flow does by default."""
+        return True
 
     @abc.abstractmethod
     def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:

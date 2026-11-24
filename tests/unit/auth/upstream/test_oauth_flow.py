@@ -1,5 +1,4 @@
 from openapi_mcp_gateway.auth.upstream.oauth_flow import (
-    detect_primary_upstream_oauth_flow,
     detect_unsupported_upstream_oauth_flows,
     detect_upstream_oauth_flows,
 )
@@ -70,30 +69,6 @@ class TestDetectUpstreamOAuthFlows:
         flows = detect_upstream_oauth_flows(_spec({'oauth2': scheme}))
         types = sorted(flow.flow_type for flow in flows)
         assert types == ['authorization_code', 'client_credentials']
-
-
-class TestDetectPrimaryUpstreamOAuthFlow:
-    """Pick a single representative flow, preferring ``authorization_code``."""
-
-    def test_returns_none_without_oauth(self):
-        """Specs with no OAuth2 flows resolve to ``None``."""
-        assert detect_primary_upstream_oauth_flow(_spec({})) is None
-
-    def test_prefers_authorization_code(self):
-        """``authorization_code`` wins over ``client_credentials`` even when listed second."""
-        scheme = {
-            'type': 'oauth2',
-            'flows': {**CLIENT_CREDS_SCHEME['flows'], **AUTH_CODE_SCHEME['flows']},
-        }
-        primary = detect_primary_upstream_oauth_flow(_spec({'oauth2': scheme}))
-        assert primary is not None
-        assert primary.flow_type == 'authorization_code'
-
-    def test_falls_back_to_first_when_no_auth_code(self):
-        """Without an ``authorization_code`` flow, the first detected flow is returned."""
-        primary = detect_primary_upstream_oauth_flow(_spec({'oauth2': CLIENT_CREDS_SCHEME}))
-        assert primary is not None
-        assert primary.flow_type == 'client_credentials'
 
 
 class TestDetectUnsupportedUpstreamOAuthFlows:

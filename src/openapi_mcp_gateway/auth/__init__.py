@@ -12,7 +12,7 @@ from .flows import (
 )
 from .flows.client_credentials import UpstreamClientCredentialsFlowHandler
 from .mcp.authorization_code import McpAuthorizationCodeServer
-from .upstream.oauth_flow import UpstreamOAuthFlow, detect_primary_upstream_oauth_flow, detect_upstream_oauth_flows
+from .upstream.oauth_flow import UpstreamOAuthFlow, detect_upstream_oauth_flows
 from .upstream.resolver import (
     UpstreamAuthResolver,
     UpstreamNoCredentialAuthResolver,
@@ -46,6 +46,5 @@ __all__ = [
     'UpstreamTokenSourceAuthResolver',
     'build_auth',
     'build_oauth_flow',
-    'detect_primary_upstream_oauth_flow',
     'detect_upstream_oauth_flows',
 ]

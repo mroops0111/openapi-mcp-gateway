@@ -1,5 +1,6 @@
 import dataclasses
 import logging
+import typing
 
 from ...openapi import OpenAPISpec
 from ...settings import ServerConfig
@@ -32,7 +33,8 @@ class OAuthFlowSelection:
 def select_oauth_flow(context: AuthTypeContext) -> OAuthFlowSelection:
     """Resolve the effective OAuth flow for ``context.entry`` and its handler, reading only the config and spec.
 
-    Resolution order:
+    A flow named in the config that reads no flow from the spec is taken as it is.
+    Otherwise the resolution order is:
 
     1. Detect all OAuth flows declared in the spec.
     2. Pick one per ``auth.upstream.flow`` if set, otherwise prefer ``authorization_code``.
@@ -40,26 +42,27 @@ def select_oauth_flow(context: AuthTypeContext) -> OAuthFlowSelection:
     4. Apply config-supplied URL overrides on top of the spec-declared values.
     """
     entry = context.entry
+    named_handler_class = OAUTH_FLOW_HANDLERS.get(entry.auth.upstream.flow or '')
+    if named_handler_class is not None and not named_handler_class().reads_spec_oauth_flow:
+        return OAuthFlowSelection(named_handler_class, typing.cast(str, entry.auth.upstream.flow), None)
     upstream_oauth_flow = resolve_upstream_oauth_flow(entry, context.spec)
-    flow_type = upstream_oauth_flow.flow_type if upstream_oauth_flow else entry.auth.upstream.flow
-    handler_class = OAUTH_FLOW_HANDLERS.get(flow_type or '')
-    if flow_type is None or handler_class is None:
+    handler_class = OAUTH_FLOW_HANDLERS.get(upstream_oauth_flow.flow_type)
+    if handler_class is None:
         raise ValueError(
-            f'Server "{entry.name}": unsupported OAuth flow type "{flow_type}". '
+            f'Server "{entry.name}": unsupported OAuth flow type "{upstream_oauth_flow.flow_type}". '
             f'Supported flows: {sorted(OAUTH_FLOW_HANDLERS)}'
         )
-    return OAuthFlowSelection(handler_class, flow_type, upstream_oauth_flow)
+    return OAuthFlowSelection(handler_class, upstream_oauth_flow.flow_type, upstream_oauth_flow)
 
 
-def build_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
-    """Build the OAuth flow ``select_oauth_flow`` resolves for ``context.entry``."""
-    selection = select_oauth_flow(context)
+def build_oauth_flow(context: AuthTypeContext, selection: OAuthFlowSelection) -> ServerAuthSetup:
+    """Build the OAuth flow ``selection`` settled for ``context.entry``."""
     flow_context = OAuthFlowContext(context, selection.upstream_oauth_flow)
     return dataclasses.replace(selection.handler_class().build(flow_context), flow_type=selection.flow_type)
 
 
-def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> UpstreamOAuthFlow | None:
-    """Pick the effective OAuth flow for ``entry`` from the spec and config, or ``None`` for ``token_exchange``.
+def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> UpstreamOAuthFlow:
+    """Pick the effective OAuth flow for ``entry`` from the spec and config.
 
     Honours ``auth.upstream.flow`` as an explicit override,
     falls back to ``authorization_code`` when the spec declares both,
@@ -73,11 +76,6 @@ def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> Upstr
     so ``auth.upstream.type: passthrough`` is never reached from here and must be asked for by name.
     """
     explicit_flow_type = entry.auth.upstream.flow
-    # No spec can declare token_exchange and it talks to no upstream authorization server,
-    # so there is no upstream flow to resolve, and consulting the spec would only report a misleading missing flow.
-    if explicit_flow_type == 'token_exchange':
-        return None
-
     declared_flows = detect_upstream_oauth_flows(spec)
     selected_flow = _pick_from_declared_flows(declared_flows, explicit_flow_type)
 

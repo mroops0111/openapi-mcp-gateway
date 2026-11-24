@@ -63,6 +63,12 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
         return 'user'
 
     @property
+    def reads_spec_oauth_flow(self) -> bool:
+        # No spec can declare token_exchange, and it talks to no upstream authorization server.
+        # Consulting the spec would only report a misleading missing flow.
+        return False
+
+    @property
     def mcp_settings(self) -> frozenset[McpSetting]:
         return frozenset({'issuer', 'required_scopes'})
 

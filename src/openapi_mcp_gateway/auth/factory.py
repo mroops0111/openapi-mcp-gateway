@@ -1,3 +1,7 @@
+import abc
+import dataclasses
+import typing
+
 from .assembly import (
     AuthTypeContext,
     AuthTypeHandler,
@@ -7,7 +11,7 @@ from .assembly import (
     UpstreamSelection,
 )
 from .authorities import MCP_TOKEN_AUTHORITIES, select_mcp_token_authority
-from .flows import OAUTH_FLOW_HANDLERS, build_oauth_flow, select_oauth_flow
+from .flows import OAUTH_FLOW_HANDLERS, OAuthFlowSelection, build_oauth_flow, select_oauth_flow
 from .upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
@@ -21,17 +25,17 @@ BEARER_PREFIX = 'Bearer '
 DEFAULT_AUTHORIZATION_HEADER = 'Authorization'
 
 
-class UpstreamNoCredentialHandler(AuthTypeHandler):
+class UpstreamNoCredentialHandler(AuthTypeHandler[UpstreamSelection]):
     """Send nothing upstream, for a public API."""
 
     def select(self, context: AuthTypeContext) -> UpstreamSelection:
         return UpstreamSelection(upstream_principal='gateway')
 
-    def build(self, context: AuthTypeContext) -> ServerAuthSetup:
+    def build(self, context: AuthTypeContext, selection: UpstreamSelection) -> ServerAuthSetup:
         return ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver())
 
 
-class UpstreamStaticCredentialHandler(AuthTypeHandler):
+class UpstreamStaticCredentialHandler(AuthTypeHandler[UpstreamSelection]):
     """Send one fixed credential, captured from config at startup.
 
     Shared by ``bearer`` and ``api_key``, which differ only in header name and prefix.
@@ -45,16 +49,20 @@ class UpstreamStaticCredentialHandler(AuthTypeHandler):
     def select(self, context: AuthTypeContext) -> UpstreamSelection:
         return UpstreamSelection(upstream_principal='gateway')
 
-    def build(self, context: AuthTypeContext) -> ServerAuthSetup:
+    def build(self, context: AuthTypeContext, selection: UpstreamSelection) -> ServerAuthSetup:
         token = context.entry.auth.upstream.resolve_token()
-        if not token:
-            return ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver())
-        return ServerAuthSetup(
-            resolver=UpstreamStaticAuthResolver(
-                header_value=f'{self.value_prefix}{token}',
-                header_name=self.resolve_header_name(context),
+        resolver = (
+            UpstreamStaticAuthResolver(
+                header_value=f'{self.value_prefix}{token}', header_name=self.resolve_header_name(context)
             )
+            if token
+            else UpstreamNoCredentialAuthResolver()
         )
+        return ServerAuthSetup(resolver=resolver, upstream_summary=self.describe(context))
+
+    @abc.abstractmethod
+    def describe(self, context: AuthTypeContext) -> str:
+        """How the upstream is reached, as ``mechanism (detail)``."""
 
     @property
     def value_prefix(self) -> str:
@@ -73,6 +81,9 @@ class UpstreamBearerTokenHandler(UpstreamStaticCredentialHandler):
     def value_prefix(self) -> str:
         return BEARER_PREFIX
 
+    def describe(self, context: AuthTypeContext) -> str:
+        return 'bearer'
+
 
 class UpstreamApiKeyHandler(UpstreamStaticCredentialHandler):
     """A raw key on whichever header the API names, defaulting to ``X-API-Key``."""
@@ -80,8 +91,15 @@ class UpstreamApiKeyHandler(UpstreamStaticCredentialHandler):
     def resolve_header_name(self, context: AuthTypeContext) -> str:
         return context.entry.auth.upstream.api_key_header
 
+    def describe(self, context: AuthTypeContext) -> str:
+        return f'api_key ({self.resolve_header_name(context)})'
 
-class UpstreamPassthroughHandler(AuthTypeHandler):
+    def build(self, context: AuthTypeContext, selection: UpstreamSelection) -> ServerAuthSetup:
+        setup = super().build(context, selection)
+        return dataclasses.replace(setup, upstream_api_key_header=self.resolve_header_name(context))
+
+
+class UpstreamPassthroughHandler(AuthTypeHandler[UpstreamSelection]):
     """Forward the caller's own ``Authorization`` header unchanged.
 
     No credential of the gateway's own, and no MCP-side check either.
@@ -92,28 +110,38 @@ class UpstreamPassthroughHandler(AuthTypeHandler):
     def select(self, context: AuthTypeContext) -> UpstreamSelection:
         return UpstreamSelection(upstream_principal='caller')
 
-    def build(self, context: AuthTypeContext) -> ServerAuthSetup:
-        return ServerAuthSetup(resolver=UpstreamPassthroughAuthResolver())
+    def build(self, context: AuthTypeContext, selection: UpstreamSelection) -> ServerAuthSetup:
+        return ServerAuthSetup(resolver=UpstreamPassthroughAuthResolver(), upstream_summary='passthrough')
 
 
-class OAuth2Handler(AuthTypeHandler):
+@dataclasses.dataclass(frozen=True)
+class OAuthUpstreamSelection(UpstreamSelection):
+    """What ``OAuth2Handler`` settles, carrying the flow it resolved so building does not resolve it again."""
+
+    flow_selection: OAuthFlowSelection = dataclasses.field(kw_only=True)
+
+
+class OAuth2Handler(AuthTypeHandler[OAuthUpstreamSelection]):
     """Defer to ``auth.upstream.flow``, which selects among the OAuth grants in turn and decides the principal."""
 
-    def select(self, context: AuthTypeContext) -> UpstreamSelection:
-        handler = select_oauth_flow(context).handler_class()
-        return UpstreamSelection(
+    def select(self, context: AuthTypeContext) -> OAuthUpstreamSelection:
+        flow_selection = select_oauth_flow(context)
+        handler = flow_selection.handler_class()
+        return OAuthUpstreamSelection(
             upstream_principal=handler.upstream_principal,
             mcp_settings_reader=handler if isinstance(handler, McpSettingsReader) else None,
+            flow_selection=flow_selection,
         )
 
-    def build(self, context: AuthTypeContext) -> ServerAuthSetup:
-        return build_oauth_flow(context)
+    def build(self, context: AuthTypeContext, selection: OAuthUpstreamSelection) -> ServerAuthSetup:
+        setup = build_oauth_flow(context, selection.flow_selection)
+        return dataclasses.replace(setup, upstream_summary=f'oauth2 ({selection.flow_selection.flow_type})')
 
 
 # The extension point for ``auth.upstream.type``, mirrored one level down by ``OAUTH_FLOW_HANDLERS`` for the flow.
 # Adding a type means adding a handler and one entry here, rather than a branch every other type passes through.
 # It follows the classes it names, since Python builds it at import time.
-AUTH_TYPE_HANDLERS: dict[str, type[AuthTypeHandler]] = {
+AUTH_TYPE_HANDLERS: dict[str, type[AuthTypeHandler[typing.Any]]] = {
     'none': UpstreamNoCredentialHandler,
     'bearer': UpstreamBearerTokenHandler,
     'api_key': UpstreamApiKeyHandler,
@@ -148,7 +176,7 @@ def build_auth(context: AuthTypeContext) -> ServerAuthSetup:
     if reader is not None:
         reader.refuse_unusable_settings(entry.auth, entry.name)
 
-    setup = handler.build(context)
+    setup = handler.build(context, selection)
     return authority.attach(setup, context) if authority else setup
 
 

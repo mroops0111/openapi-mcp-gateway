@@ -7,7 +7,6 @@ from openapi_mcp_gateway.auth.assembly import AuthTypeContext, ServerAuthSetup
 from openapi_mcp_gateway.auth.flows import (
     OAuthFlowContext,
     TokenExchangeFlowHandler,
-    build_oauth_flow,
 )
 from openapi_mcp_gateway.auth.flows.token_exchange import TokenExchangeBridge
 from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata, McpExternalIssuerTokenVerifier
@@ -22,6 +21,7 @@ from tests.client_metadata import serving_resolver
 from tests.constants import API_URL, ISSUER, JWKS_URL, TOKEN_URL
 from tests.flow import (
     auth_context,
+    build_selected_oauth_flow,
     build_spec,
     server_entry,
     spec_with_authorization_code,
@@ -112,7 +112,7 @@ class TestTokenExchangeFlowHandler:
         handler_build = patch.object(TokenExchangeFlowHandler, 'build', autospec=True, return_value=setup)
 
         with handler_build as build:
-            build_oauth_flow(auth_context(entry, spec_with_authorization_code()))
+            build_selected_oauth_flow(auth_context(entry, spec_with_authorization_code()))
 
         flow_context = build.call_args.args[1]
         assert flow_context.upstream_oauth_flow is None
