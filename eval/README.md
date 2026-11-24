@@ -189,7 +189,7 @@ Each variant is compared with the baseline per model on success rate, input toke
 
 ### Results
 
-Version 2, test split, 3 runs per task, openapi-mcp-gateway 0.8.0, Pydantic AI 2.69.0, run on 2026-11-24 with `claude-haiku` (`anthropic:claude-haiku-5-5`). OpenAI's and Google's models follow in a later run.
+Test split, 3 runs per task, openapi-mcp-gateway 0.8.0, Pydantic AI 2.69.0, run on 2026-11-24 with `claude-haiku` (`anthropic:claude-haiku-5-5`). OpenAI's and Google's models follow in a later run.
 
 | Variant | Small | Medium | Large | GitHub With Asana | All | Input Tokens | Cost |
 | --- | --- | --- | --- | --- | --- | --- | --- |
