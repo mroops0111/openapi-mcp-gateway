@@ -10,7 +10,7 @@ from openapi_mcp_gateway.auth.mcp.client_metadata import (
     MAX_CACHE_SECONDS,
     MAX_DOCUMENT_BYTES,
     MIN_CACHE_SECONDS,
-    ClientMetadataError,
+    McpClientMetadataError,
     McpClientMetadataResolver,
     parse_client_metadata_document,
 )
@@ -35,7 +35,7 @@ class TestDocumentParsing:
 
     @pytest.mark.parametrize(('body', 'reason'), [(b'{not json', 'is not JSON'), (b'["a"]', 'is not a JSON object')])
     def test_a_body_that_is_not_a_json_object_is_refused(self, body, reason):
-        with pytest.raises(ClientMetadataError, match=reason):
+        with pytest.raises(McpClientMetadataError, match=reason):
             parse_client_metadata_document(CLIENT_METADATA_URL, body)
 
     @pytest.mark.parametrize(
@@ -57,7 +57,7 @@ class TestDocumentParsing:
     )
     def test_a_document_the_gateway_cannot_serve_is_refused(self, changes, reason):
         document = {key: value for key, value in {**client_metadata_document(), **changes}.items() if value is not None}
-        with pytest.raises(ClientMetadataError, match=reason):
+        with pytest.raises(McpClientMetadataError, match=reason):
             parse_client_metadata_document(CLIENT_METADATA_URL, _body(document))
 
     def test_a_document_naming_no_method_or_grants_is_a_public_client(self):
@@ -110,11 +110,11 @@ class TestFetching:
     async def test_a_host_resolving_to_any_private_or_local_address_is_refused(self, addresses):
         """One public address is not enough, since a later resolution may pick another of them."""
         resolver = McpClientMetadataResolver(_serve(client_metadata_document()), resolve_host=resolve_to(*addresses))
-        with pytest.raises(ClientMetadataError, match=r'is at app\.example\.com'):
+        with pytest.raises(McpClientMetadataError, match=r'is at app\.example\.com'):
             await resolver.resolve(CLIENT_METADATA_URL)
 
     async def test_a_client_id_that_is_no_metadata_url_is_never_fetched(self):
-        with pytest.raises(ClientMetadataError, match='is not at an https URL with a path'):
+        with pytest.raises(McpClientMetadataError, match='is not at an https URL with a path'):
             await resolver_over(_serve(client_metadata_document())).resolve('http://app.example.com/client.json')
 
     async def test_the_system_resolver_finds_localhost_local(self):
@@ -122,13 +122,13 @@ class TestFetching:
         resolver = McpClientMetadataResolver(
             _serve({**client_metadata_document(), 'client_id': 'https://localhost/c.json'})
         )
-        with pytest.raises(ClientMetadataError, match='a private or local address'):
+        with pytest.raises(McpClientMetadataError, match='a private or local address'):
             await resolver.resolve('https://localhost/c.json')
 
     async def test_a_private_ip_literal_is_refused_without_resolving(self):
         client_id = 'https://10.0.0.5/client.json'
         resolver = McpClientMetadataResolver(_serve({**client_metadata_document(), 'client_id': client_id}))
-        with pytest.raises(ClientMetadataError, match='a private or local address'):
+        with pytest.raises(McpClientMetadataError, match='a private or local address'):
             await resolver.resolve(client_id)
 
     async def test_a_host_that_does_not_resolve_is_refused(self):
@@ -136,7 +136,7 @@ class TestFetching:
             raise OSError('no such host')
 
         resolver = McpClientMetadataResolver(_serve(client_metadata_document()), resolve_host=fail)
-        with pytest.raises(ClientMetadataError, match='does not resolve'):
+        with pytest.raises(McpClientMetadataError, match='does not resolve'):
             await resolver.resolve(CLIENT_METADATA_URL)
 
     @pytest.mark.parametrize('status', [301, 302, 404, 500])
@@ -146,7 +146,7 @@ class TestFetching:
         transport = httpx.MockTransport(
             lambda request: seen.append(request) or httpx.Response(status, headers={'location': 'http://10.0.0.5/'})
         )
-        with pytest.raises(ClientMetadataError, match=f'answered HTTP {status}'):
+        with pytest.raises(McpClientMetadataError, match=f'answered HTTP {status}'):
             await resolver_over(transport).resolve(CLIENT_METADATA_URL)
         assert len(seen) == 1
 
@@ -158,13 +158,13 @@ class TestFetching:
             seen.append(request)
             return httpx.Response(200, content=b'\x1f\x8b', headers={'content-encoding': 'gzip'})
 
-        with pytest.raises(ClientMetadataError, match='came gzip-encoded'):
+        with pytest.raises(McpClientMetadataError, match='came gzip-encoded'):
             await resolver_over(httpx.MockTransport(serve)).resolve(CLIENT_METADATA_URL)
         assert seen[0].headers['accept-encoding'] == 'identity'
 
     async def test_a_document_over_the_size_limit_is_refused(self):
         oversized = {**client_metadata_document(), 'padding': 'x' * MAX_DOCUMENT_BYTES}
-        with pytest.raises(ClientMetadataError, match='larger than'):
+        with pytest.raises(McpClientMetadataError, match='larger than'):
             await resolver_over(_serve(oversized)).resolve(CLIENT_METADATA_URL)
 
     async def test_a_slow_server_is_cut_off(self, monkeypatch):
@@ -174,14 +174,14 @@ class TestFetching:
             await asyncio.sleep(1)
             return httpx.Response(200)
 
-        with pytest.raises(ClientMetadataError, match='took longer than'):
+        with pytest.raises(McpClientMetadataError, match='took longer than'):
             await resolver_over(httpx.MockTransport(hang)).resolve(CLIENT_METADATA_URL)
 
     async def test_a_connection_failure_is_refused(self):
         def refuse(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError('refused', request=request)
 
-        with pytest.raises(ClientMetadataError, match='could not be fetched'):
+        with pytest.raises(McpClientMetadataError, match='could not be fetched'):
             await resolver_over(httpx.MockTransport(refuse)).resolve(CLIENT_METADATA_URL)
 
 
@@ -214,7 +214,7 @@ class TestCaching:
     async def test_a_failure_is_fetched_again(self):
         responses = iter([httpx.Response(503), httpx.Response(200, json=client_metadata_document())])
         resolver = resolver_over(httpx.MockTransport(lambda request: next(responses)))
-        with pytest.raises(ClientMetadataError):
+        with pytest.raises(McpClientMetadataError):
             await resolver.resolve(CLIENT_METADATA_URL)
         assert (await resolver.resolve(CLIENT_METADATA_URL)).client_id == CLIENT_METADATA_URL
 

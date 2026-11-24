@@ -7,11 +7,10 @@ from openapi_mcp_gateway.auth.mcp.client import McpPreRegisteredClient, McpPreRe
 from openapi_mcp_gateway.auth.mcp.client_credentials import (
     McpClientCredentialsError,
     McpClientCredentialsGrant,
-    McpGatewayTokenVerifier,
     _read_client_credentials,
 )
 from openapi_mcp_gateway.auth.mcp.record_origin import McpRecordOrigin
-from openapi_mcp_gateway.auth.mcp.token_issuer import McpTokenIssuer, McpTokenPolicy
+from openapi_mcp_gateway.auth.mcp.token_issuer import McpGatewayIssuerTokenVerifier, McpTokenIssuer, McpTokenPolicy
 from openapi_mcp_gateway.scopes import McpAccessToken
 from tests.constants import GATEWAY_ISSUER, GATEWAY_RESOURCE
 
@@ -43,7 +42,7 @@ class TestGrant:
         client = await grant.authenticate('agent', 'secret')
         token = await grant.exchange(client, None)
 
-        verified = await McpGatewayTokenVerifier(tokens, grant.clients).verify_token(token.access_token)
+        verified = await McpGatewayIssuerTokenVerifier(tokens, grant.clients).verify_token(token.access_token)
 
         assert isinstance(verified, McpAccessToken)
         assert verified.scopes == ['pets:read']
@@ -54,7 +53,7 @@ class TestGrant:
         """Removing an agent from the config revokes the tokens it already holds, even ones a shared store kept."""
         token = await grant.exchange(await grant.authenticate('agent', 'secret'), None)
 
-        verifier = McpGatewayTokenVerifier(tokens, McpPreRegisteredClientDirectory([]))
+        verifier = McpGatewayIssuerTokenVerifier(tokens, McpPreRegisteredClientDirectory([]))
 
         assert await verifier.verify_token(token.access_token) is None
 

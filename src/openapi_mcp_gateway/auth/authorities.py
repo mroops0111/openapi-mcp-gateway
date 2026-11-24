@@ -14,10 +14,9 @@ from .mcp.client_credentials import (
     McpClientCredentialsExtension,
     McpClientCredentialsGrant,
     McpClientCredentialsRoutes,
-    McpGatewayTokenVerifier,
 )
 from .mcp.record_origin import McpRecordOrigin
-from .mcp.token_issuer import McpTokenIssuer
+from .mcp.token_issuer import McpGatewayIssuerTokenVerifier, McpTokenIssuer
 from .settings_mapping import build_mcp_client_directory, build_mcp_token_policy
 
 
@@ -101,7 +100,7 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
         )
         return dataclasses.replace(
             setup,
-            verifier=McpGatewayTokenVerifier(tokens, clients),
+            verifier=McpGatewayIssuerTokenVerifier(tokens, clients),
             settings=AuthSettings(
                 issuer_url=server_url,
                 resource_server_url=pydantic.AnyHttpUrl(resource),

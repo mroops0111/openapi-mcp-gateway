@@ -13,7 +13,7 @@ from openapi_mcp_gateway.auth.mcp.client import (
     McpPreRegisteredClient,
     McpPreRegisteredClientDirectory,
 )
-from openapi_mcp_gateway.auth.mcp.client_metadata import ClientMetadataDocument, McpClientMetadataResolver
+from openapi_mcp_gateway.auth.mcp.client_metadata import McpClientMetadataDocument, McpClientMetadataResolver
 from tests.client_metadata import CLIENT_METADATA_HOST, CLIENT_METADATA_URL, client_metadata_document, serving_resolver
 from tests.constants import BROWSER_ORIGIN, GATEWAY_ISSUER
 
@@ -303,7 +303,7 @@ class TestClientDirectoryChain:
 class _FailingResolver(McpClientMetadataResolver):
     """A resolver that fails the test if anything asks it to fetch a document."""
 
-    async def resolve(self, client_id: str) -> ClientMetadataDocument:
+    async def resolve(self, client_id: str) -> McpClientMetadataDocument:
         raise AssertionError(f'{client_id} was fetched')
 
 

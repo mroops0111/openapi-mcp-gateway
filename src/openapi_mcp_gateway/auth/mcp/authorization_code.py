@@ -22,8 +22,20 @@ from ...scopes import McpAccessToken, McpScopePolicy
 from ..routes import AuthRoutes
 from .client import McpClientDirectory
 from .client_id import client_metadata_host
-from .consent import PENDING_AUTHORIZATION_TTL, ApprovedScopes, BrowserCookie, ConsentRegistry, PendingAuthorization
-from .consent_page import ConsentPrompt, DescribedScope, redirect_without_cache, render_consent_page, render_error_page
+from .consent import (
+    PENDING_AUTHORIZATION_TTL,
+    McpApprovedScopes,
+    McpBrowserCookie,
+    McpConsentRegistry,
+    McpPendingAuthorization,
+)
+from .consent_page import (
+    McpConsentPrompt,
+    McpDescribedScope,
+    redirect_without_cache,
+    render_consent_page,
+    render_error_page,
+)
 from .token_issuer import McpTokenAttachment, McpTokenIssuer, require_client_id
 
 
@@ -69,7 +81,7 @@ class McpAuthorizationCodeContinuation(abc.ABC):
         return []
 
     @abc.abstractmethod
-    async def continue_after_consent(self, pending_authorization: PendingAuthorization) -> str:
+    async def continue_after_consent(self, pending_authorization: McpPendingAuthorization) -> str:
         """Take over ``pending_authorization`` once the browser may go on, and return the URL to send it to."""
 
     async def refresh_attachment(self, client_id: str, attachment: McpTokenAttachment) -> McpTokenAttachment:
@@ -101,7 +113,7 @@ class McpAuthorizationCodeServer:
         self.tokens = tokens
         self.clients = clients
         self.continuation = continuation
-        self._consents = ConsentRegistry(tokens.store, tokens.issuer)
+        self._consents = McpConsentRegistry(tokens.store, tokens.issuer)
         self._server_name = server_name
 
     @property
@@ -133,7 +145,7 @@ class McpAuthorizationCodeServer:
             )
         # The scopes the SDK settled on for this client, always with the endpoint scopes every request must hold.
         scopes: list[str] = list(dict.fromkeys([*self.tokens.policy.scopes, *(params.scopes or [])]))
-        pending_authorization = PendingAuthorization(
+        pending_authorization = McpPendingAuthorization(
             request_id=secrets.token_urlsafe(32),
             client_id=require_client_id(client),
             redirect_uri=str(params.redirect_uri),
@@ -149,7 +161,7 @@ class McpAuthorizationCodeServer:
         query = urllib.parse.urlencode({'request': pending_authorization.request_id})
         return f'{self.issuer.rstrip("/")}{CONSENT_PATH}?{query}'
 
-    async def claim_authorization(self, request_id: str, browser_id: str) -> PendingAuthorization | None:
+    async def claim_authorization(self, request_id: str, browser_id: str) -> McpPendingAuthorization | None:
         """The sign-in waiting under ``request_id``, bound to ``browser_id`` by the first browser to open it.
 
         ``None`` when it expired, belongs to another server, or another browser opened it first,
@@ -161,11 +173,11 @@ class McpAuthorizationCodeServer:
             await self._store_pending_authorization(pending_authorization)
         return self._opened_by(pending_authorization, browser_id)
 
-    async def load_shown_authorization(self, request_id: str, browser_id: str) -> PendingAuthorization | None:
+    async def load_shown_authorization(self, request_id: str, browser_id: str) -> McpPendingAuthorization | None:
         """The sign-in waiting under ``request_id`` if ``browser_id`` opened it, or ``None`` for any other browser."""
         return self._opened_by(await self._load_pending_authorization(request_id), browser_id)
 
-    async def requires_consent(self, pending_authorization: PendingAuthorization) -> bool:
+    async def requires_consent(self, pending_authorization: McpPendingAuthorization) -> bool:
         """Whether the browser behind ``pending_authorization`` has to approve its client before it goes on."""
         if not self.clients.requires_consent(pending_authorization.client_id):
             return False
@@ -177,8 +189,8 @@ class McpAuthorizationCodeServer:
         )
 
     async def build_consent_prompt(
-        self, pending_authorization: PendingAuthorization, mcp_scope_policy: McpScopePolicy
-    ) -> ConsentPrompt:
+        self, pending_authorization: McpPendingAuthorization, mcp_scope_policy: McpScopePolicy
+    ) -> McpConsentPrompt:
         """What the consent page shows for ``pending_authorization``, its MCP access read from ``mcp_scope_policy``.
 
         On a step-up, the scopes beyond what the browser approved before are marked new.
@@ -194,9 +206,9 @@ class McpAuthorizationCodeServer:
         new_scopes = (
             approved_scopes.find_new_scopes(pending_authorization.scopes, next_sign_in_scopes)
             if approved_scopes
-            else ApprovedScopes()
+            else McpApprovedScopes()
         )
-        return ConsentPrompt(
+        return McpConsentPrompt(
             server_name=self._server_name,
             next_sign_in_host=next_sign_in.host if next_sign_in else None,
             client_id=pending_authorization.client_id,
@@ -204,11 +216,11 @@ class McpAuthorizationCodeServer:
             client_host=client_metadata_host(pending_authorization.client_id),
             redirect_uri=pending_authorization.redirect_uri,
             next_sign_in_scopes=[
-                DescribedScope(scope, next_sign_in_descriptions.get(scope), scope in new_scopes.next_sign_in_scopes)
+                McpDescribedScope(scope, next_sign_in_descriptions.get(scope), scope in new_scopes.next_sign_in_scopes)
                 for scope in next_sign_in_scopes
             ],
             mcp_scopes=[
-                DescribedScope(scope, mcp_scope_policy.mcp_defined_scopes[scope], scope in new_scopes.mcp_scopes)
+                McpDescribedScope(scope, mcp_scope_policy.mcp_defined_scopes[scope], scope in new_scopes.mcp_scopes)
                 for scope in pending_authorization.scopes
                 if scope in mcp_scope_policy.mcp_defined_scopes
             ],
@@ -216,7 +228,7 @@ class McpAuthorizationCodeServer:
             csrf_token=pending_authorization.csrf_token,
         )
 
-    async def approve(self, pending_authorization: PendingAuthorization) -> str:
+    async def approve(self, pending_authorization: McpPendingAuthorization) -> str:
         """Record that the browser approved the client, and return where the sign-in goes on."""
         await self._consents.approve(
             pending_authorization.bound_browser_id,
@@ -227,7 +239,7 @@ class McpAuthorizationCodeServer:
         logger.info('OAuth consent approved: client_id=%s', pending_authorization.client_id)
         return await self.continue_after_consent(pending_authorization)
 
-    async def deny(self, pending_authorization: PendingAuthorization) -> str:
+    async def deny(self, pending_authorization: McpPendingAuthorization) -> str:
         """End the sign-in, and return the redirect telling the client the user refused, per RFC 6749 §4.1.2.1."""
         await self.tokens.store.delete('mcp_auth_request', pending_authorization.request_id)
         logger.info('OAuth consent denied: client_id=%s', pending_authorization.client_id)
@@ -239,7 +251,7 @@ class McpAuthorizationCodeServer:
             iss=self.issuer,
         )
 
-    async def continue_after_consent(self, pending_authorization: PendingAuthorization) -> str:
+    async def continue_after_consent(self, pending_authorization: McpPendingAuthorization) -> str:
         """Hand ``pending_authorization`` on past the consent page, and return where the browser goes next.
 
         The continuation records the sign-in first, so a failure there leaves the consent page able to retry it.
@@ -352,7 +364,7 @@ class McpAuthorizationCodeServer:
             return data
         return None
 
-    async def _store_pending_authorization(self, pending_authorization: PendingAuthorization) -> None:
+    async def _store_pending_authorization(self, pending_authorization: McpPendingAuthorization) -> None:
         """Keep ``pending_authorization`` under its request id until the browser leaves the consent page."""
         await self.tokens.store.set(
             'mcp_auth_request',
@@ -361,12 +373,14 @@ class McpAuthorizationCodeServer:
             ttl=PENDING_AUTHORIZATION_TTL,
         )
 
-    async def _load_pending_authorization(self, request_id: str) -> PendingAuthorization | None:
+    async def _load_pending_authorization(self, request_id: str) -> McpPendingAuthorization | None:
         """The sign-in waiting at this server's consent page under ``request_id``."""
         return await self.tokens.load_pending_authorization('mcp_auth_request', request_id)
 
     @staticmethod
-    def _opened_by(pending_authorization: PendingAuthorization | None, browser_id: str) -> PendingAuthorization | None:
+    def _opened_by(
+        pending_authorization: McpPendingAuthorization | None, browser_id: str
+    ) -> McpPendingAuthorization | None:
         """``pending_authorization`` when ``browser_id`` is the browser it is bound to, else ``None``."""
         if pending_authorization is not None and pending_authorization.browser_id != browser_id:
             logger.warning('OAuth consent rejected: reason=other_browser client_id=%s', pending_authorization.client_id)
@@ -384,7 +398,7 @@ class McpAuthorizationCodeRoutes(AuthRoutes):
     """
 
     def __init__(
-        self, server: McpAuthorizationCodeServer, mcp_scope_policy: McpScopePolicy, cookie: BrowserCookie
+        self, server: McpAuthorizationCodeServer, mcp_scope_policy: McpScopePolicy, cookie: McpBrowserCookie
     ) -> None:
         self._server = server
         self._mcp_scope_policy = mcp_scope_policy
@@ -432,7 +446,7 @@ class McpAuthorizationCodeRoutes(AuthRoutes):
                 return render_error_page(_TAMPERED_FORM, 400)
         return redirect_without_cache(redirect_uri, 303)
 
-    async def _shown_authorization(self, request: Request) -> PendingAuthorization | None:
+    async def _shown_authorization(self, request: Request) -> McpPendingAuthorization | None:
         """The sign-in whose consent page this browser was shown, or ``None`` for any other browser."""
         browser_id = self._cookie.read(request)
         if browser_id is None:

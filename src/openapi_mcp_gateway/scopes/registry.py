@@ -17,7 +17,7 @@ class ScopeRegistry:
     A concrete URI a template expands to requires what the template does.
     A name it never registered, such as a dynamic meta-tool, requires nothing,
     since the operations behind it are what the scopes guard.
-    The operations it registered are also what a sign-in asks the upstream for, as ``upstream_sign_in_scopes`` says.
+    The operations it registered are also what a sign-in asks the upstream for, as ``requested_upstream_scopes`` says.
     """
 
     def __init__(self, mcp_policy: McpScopePolicy, upstream_policy: UpstreamScopePolicy | None = None) -> None:
@@ -25,7 +25,7 @@ class ScopeRegistry:
         self.upstream_policy = upstream_policy or UpstreamUnrestrictedScopePolicy()
         self._requirements: dict[str, _NameRequirements] = {}
         self._operations: dict[str, _RegisteredOperation] = {}
-        self._sign_in_scopes: dict[tuple[tuple[str, ...], tuple[str, ...], frozenset[str]], list[str]] = {}
+        self._requested_scopes: dict[tuple[tuple[str, ...], tuple[str, ...], frozenset[str]], list[str]] = {}
         self._resource_templates: list[tuple[UriTemplate, _NameRequirements]] = []
 
     @property
@@ -41,7 +41,7 @@ class ScopeRegistry:
         )
         self._requirements[name] = requirements
         self._operations[operation.operation_id] = _RegisteredOperation(operation, requirements.mcp)
-        self._sign_in_scopes.clear()
+        self._requested_scopes.clear()
 
     def register_resource(self, uri_template: str, operation: OperationInfo) -> None:
         """Record what ``operation``, exposed as a resource at ``uri_template``, requires."""
@@ -82,7 +82,7 @@ class ScopeRegistry:
             return True
         return requirements.upstream.is_met(self.upstream_policy.held_scopes(grant.upstream_scopes))
 
-    def upstream_sign_in_scopes(
+    def requested_upstream_scopes(
         self,
         ceiling: collections.abc.Sequence[str],
         required_scopes: collections.abc.Sequence[str],
@@ -97,14 +97,16 @@ class ScopeRegistry:
         """
         granted_scopes = frozenset(mcp_scopes).intersection(self.mcp_policy.mcp_defined_scopes)
         key = (tuple(ceiling), tuple(required_scopes), granted_scopes)
-        if key not in self._sign_in_scopes:
+        if key not in self._requested_scopes:
             opened_operations = [
                 registered.operation
                 for registered in self._operations.values()
                 if registered.mcp_requirement.is_met(granted_scopes)
             ]
-            self._sign_in_scopes[key] = self.upstream_policy.sign_in_scopes(ceiling, required_scopes, opened_operations)
-        return list(self._sign_in_scopes[key])
+            self._requested_scopes[key] = self.upstream_policy.requested_scopes(
+                ceiling, required_scopes, opened_operations
+            )
+        return list(self._requested_scopes[key])
 
     def _requirements_of(self, name: str) -> '_NameRequirements':
         if name in self._requirements:

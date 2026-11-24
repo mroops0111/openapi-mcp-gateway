@@ -9,8 +9,8 @@ from openapi_mcp_gateway.auth.factory import build_auth
 from openapi_mcp_gateway.auth.mcp.client_credentials import (
     McpClientCredentialsExtension,
     McpClientCredentialsRoutes,
-    McpGatewayTokenVerifier,
 )
+from openapi_mcp_gateway.auth.mcp.token_issuer import McpGatewayIssuerTokenVerifier
 from openapi_mcp_gateway.settings import AuthConfig
 from tests.flow import auth_context, build_spec, server_entry, spec_with_client_credentials
 
@@ -42,7 +42,7 @@ class TestAuthoritySelection:
         spec = spec_with_client_credentials() if upstream['type'] == 'oauth2' else build_spec()
         setup = build_auth(auth_context(_build_entry({'upstream': upstream, 'mcp': {'clients': AGENT}}), spec))
 
-        assert isinstance(setup.verifier, McpGatewayTokenVerifier)
+        assert isinstance(setup.verifier, McpGatewayIssuerTokenVerifier)
         assert setup.provider is None
         assert any(isinstance(routes, McpClientCredentialsRoutes) for routes in setup.routes)
         assert any(isinstance(extension, McpClientCredentialsExtension) for extension in setup.extensions)

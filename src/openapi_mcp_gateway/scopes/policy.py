@@ -66,7 +66,7 @@ class McpScopePolicy(ScopePolicy):
 class UpstreamScopePolicy(ScopePolicy):
     """What each operation requires of the scopes the upstream granted the user behind a token."""
 
-    def sign_in_scopes(
+    def requested_scopes(
         self,
         ceiling: collections.abc.Sequence[str],
         required_scopes: collections.abc.Sequence[str],
@@ -243,7 +243,7 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
             )
         )
 
-    def sign_in_scopes(
+    def requested_scopes(
         self,
         ceiling: collections.abc.Sequence[str],
         required_scopes: collections.abc.Sequence[str],
@@ -351,7 +351,7 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
         opened_operations = [
             operation for operation in operations if mcp_policy.requirement_for(operation).is_met(frozenset())
         ]
-        if not self.sign_in_scopes(ceiling, required_scopes, opened_operations):
+        if not self.requested_scopes(ceiling, required_scopes, opened_operations):
             logger.warning(
                 'Server "%s": a sign-in whose MCP scopes open only operations declaring no upstream scope '
                 'asks the upstream for none, so its authorize request carries no scope parameter. '

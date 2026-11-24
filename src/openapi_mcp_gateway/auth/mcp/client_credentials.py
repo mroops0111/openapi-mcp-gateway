@@ -6,14 +6,13 @@ import typing
 import urllib.parse
 
 from mcp.server import MCPServer
-from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.extension import Extension
 from mcp.shared.auth import InvalidScopeError, OAuthToken
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ..routes import AuthRoutes
-from .client import McpClientDirectory, McpPreRegisteredClient, McpPreRegisteredClientDirectory
+from .client import McpPreRegisteredClient, McpPreRegisteredClientDirectory
 from .token_issuer import McpTokenAttachment, McpTokenIssuer
 
 
@@ -122,24 +121,6 @@ class McpClientCredentialsRoutes(AuthRoutes):
             },
             status_code=400,
         )
-
-
-class McpGatewayTokenVerifier(TokenVerifier):
-    """The SDK's ``TokenVerifier`` for the access tokens the gateway issued itself.
-
-    A token outlives a restart in a shared store, so it is refused once its client is no longer in ``clients``.
-    Removing an agent from the config then revokes what it already holds.
-    """
-
-    def __init__(self, tokens: McpTokenIssuer, clients: McpClientDirectory) -> None:
-        self._tokens = tokens
-        self._clients = clients
-
-    async def verify_token(self, token: str) -> AccessToken | None:
-        access_token = await self._tokens.load_access_token(token)
-        if access_token is None or await self._clients.get(access_token.client_id) is None:
-            return None
-        return access_token
 
 
 class McpClientCredentialsExtension(Extension):

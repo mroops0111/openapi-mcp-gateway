@@ -6,7 +6,7 @@ import urllib.parse
 import httpx
 from starlette.exceptions import HTTPException
 
-from .token_source import parse_expires_in
+from .token_lifetime import parse_expires_in
 
 
 logger = logging.getLogger(__name__)

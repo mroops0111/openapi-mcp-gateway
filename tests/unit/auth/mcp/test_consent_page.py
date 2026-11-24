@@ -2,18 +2,18 @@ import dataclasses
 
 import pytest
 
-from openapi_mcp_gateway.auth.mcp.consent_page import ConsentPrompt, DescribedScope, render_consent_page
+from openapi_mcp_gateway.auth.mcp.consent_page import McpConsentPrompt, McpDescribedScope, render_consent_page
 
 
 # A prompt for a client that registered itself under a name meant to break out of the page.
-HOSTILE_PROMPT = ConsentPrompt(
+HOSTILE_PROMPT = McpConsentPrompt(
     server_name='petstore',
     next_sign_in_host='auth.example.com',
     client_id='client-1',
     client_name='<script>alert(1)</script>',
     redirect_uri='https://app.example.com/cb?next="><img src=x>',
-    next_sign_in_scopes=[DescribedScope('read', None)],
-    mcp_scopes=[DescribedScope('pets:read', '<b>Read</b> pets')],
+    next_sign_in_scopes=[McpDescribedScope('read', None)],
+    mcp_scopes=[McpDescribedScope('pets:read', '<b>Read</b> pets')],
     opens_unscoped_tools=False,
     csrf_token='token',
 )
@@ -55,7 +55,9 @@ class TestConsentPage:
         assert '&lt;b&gt;Read&lt;/b&gt; pets<code class="aside">pets:read</code>' in _page_text(HOSTILE_PROMPT)
 
     def test_a_scope_a_step_up_adds_is_marked_new(self):
-        prompt = dataclasses.replace(HOSTILE_PROMPT, mcp_scopes=[DescribedScope('pets:write', 'Write pets', new=True)])
+        prompt = dataclasses.replace(
+            HOSTILE_PROMPT, mcp_scopes=[McpDescribedScope('pets:write', 'Write pets', new=True)]
+        )
         assert 'Write pets<code class="aside">pets:write</code><span class="new">New</span>' in _page_text(prompt)
 
     def test_a_scope_without_a_description_is_shown_by_its_name(self):
@@ -85,6 +87,6 @@ class TestConsentPage:
         )
 
 
-def _page_text(prompt: ConsentPrompt) -> str:
+def _page_text(prompt: McpConsentPrompt) -> str:
     """The HTML the consent page for ``prompt`` serves."""
     return bytes(render_consent_page(prompt).body).decode()

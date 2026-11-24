@@ -31,7 +31,7 @@ from ..mcp.authorization_code import (
     McpNextSignIn,
 )
 from ..mcp.client import McpClientDirectory, McpClientDirectoryChain, McpDynamicClientRegistry
-from ..mcp.consent import PENDING_AUTHORIZATION_TTL, BrowserCookie, PendingAuthorization
+from ..mcp.consent import PENDING_AUTHORIZATION_TTL, McpBrowserCookie, McpPendingAuthorization
 from ..mcp.consent_page import redirect_without_cache, render_error_page, render_signed_in_again_page
 from ..mcp.record_origin import McpRecordOrigin
 from ..mcp.token_issuer import McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
@@ -41,13 +41,13 @@ from ..settings_mapping import (
     build_mcp_token_policy,
 )
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
+from ..upstream.authorization_code_refresh import UpstreamTokenRefresher
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamTokenSource
 from .authorization_code_reauthorization import REAUTHORIZE_PATH, AuthorizationCodeReauthorizer
 from .authorization_code_upstream_token import (
     UPSTREAM_ACCESS_TOKEN_LINK,
     UPSTREAM_REFRESH_TOKEN_LINK,
-    UpstreamTokenRefresher,
     build_upstream_links,
     expiry_of,
     renewed_attachment,
@@ -106,11 +106,11 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         return McpNextSignIn(host=self.upstream.host, scope_descriptions=self.upstream.scope_descriptions)
 
     def select_next_sign_in_scopes(self, mcp_scopes: list[str]) -> list[str]:
-        return self.scope_registry.upstream_sign_in_scopes(
+        return self.scope_registry.requested_upstream_scopes(
             self.upstream.scopes, self.upstream.required_scopes, mcp_scopes
         )
 
-    async def continue_after_consent(self, pending_authorization: PendingAuthorization) -> str:
+    async def continue_after_consent(self, pending_authorization: McpPendingAuthorization) -> str:
         """Send the browser to the upstream under a fresh ``state``.
 
         Only the browser behind ``pending_authorization`` can finish the sign-in under it.
@@ -221,7 +221,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
             iss=self.tokens.issuer,
         )
 
-    async def _pending_upstream_authorization(self, state: str, browser_id: str | None) -> PendingAuthorization:
+    async def _pending_upstream_authorization(self, state: str, browser_id: str | None) -> McpPendingAuthorization:
         """The sign-in the upstream's callback under ``state`` finishes, which ``browser_id`` must have approved.
 
         Raises ``HTTPException`` when ``state`` names none of this server's sign-ins against the current upstream,
@@ -250,7 +250,7 @@ class AuthorizationCodeCallbackRoutes(AuthRoutes):
     """
 
     def __init__(
-        self, bridge: AuthorizationCodeBridge, reauthorizer: AuthorizationCodeReauthorizer, cookie: BrowserCookie
+        self, bridge: AuthorizationCodeBridge, reauthorizer: AuthorizationCodeReauthorizer, cookie: McpBrowserCookie
     ) -> None:
         self._bridge = bridge
         self._reauthorizer = reauthorizer
@@ -391,7 +391,7 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             f'{server_url_base}{REAUTHORIZE_PATH}',
         )
         # One cookie for both pages, since the callback must read what the consent page set.
-        cookie = BrowserCookie(secure=issuer.startswith('https://'))
+        cookie = McpBrowserCookie(secure=issuer.startswith('https://'))
         settings = AuthSettings(
             issuer_url=server_url,
             resource_server_url=pydantic.AnyHttpUrl(flow_context.mcp_resource_url),

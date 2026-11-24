@@ -87,7 +87,7 @@ _HINT_ICON = (
 )
 
 
-class DescribedScope(typing.NamedTuple):
+class McpDescribedScope(typing.NamedTuple):
     """A scope as the consent page lists it, led by what it allows when anything says so.
 
     ``new`` marks a scope a step-up adds to what the browser approved before.
@@ -99,7 +99,7 @@ class DescribedScope(typing.NamedTuple):
 
 
 @dataclasses.dataclass(frozen=True)
-class ConsentPrompt:
+class McpConsentPrompt:
     """What the consent page shows, so a user can tell whether the client asking is the one they are using.
 
     ``client_name`` is whatever the client registered itself as, so the page shows ``redirect_uri`` first,
@@ -117,14 +117,14 @@ class ConsentPrompt:
     client_id: str
     client_name: str | None
     redirect_uri: str
-    next_sign_in_scopes: collections.abc.Sequence[DescribedScope]
-    mcp_scopes: collections.abc.Sequence[DescribedScope]
+    next_sign_in_scopes: collections.abc.Sequence[McpDescribedScope]
+    mcp_scopes: collections.abc.Sequence[McpDescribedScope]
     opens_unscoped_tools: bool
     csrf_token: str
     client_host: str | None = None
 
 
-def render_consent_page(prompt: ConsentPrompt) -> HTMLResponse:
+def render_consent_page(prompt: McpConsentPrompt) -> HTMLResponse:
     """The consent page for ``prompt``, posting the user's decision back to the address it was served from."""
     client = html.escape(prompt.client_name or prompt.client_id)
     server = html.escape(prompt.server_name)
@@ -217,7 +217,7 @@ def _sign_in_hint(redirect_uri: str, client: str) -> str:
     return f'Approve only if you just started this sign-in from {client}.'
 
 
-def _mcp_scope_list(prompt: ConsentPrompt, server: str) -> str:
+def _mcp_scope_list(prompt: McpConsentPrompt, server: str) -> str:
     """What the client may do on ``server``, which is ``server`` already escaped.
 
     The tools open to every client are named as well, since a list of scopes alone would understate the grant.
@@ -228,12 +228,12 @@ def _mcp_scope_list(prompt: ConsentPrompt, server: str) -> str:
     return f'<ul>{items or f"<li>No tools on {server}</li>"}</ul>'
 
 
-def _scope_items(scopes: collections.abc.Sequence[DescribedScope]) -> str:
+def _scope_items(scopes: collections.abc.Sequence[McpDescribedScope]) -> str:
     """``scopes`` as list items, a scope a step-up adds carrying a "New" mark."""
     return ''.join(f'<li><span>{_scope_label(scope)}{_NEW_MARK if scope.new else ""}</span></li>' for scope in scopes)
 
 
-def _scope_label(scope: DescribedScope) -> str:
+def _scope_label(scope: McpDescribedScope) -> str:
     """The scope's description with its name beside it, or its name alone."""
     if not scope.description:
         return f'<code>{html.escape(scope.name)}</code>'

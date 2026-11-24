@@ -4,7 +4,7 @@ import time
 
 import httpx
 
-from .token_source import DEFAULT_REFRESH_SKEW_SECONDS, DEFAULT_TOKEN_LIFETIME_SECONDS, parse_expires_in
+from .token_lifetime import DEFAULT_REFRESH_SKEW_SECONDS, DEFAULT_TOKEN_LIFETIME_SECONDS, parse_expires_in
 
 
 logger = logging.getLogger(__name__)

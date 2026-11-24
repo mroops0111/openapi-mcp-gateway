@@ -114,25 +114,25 @@ class TestUpstreamSignInScopes:
         ],
     )
     def test_each_sign_in_asks_for_what_its_mcp_scopes_open(self, mcp_scopes, requested):
-        assert secured_registry().upstream_sign_in_scopes(SECURED_CEILING, [], mcp_scopes) == requested
+        assert secured_registry().requested_upstream_scopes(SECURED_CEILING, [], mcp_scopes) == requested
 
     def test_without_mcp_scopes_every_registered_operation_counts(self):
         scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
         scope_registry.register('delete_pet', DELETE_PET)
-        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, [], []) == SECURED_CEILING
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], []) == SECURED_CEILING
 
     def test_without_an_enforced_grant_every_sign_in_asks_for_the_whole_ceiling(self):
         scope_registry = ScopeRegistry(tag_scopes(DELETE_PET))
         scope_registry.register('delete_pet', DELETE_PET)
-        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, [], []) == SECURED_CEILING
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], []) == SECURED_CEILING
 
     def test_an_operation_registered_after_a_sign_in_counts_at_the_next_one(self):
         scope_registry = ScopeRegistry(tag_scopes(*SECURED_OPERATIONS), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
         scope_registry.register('delete_pet', DELETE_PET)
-        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, [], ['pets:write']) == []
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['pets:write']) == []
         scope_registry.register('create_pet', CREATE_PET)
-        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, [], ['pets:write']) == ['write:pets']
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['pets:write']) == ['write:pets']
 
     def test_a_scope_the_server_does_not_define_changes_nothing(self):
         scope_registry = secured_registry()
-        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, [], ['pets:read', 'unknown']) == ['read:pets']
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['pets:read', 'unknown']) == ['read:pets']
