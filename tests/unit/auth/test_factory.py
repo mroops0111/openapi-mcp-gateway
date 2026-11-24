@@ -50,7 +50,7 @@ SPEC_BY_FLOW = {
 }
 
 # What ``token_exchange`` needs on the MCP side to build.
-TOKEN_EXCHANGE_MCP = {'issuer': ISSUER}
+TOKEN_EXCHANGE_MCP = {'issuer': ISSUER, 'required_scopes': ['mcp']}
 
 
 class TestStaticCredentials:
@@ -314,13 +314,24 @@ class TestMcpSettingsWithoutEffect:
                 r'auth\.mcp\.required_scopes cannot be combined with auth\.mcp\.operation_scopes',
             ),
             (
+                {'upstream': TOKEN_EXCHANGE, 'mcp': {'issuer': ISSUER, 'operation_scopes': {'auto': 'tags'}}},
+                r'auth\.mcp\.issuer needs auth\.mcp\.required_scopes, the scopes every client asks the issuer for first',
+            ),
+            (
+                {'upstream': BEARER, 'mcp': {'issuer': ISSUER}},
+                r'auth\.mcp\.issuer needs auth\.mcp\.required_scopes',
+            ),
+            (
                 {'upstream': BEARER, 'mcp': {'issuer': ISSUER, 'clients': {'agent': {'client_secret': 's'}}}},
                 r"auth\.mcp\.issuer on .* and auth\.mcp\.clients on .* each issue this endpoint's tokens",
             ),
         ],
     )
     def test_scope_settings_the_token_issuer_cannot_honour_are_refused(self, auth, refusal):
-        """Where the gateway mints the tokens, a client must be granted the scopes, and only one party mints them."""
+        """Where the gateway mints the tokens, a client must be granted the scopes, and only one party mints them.
+
+        Under an external issuer, a client must be told which scopes to ask for first.
+        """
         with pytest.raises(ValueError, match=rf'Server "srv": {refusal}'):
             _build(auth)
 

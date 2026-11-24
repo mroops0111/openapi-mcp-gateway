@@ -144,6 +144,9 @@ class McpExternalIssuerAuthority(McpTokenAuthority, McpSettingsReader):
     def applies_to(self, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
         return upstream_principal == self.upstream_principal and bool(auth.mcp.resolve_issuer())
 
+    def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
+        auth.mcp.refuse_scope_settings_for_issuer_tokens(server_name)
+
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
         return self.attach_discovered(setup, context, self.discover(context))
 

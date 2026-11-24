@@ -3,7 +3,6 @@ import pathlib
 import typing
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from mcp import Client
 from mcp.client.auth.exceptions import OAuthTokenError
 
@@ -21,6 +20,9 @@ WRITER = 'writer'
 SECRETS = {READER: 'reader-secret', WRITER: 'writer-secret', GATEWAY_CLIENT_ID: GATEWAY_CLIENT_SECRET}
 GRANTABLE = {READER: {'pets:read'}, WRITER: {'pets:read', 'pets:write'}}
 
+# What every caller's token must carry, which the protected resource metadata tells a client to ask for first.
+REQUIRED_SCOPES = ['pets:read']
+
 # The most the gateway asks the issuer for upstream.
 UPSTREAM_CEILING = ['read:pets', 'write:pets']
 
@@ -29,12 +31,6 @@ UPSTREAM_TOKEN = 'upstream-pat'
 
 # Every tool an operation scope covers on the petstore fixture, which the operations without a tag are not.
 SCOPED_TOOLS = ['list_pets', 'create_pet', 'get_pet_by_id', 'delete_pet']
-
-
-@pytest.fixture(scope='module')
-def signing_key() -> rsa.RSAPrivateKey:
-    """One RSA keypair for the module, since generation dominates the runtime."""
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
 @pytest.fixture
@@ -60,7 +56,7 @@ def _token_exchange_gateway(spec: pathlib.Path, issuer: str, **upstream: typing.
                 'enforce_scopes': True,
                 **upstream,
             },
-            'mcp': {'issuer': issuer, 'operation_scopes': {'auto': 'tags'}},
+            'mcp': {'issuer': issuer, 'required_scopes': REQUIRED_SCOPES, 'operation_scopes': {'auto': 'tags'}},
         }
         server = {'name': 'petstore', 'spec': str(spec), 'auth': auth}
         return Gateway.from_config(GatewayConfig.model_validate({'url': url, 'servers': [server]}))
@@ -74,7 +70,7 @@ def _shared_credential_gateway(spec: pathlib.Path, issuer: str) -> typing.Callab
     def build(url: str) -> Gateway:
         auth = {
             'upstream': {'type': 'bearer', 'token': UPSTREAM_TOKEN},
-            'mcp': {'issuer': issuer, 'operation_scopes': {'auto': 'tags'}},
+            'mcp': {'issuer': issuer, 'required_scopes': REQUIRED_SCOPES, 'operation_scopes': {'auto': 'tags'}},
         }
         server = {'name': 'petstore', 'spec': str(spec), 'auth': auth}
         return Gateway.from_config(GatewayConfig.model_validate({'url': url, 'servers': [server]}))

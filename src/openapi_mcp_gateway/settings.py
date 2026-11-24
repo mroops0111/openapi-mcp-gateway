@@ -337,6 +337,23 @@ class McpAuthConfig(pydantic.BaseModel):
                 'so an endpoint-wide scope would stop no one.'
             )
 
+    def refuse_scope_settings_for_issuer_tokens(self, server_name: str) -> None:
+        """Refuse an external issuer whose clients would be told no scope to ask for first.
+
+        It holds where another issuer mints the tokens, whose clients read ``scopes_supported``
+        from the protected resource metadata, and ``required_scopes`` is what that lists.
+        With none listed, the MCP SDK falls back to every scope the issuer advertises,
+        which the issuer refuses for any client it restricts.
+        """
+        if self.resolve_issuer() and not self.required_scopes:
+            raise ValueError(
+                f'Server "{server_name}": auth.mcp.issuer needs auth.mcp.required_scopes, '
+                'the scopes every client asks the issuer for first. '
+                'Without them the protected resource metadata lists no scopes_supported, '
+                'and the MCP SDK then asks for every scope the issuer advertises, '
+                'which the issuer refuses for any client it restricts.'
+            )
+
     def resolve_other_clients(self) -> OtherClientsConfig | None:
         """The rule for unlisted Client ID Metadata Document clients, or ``None`` when none may sign in."""
         if self.other_clients is None:

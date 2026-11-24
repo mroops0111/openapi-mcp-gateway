@@ -3,7 +3,6 @@ from unittest.mock import MagicMock, patch
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 
 from openapi_mcp_gateway.auth.mcp.external_issuer import (
     McpExternalIssuerConfigurationError,
@@ -16,12 +15,6 @@ from tests.constants import ATTACKER_URL, GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_U
 
 
 GATEWAY_RESOURCE = f'{GATEWAY_URL}/braid/mcp'
-
-
-@pytest.fixture(scope='module')
-def signing_key():
-    """One RSA keypair reused across tests, since generation is the slow part."""
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
 class TestFetchExternalIssuerMetadata:

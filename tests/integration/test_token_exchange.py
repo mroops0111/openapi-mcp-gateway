@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
 from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
@@ -23,12 +22,6 @@ from tests.constants import (
     JWKS_URL,
     TOKEN_URL,
 )
-
-
-@pytest.fixture(scope='module')
-def signing_key():
-    """One RSA keypair for the module, since generation dominates the runtime."""
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
 class TestTokenExchangeDiscovery:
@@ -162,7 +155,7 @@ def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = N
                         client_secret='secret',
                         scopes=['read'],
                     ),
-                    mcp=McpAuthConfig(issuer=ISSUER),
+                    mcp=McpAuthConfig(issuer=ISSUER, required_scopes=['mcp']),
                 ),
             ),
         ],

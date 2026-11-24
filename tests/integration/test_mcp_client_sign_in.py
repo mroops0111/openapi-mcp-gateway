@@ -1,18 +1,10 @@
 import contextlib
-import socket
-import threading
-import time
 import typing
 from unittest.mock import AsyncMock, patch
 
 import httpx2
-import jwt
 import pytest
-import uvicorn
-from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import FastAPI, Form
-from fastapi.responses import JSONResponse
-from jwt.algorithms import RSAAlgorithm
+from fastapi import FastAPI
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from openapi_mcp_gateway.auth.mcp.client_metadata import McpClientMetadataResolver
@@ -25,9 +17,10 @@ from tests.client_metadata import (
     client_metadata_document,
     serving_resolver,
 )
+from tests.fake_idp import FakeIdentityProvider, serve_identity_provider
 from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, client_credentials_auth, connect
 from tests.oauth import shared_credential_server, upstream_token_response
-from tests.serving import bind_loopback_socket, build_socket_url, serve_gateway
+from tests.serving import serve_gateway
 
 
 class TestClientCredentials:
@@ -143,30 +136,27 @@ class TestClientIdMetadataDocument:
 class TestTokenExchange:
     """An MCP SDK client finds the external issuer from the endpoint, gets a token there, and lists the tools."""
 
-    async def test_a_client_signs_in_at_the_external_issuer(self, petstore_json_path):
-        signing_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        issuer_sock = bind_loopback_socket()
-        issuer_url = build_socket_url(issuer_sock)
-        server = {
-            'name': 'petstore',
-            'spec': str(petstore_json_path),
-            'auth': {
-                'upstream': {
-                    'type': 'oauth2',
-                    'flow': 'token_exchange',
-                    'audience': 'https://api.example.com',
-                    'client_id': 'gateway',
-                    'client_secret': 'secret',
-                    'scopes': ['read'],
+    async def test_a_client_signs_in_at_the_external_issuer(self, petstore_json_path, signing_key):
+        identity_provider = FakeIdentityProvider(signing_key, {'agent': 'agent-secret'}, {'agent': {'pets:read'}})
+        with serve_identity_provider(identity_provider) as issuer:
+            server = {
+                'name': 'petstore',
+                'spec': str(petstore_json_path),
+                'auth': {
+                    'upstream': {
+                        'type': 'oauth2',
+                        'flow': 'token_exchange',
+                        'audience': 'https://api.example.com',
+                        'client_id': 'gateway',
+                        'client_secret': 'secret',
+                        'scopes': ['read'],
+                    },
+                    'mcp': {'issuer': issuer, 'required_scopes': ['pets:read']},
                 },
-                'mcp': {'issuer': issuer_url},
-            },
-        }
-
-        with _serve_in_thread(_build_external_issuer(issuer_url, signing_key), issuer_sock):
+            }
             async with serve_gateway(lambda url: _build_gateway(url, [server])) as base_url:
                 endpoint = f'{base_url}/petstore/mcp'
-                auth = client_credentials_auth(endpoint, 'agent', 'agent-secret', issuer=issuer_url)
+                auth = client_credentials_auth(endpoint, 'agent', 'agent-secret', issuer=issuer)
                 assert await _list_tools(endpoint, auth)
 
 
@@ -191,52 +181,6 @@ def _strip_path_prefix(app: ASGIApp, prefix: str) -> ASGIApp:
         await app(scope, receive, send)
 
     return proxy
-
-
-@contextlib.contextmanager
-def _serve_in_thread(app: FastAPI, sock: socket.socket) -> typing.Iterator[None]:
-    """Serve ``app`` on its own thread, since the gateway reads an external issuer's documents synchronously."""
-    server = uvicorn.Server(uvicorn.Config(app, log_config=None, ws='none'))
-    thread = threading.Thread(target=server.run, kwargs={'sockets': [sock]}, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 5
-    while not server.started:
-        assert time.monotonic() < deadline, 'the external issuer failed to start'
-        time.sleep(0.01)
-    try:
-        yield
-    finally:
-        server.should_exit = True
-        thread.join(5)
-
-
-def _build_external_issuer(issuer_url: str, signing_key: rsa.RSAPrivateKey) -> FastAPI:
-    """An authorization server outside the gateway, issuing JWTs for the resource each client names."""
-    app = FastAPI()
-    jwk = RSAAlgorithm.to_jwk(signing_key.public_key(), as_dict=True)
-
-    @app.get('/.well-known/oauth-authorization-server')
-    async def metadata():
-        return {
-            'issuer': issuer_url,
-            'authorization_endpoint': f'{issuer_url}/authorize',
-            'token_endpoint': f'{issuer_url}/token',
-            'jwks_uri': f'{issuer_url}/jwks',
-            'response_types_supported': ['code'],
-            'grant_types_supported': ['client_credentials', 'urn:ietf:params:oauth:grant-type:token-exchange'],
-        }
-
-    @app.get('/jwks')
-    async def jwks():
-        return {'keys': [{**jwk, 'kid': 'key-1', 'use': 'sig', 'alg': 'RS256'}]}
-
-    @app.post('/token')
-    async def token(resource: typing.Annotated[str, Form()]):
-        claims = {'iss': issuer_url, 'aud': resource, 'sub': 'agent', 'exp': int(time.time()) + 300}
-        access_token = jwt.encode(claims, signing_key, algorithm='RS256', headers={'kid': 'key-1'})
-        return JSONResponse({'access_token': access_token, 'token_type': 'Bearer', 'expires_in': 300})
-
-    return app
 
 
 async def _list_tools(endpoint: str, auth: httpx2.Auth) -> list[str]:

@@ -250,6 +250,7 @@ servers:
         client_secret: ${GATEWAY_CLIENT_SECRET}
       mcp:
         issuer: https://auth.example.com/realms/internal
+        required_scopes: [mcp]
 ```
 
 The gateway serves no `/authorize` or `/token` here. Its protected resource metadata names the issuer, clients authorize there, and the JWKS comes from the issuer's own metadata so key rotation needs no restart.
@@ -274,7 +275,9 @@ Keycloak is generally available in the sense that the feature flag is on, but a 
 
 The issuer also decides what each caller may do. Set `auth.mcp.operation_scopes` and every operation needs the scopes it names, read from the token's `scope` or `scp` claim. Every tool a scope opens stays listed, and a call whose token lacks the scope gets a `403` naming it, so the client steps up at the issuer, which grants it or refuses. Each exchange asks the issuer for only the upstream scopes the caller's operations need, within `auth.upstream.scopes`. `auth.mcp.required_scopes` may sit beside `operation_scopes` here, as a gate every token must pass first.
 
-And because the issuer is the authorization server for this endpoint, MCP clients register there rather than with the gateway. Check whether yours supports dynamic client registration, or whether each client needs pre-registering. If it does support it, set `auth.mcp.required_scopes` so the advertised `scopes_supported` tells a registering client what to ask for. Leave it empty and a client may register with a minimal scope set whose tokens then carry neither the audience nor the claims the upstream needs.
+And because the issuer is the authorization server for this endpoint, MCP clients register there rather than with the gateway. Check whether yours supports dynamic client registration, or whether each client needs pre-registering.
+
+`auth.mcp.required_scopes` is required under an issuer. Every token must carry those scopes, and the protected resource metadata lists them as `scopes_supported`, which is what a client asks the issuer for first. Without it a client has nothing to go by. The MCP SDK then asks for every scope the issuer advertises, which the issuer refuses for any client it restricts.
 
 </details>
 
@@ -329,7 +332,7 @@ servers:
 
 Each agent posts its own `client_id` and `client_secret` to `{url}{mount_path}/token` and sees only the operations its scopes open, while every call still reaches GitHub with `${GITHUB_TOKEN}`. This suits agent frameworks and the MCP SDK's `ClientCredentialsOAuthProvider`, since Claude Code supports only the browser sign-in.
 
-Where your identity provider already knows the agents, set `auth.mcp.issuer` in place of `clients`. The gateway then verifies the provider's tokens as it does under `token_exchange`, and `operation_scopes` limits each caller to what the provider granted it, while the upstream still sees the one shared credential. Only one of the two may issue an endpoint's tokens, so setting both is refused.
+Where your identity provider already knows the agents, set `auth.mcp.issuer` and `auth.mcp.required_scopes` in place of `clients`. The gateway then verifies the provider's tokens as it does under `token_exchange`, and `operation_scopes` limits each caller to what the provider granted it, while the upstream still sees the one shared credential. Only one of the two may issue an endpoint's tokens, so setting both is refused.
 
 </details>
 
@@ -414,7 +417,7 @@ A layer only overrides the fields it actually sets, so `--log-level=DEBUG` won't
 | `auth.upstream.resource`, `auth.upstream.audience` | string |  | Names the API the upstream token is for, when the API and its authorization server are different parties. `resource` is the [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) parameter, `audience` is the spelling Auth0 uses. Only what you set is sent |
 | `auth.upstream.issuer` | string |  | For `authorization_code`. The upstream authorization server's issuer identifier, exactly as its metadata publishes it. Enables the [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207) `iss` check on its authorization responses |
 | `auth.mcp.issuer` | string |  | The authorization server that mints tokens for this MCP endpoint. Required for `token_exchange`, and accepted on a server whose upstream credential is shared, in place of `auth.mcp.clients` |
-| `auth.mcp.required_scopes` | list |  | What every token for this endpoint must carry. Under an `issuer` an inbound token must already hold them. Under `authorization_code` the gateway grants them on every token it mints, `api` when unset. Advertised as `scopes_supported`, so a client doing dynamic registration knows what to ask for |
+| `auth.mcp.required_scopes` | list |  | What every token for this endpoint must carry. Required under an `issuer`, where an inbound token must already hold them. Under `authorization_code` the gateway grants them on every token it mints, `api` when unset. Advertised as `scopes_supported`, so a client doing dynamic registration knows what to ask for |
 | `auth.mcp.clients` | map |  | Pre-registered MCP clients by `client_id`, each with the `scopes` it may hold. A key may be a Client ID Metadata Document URL |
 | `auth.mcp.other_clients` | map or `false` | open when `clients` is empty | Under `authorization_code`, admits metadata document clients that `clients` does not list, with optional `trusted_hosts`, `scopes` and `default_scopes` |
 | `auth.mcp.operation_scopes` | map |  | The scopes that open each operation, from spec tags (`auto: tags`) or listed under `manual`. Where the gateway mints the tokens, a client in `clients` or `other_clients` must be granted them. Under an `issuer`, the issuer grants them |
