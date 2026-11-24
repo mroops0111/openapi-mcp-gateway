@@ -17,7 +17,6 @@ from ..scopes import (
     RequestTarget,
     ScopeRegistry,
     UpstreamGrantSource,
-    UpstreamNoGrantSource,
     current_grant,
 )
 from ._bm25 import BM25FIndex
@@ -118,15 +117,15 @@ class MetaToolGenerator:
         self,
         mcp: MCPServer,
         connection: UpstreamConnection,
+        grant_source: UpstreamGrantSource,
         field_weight_overrides: typing.Mapping[str, float] | None = None,
         scope_registry: ScopeRegistry | None = None,
         semantic_search: SemanticSearchOptions | None = None,
-        grant_source: UpstreamGrantSource | None = None,
     ):
         self.mcp = mcp
         self.connection = connection
+        self.grant_source = grant_source
         self.scope_registry = scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy())
-        self.grant_source = grant_source or UpstreamNoGrantSource()
         # Overrides replace the default weight of the fields they name and leave the rest as they are.
         self.field_weights = {**DEFAULT_FIELD_WEIGHTS, **(field_weight_overrides or {})}
         self.semantic_search = semantic_search

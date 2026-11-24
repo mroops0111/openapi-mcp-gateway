@@ -21,6 +21,7 @@ from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
 from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, connect
 from tests.oauth import authorization_code_gateway, query_value, server_of, sign_in, upstream_token_response
+from tests.scope import DELETE_PET_UPSTREAM_REFUSAL
 from tests.serving import serve, serve_gateway
 from tests.tool_result import text_of
 
@@ -56,12 +57,6 @@ READ_CHALLENGE = DELETE_CHALLENGE.replace('pets:delete', 'pets:read')
 
 # A pet read through the resource the petstore's ``getPetById`` is promoted to.
 PET_RESOURCE = 'petstore://pets/7'
-
-# Why a token whose upstream grant lacks what ``deletePet`` declares is refused.
-DELETE_UPSTREAM_REFUSAL = (
-    'The upstream token lacks the scopes deletePet needs (read:pets write:pets). '
-    'Add them to auth.upstream.scopes and sign in again, or correct its security under operations.deletePet.security.'
-)
 
 
 @pytest.fixture
@@ -350,7 +345,7 @@ class TestUpstreamGrant:
             result = await session.client.call_tool(tool, arguments)
         assert result.is_error
         # The meta-tool's refusal arrives prefixed by the SDK, as any error a tool raises does.
-        assert DELETE_UPSTREAM_REFUSAL in text_of(result)
+        assert DELETE_PET_UPSTREAM_REFUSAL in text_of(result)
         assert upstream_requests == []
 
     async def test_missing_mcp_scopes_are_challenged_first(self, make_enforcing_gateway):

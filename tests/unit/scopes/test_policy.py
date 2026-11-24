@@ -356,7 +356,7 @@ class TestSignInWarnings:
             UpstreamSpecSecurityScopePolicy(SCHEMES, {}).warn_on_empty_sign_in(
                 operations, SECURED_CEILING, required_scopes, McpUnrestrictedScopePolicy(), 'petstore'
             )
-        assert ('its authorize request carries no scope parameter' in caplog.text) is warned
+        assert ('its sign-in or token exchange carries no scope parameter' in caplog.text) is warned
 
     def test_a_sign_in_whose_mcp_scopes_open_nothing_is_warned_about(self, caplog):
         """Tag-derived scopes close every operation to a grant of none."""
@@ -364,7 +364,7 @@ class TestSignInWarnings:
             UpstreamSpecSecurityScopePolicy(SCHEMES, {}).warn_on_empty_sign_in(
                 SECURED_OPERATIONS, SECURED_CEILING, [], tag_scopes(*SECURED_OPERATIONS), 'petstore'
             )
-        assert 'its authorize request carries no scope parameter' in caplog.text
+        assert 'its sign-in or token exchange carries no scope parameter' in caplog.text
 
 
 class TestUnrequestedScopeWarning:

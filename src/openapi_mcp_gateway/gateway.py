@@ -714,11 +714,17 @@ def _check_upstream_grant(
 
     Raises ``ValueError`` when ``enforce_scopes`` leaves no operation any sign-in can open.
     A flow that records no user grant never reads ``enforce_scopes``, so ``build_auth`` has already refused it.
+    It is refused here too, since a flow that read it without such a grant would let every call through unchecked.
     Under ``enforce_scopes``, an operation no sign-in can open is left out, since every call to it is refused.
     Without it the gateway does not check the grant, so such an operation is only warned about.
     """
     upstream = server_config.auth.upstream
     if not auth.upstream_grant_source.records_user_grant:
+        if upstream.enforce_scopes:
+            raise ValueError(
+                f'Server "{server_config.name}": auth.upstream.enforce_scopes needs a flow that knows each user\'s '
+                "upstream grant, which this server's auth does not."
+            )
         return operations
     if not upstream.enforce_scopes:
         spec_security.warn_on_unrequested_scopes(

@@ -1,3 +1,4 @@
+import functools
 import json
 import typing
 
@@ -22,6 +23,7 @@ from openapi_mcp_gateway.openapi import (
     OperationInfo,
     ParameterInfo,
 )
+from openapi_mcp_gateway.scopes import UpstreamNoGrantSource
 from tests.constants import API_URL
 from tests.context import stub_context
 from tests.operation import register_tool, shaped_operation
@@ -236,7 +238,15 @@ class TestInputSchemaEnforcement:
         async with Client(mcp) as client:
             return await client.call_tool('do_thing', arguments)
 
-    @pytest.mark.parametrize('generator_class', [ToolGenerator, MetaToolGenerator])
+    @pytest.mark.parametrize(
+        'generator_class',
+        [
+            pytest.param(ToolGenerator, id='ToolGenerator'),
+            pytest.param(
+                functools.partial(MetaToolGenerator, grant_source=UpstreamNoGrantSource()), id='MetaToolGenerator'
+            ),
+        ],
+    )
     def test_schema_is_built_once_and_enforced_as_built(self, monkeypatch, generator_class):
         """Each operation's schema is built once, and the validator checks against that very schema."""
         built: list[dict] = []

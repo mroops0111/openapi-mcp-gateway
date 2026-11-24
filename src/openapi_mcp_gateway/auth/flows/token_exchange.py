@@ -1,6 +1,7 @@
 import collections.abc
 import logging
 
+import httpx
 from mcp.server.auth.middleware.auth_context import get_access_token
 
 from ...scopes import ScopeRegistry, TokenGrant, UpstreamGrantSource, UpstreamGrantUnavailableError, current_grant
@@ -15,8 +16,13 @@ from ..assembly import (
     UpstreamSetting,
 )
 from ..authorities import McpExternalIssuerAuthority
-from ..upstream.resolver import UpstreamTokenSourceAuthResolver
-from ..upstream.token_exchange import UpstreamExchangedToken, UpstreamTokenExchangeClient
+from ..upstream.resolver import UPSTREAM_CREDENTIAL_UNAVAILABLE, UpstreamTokenSourceAuthResolver
+from ..upstream.token_exchange import (
+    UpstreamExchangedToken,
+    UpstreamTokenExchangeClient,
+    UpstreamTokenExchangeError,
+    UpstreamTokenExchangeRefusedError,
+)
 from ..upstream.token_source import UpstreamTokenSource
 
 
@@ -66,10 +72,14 @@ class TokenExchangeBridge(UpstreamTokenSource, UpstreamGrantSource):
         grant = current_grant()
         try:
             exchanged = await self._exchange_for_caller()
-        except RuntimeError as error:
+        except UpstreamTokenExchangeRefusedError as error:
             # An issuer that will not grant every scope asked for may refuse the whole exchange rather than narrow it,
             # as Keycloak does, so the refusal is the call's answer rather than a server error.
             raise UpstreamGrantUnavailableError(str(error)) from error
+        except (UpstreamTokenExchangeError, httpx.HTTPError) as error:
+            # Any other failure is the gateway's, so its detail goes to the log and the caller learns only that much.
+            logger.warning('Token exchange for a call failed: %s', error)
+            raise UpstreamGrantUnavailableError(UPSTREAM_CREDENTIAL_UNAVAILABLE) from error
         if exchanged is None:
             return grant
         return grant._replace(upstream_scopes=frozenset(exchanged.scopes))

@@ -342,20 +342,20 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
         mcp_policy: McpScopePolicy,
         server_name: str,
     ) -> None:
-        """Warn when a sign-in granted no MCP scope asks the upstream for no scope at all.
+        """Warn when a caller granted no MCP scope asks the upstream for no scope at all.
 
         A wider MCP grant opens more operations, so it asks for at least as much,
-        and the sign-in granted none is the only one to check.
-        Its authorize request then carries no ``scope``, which some upstreams accept and others refuse.
+        and the caller granted none is the only one to check.
+        Its sign-in or token exchange then carries no ``scope``, which some upstreams accept and others refuse.
         """
         opened_operations = [
             operation for operation in operations if mcp_policy.requirement_for(operation).is_met(frozenset())
         ]
         if not self.requested_scopes(ceiling, required_scopes, opened_operations):
             logger.warning(
-                'Server "%s": a sign-in whose MCP scopes open only operations declaring no upstream scope '
-                'asks the upstream for none, so its authorize request carries no scope parameter. '
-                'An upstream that requires one refuses that sign-in. '
+                'Server "%s": a caller whose MCP scopes open only operations declaring no upstream scope '
+                'asks the upstream for none, so its sign-in or token exchange carries no scope parameter. '
+                'An authorization server that requires one refuses it. '
                 'List the scopes every sign-in needs in auth.upstream.required_scopes, '
                 'or declare what the operations need under operations.<id>.security.',
                 server_name,

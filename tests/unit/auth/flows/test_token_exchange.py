@@ -1,6 +1,7 @@
 import typing
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from openapi_mcp_gateway.auth.assembly import AuthTypeContext, ServerAuthSetup
@@ -11,10 +12,16 @@ from openapi_mcp_gateway.auth.flows import (
 from openapi_mcp_gateway.auth.flows.token_exchange import TokenExchangeBridge
 from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata, McpExternalIssuerTokenVerifier
 from openapi_mcp_gateway.auth.upstream.resolver import (
+    UPSTREAM_CREDENTIAL_UNAVAILABLE,
     UpstreamNoCredentialAuthResolver,
     UpstreamTokenSourceAuthResolver,
 )
-from openapi_mcp_gateway.auth.upstream.token_exchange import UpstreamExchangedToken, UpstreamTokenExchangeClient
+from openapi_mcp_gateway.auth.upstream.token_exchange import (
+    UpstreamExchangedToken,
+    UpstreamTokenExchangeClient,
+    UpstreamTokenExchangeError,
+    UpstreamTokenExchangeRefusedError,
+)
 from openapi_mcp_gateway.scopes import (
     McpAccessToken,
     McpUnrestrictedScopePolicy,
@@ -171,16 +178,34 @@ class TestTokenExchangeBridge:
         assert grant.mcp_scopes == {'pets:read'}
         assert grant.upstream_scopes == {'read:pets'}
 
-    async def test_a_refused_exchange_leaves_the_grant_unavailable(self):
+    async def test_a_refused_exchange_leaves_the_grant_unavailable_for_the_issuers_reason(self):
         """An issuer that will not grant every scope may refuse the whole exchange, as Keycloak does."""
         upstream = MagicMock()
-        upstream.exchange = AsyncMock(side_effect=RuntimeError('Token exchange failed (400): invalid_scope'))
+        upstream.exchange = AsyncMock(side_effect=UpstreamTokenExchangeRefusedError('refused (invalid_scope)'))
 
         with (
             authenticated_as(_caller(['pets:write'])),
             pytest.raises(UpstreamGrantUnavailableError, match='invalid_scope'),
         ):
             await _bridge(upstream).read_call_grant()
+
+    @pytest.mark.parametrize(
+        'failure',
+        [UpstreamTokenExchangeError('Token exchange failed (401): bad secret'), httpx.ConnectError('unreachable')],
+        ids=['failed exchange', 'issuer unreachable'],
+    )
+    async def test_any_other_failure_leaves_the_grant_unavailable_without_its_detail(self, failure):
+        """The failure is the gateway's, so the caller is not shown the issuer's response."""
+        upstream = MagicMock()
+        upstream.exchange = AsyncMock(side_effect=failure)
+
+        with (
+            authenticated_as(_caller(['pets:write'])),
+            pytest.raises(UpstreamGrantUnavailableError) as raised,
+        ):
+            await _bridge(upstream).read_call_grant()
+
+        assert str(raised.value) == UPSTREAM_CREDENTIAL_UNAVAILABLE
 
     async def test_a_call_grant_and_its_token_share_one_exchange(self):
         """The grant is read before the call and the token on it, and the exchange client serves both from one answer."""

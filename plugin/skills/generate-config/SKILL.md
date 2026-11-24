@@ -43,12 +43,12 @@ Match features to the user's situation, do not reach for all of them.
 - **Local, Single User, One API (stdio).** A static token is enough, `bearer` or `api_key` with the provider's header, such as a GitHub personal access token. No OAuth. Expose a handful of operations with `policy.allow`.
 - **A Huge Spec of Hundreds of Operations.** Prefer dynamic exposure, which fronts the spec with a few meta-tools, over listing every operation, so the tool list never floods the model. Still scope it with `policy.allow`.
 - **A Messy API That Makes Poor Tools.** Shape it. Hide the knobs the model should not set, and trim the response.
-- **Several Agents Sharing One Credential.** Keep the static token or `client_credentials` upstream and declare each agent under `auth.mcp.clients` with its own `client_secret` and `scopes`, plus `auth.mcp.operation_scopes`. Each agent then obtains a token as itself and reaches only the operations its scopes open, which the shared upstream credential cannot tell apart.
+- **Several Agents Sharing One Credential.** Keep the static token or `client_credentials` upstream and declare each agent under `auth.mcp.clients` with its own `client_secret` and `scopes`, plus `auth.mcp.operation_scopes`. Each agent then obtains a token as itself and reaches only the operations its scopes open, which the shared upstream credential cannot tell apart. When an identity provider the user runs already mints the agents' tokens, set `auth.mcp.issuer` to it instead of `auth.mcp.clients`, together with `auth.mcp.required_scopes` and `auth.mcp.operation_scopes`.
 - **Multiple Users, or a Provider That Mandates It.** Use `oauth2`, so each user signs in with their own credentials. `authorization_code` is the default and fits nearly every case.
-- **Least Privilege at the Upstream.** Set `auth.upstream.enforce_scopes: true` only under `authorization_code`, when the spec's operations declare `security` and the user wants each sign-in to grant the upstream no more than the agent can reach. Leave it off otherwise. Off, no scope hierarchy matters.
+- **Least Privilege at the Upstream.** Set `auth.upstream.enforce_scopes: true` only under `authorization_code` or `token_exchange`, when the spec's operations declare `security` and the user wants each sign-in or exchange to grant the upstream no more than the agent can reach. Leave it off otherwise. Off, no scope hierarchy matters.
   - **Scope Hierarchies.** When it is on, look up the upstream's official OAuth scope documentation, such as GitHub's "Scopes for OAuth apps", for scopes that include others. Record each in `auth.upstream.scope_implies`, with the source URL in a YAML comment. Never infer one from scope names. `repo` covers `repo_deployment`, but Slack's `chat:write` does not cover `chat:write.public`. When no documentation states a hierarchy, set none. A missing entry only refuses more than the upstream would, and the startup warnings show where.
   - **Every Sign-In.** Put a scope every sign-in needs, whatever it opens, such as `offline_access` or `openid`, in `auth.upstream.required_scopes`, not in `auth.upstream.scopes`.
-- **An API Behind an Identity Provider You Run.** Point the OAuth URLs at that provider and set `auth.upstream.audience` to the API, so the provider mints a token the API will accept rather than one for its own default audience. Reach for `auth.upstream.flow: token_exchange` only when the provider should also issue for the MCP endpoint itself, which needs RFC 8693 support on its side.
+- **An API Behind an Identity Provider You Run.** Point the OAuth URLs at that provider and set `auth.upstream.audience` to the API, so the provider mints a token the API will accept rather than one for its own default audience. Reach for `auth.upstream.flow: token_exchange` only when the provider should also issue for the MCP endpoint itself, which needs RFC 8693 support on its side. It needs `auth.mcp.issuer` and `auth.mcp.required_scopes`, since without the latter an MCP client asks the provider for every scope it advertises.
 
 ## Process
 
@@ -127,16 +127,17 @@ servers:
         # client_id, client_secret, scopes and the rest below are for oauth2 only
         client_id: ${SOME_ID}
         scopes: [...] # the most it asks for; with enforce_scopes and none listed, what the operations' security declares
-        # required_scopes: [offline_access], for authorization_code, asked for at every sign-in
+        # required_scopes: [offline_access], for authorization_code or token_exchange, asked for every time
         audience: https://the-api.example.com # when the API and its AS differ
-        # enforce_scopes: true, for authorization_code, an operation also needs the upstream scopes
+        # enforce_scopes: true, for authorization_code or token_exchange, an operation also needs the upstream scopes
         #   its OpenAPI security declares, checked against what the upstream granted the user,
-        #   and each sign-in asks only for what its MCP scopes need, plus required_scopes
+        #   and each sign-in or exchange asks only for what its MCP scopes need, plus required_scopes
         # scope_implies: {repo: [public_repo]}, an upstream scope covering narrower ones
       mcp: # who may call this MCP endpoint; leave it out to keep the endpoint open
-        # issuer: for token_exchange, the authorization server that mints tokens for this endpoint
-        # required_scopes: what every token must carry, checked under token_exchange, granted otherwise
-        # operation_scopes: which MCP scopes open which operations, wherever the gateway issues tokens
+        # issuer: the authorization server that mints tokens for this endpoint, under token_exchange
+        #   or in front of a shared upstream credential (bearer, api_key, client_credentials, none)
+        # required_scopes: what every token must carry, checked with an issuer, granted otherwise; required with an issuer
+        # operation_scopes: which MCP scopes open which operations, whoever issues the tokens
         #   {auto: tags, unscoped: deny, manual: {<scope>: {description: ..., operations: ["DELETE *"]}}}
         # clients: the pre-registered clients allowed to sign in, which turns off dynamic registration
         #   {<client_id>: {scopes: [...], default_scopes: [...], client_secret: ${SOME_SECRET}, redirect_uris: [...], consent: false}}
@@ -195,7 +196,7 @@ It loads every spec, applies the policy, and compiles the shaping, then exits wi
 
 Under `enforce_scopes`, read the scope warnings too. A ceiling scope no operation declares is often a broad scope that needs `scope_implies` or belongs in `required_scopes`. An operation no sign-in can open needs a scope added to `auth.upstream.scopes`, or a hierarchy entry. Check the upstream documentation before acting on either.
 
-One config shape cannot be validated offline. `auth.upstream.flow: token_exchange` contacts the issuer during startup to discover its JWKS and token endpoints, so `--dry-run` needs that provider reachable. Say so rather than reporting the config unverified.
+One config shape cannot be validated offline. A server with `auth.mcp.issuer` contacts the issuer during startup to discover its JWKS and, under `token_exchange`, its token endpoint, so `--dry-run` needs that provider reachable. Say so rather than reporting the config unverified.
 
 Hand the finished config to the user with a one-line summary of each tool, the environment variables they must set, and the exact run command:
 
