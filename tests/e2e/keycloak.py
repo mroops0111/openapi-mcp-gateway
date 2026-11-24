@@ -1,4 +1,5 @@
 import contextlib
+import itertools
 import typing
 
 import httpx
@@ -8,10 +9,6 @@ from testcontainers.core.wait_strategies import HttpWaitStrategy
 
 # The Keycloak release the end-to-end tests run, the first with standard RFC 8693 token exchange.
 KEYCLOAK_IMAGE = 'quay.io/keycloak/keycloak:26.2'
-
-# The bootstrap administrator, who creates each test's realm.
-_ADMIN_USERNAME = 'admin'
-_ADMIN_PASSWORD = 'admin'
 
 # The upstream API's client, which every exchanged token names as its audience.
 UPSTREAM_AUDIENCE = 'pets-api'
@@ -24,6 +21,14 @@ AGENT_SCOPES = {'reader': ['pets:read'], 'writer': ['pets:read', 'pets:write', '
 
 # The upstream scopes the gateway may exchange for, each adding the upstream API to the token's audience.
 UPSTREAM_SCOPES = ['read:pets', 'write:pets']
+
+
+# The bootstrap administrator, who creates each test's realm.
+_ADMIN_USERNAME = 'admin'
+_ADMIN_PASSWORD = 'admin'
+
+# A fresh realm name for each realm, so no test sees another's agents or tokens.
+_REALM_NUMBERS = itertools.count()
 
 
 @contextlib.contextmanager
@@ -43,14 +48,15 @@ def run_keycloak() -> typing.Iterator[str]:
 
 @contextlib.contextmanager
 def create_realm(
-    base_url: str, name: str, mcp_endpoint: str, exchangeable_scopes: typing.Sequence[str] = tuple(UPSTREAM_SCOPES)
+    base_url: str, mcp_endpoint: str, exchangeable_scopes: typing.Sequence[str] = tuple(UPSTREAM_SCOPES)
 ) -> typing.Iterator[str]:
-    """Create the realm ``name`` for a gateway serving ``mcp_endpoint``, and yield its issuer.
+    """Create a realm of its own for a gateway serving ``mcp_endpoint``, and yield its issuer.
 
     The gateway exchanges tokens as a client named by its endpoint's canonical URI,
     which an audience mapper also puts in every agent's token, as the README's Keycloak notes describe.
     That client may exchange for ``exchangeable_scopes`` only.
     """
+    name = f'mcp-{next(_REALM_NUMBERS)}'
     realm = _build_realm(name, mcp_endpoint, exchangeable_scopes)
     with httpx.Client(base_url=base_url, headers={'Authorization': f'Bearer {_admin_token(base_url)}'}) as admin:
         admin.post('/admin/realms', json=realm).raise_for_status()
