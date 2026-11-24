@@ -1,18 +1,18 @@
 [
   {
     "model": "anthropic:claude-sonnet-5-5",
-    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
-    "finished_at": "2026-11-17T09:57:50+00:00",
+    "instructions_sha256": "ccb6a0871b081af46f55120a32156692666d123c6e3f5dfd82551c849d65fd8f",
+    "finished_at": "2026-11-23T16:20:28+00:00",
     "pydantic_ai_version": "2.69.0",
-    "input_tokens": 55715,
-    "output_tokens": 2057,
-    "model_requests": 6,
+    "input_tokens": 73663,
+    "output_tokens": 1871,
+    "model_requests": 7,
     "scenario": "asana",
     "variant": "generated",
     "skill": "generate-config",
-    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "skill_sha256": "706503c62a7727102a0818bf151eba6c429d0de25c159ba6a1e3f5f3d4e66884",
     "request": "Help a team plan and track its work: create, assign, and update tasks in its projects.",
     "gateway_version": "0.8.0",
-    "summary": "`config.yaml` validates with `--dry-run`: 1 server and 14 tools, all passed through without shaping. I used the official Asana spec in `asana.yaml`.\n\n- **What's exposed:** You can look up workspaces, projects, sections and users, and list, read and search tasks. You can create tasks and subtasks, update them (assignee, due date, completion), add them to a project or section, and comment on them. I left out deletes, project creation and edits, and everything else in Asana's several hundred operations.\n- **Auth:** The spec accepts a personal access token (sent as a bearer token) or OAuth. I chose the token because it's simplest for a single local user. Set `ASANA_TOKEN` to a token from Asana's developer console. Tasks will be attributed to that person. For several users who each sign in as themselves, OAuth would be the better choice.\n- **`base_url`:** I kept the placeholder `https://upstream.invalid`, as you asked. Calls will fail until you change it to `https://app.asana.com/api/1.0`, which is the server URL in the spec.\n\nRun it with `uvx openapi-mcp-gateway --config config.yaml`."
+    "summary": "`config.yaml` now validates with `--dry-run`: one server, `asana`, with 12 tools exposed as-is. I used `policy.allow` to pick them, so the rest of the Asana API stays hidden and you can widen the list later.\n\n- **Create, assign and update tasks:** `create_task`, `update_task`, `create_subtask_for_task`, `add_project_for_task` and `add_task_for_section`. Assigning someone is done by setting the assignee on `create_task` or `update_task`.\n- **Look things up first:** `get_workspaces`, `get_projects`, `get_project`, `get_sections_for_project`, `get_users_for_workspace` (to find an assignee's ID), `get_tasks_for_project` and `get_task`. These cover planning and tracking.\n- **Left out:** deleting, followers, comments, and the rest of the API.\n\nAs instructed, I kept the placeholder `base_url` (`https://upstream.invalid`) and `auth: none`, so the config won't work against Asana yet. Before running it, set `base_url` to `https://app.asana.com/api/1.0`. Also set `auth.upstream` to `type: bearer` with `token: ${ASANA_TOKEN}`, using an Asana personal access token. I haven't tested it against the live API."
   }
 ]

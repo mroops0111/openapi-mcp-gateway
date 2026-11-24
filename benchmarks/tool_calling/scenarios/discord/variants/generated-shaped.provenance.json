@@ -1,18 +1,18 @@
 [
   {
     "model": "anthropic:claude-sonnet-5-5",
-    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
-    "finished_at": "2026-11-17T10:13:42+00:00",
+    "instructions_sha256": "ccb6a0871b081af46f55120a32156692666d123c6e3f5dfd82551c849d65fd8f",
+    "finished_at": "2026-11-23T16:23:20+00:00",
     "pydantic_ai_version": "2.69.0",
-    "input_tokens": 288681,
-    "output_tokens": 5681,
-    "model_requests": 12,
+    "input_tokens": 478088,
+    "output_tokens": 7591,
+    "model_requests": 19,
     "scenario": "discord",
     "variant": "generated-shaped",
     "skill": "generate-config",
-    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "skill_sha256": "706503c62a7727102a0818bf151eba6c429d0de25c159ba6a1e3f5f3d4e66884",
     "request": "Moderate a community server: manage members and roles, and keep channels and messages tidy. Also shape the operations, so that each tool is easy for a model to call correctly.",
     "gateway_version": "0.8.0",
-    "summary": "I wrote `config.yaml`, and `--dry-run` validates it with 29 tools. I kept the `discord` name, the spec and the placeholder `base_url`. Change that `base_url` to `https://discord.com/api/v10` before you run it, or the calls won't reach Discord. Auth is the bot token. The gateway sends it as `Authorization: Bot ${DISCORD_BOT_TOKEN}`, so set that variable. I didn't run any live calls.\n\n- **Members:** list, search, get, edit (nickname, timeout, roles) and kick. Bans can be listed, checked, added and lifted.\n- **Roles:** list, get, create, edit and delete. Roles can also be added to or removed from a member.\n- **Channels:** list, get, create, edit and delete.\n- **Messages:** list, get, post, delete, bulk delete, and list, add or remove pins.\n\nI left out the rest of the 200-plus operations (commands, webhooks, lobbies, stickers, events and so on) because they don't help with moderation. Widening the allow list later is a one-line change.\n\nTo make the tools easier for a model to call:\n- The member and message lists return only the fields moderation needs, such as ids, names, roles, timestamps and content.\n- The member and message lists have sensible default page sizes, and their descriptions explain how to page through results.\n- The ban tool explains that `delete_message_seconds` also deletes the user's recent messages.\n- The server instructions say where to look up ids and warn that deletes, kicks and bans can't be undone.\n\nI haven't tested the response trimming against real Discord replies. Check one member list and one message list on first use."
+    "summary": "`config.yaml` now validates with `serve --dry-run`. It exposes 29 Discord tools for moderating one server, and the dry run only checks the config, not live calls.\n\n- **Tools:** I kept it to members and roles, bans, channels, and message cleanup. Bulk ban, prune, webhooks, commands, events, stickers, emojis and lobbies are left out.\n- **Shaping:**\n  - The list tools return a trimmed response with just the useful fields.\n  - Channel types show as names such as \"text\" and \"voice\" instead of numbers.\n  - `list_messages` defaults to 50 results.\n  - `ban_user_from_guild` has one `delete_recent_messages` choice (`none`, `last_hour`, `last_day` or `last_week`) in place of Discord's two overlapping delete fields.\n  - `update_guild_member` has a warning that `roles` replaces the whole role list, so the add and remove role tools are the safer route.\n  - Server-wide instructions tell the model to look up ids first and to confirm anything irreversible.\n- **Auth:** I left `base_url` as the placeholder and auth as `none`, as you asked, so this won't work against Discord yet. The spec uses a bot token in the `Authorization` header, sent as `Bot <token>`. Before you run it, set `base_url` to `https://discord.com/api/v10`. Then set `auth.upstream` to `type: api_key`, `api_key_header: Authorization` and `token: \"Bot ${DISCORD_BOT_TOKEN}\"`.\n- **Not shaped:** I didn't change `unban_user_from_guild`, `create_guild_channel` or timeout handling in `update_guild_member`. The spec requires an empty body for unban, and I couldn't confirm how the gateway sends it. Channel creation has a complicated request schema, and clearing a timeout needs an explicit `null` that the gateway may drop."
   }
 ]

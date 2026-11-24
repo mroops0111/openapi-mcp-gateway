@@ -1,18 +1,18 @@
 [
   {
     "model": "anthropic:claude-sonnet-5-5",
-    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
-    "finished_at": "2026-11-17T10:14:14+00:00",
+    "instructions_sha256": "ccb6a0871b081af46f55120a32156692666d123c6e3f5dfd82551c849d65fd8f",
+    "finished_at": "2026-11-23T16:24:18+00:00",
     "pydantic_ai_version": "2.69.0",
-    "input_tokens": 79853,
-    "output_tokens": 3269,
-    "model_requests": 7,
+    "input_tokens": 106310,
+    "output_tokens": 4839,
+    "model_requests": 8,
     "scenario": "github",
     "variant": "generated-shaped",
     "skill": "generate-config",
-    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "skill_sha256": "706503c62a7727102a0818bf151eba6c429d0de25c159ba6a1e3f5f3d4e66884",
     "request": "Help a team triage issues and review pull requests in its repositories. Also shape the operations, so that each tool is easy for a model to call correctly.",
     "gateway_version": "0.8.0",
-    "summary": "`config.yaml` passes `--dry-run`: one `github` server with 20 tools. The issue-triage tools list, read, create and update issues. They also read and add comments, list labels, add and remove labels, and list and add assignees. The pull-request review tools list and read PRs, files, commits, reviews, review comments and requested reviewers. They also request reviewers and submit a review. I left out merge, branch update, deletes and the other ~1,000 operations, so the assistant can review but can't merge or destroy anything. Widening the surface later is a one-line change in `policy.allow`. For shaping, `issues/list-for-repo` and `pulls/list` now return compact summaries (number, title, state, author, labels, assignees or reviewers, dates, URL) instead of the full GitHub payload, and they default to 30 results per page. `issues/list-for-repo` also flags which items are really PRs. The server instructions explain that every tool takes `owner` and `repo`. I replaced `auth: none` with a bearer token from the `GITHUB_TOKEN` environment variable, which needs repo access to the team's repositories. I kept the placeholder `base_url: https://upstream.invalid` as you asked, but it must be changed to `https://api.github.com` before the gateway can reach GitHub. To run it, use `openapi-mcp-gateway --config config.yaml`."
+    "summary": "`config.yaml` now exposes 18 GitHub tools for issue triage and PR review, and `openapi-mcp-gateway serve --config config.yaml --dry-run` validates it. I kept the placeholder `base_url` and `auth: none` as given, so you'll need to set the real host and a token before using it.\n\n- **Triage (10 tools):**\n  - List, get, create and update issues.\n  - List and add comments.\n  - List repo labels and add labels to an issue.\n  - List assignable users and add assignees.\n- **PR review (8 tools):**\n  - List and get PRs.\n  - List files, commits, reviews and review comments.\n  - Create a review.\n  - Request reviewers.\n- **Left out:** merging, deleting, locking, and the rest of the large spec (webhooks, Actions, admin and so on). Widening the surface later is a one-line `policy.allow` change.\n- **Shaping:** every tool has a `response` expression that cuts GitHub's very large payloads down to the fields needed for triage and review, such as number, title, state, author, label names, assignees, body and URL. Issue lists mark pull requests with `is_pull_request`, because GitHub returns PRs from the issues endpoints. For PR files, the diff patch is kept. `pulls/create-review` defaults `event` to `COMMENT`, so a review isn't left as a hidden pending draft when the model omits it. Server-level `instructions` describe the triage and review workflows."
   }
 ]

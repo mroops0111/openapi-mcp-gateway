@@ -1,18 +1,18 @@
 [
   {
     "model": "anthropic:claude-sonnet-5-5",
-    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
-    "finished_at": "2026-11-17T09:59:49+00:00",
+    "instructions_sha256": "ccb6a0871b081af46f55120a32156692666d123c6e3f5dfd82551c849d65fd8f",
+    "finished_at": "2026-11-23T16:26:35+00:00",
     "pydantic_ai_version": "2.69.0",
-    "input_tokens": 91537,
-    "output_tokens": 3043,
-    "model_requests": 8,
+    "input_tokens": 170405,
+    "output_tokens": 3649,
+    "model_requests": 10,
     "scenario": "github-asana",
     "variant": "generated",
     "skill": "generate-config",
-    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "skill_sha256": "706503c62a7727102a0818bf151eba6c429d0de25c159ba6a1e3f5f3d4e66884",
     "request": "Turn engineering work on GitHub into tracked tasks in Asana, and keep the two in step.",
     "gateway_version": "0.8.0",
-    "summary": "`config.yaml` now validates with `--dry-run`: 2 servers and 19 tools. I kept the specs you saved and replaced the placeholder `base_url` values with the real hosts, `https://api.github.com` and `https://app.asana.com/api/1.0`. Both servers use a static bearer token. Set `GITHUB_TOKEN` to a GitHub personal access token and `ASANA_TOKEN` to an Asana personal access token. I used the specs' operations as they are, with no shaping, and I only checked that the config loads. I didn't call either API.\n\n- **GitHub (7 tools, the source of engineering work):**\n  - **Issues:** list, get, update, list comments and comment.\n  - **Pull requests:** list and get.\n  - **Why:** the assistant can read the work and then post the Asana task link back on the issue. Updating an issue lets it close or relabel it when the Asana task changes.\n- **Asana (12 tools, the tracker):**\n  - **Find the target:** list workspaces, projects and sections.\n  - **Check for an existing task:** list tasks for a project, search tasks in a workspace, get a task. This avoids duplicate tasks.\n  - **Create and update:** create a task, update a task, and add a task to a section.\n  - **Notes:** read and add comments on a task.\n- **Left out:** deleting anything on either side, and the rest of both large APIs. You can widen the `policy.allow` lists later.\n\nRun it with `uvx openapi-mcp-gateway --config config.yaml`."
+    "summary": "`config.yaml` passes `--dry-run` with 18 tools across the two servers, all passed through unshaped.\n\n- **GitHub (8 tools):** these read the work and write status back.\n  - Read: list and get issues, list issue comments, and list and get pull requests.\n  - Write: comment on an issue, update an issue (for example to close it), and add labels. Merging and review tools are left out.\n- **Asana (10 tools):** these find where the work belongs, avoid duplicates and keep tasks current.\n  - Find: list workspaces, projects, sections and a project's tasks.\n  - Check: search tasks and get a single task.\n  - Change: create and update tasks, move a task into a section, and add comments.\n  - Deleting is not exposed.\n- **Instructions:** each server has a short `instructions` note. It tells the model to put the GitHub URL in the Asana task notes and to comment the task link back on the issue. That is how the two sides stay matched.\n\nI left `base_url` as the placeholder and auth as `none`, as you asked. Before real use, set GitHub's `base_url` to `https://api.github.com` and Asana's to `https://app.asana.com/api/1.0`. Both services need a bearer token (a GitHub personal access token and an Asana personal access token). Asana's `searchTasksForWorkspace` may need a paid Asana plan."
   }
 ]

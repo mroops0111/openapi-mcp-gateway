@@ -1,18 +1,18 @@
 [
   {
     "model": "anthropic:claude-sonnet-5-5",
-    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
-    "finished_at": "2026-11-17T10:12:51+00:00",
+    "instructions_sha256": "ccb6a0871b081af46f55120a32156692666d123c6e3f5dfd82551c849d65fd8f",
+    "finished_at": "2026-11-23T16:21:34+00:00",
     "pydantic_ai_version": "2.69.0",
-    "input_tokens": 230283,
-    "output_tokens": 5710,
+    "input_tokens": 255874,
+    "output_tokens": 8883,
     "model_requests": 11,
     "scenario": "asana",
     "variant": "generated-shaped",
     "skill": "generate-config",
-    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "skill_sha256": "706503c62a7727102a0818bf151eba6c429d0de25c159ba6a1e3f5f3d4e66884",
     "request": "Help a team plan and track its work: create, assign, and update tasks in its projects. Also shape the operations, so that each tool is easy for a model to call correctly.",
     "gateway_version": "0.8.0",
-    "summary": "`config.yaml` now passes `--dry-run`. It exposes 12 Asana tools for planning and tracking work. I ran only the dry run, so none of the tools have been called against Asana.\n\n- **Tools:** `get_workspaces`, `get_projects_for_workspace`, `get_sections_for_project` and `get_users_for_workspace` find the right IDs. `get_tasks_for_project` and `get_task` read tasks. `create_task`, `create_subtask_for_task`, `update_task`, `add_task_for_section`, `add_project_for_task` and `create_story_for_task` (comments) change them. I left out the rest of the large spec, so it can't touch goals, portfolios, webhooks or admin settings. You can widen the list later with `policy.allow`.\n- **Shaping:**\n  - `create_task` and `update_task` take flat inputs (name, notes, assignee, due_on, start_on, projects, parent, completed). Asana wraps the body in `data`, and the config does that wrapping itself. Both return just the task's id, name and link.\n  - `get_task` and `get_tasks_for_project` default to a short set of useful fields instead of Asana's bare IDs.\n  - The `instructions` text tells the model to look up workspace, project and user IDs before it assigns anything.\n- **Auth:** Asana's spec supports a personal access token, so I set bearer auth with `${ASANA_TOKEN}`. Set that environment variable to a token from Asana's developer console.\n- **Base URL:** `base_url` is still the placeholder `https://upstream.invalid`, as you asked. Before running for real, change it to `https://app.asana.com/api/1.0`.\n- **Not covered:** `update_task` can't clear an assignee or a date, because there is no way to send a null.\n\nTo run it: `uvx openapi-mcp-gateway --config config.yaml`"
+    "summary": "`config.yaml` now exposes 17 Asana tools for planning and tracking work. `openapi-mcp-gateway serve --config config.yaml --dry-run` passes. I only ran the dry-run, so no tool has been called against Asana.\n\n- **Create, assign, update:**\n  - `create_task`, `create_subtask_for_task` and `update_task` take a short list of plain fields: name, notes, assignee (a user gid, an email or \"me\"), due and start dates, and `completed`. The gateway builds the `{data: …}` body Asana expects.\n  - `add_task_for_section` moves a task into a board column, `add_project_for_task` adds it to another project, and `create_story_for_task` adds a comment.\n- **Find what to act on:** I added tools to list workspaces, projects, a project's sections, workspace users, and tasks in a project or section. I also added task search, `get_task`, subtasks and comments, so a model can look up gids before it writes.\n- **Shaping:**\n  - The list and get tools ask Asana only for a compact set of fields, so the model can't set that parameter.\n  - Responses are cut down to gid, name, status, assignee, due date and URL, plus `next_offset` for paging.\n  - I added server instructions that say to start with `get_workspaces`.\n- **Left out:** I left out delete and the other admin operations (goals, portfolios, webhooks, time tracking and so on), which the request doesn't cover.\n- **Not set:** I kept the placeholder `base_url` (`https://upstream.invalid`) and `auth: none` as instructed, so it can't reach Asana yet. Before running it, set `base_url` to `https://app.asana.com/api/1.0`. Then set the upstream auth to `type: bearer` with `token: ${ASANA_TOKEN}`, using an Asana personal access token. If each teammate should act as themselves, use `oauth2` instead."
   }
 ]

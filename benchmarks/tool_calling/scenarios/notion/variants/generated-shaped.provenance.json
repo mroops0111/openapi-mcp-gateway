@@ -1,18 +1,18 @@
 [
   {
     "model": "anthropic:claude-sonnet-5-5",
-    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
-    "finished_at": "2026-11-17T10:12:01+00:00",
+    "instructions_sha256": "ccb6a0871b081af46f55120a32156692666d123c6e3f5dfd82551c849d65fd8f",
+    "finished_at": "2026-11-23T16:20:11+00:00",
     "pydantic_ai_version": "2.69.0",
-    "input_tokens": 196212,
-    "output_tokens": 4831,
-    "model_requests": 13,
+    "input_tokens": 103081,
+    "output_tokens": 3908,
+    "model_requests": 8,
     "scenario": "notion",
     "variant": "generated-shaped",
     "skill": "generate-config",
-    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "skill_sha256": "706503c62a7727102a0818bf151eba6c429d0de25c159ba6a1e3f5f3d4e66884",
     "request": "Keep a team's notes in Notion organized: find pages, add content to them, and update database entries. Also shape the operations, so that each tool is easy for a model to call correctly.",
     "gateway_version": "0.8.0",
-    "summary": "`config.yaml` validates with `--dry-run`: 1 server and 6 tools. I haven't run any of the tools against the live Notion API. I replaced the placeholder `base_url` with `https://api.notion.com` and the `none` auth with a bearer token read from `NOTION_TOKEN`. Create a Notion integration, share your team's pages and databases with it, and set that variable before you run the gateway.\n\n- **Find pages and read them:** `query_a_database`, `retrieve_a_database`, `retrieve_a_page` and `retrieve_block_children`. The spec has no search operation, so pages are found by querying a database. The server instructions tell the model this.\n- **Add content:** `append_block_children`. I reshaped it into three simple inputs: the page id, the text, and a block type (paragraph, heading, bullet, numbered item, to-do or quote). The gateway builds Notion's nested block JSON from those. The spec has no create-page operation, so this adds to existing pages only.\n- **Update database entries:** `update_page_properties`, left as it comes in the spec.\n- **Hidden header:** the required `Notion-Version` header (`2022-06-28`) is hidden on every tool, so the model never sets it.\n- **Left out:** deleting blocks, editing blocks or database schemas, comments and users. The model can't destroy or restructure anything.\n\nRun it with `uvx openapi-mcp-gateway --config config.yaml`."
+    "summary": "`config.yaml` now validates with `--dry-run`: 6 tools on one `notion` server.\n\n- **Finding pages:** `query_a_database` searches a notes database, and I trimmed its response to id, url, edit time and properties. `retrieve_a_database` shows the property names, and `retrieve_a_page` and `retrieve_block_children` read a page.\n- **Adding content:** I reshaped `append_block_children` into a simple call. It takes `page_id`, an optional `heading` and a list of `paragraphs`, and builds the Notion blocks itself.\n- **Updating entries:** `update_page_properties` edits a database entry.\n- **Notion-Version header:** every tool pins it to `2022-06-28` and hides it, so the model never has to set it.\n- **Left out:** I didn't expose deletes, block edits or database schema changes, so notes can't be destroyed or restructured by accident. The spec also has no search or create-page operations.\n- **Auth is still `none`:** you asked me to keep it and the spec declares no security scheme. Notion needs an integration token as a bearer token, so before real use change `auth.upstream` to `type: bearer` with `token: ${NOTION_TOKEN}`. You'll also need to replace the placeholder `base_url` with `https://api.notion.com`.\n\nThe dry run printed a harmless warning about an unnamed header parameter on `get /v1/pages/{id}`."
   }
 ]

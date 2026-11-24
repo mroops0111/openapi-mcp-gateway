@@ -1,18 +1,18 @@
 [
   {
     "model": "anthropic:claude-sonnet-5-5",
-    "instructions_sha256": "9d3e812bad8603d5623be4b2e22e943dc265d0f40093973bee80f2e5a3387a8b",
-    "finished_at": "2026-11-17T09:56:06+00:00",
+    "instructions_sha256": "ccb6a0871b081af46f55120a32156692666d123c6e3f5dfd82551c849d65fd8f",
+    "finished_at": "2026-11-23T16:18:41+00:00",
     "pydantic_ai_version": "2.69.0",
-    "input_tokens": 42736,
-    "output_tokens": 1314,
-    "model_requests": 5,
+    "input_tokens": 64363,
+    "output_tokens": 1420,
+    "model_requests": 6,
     "scenario": "petstore",
     "variant": "generated",
     "skill": "generate-config",
-    "skill_sha256": "6849f4fbcc75488ab1993e675ef13a02f34fe3f88090f97a4f97570488e5afd2",
+    "skill_sha256": "706503c62a7727102a0818bf151eba6c429d0de25c159ba6a1e3f5f3d4e66884",
     "request": "Run a small pet shop: keep its pets listed with the right status, and handle customers' orders.",
     "gateway_version": "0.8.0",
-    "summary": "`config.yaml` now passes `--dry-run` with 9 tools. I left the spec, the placeholder `base_url` and `auth: none` as they were.\n\n- **Pets (5 tools):** `add_pet`, `update_pet`, `update_pet_with_form`, `find_pets_by_status` and `get_pet_by_id`. These let you list a pet, change its status (available, pending or sold) and look pets up. I left out deleting pets, uploading images and searching by tag, since they aren't needed to keep listings correct.\n- **Orders (4 tools):** `place_order`, `get_order_by_id`, `delete_order` (cancel) and `get_inventory`, which shows stock counts by status.\n- **Left out:** all the user-account operations, which a shop assistant doesn't need.\n- **Shaping:** none. The operations work fine as they are.\n- **Before real use:** set `base_url` to the real server. The spec's own server is `https://petstore3.swagger.io/api/v3`. The spec also declares an API key and OAuth for the pet-changing operations, so you'll need to add auth if your server enforces it."
+    "summary": "`config.yaml` passes the `--dry-run` check with 9 tools exposed as-is (no shaping). I kept the placeholder `base_url` and `auth: none` as given.\n\n- **Pets:** `add_pet`, `update_pet`, `update_pet_with_form`, `find_pets_by_status`, `get_pet_by_id` and `get_inventory`. These let you list a pet, change its status (for example available, pending or sold), look pets up by status or ID, and see stock counts.\n- **Orders:** `place_order`, `get_order_by_id` and `delete_order`, so you can place, look up and cancel a customer's order.\n\nI left out `deletePet`, because deleting a pet is destructive and you can mark it sold instead. I also left out the user, tag-search and image-upload operations, since the request doesn't need them.\n\nThe spec declares OAuth and API-key security on some operations. I left auth off as instructed, so real credentials would need adding if you point this at a live server."
   }
 ]
