@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from openapi_mcp_gateway.stores.redis import RedisTokenStore
 from openapi_mcp_gateway.upstream_http import UpstreamHttpClient
+from tests.spec import write_secured_petstore
 
 
 # Where the spec fixtures every test reads live.
@@ -29,6 +30,12 @@ def petstore_json_path() -> pathlib.Path:
 @pytest.fixture
 def petstore_yml_path() -> pathlib.Path:
     return FIXTURES_DIR / 'petstore.yml'
+
+
+@pytest.fixture
+def secured_spec(petstore_json_path: pathlib.Path, tmp_path: pathlib.Path) -> pathlib.Path:
+    """The petstore fixture with each operation's upstream scopes declared."""
+    return write_secured_petstore(petstore_json_path, tmp_path)
 
 
 @pytest.fixture

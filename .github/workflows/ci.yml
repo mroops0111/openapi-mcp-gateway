@@ -68,6 +68,19 @@ jobs:
       - run: uv sync --all-packages --extra dev --extra redis
       - run: uv run pytest -m smoke -v --tb=short
 
+  e2e:
+    name: End-to-End (Keycloak)
+    runs-on: ubuntu-latest
+    # Starts Keycloak in Docker through testcontainers and signs MCP SDK clients in at it,
+    # since only a real identity provider shows how its tokens, scopes and exchanges behave.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --extra dev --extra redis
+      - run: uv run pytest -m e2e -v --tb=short
+
   search-ranking-benchmark:
     name: Search Ranking Benchmark
     runs-on: ubuntu-latest

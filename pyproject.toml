@@ -51,6 +51,7 @@ dev = [
     "ruff>=0.17.6",
     "pyjwt[crypto]>=2.15.1",
     "pytest-cov>=7.1.0",
+    "testcontainers>=4.15.0",
 ]
 
 [project.scripts]
@@ -144,9 +145,10 @@ line-width = 120
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-m 'not smoke'"
+addopts = "-m 'not smoke and not e2e'"
 markers = [
     "smoke: external-dependency smoke tests (clones fastapi/fastapi, fetches public OpenAPI specs over HTTP); skipped by default. Run explicitly with `pytest -m smoke`.",
+    "e2e: end-to-end tests against a real identity provider in Docker (Keycloak); skipped by default. Run explicitly with `pytest -m e2e`.",
 ]
 
 # Coverage of the gateway package by the test suite, lines and branches both, which CI holds at 80%.
