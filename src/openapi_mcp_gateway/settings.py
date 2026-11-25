@@ -543,8 +543,9 @@ class ServerConfig(pydantic.BaseModel):
     operations: dict[str, OperationOverride] = pydantic.Field(default_factory=dict)
     # Static headers sent on every upstream call, such as an API version the whole API requires.
     headers: dict[str, str] = pydantic.Field(default_factory=dict)
-    # Guidance about the server as a whole, such as when to use it rather than another,
-    # sent in the MCP ``initialize`` result, which clients place in the model's context.
+    # Guidance about the server as a whole, such as when to use it rather than another.
+    # It is sent in the MCP ``server/discover`` result, or in ``initialize`` for a legacy client.
+    # Clients place it in the model's context.
     instructions: str | None = None
 
     @pydantic.field_validator('name')
