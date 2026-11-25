@@ -11,7 +11,7 @@ from pydantic import AnyUrl
 
 from ...stores.base import TokenStore
 from .client_id import client_metadata_host, is_client_metadata_url, is_loopback_redirect
-from .client_metadata import ClientMetadataError, McpClientMetadataResolver
+from .client_metadata import McpClientMetadataError, McpClientMetadataResolver
 
 
 logger = logging.getLogger(__name__)
@@ -248,7 +248,7 @@ class McpClientMetadataDirectory(McpClientDirectory):
             return None
         try:
             document = await self._resolver.resolve(client_id)
-        except ClientMetadataError as error:
+        except McpClientMetadataError as error:
             logger.warning('Client "%s" cannot sign in, since its metadata document %s.', client_id, error)
             return None
         return client.model_copy(update={'client_name': document.client_name, 'redirect_uris': document.redirect_uris})

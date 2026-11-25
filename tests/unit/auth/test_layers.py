@@ -7,14 +7,32 @@ import openapi_mcp_gateway
 
 
 # The auth package's layers, and which other parts of ``auth`` each may import.
-# The two sides know nothing of each other, and only the assembling layer joins them.
+# The two sides know nothing of each other, and only the assembling layers join them.
 # ``auth.assembly`` names types from both sides in the contracts it defines.
+# The strategies build on those contracts, and ``auth.factory`` alone picks among them.
 ALLOWED_AUTH_IMPORTS = {
     'auth.routes': set(),
     'auth.upstream': {'auth.upstream'},
     'auth.mcp': {'auth.mcp', 'auth.routes'},
     'auth.assembly': {'auth.routes', 'auth.upstream', 'auth.mcp'},
+    'auth.settings_mapping': {'auth.mcp'},
+    'auth.external_issuer_setup': {'auth.assembly', 'auth.mcp'},
+    'auth.authorities': {'auth.assembly', 'auth.external_issuer_setup', 'auth.mcp', 'auth.settings_mapping'},
+    'auth.flows': {
+        'auth.assembly',
+        'auth.external_issuer_setup',
+        'auth.flows',
+        'auth.mcp',
+        'auth.routes',
+        'auth.settings_mapping',
+        'auth.upstream',
+    },
+    'auth.upstream_types': {'auth.assembly', 'auth.flows', 'auth.upstream'},
+    'auth.factory': {'auth.assembly', 'auth.authorities', 'auth.flows', 'auth.upstream_types'},
 }
+
+# The package's own ``__init__``, which re-exports from every layer and which no layer may import.
+_PACKAGE_INIT_LAYER = 'auth'
 
 # The layers that speak a protocol, which take plain values and never read the config.
 # Turning ``settings`` into those values belongs to the assembling layer, so a renamed key never reaches them.
@@ -34,6 +52,13 @@ def test_a_layer_imports_only_what_lies_beneath_it(layer):
         if _is_auth(target) and _layer_of(target) not in ALLOWED_AUTH_IMPORTS[layer]
     ]
     assert offending == []
+
+
+def test_every_auth_layer_states_what_it_may_import():
+    """A new module under ``auth`` names its layer's imports here, or it would escape the check above."""
+    layers = {_layer_of(module) for module in _auth_imports()} - {_PACKAGE_INIT_LAYER}
+
+    assert layers == set(ALLOWED_AUTH_IMPORTS)
 
 
 @pytest.mark.parametrize('layer', PROTOCOL_LAYERS)

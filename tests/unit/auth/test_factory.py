@@ -1,17 +1,15 @@
 import typing
-from unittest.mock import patch
 
-import pydantic
 import pytest
 
-from openapi_mcp_gateway.auth.assembly import AuthTypeContext, McpSetting
-from openapi_mcp_gateway.auth.factory import AUTH_TYPE_HANDLERS, build_auth
-from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
+from openapi_mcp_gateway.auth.assembly import AuthTypeContext, McpSetting, UpstreamSetting
+from openapi_mcp_gateway.auth.factory import build_auth
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
     UpstreamStaticAuthResolver,
 )
+from openapi_mcp_gateway.auth.upstream_types import AUTH_TYPE_HANDLERS
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, ScopeRegistry
@@ -24,10 +22,11 @@ from openapi_mcp_gateway.settings import (
 )
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from tests.client_metadata import serving_resolver
-from tests.constants import API_URL, GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
+from tests.constants import API_URL, GATEWAY_URL, ISSUER
 from tests.flow import (
     auth_context,
     build_spec,
+    discovered_external_issuer,
     server_entry,
     spec_with_authorization_code,
     spec_with_client_credentials,
@@ -51,7 +50,7 @@ SPEC_BY_FLOW = {
 }
 
 # What ``token_exchange`` needs on the MCP side to build.
-TOKEN_EXCHANGE_MCP = {'issuer': ISSUER}
+TOKEN_EXCHANGE_MCP = {'issuer': ISSUER, 'required_scopes': ['mcp']}
 
 
 class TestStaticCredentials:
@@ -111,8 +110,8 @@ class TestOtherTypes:
 
     def test_a_token_alongside_none_is_refused(self):
         """Previously the token was quietly ignored, which read as auth that was never applied."""
-        with pytest.raises(pydantic.ValidationError, match='no effect'):
-            AuthConfig(upstream=UpstreamAuthConfig(type='none', token='ignored'))
+        with pytest.raises(ValueError, match='no effect'):
+            build_auth(_context(AuthConfig(upstream=UpstreamAuthConfig(type='none', token='ignored'))))
 
 
 class TestDispatch:
@@ -176,6 +175,62 @@ class TestUpstreamPrincipal:
         assert handler.select(context).upstream_principal == principal
 
 
+class TestUpstreamSettingsWithoutEffect:
+    """An ``auth.upstream`` field the selected strategy never reads is refused, naming what would read it.
+
+    A known key in the wrong place is the same mistake as an unknown one.
+    Both leave an operator believing they configured something.
+    """
+
+    def test_every_upstream_setting_is_an_upstream_field(self):
+        """``UpstreamSetting`` and ``auth.upstream`` must not drift apart, or a strategy could name a missing field."""
+        assert set(typing.get_args(UpstreamSetting)) == set(UpstreamAuthConfig.model_fields) - {'type'}
+
+    @pytest.mark.parametrize(
+        ('upstream', 'refusal'),
+        [
+            ({**BEARER, 'api_key_header': 'X-Custom'}, r'api_key_header needs auth\.upstream\.type api_key,'),
+            (
+                {**CLIENT_CREDENTIALS, 'token': 'ignored'},
+                r'token needs auth\.upstream\.type bearer, or auth\.upstream\.type api_key,',
+            ),
+            ({**BEARER, 'audience': 'https://api'}, r'audience needs auth\.upstream\.type oauth2,'),
+            ({**BEARER, 'flow': 'client_credentials'}, r'flow needs auth\.upstream\.type oauth2,'),
+            ({**CLIENT_CREDENTIALS, 'issuer': ISSUER}, r'issuer needs auth\.upstream\.flow authorization_code,'),
+            (
+                {**CLIENT_CREDENTIALS, 'enforce_scopes': True},
+                r'enforce_scopes needs auth\.upstream\.flow authorization_code or token_exchange,',
+            ),
+            (
+                {**CLIENT_CREDENTIALS, 'authorization_url': 'https://idp/authorize'},
+                r'authorization_url needs auth\.upstream\.flow authorization_code,',
+            ),
+            (
+                {**CLIENT_CREDENTIALS, 'flow': None, 'required_scopes': ['openid']},
+                r'required_scopes needs auth\.upstream\.flow authorization_code or token_exchange,',
+            ),
+        ],
+    )
+    def test_a_setting_nothing_reads_is_refused(self, upstream, refusal):
+        """An unset flow is checked against the flow the spec resolves it to."""
+        with pytest.raises(ValueError, match=rf'Server "srv": auth\.upstream\.{refusal} so it would have no effect'):
+            _build({'upstream': upstream})
+
+    @pytest.mark.parametrize(
+        'auth',
+        [
+            {'upstream': BEARER},
+            {'upstream': {'type': 'api_key', 'token': 'k', 'api_key_header': 'X-Custom'}},
+            {'upstream': {**AUTHORIZATION_CODE, 'issuer': ISSUER, 'required_scopes': ['openid']}},
+            {'upstream': {**CLIENT_CREDENTIALS, 'scopes': ['api'], 'audience': API_URL}},
+            {'upstream': {'type': 'none'}},
+        ],
+    )
+    def test_a_setting_the_strategy_reads_is_accepted(self, auth):
+        """Refusing the inapplicable must not refuse the ordinary."""
+        assert _build(auth)
+
+
 class TestMcpSettingsWithoutEffect:
     """An ``auth.mcp`` field the assembled MCP half never reads is refused, naming what would read it."""
 
@@ -186,7 +241,10 @@ class TestMcpSettingsWithoutEffect:
     @pytest.mark.parametrize(
         ('auth', 'refusal'),
         [
-            ({'upstream': BEARER, 'mcp': {'required_scopes': ['x']}}, r'required_scopes needs auth\.mcp\.clients on'),
+            (
+                {'upstream': BEARER, 'mcp': {'required_scopes': ['x']}},
+                r'required_scopes needs auth\.mcp\.issuer on .*, or auth\.mcp\.clients on',
+            ),
             ({'upstream': BEARER, 'mcp': {'access_token_ttl': 60}}, r'access_token_ttl needs auth\.mcp\.clients on'),
             (
                 {'upstream': CLIENT_CREDENTIALS, 'mcp': {'access_token_ttl': 60}},
@@ -197,7 +255,7 @@ class TestMcpSettingsWithoutEffect:
                 r'issuer needs auth\.upstream\.flow token_exchange',
             ),
             (
-                {'upstream': {**CLIENT_CREDENTIALS, 'flow': None}, 'mcp': {'issuer': ISSUER}},
+                {'upstream': {'type': 'passthrough'}, 'mcp': {'issuer': ISSUER}},
                 r'issuer needs auth\.upstream\.flow token_exchange',
             ),
             (
@@ -224,6 +282,7 @@ class TestMcpSettingsWithoutEffect:
         [
             {'upstream': AUTHORIZATION_CODE, 'mcp': {'access_token_ttl': 60, 'refresh_token_ttl': 600}},
             {'upstream': TOKEN_EXCHANGE, 'mcp': {**TOKEN_EXCHANGE_MCP, 'required_scopes': ['x']}},
+            {'upstream': {**CLIENT_CREDENTIALS, 'flow': None}, 'mcp': {'issuer': ISSUER, 'required_scopes': ['x']}},
             {
                 'upstream': BEARER,
                 'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'access_token_ttl': 600},
@@ -240,11 +299,47 @@ class TestMcpSettingsWithoutEffect:
     def test_a_setting_the_mcp_half_reads_is_accepted(self, auth):
         assert _build(auth)
 
+    @pytest.mark.parametrize(
+        ('auth', 'refusal'),
+        [
+            (
+                {'upstream': AUTHORIZATION_CODE, 'mcp': {'operation_scopes': {'auto': 'tags'}}},
+                r'auth\.mcp\.operation_scopes needs auth\.mcp\.clients',
+            ),
+            (
+                {
+                    'upstream': AUTHORIZATION_CODE,
+                    'mcp': {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {}}, 'required_scopes': ['api']},
+                },
+                r'auth\.mcp\.required_scopes cannot be combined with auth\.mcp\.operation_scopes',
+            ),
+            (
+                {'upstream': TOKEN_EXCHANGE, 'mcp': {'issuer': ISSUER, 'operation_scopes': {'auto': 'tags'}}},
+                r'auth\.mcp\.issuer needs auth\.mcp\.required_scopes, the scopes every client asks the issuer for first',
+            ),
+            (
+                {'upstream': BEARER, 'mcp': {'issuer': ISSUER}},
+                r'auth\.mcp\.issuer needs auth\.mcp\.required_scopes',
+            ),
+            (
+                {'upstream': BEARER, 'mcp': {'issuer': ISSUER, 'clients': {'agent': {'client_secret': 's'}}}},
+                r"auth\.mcp\.issuer on .* and auth\.mcp\.clients on .* each issue this endpoint's tokens",
+            ),
+        ],
+    )
+    def test_scope_settings_the_token_issuer_cannot_honour_are_refused(self, auth, refusal):
+        """Where the gateway mints the tokens, a client must be granted the scopes, and only one party mints them.
+
+        Under an external issuer, a client must be told which scopes to ask for first.
+        """
+        with pytest.raises(ValueError, match=rf'Server "srv": {refusal}'):
+            _build(auth)
+
     def test_the_refusal_comes_before_anything_is_built(self):
         """``token_exchange`` fetches its issuer's metadata when built, so a misplaced setting must stop it first."""
         context = _build_context({'upstream': TOKEN_EXCHANGE, 'mcp': {**TOKEN_EXCHANGE_MCP, 'access_token_ttl': 60}})
         with (
-            patch('openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata') as fetch,
+            discovered_external_issuer() as fetch,
             pytest.raises(ValueError, match=r'access_token_ttl needs'),
         ):
             build_auth(context)
@@ -268,13 +363,7 @@ def _build(auth: dict):
 
     Issuer discovery is stubbed, so ``token_exchange`` builds offline.
     """
-    metadata = McpExternalIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
-    with (
-        patch(
-            'openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata', return_value=metadata
-        ),
-        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client'),
-    ):
+    with discovered_external_issuer():
         return build_auth(_build_context(auth))
 
 

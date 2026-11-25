@@ -1,18 +1,11 @@
-"""Discovery and token verification for an authorization server the gateway does not own.
-
-Used by the ``token_exchange`` flow, where the gateway issues no credentials of its own.
-It validates tokens minted for it by an external issuer,
-then exchanges each one for a separate upstream token under RFC 8693.
-
-Two documents are fetched, both from the issuer.
-Its RFC 8414 / OpenID Connect metadata names the JWKS and token endpoints, and the JWKS supplies the signing keys.
-"""
-
 import dataclasses
 import logging
 import typing
 
 import httpx
+from mcp.server.auth.provider import TokenVerifier
+
+from ...scopes import McpAccessToken
 
 
 logger = logging.getLogger(__name__)
@@ -114,12 +107,14 @@ def fetch_mcp_external_issuer_metadata(issuer: str, timeout: float = 10.0) -> Mc
     )
 
 
-class McpExternalIssuerTokenVerifier:
-    """Verify inbound bearer tokens as JWTs signed by an external issuer.
+class McpExternalIssuerTokenVerifier(TokenVerifier):
+    """Verify inbound bearer tokens as JWTs signed by an external issuer the gateway does not own.
 
-    Implements the MCP SDK's ``TokenVerifier`` protocol.
+    It serves an endpoint whose tokens another authorization server mints,
+    with the signing keys read from the JWKS the issuer's metadata names.
     ``PyJWKClient`` caches the issuer's signing keys and refetches on an unknown ``kid``, so rotation needs no restart.
 
+    ``mcp_grantable_scopes`` is what each token may step up to, or only what it holds when ``None``.
     ``audience`` is the gateway's own canonical URI, never the upstream API's.
     The MCP spec requires a server to accept only tokens minted for itself,
     which is why the upstream is reached with a separately exchanged token rather than this one.
@@ -131,14 +126,16 @@ class McpExternalIssuerTokenVerifier:
         audience: str,
         jwks_uri: str,
         required_scopes: typing.Sequence[str] = (),
+        mcp_grantable_scopes: typing.Sequence[str] | None = None,
     ) -> None:
         self.issuer = issuer.rstrip('/')
         self.audience = audience
         self.jwks_uri = jwks_uri
         self.required_scopes = tuple(required_scopes)
+        self.mcp_grantable_scopes = None if mcp_grantable_scopes is None else list(mcp_grantable_scopes)
         self._jwk_client = _build_jwk_client(jwks_uri)
 
-    async def verify_token(self, token: str) -> typing.Any | None:
+    async def verify_token(self, token: str) -> McpAccessToken | None:
         """Return an ``AccessToken`` for an acceptable token, or ``None`` for anything else.
 
         ``None`` is the only rejection the SDK's bearer backend understands.
@@ -156,10 +153,9 @@ class McpExternalIssuerTokenVerifier:
             logger.info('Rejected bearer token for %s: %s', self.audience, rejection)
             return None
 
-    def _verified_access_token(self, token: str) -> typing.Any | None:
+    def _verified_access_token(self, token: str) -> McpAccessToken | None:
         """Validate ``token``, raising ``McpTokenVerificationError`` with the reason it is unacceptable."""
         import jwt
-        from mcp.server.auth.provider import AccessToken
 
         # A JWT has three dot-separated segments.
         # Anything else is some other credential scheme, and reporting it as invalid would misdescribe what went wrong.
@@ -195,13 +191,16 @@ class McpExternalIssuerTokenVerifier:
 
         expires_at = claims.get('exp')
         subject = claims.get('sub')
-        return AccessToken(
+        return McpAccessToken(
             token=token,
             client_id=str(claims.get('azp') or claims.get('client_id') or subject or 'unknown'),
             scopes=list(scopes),
             expires_at=int(expires_at) if expires_at is not None else None,
             resource=self.audience,
             subject=str(subject) if subject is not None else None,
+            # The token records no upstream grant, which an exchange finds out on the call.
+            upstream_scopes=None,
+            mcp_grantable_scopes=list(scopes) if self.mcp_grantable_scopes is None else self.mcp_grantable_scopes,
         )
 
 

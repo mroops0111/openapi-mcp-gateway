@@ -6,10 +6,12 @@ import fakeredis.aioredis
 import httpx
 import pytest
 import pytest_asyncio
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from openapi_mcp_gateway.stores.redis import RedisTokenStore
 from openapi_mcp_gateway.upstream_http import UpstreamHttpClient
+from tests.spec import write_secured_petstore
 
 
 # Where the spec fixtures every test reads live.
@@ -31,6 +33,12 @@ def petstore_yml_path() -> pathlib.Path:
 
 
 @pytest.fixture
+def secured_spec(petstore_json_path: pathlib.Path, tmp_path: pathlib.Path) -> pathlib.Path:
+    """The petstore fixture with each operation's upstream scopes declared."""
+    return write_secured_petstore(petstore_json_path, tmp_path)
+
+
+@pytest.fixture
 def client_credentials_spec_path() -> pathlib.Path:
     """A spec declaring only the ``clientCredentials`` flow, so the flow is resolved rather than configured."""
     return FIXTURES_DIR / 'client_credentials.json'
@@ -39,6 +47,12 @@ def client_credentials_spec_path() -> pathlib.Path:
 @pytest.fixture
 def petstore_spec_raw() -> dict:
     return json.loads((FIXTURES_DIR / 'petstore.json').read_text())
+
+
+@pytest.fixture(scope='session')
+def signing_key() -> rsa.RSAPrivateKey:
+    """One RSA keypair an external issuer signs with, shared by the session since generation dominates the runtime."""
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
 @pytest_asyncio.fixture

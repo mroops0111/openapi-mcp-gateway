@@ -1,47 +1,98 @@
+import collections.abc
 import logging
 
-import pydantic
+import httpx
 from mcp.server.auth.middleware.auth_context import get_access_token
-from mcp.server.auth.settings import AuthSettings
-from mcp.shared.auth import ProtectedResourceMetadata
 
+from ...scopes import ScopeRegistry, TokenGrant, UpstreamGrantSource, UpstreamGrantUnavailableError, read_current_grant
+from ...settings import AuthConfig
 from ..assembly import (
+    AuthTypeContext,
     McpSetting,
     McpSettingsReader,
-    OAuthFlowContext,
-    OAuthFlowHandler,
     ServerAuthSetup,
     UpstreamPrincipal,
+    UpstreamSetting,
 )
-from ..mcp.external_issuer import McpExternalIssuerTokenVerifier, fetch_mcp_external_issuer_metadata
-from ..upstream.resolver import UpstreamTokenSourceAuthResolver
-from ..upstream.token_exchange import UpstreamTokenExchangeClient
+from ..external_issuer_setup import McpExternalIssuerSetup
+from ..upstream.oauth_flow import UpstreamOAuthFlow
+from ..upstream.resolver import UPSTREAM_CREDENTIAL_UNAVAILABLE, UpstreamTokenSourceAuthResolver
+from ..upstream.token_exchange import (
+    UpstreamExchangedToken,
+    UpstreamTokenExchangeClient,
+    UpstreamTokenExchangeError,
+    UpstreamTokenExchangeRefusedError,
+)
 from ..upstream.token_source import UpstreamTokenSource
+from .handler import OAuthFlowHandler
 
 
 logger = logging.getLogger(__name__)
 
 
-class TokenExchangeBridge(UpstreamTokenSource):
+class TokenExchangeBridge(UpstreamTokenSource, UpstreamGrantSource):
     """Joins the caller's validated MCP token to the upstream token exchanged for it, for ``token_exchange``.
 
     Reads the token the MCP transport already verified for this request,
     so the exchange only ever runs on a credential the gateway has accepted for itself.
+    Each exchange asks for the upstream scopes the operations the caller's MCP scopes open need,
+    picked by ``scope_registry`` within ``ceiling`` as an ``authorization_code`` sign-in picks them.
+    The scopes the exchange granted are the upstream grant a call is checked against.
     Returns no token when there is no authenticated caller,
     which lets the upstream reject the call rather than the gateway serving it anonymously.
     """
 
-    def __init__(self, upstream: UpstreamTokenExchangeClient) -> None:
+    def __init__(
+        self,
+        upstream: UpstreamTokenExchangeClient,
+        scope_registry: ScopeRegistry,
+        ceiling: collections.abc.Sequence[str],
+        required_scopes: collections.abc.Sequence[str],
+    ) -> None:
         self.upstream = upstream
+        self._scope_registry = scope_registry
+        self._ceiling = list(ceiling)
+        self._required_scopes = list(required_scopes)
+
+    # UpstreamTokenSource
 
     async def get_token(self) -> str | None:
-        access_token = get_access_token()
-        if access_token is None:
-            return None
-        return await self.upstream.exchange(access_token.token)
+        exchanged = await self._exchange_for_caller()
+        return exchanged.access_token if exchanged else None
 
     async def aclose(self) -> None:
         await self.upstream.aclose()
+
+    # UpstreamGrantSource
+
+    @property
+    def records_user_grant(self) -> bool:
+        return True
+
+    async def read_call_grant(self) -> TokenGrant:
+        grant = read_current_grant()
+        try:
+            exchanged = await self._exchange_for_caller()
+        except UpstreamTokenExchangeRefusedError as error:
+            # An issuer that will not grant every scope asked for may refuse the whole exchange rather than narrow it,
+            # as Keycloak does, so the refusal is the call's answer rather than a server error.
+            raise UpstreamGrantUnavailableError(str(error)) from error
+        except (UpstreamTokenExchangeError, httpx.HTTPError) as error:
+            # Any other failure is the gateway's, so its detail goes to the log and the caller learns only that much.
+            logger.warning('Token exchange for a call failed: %s', error)
+            raise UpstreamGrantUnavailableError(UPSTREAM_CREDENTIAL_UNAVAILABLE) from error
+        if exchanged is None:
+            return grant
+        return grant._replace(upstream_scopes=frozenset(exchanged.scopes))
+
+    async def _exchange_for_caller(self) -> UpstreamExchangedToken | None:
+        access_token = get_access_token()
+        if access_token is None:
+            return None
+        scopes = self._scope_registry.requested_upstream_scopes(
+            self._ceiling, self._required_scopes, access_token.scopes
+        )
+        return await self.upstream.exchange(access_token.token, scopes)
 
 
 class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
@@ -58,20 +109,45 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     so revoking a user at the issuer takes effect without waiting for a gateway-minted token to expire.
     """
 
+    # No spec can declare token_exchange, and it talks to no upstream authorization server.
+    # Consulting the spec would only report a misleading missing flow.
+    reads_spec_oauth_flow = False
+    # Each exchange states what the issuer granted for the upstream.
+    records_user_grant = True
+
+    def __init__(self) -> None:
+        self._issuer_setup = McpExternalIssuerSetup()
+
     @property
     def upstream_principal(self) -> UpstreamPrincipal:
         return 'user'
 
     @property
+    def flow_settings(self) -> frozenset[UpstreamSetting]:
+        return frozenset(
+            {
+                'client_id',
+                'client_secret',
+                'scopes',
+                'required_scopes',
+                'resource',
+                'audience',
+            }
+        )
+
+    @property
     def mcp_settings(self) -> frozenset[McpSetting]:
-        return frozenset({'issuer', 'required_scopes'})
+        return self._issuer_setup.mcp_settings
 
     @property
     def mcp_settings_requirement(self) -> str:
         return 'auth.upstream.flow token_exchange, where another authorization server issues MCP tokens'
 
-    def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
-        entry = flow_context.entry
+    def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
+        self._issuer_setup.refuse_unusable_settings(auth, server_name)
+
+    def build(self, context: AuthTypeContext, upstream_oauth_flow: UpstreamOAuthFlow | None) -> ServerAuthSetup:
+        entry = context.entry
 
         issuer = entry.auth.mcp.resolve_issuer()
         if not issuer:
@@ -98,70 +174,33 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
                 'and authorization servers require a confidential client for that grant.'
             )
 
-        metadata = fetch_mcp_external_issuer_metadata(issuer)
+        metadata = self._issuer_setup.discover(issuer)
         if not metadata.token_endpoint:
             raise ValueError(
                 f'Server "{entry.name}": issuer "{issuer}" publishes no token_endpoint, '
                 "so the gateway cannot exchange the caller's token for an upstream one."
             )
 
-        # RFC 8707 §2: the canonical URI of this MCP server.
-        # A client asks the issuer for this, so it is what the issuer stamps into the token's audience.
-        canonical_uri = flow_context.mcp_resource_url
-
-        # The two scope lists point in opposite directions and must not be conflated.
-        # Demanding the upstream scopes of the caller would lock out every client that did not match,
-        # since the deployment picks what to request from the issuer but not what a caller registered with.
-        mcp_endpoint_scopes = list(entry.auth.mcp.required_scopes)
-        verifier = McpExternalIssuerTokenVerifier(
-            issuer=metadata.issuer,
-            audience=canonical_uri,
-            jwks_uri=metadata.jwks_uri,
-            required_scopes=mcp_endpoint_scopes,
-        )
         bridge = TokenExchangeBridge(
             UpstreamTokenExchangeClient(
                 token_endpoint=metadata.token_endpoint,
                 client_id=client_id,
                 client_secret=client_secret,
                 audience_params=audience_params,
-                scopes=entry.auth.upstream.scopes,
-            )
+            ),
+            context.scope_registry,
+            entry.auth.upstream.scopes,
+            entry.auth.upstream.required_scopes,
         )
-
-        settings = AuthSettings(
-            issuer_url=pydantic.AnyHttpUrl(metadata.issuer),
-            resource_server_url=pydantic.AnyHttpUrl(canonical_uri),
-            validate_token_resource=True,
-            required_scopes=mcp_endpoint_scopes or None,
-        )
-
         logger.debug(
-            'Token exchange flow set up for "%s": issuer=%s resource=%s exchange_target=%s '
-            'required_scopes=%s upstream_scopes=%s',
+            'Token exchange flow set up for "%s": issuer=%s exchange_target=%s upstream_scopes=%s',
             entry.name,
             metadata.issuer,
-            canonical_uri,
             audience_params,
-            mcp_endpoint_scopes,
             entry.auth.upstream.scopes,
         )
-
-        return ServerAuthSetup(
-            resolver=UpstreamTokenSourceAuthResolver(bridge),
-            settings=settings,
-            verifier=verifier,
-            # Validated from strings so a path-less issuer keeps its exact form.
-            # RFC 8414 §2 compares issuers by exact string, and ``AnyHttpUrl`` would append a slash.
-            protected_resource=ProtectedResourceMetadata.model_validate(
-                {
-                    'resource': canonical_uri,
-                    'authorization_servers': [metadata.issuer],
-                    # RFC 9728 defines this as what a client must obtain for this endpoint,
-                    # so it is the inbound list, and a registering client reads it to know what to ask for.
-                    'scopes_supported': mcp_endpoint_scopes or None,
-                }
-            ),
-            mcp_summary=f'issuer ({metadata.issuer})',
-            on_shutdown=bridge.aclose,
+        upstream_setup = ServerAuthSetup(
+            resolver=UpstreamTokenSourceAuthResolver(bridge), upstream_grant_source=bridge, on_shutdown=bridge.aclose
         )
+        # The MCP half is the external issuer's, as on a server whose upstream sees only the gateway.
+        return self._issuer_setup.attach(upstream_setup, context, metadata)

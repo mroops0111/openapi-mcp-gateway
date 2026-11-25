@@ -425,50 +425,6 @@ class TestUnknownKeysAreRefused:
         assert config.servers[0].exposure.promote_resources is True
 
 
-class TestSettingsThatCannotTakeEffect:
-    """A known ``auth.upstream`` key in the wrong place is refused, like an unknown one.
-
-    Both leave an operator believing they configured something.
-    ``auth.mcp`` is checked once the server is assembled, by ``build_auth``.
-    """
-
-    @pytest.mark.parametrize(
-        ('payload', 'offending'),
-        [
-            ({'upstream': {'type': 'bearer', 'token': 't', 'api_key_header': 'X-Custom'}}, 'api_key_header'),
-            ({'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'token': 'ignored'}}, 'token'),
-            ({'upstream': {'type': 'bearer', 'token': 't', 'audience': 'https://api'}}, 'upstream'),
-            (
-                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'issuer': ISSUER}},
-                'upstream.issuer',
-            ),
-            (
-                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'enforce_scopes': True}},
-                'upstream.enforce_scopes',
-            ),
-        ],
-    )
-    def test_inapplicable_settings_are_refused(self, payload, offending):
-        """Each names the field and what it would need, rather than only rejecting the input."""
-        with pytest.raises(pydantic.ValidationError, match=rf'{offending}.*no effect'):
-            AuthConfig.model_validate(payload)
-
-    @pytest.mark.parametrize(
-        'payload',
-        [
-            {'upstream': {'type': 'bearer', 'token': 't'}},
-            {'upstream': {'type': 'api_key', 'token': 'k', 'api_key_header': 'X-Custom'}},
-            {'upstream': {'type': 'oauth2', 'client_id': 'c'}},
-            {'upstream': {'type': 'oauth2', 'issuer': ISSUER}},
-            {'upstream': {'type': 'oauth2', 'flow': 'authorization_code', 'issuer': ISSUER}},
-            {'upstream': {'type': 'none'}},
-        ],
-    )
-    def test_applicable_settings_are_accepted(self, payload):
-        """Refusing the inapplicable must not refuse the ordinary."""
-        assert AuthConfig.model_validate(payload)
-
-
 class TestClientConfig:
     """A client declared under ``auth.mcp.clients`` refuses a default it could never be granted."""
 
@@ -478,27 +434,22 @@ class TestClientConfig:
 
 
 class TestOtherClients:
-    """``auth.mcp.other_clients`` admits unlisted metadata document clients.
-
-    It also decides whether clients may register.
-    """
+    """``auth.mcp.other_clients`` admits unlisted metadata document clients."""
 
     @pytest.mark.parametrize(
-        ('mcp', 'admits_others', 'registration'),
+        ('mcp', 'admits_others'),
         [
-            ({}, True, True),
-            ({'clients': {'agent': {}}}, False, False),
-            ({'other_clients': {}}, True, False),
-            ({'clients': {'agent': {}}, 'other_clients': {}}, True, False),
-            ({'clients': {'agent': {}}, 'other_clients': False}, False, False),
+            ({}, True),
+            ({'clients': {'agent': {}}}, False),
+            ({'other_clients': {}}, True),
+            ({'clients': {'agent': {}}, 'other_clients': {}}, True),
+            ({'clients': {'agent': {}}, 'other_clients': False}, False),
         ],
         ids=['nothing set', 'clients only', 'other clients', 'both', 'other clients off'],
     )
-    def test_the_defaults_keep_a_listed_set_closed(self, mcp, admits_others, registration):
-        """Registration stays only for a config naming neither, since it cannot be held to ``trusted_hosts``."""
+    def test_the_defaults_keep_a_listed_set_closed(self, mcp, admits_others):
         config = McpAuthConfig.model_validate(mcp)
         assert (config.resolve_other_clients() is not None) is admits_others
-        assert config.accepts_dynamic_registration is registration
 
     def test_trusted_hosts_compare_without_case(self):
         assert OtherClientsConfig(trusted_hosts=['Claude.AI']).trusted_hosts == ['claude.ai']
@@ -542,11 +493,6 @@ class TestScopeSettings:
     @pytest.mark.parametrize(
         ('auth', 'refusal'),
         [
-            ({'mcp': {'operation_scopes': {'auto': 'tags'}}}, 'auth.mcp.operation_scopes needs auth.mcp.clients'),
-            (
-                {'mcp': {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {}}, 'required_scopes': ['api']}},
-                'cannot be combined with auth.mcp.operation_scopes',
-            ),
             ({'mcp': {'clients': {'agent': {'scopes': ['pets:read']}}}}, r'clients \(agent\) grant scopes'),
             (
                 {'mcp': {'clients': {'agent': {'scopes': ['pets read']}}}},

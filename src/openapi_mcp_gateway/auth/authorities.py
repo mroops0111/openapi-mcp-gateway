@@ -1,12 +1,14 @@
 import abc
 import dataclasses
+import typing
 
 import pydantic
 from mcp.server.auth.settings import AuthSettings
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
-from ..settings import AuthConfig
+from ..settings import AuthConfig, McpAuthConfig, is_url_client_id
 from .assembly import AuthTypeContext, McpSetting, McpSettingsReader, ServerAuthSetup, UpstreamPrincipal
+from .external_issuer_setup import McpExternalIssuerSetup
 from .mcp.client_credentials import (
     AUTHORIZE_PATH,
     TOKEN_ENDPOINT_AUTH_METHODS,
@@ -14,11 +16,10 @@ from .mcp.client_credentials import (
     McpClientCredentialsExtension,
     McpClientCredentialsGrant,
     McpClientCredentialsRoutes,
-    McpGatewayTokenVerifier,
 )
 from .mcp.record_origin import McpRecordOrigin
-from .mcp.token_issuer import McpTokenIssuer
-from .settings_mapping import build_mcp_client_directory, build_mcp_token_policy
+from .mcp.token_issuer import McpGatewayIssuerTokenVerifier, McpTokenIssuer
+from .settings_mapping import build_mcp_client_directory, build_mcp_token_policy, refuse_unusable_mcp_token_scopes
 
 
 class McpTokenAuthority(abc.ABC):
@@ -72,7 +73,8 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
         return upstream_principal == self.upstream_principal and bool(auth.mcp.clients)
 
     def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
-        auth.mcp.refuse_client_settings_without_sign_in(server_name)
+        _refuse_client_settings_without_sign_in(auth.mcp, server_name)
+        refuse_unusable_mcp_token_scopes(auth.mcp, server_name)
 
     def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
         entry = context.entry
@@ -101,7 +103,7 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
         )
         return dataclasses.replace(
             setup,
-            verifier=McpGatewayTokenVerifier(tokens, clients),
+            verifier=McpGatewayIssuerTokenVerifier(tokens, clients),
             settings=AuthSettings(
                 issuer_url=server_url,
                 resource_server_url=pydantic.AnyHttpUrl(resource),
@@ -116,11 +118,102 @@ class McpClientCredentialsAuthority(McpTokenAuthority, McpSettingsReader):
         )
 
 
+class McpExternalIssuerAuthority(McpTokenAuthority, McpSettingsReader):
+    """Accept the tokens an authorization server the gateway does not own mints for this endpoint.
+
+    It applies to an upstream that sees only the gateway's identity once ``auth.mcp.issuer`` is set,
+    and builds the MCP half ``McpExternalIssuerSetup`` describes.
+    """
+
+    def __init__(self) -> None:
+        self._issuer_setup = McpExternalIssuerSetup()
+
+    @property
+    def upstream_principal(self) -> UpstreamPrincipal:
+        return 'gateway'
+
+    @property
+    def mcp_settings(self) -> frozenset[McpSetting]:
+        return self._issuer_setup.mcp_settings
+
+    @property
+    def mcp_settings_requirement(self) -> str:
+        return "auth.mcp.issuer on an upstream that sees only the gateway's identity"
+
+    def applies_to(self, auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> bool:
+        return upstream_principal == self.upstream_principal and bool(auth.mcp.resolve_issuer())
+
+    def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
+        self._issuer_setup.refuse_unusable_settings(auth, server_name)
+
+    def attach(self, setup: ServerAuthSetup, context: AuthTypeContext) -> ServerAuthSetup:
+        # Selected only once auth.mcp.issuer is set, as applies_to checks.
+        issuer = typing.cast(str, context.entry.auth.mcp.resolve_issuer())
+        return self._issuer_setup.attach(setup, context, self._issuer_setup.discover(issuer))
+
+
 # The extension point, tried in order, so the default that always applies comes last.
-MCP_TOKEN_AUTHORITIES: tuple[type[McpTokenAuthority], ...] = (McpClientCredentialsAuthority, McpNoTokenAuthority)
+MCP_TOKEN_AUTHORITIES: tuple[type[McpTokenAuthority], ...] = (
+    McpExternalIssuerAuthority,
+    McpClientCredentialsAuthority,
+    McpNoTokenAuthority,
+)
 
 
-def select_mcp_token_authority(auth: AuthConfig, upstream_principal: UpstreamPrincipal) -> McpTokenAuthority:
-    """The first authority ``auth`` selects for an upstream that sees ``upstream_principal``."""
-    authorities = (authority_class() for authority_class in MCP_TOKEN_AUTHORITIES)
-    return next(authority for authority in authorities if authority.applies_to(auth, upstream_principal))
+def select_mcp_token_authority(
+    auth: AuthConfig, upstream_principal: UpstreamPrincipal, server_name: str
+) -> McpTokenAuthority:
+    """The one authority ``auth`` selects for an upstream that sees ``upstream_principal``, or the default.
+
+    Raises ``ValueError`` when two authorities both apply, since only one may issue an endpoint's tokens.
+    """
+    *specific_classes, default_class = MCP_TOKEN_AUTHORITIES
+    applying = [
+        authority
+        for authority in (authority_class() for authority_class in specific_classes)
+        if authority.applies_to(auth, upstream_principal)
+    ]
+    if len(applying) > 1:
+        named = ' and '.join(_describe_selection(authority) for authority in applying)
+        raise ValueError(
+            f'Server "{server_name}": {named} each issue this endpoint\'s tokens, so set only one of them.'
+        )
+    return applying[0] if applying else default_class()
+
+
+def _describe_selection(authority: McpTokenAuthority) -> str:
+    """What selects ``authority``, as an error names it."""
+    if isinstance(authority, McpSettingsReader):
+        return authority.mcp_settings_requirement
+    return type(authority).__name__
+
+
+def _refuse_client_settings_without_sign_in(config: McpAuthConfig, server_name: str) -> None:
+    """Refuse what only a user signing in reads, for a server where agents obtain tokens as themselves.
+
+    Each client needs a secret, since it is its only proof of identity.
+    A redirect, default scopes and the consent page all belong to a sign-in that never happens.
+    A request with no scope is granted all of ``scopes``, so ``default_scopes`` would have nothing to narrow.
+    """
+    problems = [
+        f'auth.mcp.clients.{client_id}.client_secret is required, since it is the only proof of who the agent is'
+        for client_id, client in config.clients.items()
+        if not client.client_secret
+    ]
+    problems += [
+        f'auth.mcp.clients.{client_id}.{field} has no effect, since no user signs in'
+        for client_id, client in config.clients.items()
+        for field in ('redirect_uris', 'default_scopes', 'consent')
+        if field in client.model_fields_set
+    ]
+    problems += [
+        f'auth.mcp.clients.{client_id} names a Client ID Metadata Document, whose client signs a user in'
+        for client_id in config.clients
+        if is_url_client_id(client_id)
+    ]
+    if problems:
+        raise ValueError(
+            f'Server "{server_name}": agents here obtain tokens with their own credentials, and no user signs in. '
+            + '. '.join(problems)
+            + '.'
+        )

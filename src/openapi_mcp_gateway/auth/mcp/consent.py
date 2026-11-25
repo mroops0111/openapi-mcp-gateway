@@ -23,7 +23,7 @@ _SECURE_BROWSER_COOKIE = f'__Host-{_BROWSER_COOKIE}'
 _BROWSER_ID_PATTERN = re.compile(r'[0-9a-f]{64}')
 
 
-class PendingAuthorization(pydantic.BaseModel):
+class McpPendingAuthorization(pydantic.BaseModel):
     """One sign-in between the MCP client's ``/authorize`` and the upstream's callback.
 
     It is stored under ``request_id`` until the browser leaves the consent page,
@@ -54,7 +54,7 @@ class PendingAuthorization(pydantic.BaseModel):
         return self.browser_id
 
 
-class ConsentRegistry:
+class McpConsentRegistry:
     """The scopes each browser has approved for each client on this server's consent page, kept for ``CONSENT_TTL``.
 
     The gateway does not know the user before the upstream sign-in, so an approval belongs to the browser.
@@ -85,23 +85,23 @@ class ConsentRegistry:
         next_sign_in_scopes: collections.abc.Iterable[str],
     ) -> None:
         """Add these scopes to what the browser approved for the client, restarting the approval's lifetime."""
-        approved = await self.load_approved_scopes(browser_id, client_id) or ApprovedScopes()
-        merged = ApprovedScopes(
+        approved = await self.load_approved_scopes(browser_id, client_id) or McpApprovedScopes()
+        merged = McpApprovedScopes(
             mcp_scopes=sorted({*approved.mcp_scopes, *mcp_scopes}),
             next_sign_in_scopes=sorted({*approved.next_sign_in_scopes, *next_sign_in_scopes}),
         )
         await self._store.set('mcp_consent', self._key(browser_id, client_id), merged.model_dump(), ttl=CONSENT_TTL)
 
-    async def load_approved_scopes(self, browser_id: str, client_id: str) -> 'ApprovedScopes | None':
+    async def load_approved_scopes(self, browser_id: str, client_id: str) -> 'McpApprovedScopes | None':
         """What the browser approved for the client so far, or ``None`` when it never did."""
         data = await self._store.get('mcp_consent', self._key(browser_id, client_id))
-        return ApprovedScopes.model_validate(data) if data else None
+        return McpApprovedScopes.model_validate(data) if data else None
 
     def _key(self, browser_id: str, client_id: str) -> str:
         return f'{self._issuer} {browser_id} {client_id}'
 
 
-class ApprovedScopes(pydantic.BaseModel):
+class McpApprovedScopes(pydantic.BaseModel):
     """The scopes a browser approved for one client, of the MCP endpoint and of the sign-in after consent."""
 
     mcp_scopes: list[str] = pydantic.Field(default_factory=list)
@@ -114,15 +114,15 @@ class ApprovedScopes(pydantic.BaseModel):
 
     def find_new_scopes(
         self, mcp_scopes: collections.abc.Iterable[str], next_sign_in_scopes: collections.abc.Iterable[str]
-    ) -> 'ApprovedScopes':
+    ) -> 'McpApprovedScopes':
         """The scopes of each kind this approval does not yet cover."""
-        return ApprovedScopes(
+        return McpApprovedScopes(
             mcp_scopes=[scope for scope in mcp_scopes if scope not in self.mcp_scopes],
             next_sign_in_scopes=[scope for scope in next_sign_in_scopes if scope not in self.next_sign_in_scopes],
         )
 
 
-class BrowserCookie:
+class McpBrowserCookie:
     """The cookie that tells one browser from another, holding a random id and nothing else.
 
     It is ``HttpOnly`` and ``SameSite=Lax``, so no script reads it and no cross-site form sends it,

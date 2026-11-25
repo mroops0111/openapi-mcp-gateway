@@ -13,14 +13,14 @@ from ..mcp.consent import PENDING_AUTHORIZATION_TTL
 from ..mcp.record_origin import McpRecordOrigin
 from ..mcp.token_issuer import MCP_GRANT_NAMESPACE, McpTokenAttachment, McpTokenIssuer
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
+from ..upstream.authorization_code_refresh import UpstreamAuthorizationCodeRefresher
 from ..upstream.reauthorization import UpstreamReauthorizer, UpstreamSignInOffer
 from ..upstream.rejection import UpstreamRejection
 from .authorization_code_upstream_token import (
     UPSTREAM_REFRESH_TOKEN_LINK,
-    UpstreamTokenRefresher,
+    build_renewed_attachment,
     build_upstream_links,
-    expiry_of,
-    renewed_attachment,
+    compute_expiry,
 )
 
 
@@ -42,7 +42,7 @@ _SIGN_IN_POLL_INTERVAL = 1.0
 _SIGN_IN_ENDED = 'This sign-in has expired or was already finished'
 
 
-class PendingReauthorization(pydantic.BaseModel):
+class AuthorizationCodePendingReauthorization(pydantic.BaseModel):
     """A new upstream sign-in for MCP tokens the client already holds.
 
     ``grant_id`` is the first sign-in behind those tokens, whose current tokens get the new upstream credential,
@@ -78,7 +78,7 @@ class AuthorizationCodeReauthorizer(UpstreamReauthorizer):
         self,
         tokens: McpTokenIssuer,
         upstream: UpstreamAuthorizationCodeClient,
-        refresher: UpstreamTokenRefresher,
+        refresher: UpstreamAuthorizationCodeRefresher,
         scope_registry: ScopeRegistry,
         reauthorize_url: str,
     ) -> None:
@@ -103,7 +103,7 @@ class AuthorizationCodeReauthorizer(UpstreamReauthorizer):
             # A token endpoint that is down or answers garbage leaves the upstream's refusal as the answer.
             logger.info('Upstream token renewal failed: error=%s', exception)
             return False
-        renewed = renewed_attachment(attachment, refreshed, upstream_refresh_token)
+        renewed = build_renewed_attachment(attachment, refreshed, upstream_refresh_token)
         return await self.tokens.replace_grant_attachment(attachment.grant_id, renewed)
 
     async def offer_sign_in(self, rejection: UpstreamRejection) -> UpstreamSignInOffer | None:
@@ -124,13 +124,13 @@ class AuthorizationCodeReauthorizer(UpstreamReauthorizer):
         pending = await self._load_pending(await self._load_pending_id(attachment.grant_id))
         scopes = [
             *(pending.scopes if pending else []),
-            *self._scope_registry.upstream_sign_in_scopes(
+            *self._scope_registry.requested_upstream_scopes(
                 self.upstream.scopes, self.upstream.required_scopes, mcp_access_token.scopes
             ),
             *attachment.upstream_scopes,
             *rejection.scopes,
         ]
-        pending_reauthorization = PendingReauthorization(
+        pending_reauthorization = AuthorizationCodePendingReauthorization(
             reauthorization_id=pending.reauthorization_id if pending else secrets.token_urlsafe(32),
             grant_id=attachment.grant_id,
             browser_id=attachment.browser_id,
@@ -205,7 +205,7 @@ class AuthorizationCodeReauthorizer(UpstreamReauthorizer):
         attachment = McpTokenAttachment(
             upstream_scopes=upstream_token.resolve_granted_scopes(pending_reauthorization.scopes),
             links=build_upstream_links(upstream_token.access_token, upstream_refresh_token),
-            links_expire_at=expiry_of(upstream_token.expires_in),
+            links_expire_at=compute_expiry(upstream_token.expires_in),
             browser_id=pending_reauthorization.browser_id,
             grant_id=pending_reauthorization.grant_id,
         )
@@ -248,7 +248,7 @@ class AuthorizationCodeReauthorizer(UpstreamReauthorizer):
             raise HTTPException(400, _SIGN_IN_ENDED)
         return data['reauthorization_id']
 
-    async def _load_pending(self, reauthorization_id: str | None) -> PendingReauthorization | None:
+    async def _load_pending(self, reauthorization_id: str | None) -> AuthorizationCodePendingReauthorization | None:
         """The sign-in ``reauthorization_id`` names while it still waits, or ``None`` once it ended or finished.
 
         A record of another shape, such as one an older gateway stored, reads as ended.
@@ -261,11 +261,13 @@ class AuthorizationCodeReauthorizer(UpstreamReauthorizer):
         if not self.tokens.is_from_here(data) or data.get('completed'):
             return None
         try:
-            return PendingReauthorization.model_validate(data)
+            return AuthorizationCodePendingReauthorization.model_validate(data)
         except pydantic.ValidationError:
             return None
 
-    async def _load_pending_in_browser(self, reauthorization_id: str, browser_id: str | None) -> PendingReauthorization:
+    async def _load_pending_in_browser(
+        self, reauthorization_id: str, browser_id: str | None
+    ) -> AuthorizationCodePendingReauthorization:
         """The sign-in ``reauthorization_id`` names, which only the browser of the first sign-in may run.
 
         Raises ``HTTPException`` when it ended, finished, or was opened in another browser.
@@ -281,7 +283,7 @@ class AuthorizationCodeReauthorizer(UpstreamReauthorizer):
             )
         return pending_reauthorization
 
-    async def _save_pending(self, pending_reauthorization: PendingReauthorization) -> None:
+    async def _save_pending(self, pending_reauthorization: AuthorizationCodePendingReauthorization) -> None:
         await self.tokens.store.set(
             UPSTREAM_REAUTHORIZATION_NAMESPACE,
             pending_reauthorization.reauthorization_id,

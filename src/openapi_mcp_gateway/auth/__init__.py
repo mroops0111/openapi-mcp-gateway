@@ -1,25 +1,25 @@
-from .assembly import AuthRoutes, AuthTypeContext, AuthTypeHandler, ServerAuthSetup
-from .factory import AUTH_TYPE_HANDLERS, build_auth
+from .assembly import AuthRoutes, AuthTypeContext, ServerAuthSetup
+from .factory import build_auth
 from .flows import (
     OAUTH_FLOW_HANDLERS,
     AuthorizationCodeBridge,
     AuthorizationCodeFlowHandler,
-    OAuthFlowContext,
     OAuthFlowHandler,
     TokenExchangeBridge,
     TokenExchangeFlowHandler,
-    build_oauth_flow,
 )
 from .flows.client_credentials import UpstreamClientCredentialsFlowHandler
 from .mcp.authorization_code import McpAuthorizationCodeServer
-from .upstream.oauth_flow import UpstreamOAuthFlow, detect_primary_upstream_oauth_flow, detect_upstream_oauth_flows
+from .upstream.client_credentials import UpstreamClientCredentialsTokenSource
+from .upstream.oauth_flow import UpstreamOAuthFlow, detect_upstream_oauth_flows
 from .upstream.resolver import (
     UpstreamAuthResolver,
     UpstreamNoCredentialAuthResolver,
     UpstreamStaticAuthResolver,
     UpstreamTokenSourceAuthResolver,
 )
-from .upstream.token_source import UpstreamClientCredentialsTokenSource, UpstreamTokenSource
+from .upstream.token_source import UpstreamTokenSource
+from .upstream_types import AUTH_TYPE_HANDLERS, AuthTypeHandler
 
 
 __all__ = [
@@ -31,7 +31,6 @@ __all__ = [
     'AuthorizationCodeBridge',
     'AuthorizationCodeFlowHandler',
     'McpAuthorizationCodeServer',
-    'OAuthFlowContext',
     'OAuthFlowHandler',
     'ServerAuthSetup',
     'TokenExchangeBridge',
@@ -45,7 +44,5 @@ __all__ = [
     'UpstreamTokenSource',
     'UpstreamTokenSourceAuthResolver',
     'build_auth',
-    'build_oauth_flow',
-    'detect_primary_upstream_oauth_flow',
     'detect_upstream_oauth_flows',
 ]

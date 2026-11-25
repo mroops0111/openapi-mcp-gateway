@@ -5,13 +5,13 @@ import time
 import typing
 
 import pydantic
-from mcp.server.auth.provider import construct_redirect_uri
+from mcp.server.auth.provider import TokenVerifier, construct_redirect_uri
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 from ...scopes import McpAccessToken
 from ...stores.base import TokenStore
-from .client import get_mcp_registered_scopes
-from .consent import PendingAuthorization
+from .client import McpClientDirectory, get_mcp_registered_scopes
+from .consent import McpPendingAuthorization
 from .record_origin import McpRecordOrigin
 
 
@@ -109,7 +109,7 @@ class McpTokenIssuer:
             return False
 
     async def complete_authorization(
-        self, pending_authorization: PendingAuthorization, attachment: McpTokenAttachment
+        self, pending_authorization: McpPendingAuthorization, attachment: McpTokenAttachment
     ) -> str:
         """Mint the MCP authorization code that ends ``pending_authorization``.
 
@@ -138,7 +138,7 @@ class McpTokenIssuer:
             pending_authorization.redirect_uri, code=code, state=pending_authorization.client_state, iss=self.issuer
         )
 
-    async def load_pending_authorization(self, namespace: str, key: str) -> PendingAuthorization | None:
+    async def load_pending_authorization(self, namespace: str, key: str) -> McpPendingAuthorization | None:
         """The sign-in stored under ``key`` in ``namespace`` by this server, or ``None`` for none or another's.
 
         A record of an older shape, such as one from before sign-ins were tied to a browser, counts as none.
@@ -147,7 +147,7 @@ class McpTokenIssuer:
         if not self.is_from_here(data):
             return None
         try:
-            return PendingAuthorization.model_validate(data)
+            return McpPendingAuthorization.model_validate(data)
         except pydantic.ValidationError:
             return None
 
@@ -364,6 +364,24 @@ class McpTokenIssuer:
         """Map the record under ``key`` to each credential ``attachment`` links, for as long as the record lives."""
         for link, value in attachment.links.items():
             await self.store.set_mapping(namespace, key, link, value, ttl=ttl)
+
+
+class McpGatewayIssuerTokenVerifier(TokenVerifier):
+    """The SDK's ``TokenVerifier`` for the access tokens ``McpTokenIssuer`` minted.
+
+    A token outlives a restart in a shared store, so it is refused once its client is no longer in ``clients``.
+    Removing an agent from the config then revokes what it already holds.
+    """
+
+    def __init__(self, tokens: McpTokenIssuer, clients: McpClientDirectory) -> None:
+        self._tokens = tokens
+        self._clients = clients
+
+    async def verify_token(self, token: str) -> McpAccessToken | None:
+        access_token = await self._tokens.load_access_token(token)
+        if access_token is None or await self._clients.get(access_token.client_id) is None:
+            return None
+        return access_token
 
 
 def require_client_id(client: OAuthClientInformationFull) -> str:

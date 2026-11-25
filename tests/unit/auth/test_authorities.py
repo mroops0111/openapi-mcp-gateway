@@ -9,10 +9,12 @@ from openapi_mcp_gateway.auth.factory import build_auth
 from openapi_mcp_gateway.auth.mcp.client_credentials import (
     McpClientCredentialsExtension,
     McpClientCredentialsRoutes,
-    McpGatewayTokenVerifier,
 )
+from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerTokenVerifier
+from openapi_mcp_gateway.auth.mcp.token_issuer import McpGatewayIssuerTokenVerifier
 from openapi_mcp_gateway.settings import AuthConfig
-from tests.flow import auth_context, build_spec, server_entry, spec_with_client_credentials
+from tests.constants import ISSUER
+from tests.flow import auth_context, build_spec, discovered_external_issuer, server_entry, spec_with_client_credentials
 
 
 # One agent declared with a secret, as a shared-credential server needs.
@@ -42,16 +44,39 @@ class TestAuthoritySelection:
         spec = spec_with_client_credentials() if upstream['type'] == 'oauth2' else build_spec()
         setup = build_auth(auth_context(_build_entry({'upstream': upstream, 'mcp': {'clients': AGENT}}), spec))
 
-        assert isinstance(setup.verifier, McpGatewayTokenVerifier)
+        assert isinstance(setup.verifier, McpGatewayIssuerTokenVerifier)
         assert setup.provider is None
         assert any(isinstance(routes, McpClientCredentialsRoutes) for routes in setup.routes)
         assert any(isinstance(extension, McpClientCredentialsExtension) for extension in setup.extensions)
         assert setup.authorization_server_metadata is not None
         assert setup.authorization_server_metadata.grant_types_supported == ['client_credentials']
-        assert not setup.mcp_tokens_carry_upstream_grant
+        assert not setup.upstream_grant_source.records_user_grant
         assert setup.mcp_summary == 'gateway (client_credentials)'
         # The upstream half survives the MCP half being attached.
-        assert setup.flow_type == upstream.get('flow')
+        assert setup.upstream_description.resolved_settings.get('flow') == upstream.get('flow')
+
+    @pytest.mark.parametrize(
+        'upstream',
+        [
+            {'type': 'none'},
+            {'type': 'bearer', 'token': 't'},
+            {'type': 'oauth2', 'flow': 'client_credentials', 'client_id': 'cid', 'client_secret': 'sec'},
+        ],
+    )
+    def test_a_shared_credential_server_with_an_issuer_verifies_its_tokens(self, upstream):
+        """The gateway is only a resource server here, so it publishes no authorization server of its own."""
+        spec = spec_with_client_credentials() if upstream['type'] == 'oauth2' else build_spec()
+        entry = _build_entry({'upstream': upstream, 'mcp': {'issuer': ISSUER, 'required_scopes': ['mcp']}})
+        with discovered_external_issuer():
+            setup = build_auth(auth_context(entry, spec))
+
+        assert isinstance(setup.verifier, McpExternalIssuerTokenVerifier)
+        assert setup.authorization_server_metadata is None
+        assert setup.protected_resource is not None
+        assert [str(server) for server in setup.protected_resource.authorization_servers] == [ISSUER]
+        assert setup.protected_resource.scopes_supported == ['mcp']
+        assert setup.mcp_summary == f'issuer ({ISSUER})'
+        assert setup.upstream_description.resolved_settings.get('flow') == upstream.get('flow')
 
     def test_discovery_names_the_endpoint_scopes(self):
         """A client asking for fewer than these would be refused on every call."""

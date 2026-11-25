@@ -1,125 +1,18 @@
 from .assembly import (
     AuthTypeContext,
-    AuthTypeHandler,
     McpSettingsReader,
     ServerAuthSetup,
     UpstreamPrincipal,
-    UpstreamSelection,
 )
 from .authorities import MCP_TOKEN_AUTHORITIES, select_mcp_token_authority
-from .flows import OAUTH_FLOW_HANDLERS, build_oauth_flow, select_oauth_flow
-from .upstream.resolver import (
-    UpstreamNoCredentialAuthResolver,
-    UpstreamPassthroughAuthResolver,
-    UpstreamStaticAuthResolver,
+from .flows import OAUTH_FLOW_HANDLERS
+from .upstream_types import AUTH_TYPE_HANDLERS, UpstreamOAuth2Handler
+
+
+# The ``auth.upstream.type`` that defers to ``auth.upstream.flow``, named where a setting every flow reads is refused.
+_OAUTH2_TYPE = next(
+    auth_type for auth_type, handler_class in AUTH_TYPE_HANDLERS.items() if handler_class is UpstreamOAuth2Handler
 )
-
-
-# Header formats live here rather than on the config.
-# Knowing that a bearer token is written ``Bearer <token>`` is protocol knowledge, not configuration.
-BEARER_PREFIX = 'Bearer '
-DEFAULT_AUTHORIZATION_HEADER = 'Authorization'
-
-
-class UpstreamNoCredentialHandler(AuthTypeHandler):
-    """Send nothing upstream, for a public API."""
-
-    def select(self, context: AuthTypeContext) -> UpstreamSelection:
-        return UpstreamSelection(upstream_principal='gateway')
-
-    def build(self, context: AuthTypeContext) -> ServerAuthSetup:
-        return ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver())
-
-
-class UpstreamStaticCredentialHandler(AuthTypeHandler):
-    """Send one fixed credential, captured from config at startup.
-
-    Shared by ``bearer`` and ``api_key``, which differ only in header name and prefix.
-    Every caller reaches the upstream as the same identity,
-    so any per-user rule the upstream enforces stops distinguishing anyone.
-
-    Falls back to sending nothing when no token is configured,
-    which keeps a half-filled config serving a public API rather than failing at startup.
-    """
-
-    def select(self, context: AuthTypeContext) -> UpstreamSelection:
-        return UpstreamSelection(upstream_principal='gateway')
-
-    def build(self, context: AuthTypeContext) -> ServerAuthSetup:
-        token = context.entry.auth.upstream.resolve_token()
-        if not token:
-            return ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver())
-        return ServerAuthSetup(
-            resolver=UpstreamStaticAuthResolver(
-                header_value=f'{self.value_prefix}{token}',
-                header_name=self.resolve_header_name(context),
-            )
-        )
-
-    @property
-    def value_prefix(self) -> str:
-        """What precedes the credential in its header, such as ``Bearer``. Nothing, by default."""
-        return ''
-
-    def resolve_header_name(self, context: AuthTypeContext) -> str:
-        """Header the credential travels in. Overridden where the config names it."""
-        return DEFAULT_AUTHORIZATION_HEADER
-
-
-class UpstreamBearerTokenHandler(UpstreamStaticCredentialHandler):
-    """``Authorization: Bearer <token>``, the shape most token-based APIs expect."""
-
-    @property
-    def value_prefix(self) -> str:
-        return BEARER_PREFIX
-
-
-class UpstreamApiKeyHandler(UpstreamStaticCredentialHandler):
-    """A raw key on whichever header the API names, defaulting to ``X-API-Key``."""
-
-    def resolve_header_name(self, context: AuthTypeContext) -> str:
-        return context.entry.auth.upstream.api_key_header
-
-
-class UpstreamPassthroughHandler(AuthTypeHandler):
-    """Forward the caller's own ``Authorization`` header unchanged.
-
-    No credential of the gateway's own, and no MCP-side check either.
-    Only correct where the caller's token already addresses the upstream,
-    which in practice means the in-process FastAPI integration.
-    """
-
-    def select(self, context: AuthTypeContext) -> UpstreamSelection:
-        return UpstreamSelection(upstream_principal='caller')
-
-    def build(self, context: AuthTypeContext) -> ServerAuthSetup:
-        return ServerAuthSetup(resolver=UpstreamPassthroughAuthResolver())
-
-
-class OAuth2Handler(AuthTypeHandler):
-    """Defer to ``auth.upstream.flow``, which selects among the OAuth grants in turn and decides the principal."""
-
-    def select(self, context: AuthTypeContext) -> UpstreamSelection:
-        handler = select_oauth_flow(context).handler_class()
-        return UpstreamSelection(
-            upstream_principal=handler.upstream_principal,
-            mcp_settings_reader=handler if isinstance(handler, McpSettingsReader) else None,
-        )
-
-    def build(self, context: AuthTypeContext) -> ServerAuthSetup:
-        return build_oauth_flow(context)
-
-
-# The extension point for ``auth.upstream.type``, mirrored one level down by ``OAUTH_FLOW_HANDLERS`` for the flow.
-# Adding a type means adding a handler and one entry here, rather than a branch every other type passes through.
-# It follows the classes it names, since Python builds it at import time.
-AUTH_TYPE_HANDLERS: dict[str, type[AuthTypeHandler]] = {
-    'none': UpstreamNoCredentialHandler,
-    'bearer': UpstreamBearerTokenHandler,
-    'api_key': UpstreamApiKeyHandler,
-    'passthrough': UpstreamPassthroughHandler,
-    'oauth2': OAuth2Handler,
-}
 
 
 def build_auth(context: AuthTypeContext) -> ServerAuthSetup:
@@ -137,8 +30,13 @@ def build_auth(context: AuthTypeContext) -> ServerAuthSetup:
         )
     handler = handler_class()
     selection = handler.select(context)
+    _refuse_unread_upstream_settings(
+        entry.name, entry.auth.upstream.model_fields_set - {'type'} - selection.upstream_settings
+    )
     authority = (
-        None if selection.mcp_settings_reader else select_mcp_token_authority(entry.auth, selection.upstream_principal)
+        None
+        if selection.mcp_settings_reader
+        else select_mcp_token_authority(entry.auth, selection.upstream_principal, entry.name)
     )
     reader = selection.mcp_settings_reader or (authority if isinstance(authority, McpSettingsReader) else None)
     mcp_settings_read = reader.mcp_settings if reader else frozenset()
@@ -148,8 +46,36 @@ def build_auth(context: AuthTypeContext) -> ServerAuthSetup:
     if reader is not None:
         reader.refuse_unusable_settings(entry.auth, entry.name)
 
-    setup = handler.build(context)
+    setup = handler.build(context, selection)
     return authority.attach(setup, context) if authority else setup
+
+
+def _refuse_unread_upstream_settings(server_name: str, unread: set[str]) -> None:
+    """Refuse an ``auth.upstream`` field the selected strategy would never read, naming what would read it.
+
+    Only explicitly-set fields are checked, so defaults never trip this.
+    """
+    if not unread:
+        return
+    field = sorted(unread)[0]
+    flow_readers = [
+        flow_type
+        for flow_type, handler_class in OAUTH_FLOW_HANDLERS.items()
+        if field in handler_class().upstream_settings
+    ]
+    type_readers = [
+        f'auth.upstream.type {auth_type}'
+        for auth_type, handler_class in AUTH_TYPE_HANDLERS.items()
+        if field in handler_class().upstream_settings
+    ]
+    if flow_readers and set(flow_readers) == set(OAUTH_FLOW_HANDLERS):
+        type_readers.append(f'auth.upstream.type {_OAUTH2_TYPE}')
+    elif flow_readers:
+        type_readers.append(f'auth.upstream.flow {" or ".join(flow_readers)}')
+    requirement = ', or '.join(type_readers)
+    raise ValueError(
+        f'Server "{server_name}": auth.upstream.{field} needs {requirement}, so it would have no effect here.'
+    )
 
 
 def _refuse_unread_mcp_settings(server_name: str, unread: set[str], upstream_principal: UpstreamPrincipal) -> None:

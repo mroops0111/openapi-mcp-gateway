@@ -13,6 +13,7 @@ from openapi_mcp_gateway.openapi import (
     OperationInfo,
     ParameterInfo,
 )
+from openapi_mcp_gateway.scopes import UpstreamNoGrantSource
 from tests.constants import API_URL
 from tests.context import stub_context
 from tests.operation import shaped_operation
@@ -213,10 +214,8 @@ class TestSearchOperations:
         generator, mcp = _meta_generator()
         generator.register([operation])
         assert await _search(mcp, query='closed') == {'operations': []}
-        mcp = MCPServer('test')
-        MetaToolGenerator(
-            mcp=mcp, connection=UpstreamConnection(base_url=API_URL), field_weight_overrides={'parameters': 1.0}
-        ).register([operation])
+        generator, mcp = _meta_generator(field_weight_overrides={'parameters': 1.0})
+        generator.register([operation])
         assert [entry['name'] for entry in (await _search(mcp, query='closed'))['operations']] == ['update_issue']
 
 
@@ -356,8 +355,8 @@ class TestDynamicParamShaping:
             ],
             params={'secret': {'hidden': True}},
         )
-        mcp = MCPServer('test')
-        MetaToolGenerator(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([op])
+        generator, mcp = _meta_generator()
+        generator.register([op])
         get_operation = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'get_operation')
         payload = (await get_operation.fn(name='do_thing', ctx=stub_context())).structured_content
         schema = payload['input_schema']
@@ -381,17 +380,20 @@ class TestDynamicParamShaping:
             ],
             request='{"op[status_id]": $lookup({"open": "o"}, status)}',
         )
-        mcp = MCPServer('test')
-        MetaToolGenerator(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([op])
+        generator, mcp = _meta_generator()
+        generator.register([op])
         call_operation = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'call_operation')
         await call_operation.fn(name='do_thing', arguments={'status': 'open'}, ctx=stub_context())
         assert captured['params']['op[status_id]'] == 'o'
 
 
-def _meta_generator() -> tuple[MetaToolGenerator, MCPServer]:
-    """Build a fresh MetaToolGenerator + MCPServer pair for each test."""
+def _meta_generator(**options: typing.Any) -> tuple[MetaToolGenerator, MCPServer]:
+    """Build a fresh MetaToolGenerator + MCPServer pair for each test, with ``options`` passed on."""
     mcp = MCPServer('test')
-    return MetaToolGenerator(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)), mcp
+    generator = MetaToolGenerator(
+        mcp=mcp, connection=UpstreamConnection(base_url=API_URL), grant_source=UpstreamNoGrantSource(), **options
+    )
+    return generator, mcp
 
 
 def _ops() -> list[OperationInfo]:

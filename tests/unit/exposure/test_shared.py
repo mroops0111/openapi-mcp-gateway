@@ -30,6 +30,7 @@ from openapi_mcp_gateway.exposure._shared import (
 )
 from openapi_mcp_gateway.exposure.tool import _build_tool_signature
 from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ParamOverride, ToolOverride, parse_spec
+from openapi_mcp_gateway.scopes import UpstreamNoGrantSource
 from tests.constants import API_URL
 from tests.operation import expose_resource
 from tests.spec import component_ref, defs_ref, operation_spec, write_spec
@@ -390,7 +391,7 @@ class TestAllOfOverAReference:
         operation = _operation(_extended_body_spec(person_shared=person_shared))
         arguments = {'owner': {'id': 1, 'name': 'n', 'extra': 'e'}, 'approver': {'name': 'r', 'role': 'admin'}}
 
-        async with Client(_register(ToolGenerator, operation)) as client:
+        async with Client(_register(operation)) as client:
             result = await client.call_tool('create_ticket', arguments)
 
         assert result.is_error is False
@@ -433,7 +434,7 @@ class TestGeneratedModels:
         operation = _operation(_union_recursion_spec())
         arguments = {'filter': {'all': ['open', {'all': ['closed', {'all': []}]}]}}
 
-        async with Client(_register(ToolGenerator, operation)) as client:
+        async with Client(_register(operation)) as client:
             result = await client.call_tool('create_thing', arguments)
 
         assert result.is_error is False
@@ -456,7 +457,7 @@ class TestGeneratedModels:
         """Each object reaches the upstream with exactly its own fields, whatever its generated class is called."""
         operation = _operation(_colliding_names_spec())
 
-        async with Client(_register(ToolGenerator, operation)) as client:
+        async with Client(_register(operation)) as client:
             result = await client.call_tool('create_pet', _COLLIDING_NAMES_ARGUMENTS)
 
         assert result.is_error is False
@@ -468,7 +469,7 @@ class TestOverTheWire:
 
     async def test_defs_survive_to_the_wire(self):
         """The SDK inlines only an output schema whose root is a bare ``$ref``, so nested ``$defs`` reach the client."""
-        mcp = _register(ToolGenerator)
+        mcp = _register()
 
         async with Client(mcp) as client:
             tool = next(tool for tool in (await client.list_tools()).tools if tool.name == 'create_proposal')
@@ -479,7 +480,7 @@ class TestOverTheWire:
 
     async def test_nested_arguments_reach_the_upstream_intact(self, upstream_requests):
         """Arguments shaped by a referenced component, recursive ones included, are sent upstream as given."""
-        mcp = _register(ToolGenerator)
+        mcp = _register()
         arguments = {
             'status': 'open',
             'payload': {'sourceId': 'docs', 'line': 3},
@@ -499,7 +500,7 @@ class TestOverTheWire:
     async def test_a_bad_value_behind_a_reference_is_rejected(self, mock_upstream):
         """Validation follows the reference, so a constraint on the shared shape holds on every path."""
         mock_upstream(lambda request: pytest.fail('the upstream must not be called'))
-        mcp = _register(ToolGenerator)
+        mcp = _register()
 
         async with Client(mcp) as client:
             result = await client.call_tool(
@@ -518,7 +519,7 @@ class TestOverTheWire:
         the same way it catches a missing required field at any other nesting depth.
         """
         mock_upstream(lambda request: pytest.fail('the upstream must not be called'))
-        mcp = _register(ToolGenerator)
+        mcp = _register()
         tree = {'label': 'root', 'children': [{'label': 'leaf', 'children': [{'children': []}]}]}
 
         async with Client(mcp) as client:
@@ -531,7 +532,10 @@ class TestOverTheWire:
 
     async def test_dynamic_exposure_advertises_and_enforces_the_same_schema(self, upstream_requests):
         """``get_operation`` returns the ``$defs`` form, and ``call_operation`` validates against it."""
-        mcp = _register(MetaToolGenerator)
+        mcp = MCPServer('test')
+        MetaToolGenerator(
+            mcp=mcp, connection=UpstreamConnection(base_url=API_URL), grant_source=UpstreamNoGrantSource()
+        ).register([_operation()])
 
         async with Client(mcp) as client:
             described = await client.call_tool('get_operation', {'name': 'create_proposal'})
@@ -856,12 +860,10 @@ def _operation(raw: dict | None = None) -> OperationInfo:
     return parse_spec(raw or _shared_component_spec()).operations[0]
 
 
-def _register(
-    generator_type: type[ToolGenerator] | type[MetaToolGenerator],
-    operation: OperationInfo | None = None,
-) -> MCPServer:
+def _register(operation: OperationInfo | None = None) -> MCPServer:
+    """A server exposing ``operation``, or the shared-component one, as a static tool."""
     mcp = MCPServer('test')
-    generator_type(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([operation or _operation()])
+    ToolGenerator(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([operation or _operation()])
     return mcp
 
 

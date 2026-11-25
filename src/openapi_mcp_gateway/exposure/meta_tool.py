@@ -12,7 +12,13 @@ from mcp.shared.inbound import MCP_NAME_HEADER, MCP_PARAM_HEADER_PREFIX, X_MCP_H
 from mcp.types import CallToolResult, InputRequiredResult
 
 from ..openapi import ExposedTool, OperationInfo, schema_description
-from ..scopes import McpUnrestrictedScopePolicy, RequestTarget, ScopeRegistry, current_grant
+from ..scopes import (
+    McpUnrestrictedScopePolicy,
+    RequestTarget,
+    ScopeRegistry,
+    UpstreamGrantSource,
+    read_current_grant,
+)
 from ._bm25 import BM25FIndex
 from ._semantic import SemanticIndex, SemanticSearchOptions
 from ._shaping import shape_operation
@@ -111,12 +117,14 @@ class MetaToolGenerator:
         self,
         mcp: MCPServer,
         connection: UpstreamConnection,
+        grant_source: UpstreamGrantSource,
         field_weight_overrides: typing.Mapping[str, float] | None = None,
         scope_registry: ScopeRegistry | None = None,
         semantic_search: SemanticSearchOptions | None = None,
     ):
         self.mcp = mcp
         self.connection = connection
+        self.grant_source = grant_source
         self.scope_registry = scope_registry or ScopeRegistry(McpUnrestrictedScopePolicy())
         # Overrides replace the default weight of the fields they name and leave the rest as they are.
         self.field_weights = {**DEFAULT_FIELD_WEIGHTS, **(field_weight_overrides or {})}
@@ -208,7 +216,7 @@ class MetaToolGenerator:
                 raise _unknown_operation_error(name)
             # A 2026-07-28 client lacking MCP scopes was already refused over HTTP with a scope challenge.
             # This refusal covers older clients, which send no Mcp-Param-Operation header, and a short upstream grant.
-            refusal = self.scope_registry.refusal(name, current_grant())
+            refusal = await self.scope_registry.call_refusal(name, self.grant_source)
             if refusal is not None:
                 raise ToolError(refusal)
             return await operation.callable_(**arguments, ctx=ctx)
@@ -218,7 +226,7 @@ class MetaToolGenerator:
 
         Operations the token can step up for show as well.
         """
-        grant = current_grant()
+        grant = read_current_grant()
         return lambda name: self.scope_registry.lists(name, grant)
 
 

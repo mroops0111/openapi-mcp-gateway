@@ -21,8 +21,8 @@ from openapi_mcp_gateway.settings import GatewayConfig
 from tests.constants import GATEWAY_URL
 from tests.mcp_client import Browser, MemoryTokenStorage, authorization_code_auth, connect
 from tests.oauth import authorization_code_gateway, query_value, server_of, sign_in, upstream_token_response
+from tests.scope import DELETE_PET_UPSTREAM_REFUSAL
 from tests.serving import serve, serve_gateway
-from tests.spec import write_spec
 from tests.tool_result import text_of
 
 
@@ -57,20 +57,6 @@ READ_CHALLENGE = DELETE_CHALLENGE.replace('pets:delete', 'pets:read')
 
 # A pet read through the resource the petstore's ``getPetById`` is promoted to.
 PET_RESOURCE = 'petstore://pets/7'
-
-# The upstream scopes each petstore operation declares in its OpenAPI ``security``, keyed by operationId.
-UPSTREAM_SECURITY = {
-    'listPets': [{'oauth2': ['read:pets']}],
-    'getPetById': [{'oauth2': ['read:pets']}],
-    'createPet': [{'oauth2': ['write:pets']}],
-    'deletePet': [{'oauth2': ['read:pets', 'write:pets']}],
-}
-
-# Why a token whose upstream grant lacks what ``deletePet`` declares is refused.
-DELETE_UPSTREAM_REFUSAL = (
-    'The upstream token lacks the scopes deletePet needs (read:pets write:pets). '
-    'Add them to auth.upstream.scopes and sign in again, or correct its security under operations.deletePet.security.'
-)
 
 
 @pytest.fixture
@@ -323,17 +309,6 @@ class TestAuthorizationServer:
 
 
 @pytest.fixture
-def secured_spec(petstore_json_path: pathlib.Path, tmp_path: pathlib.Path) -> pathlib.Path:
-    """The petstore fixture with each operation's upstream scopes declared."""
-    spec = json.loads(petstore_json_path.read_text())
-    for path_item in spec['paths'].values():
-        for operation in path_item.values():
-            if isinstance(operation, dict) and operation.get('operationId') in UPSTREAM_SECURITY:
-                operation['security'] = UPSTREAM_SECURITY[operation['operationId']]
-    return write_spec(tmp_path, spec, 'secured-petstore.json')
-
-
-@pytest.fixture
 def make_enforcing_gateway(make_gateway, secured_spec) -> typing.Callable[..., Gateway]:
     """A gateway enforcing the upstream grant, asking for at most both pet scopes unless ``upstream`` says otherwise."""
 
@@ -370,7 +345,7 @@ class TestUpstreamGrant:
             result = await session.client.call_tool(tool, arguments)
         assert result.is_error
         # The meta-tool's refusal arrives prefixed by the SDK, as any error a tool raises does.
-        assert DELETE_UPSTREAM_REFUSAL in text_of(result)
+        assert DELETE_PET_UPSTREAM_REFUSAL in text_of(result)
         assert upstream_requests == []
 
     async def test_missing_mcp_scopes_are_challenged_first(self, make_enforcing_gateway):
@@ -483,7 +458,7 @@ async def _sign_in(gateway: Gateway, client_id: str, requested: str | None = Non
 
 def _provider(gateway: Gateway) -> McpAuthorizationCodeServer:
     """The authorization server of the gateway's one server."""
-    return server_of(gateway.describe_servers()[0].auth_provider)
+    return server_of(gateway.describe_servers()[0].auth.provider)
 
 
 @contextlib.asynccontextmanager

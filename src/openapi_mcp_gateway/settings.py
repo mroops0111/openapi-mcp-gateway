@@ -64,10 +64,10 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     token_url: str | None = None
     scopes: list[str] = pydantic.Field(default_factory=list)
 
-    # The upstream scopes every sign-in asks for, whatever the operations it opens need,
+    # The upstream scopes every sign-in or token exchange asks for, whatever the operations it opens need,
     # such as ``offline_access`` for a refresh token or ``openid`` for the user's identity.
-    # ``scopes`` is the most a sign-in asks for beyond them.
-    # Only ``authorization_code`` signs the user in, so no other flow reads them.
+    # ``scopes`` is the most a sign-in or exchange asks for beyond them.
+    # Only ``authorization_code`` and ``token_exchange`` obtain a token per user, so no other flow reads them.
     required_scopes: list[str] = pydantic.Field(default_factory=list)
 
     # The upstream authorization server's issuer identifier, exactly as its metadata publishes it.
@@ -225,16 +225,6 @@ class ClientConfig(ClientScopesConfig):
     redirect_uris: list[pydantic.AnyUrl] | None = pydantic.Field(default=None, min_length=1)
     consent: bool = True
 
-    def find_settings_without_sign_in(self) -> list[tuple[str, str]]:
-        """The fields this client sets, or lacks, that only make sense when a user signs in, each with why."""
-        problems = []
-        if not self.client_secret:
-            problems.append(('client_secret', 'is required, since it is the only proof of who the agent is'))
-        for field in ('redirect_uris', 'default_scopes', 'consent'):
-            if field in self.model_fields_set:
-                problems.append((field, 'has no effect, since no user signs in'))
-        return problems
-
     def resolve_client_secret(self) -> str | None:
         """Client secret after env-var substitution."""
         return _resolve_env_var(self.client_secret)
@@ -300,25 +290,10 @@ class McpAuthConfig(pydantic.BaseModel):
 
     @pydantic.model_validator(mode='after')
     def _reject_scope_settings_that_cannot_take_effect(self) -> typing.Self:
-        """Refuse operation scopes no client could receive, and endpoint scopes that would stop no one.
-
-        With ``operation_scopes`` set, every token is minted from the scopes a client is configured with,
-        so an endpoint-wide ``required_scopes`` checks only what the gateway itself just granted.
-        """
+        """Refuse client scopes no operation scope could use, and a client list that admits no one."""
         if self.other_clients is False and not self.clients:
             raise ValueError(
                 'auth.mcp.other_clients is false and auth.mcp.clients lists no client, so no client could sign in.'
-            )
-        if self.operation_scopes is not None and not self.clients and not self.other_clients:
-            raise ValueError(
-                'auth.mcp.operation_scopes needs auth.mcp.clients or auth.mcp.other_clients, '
-                'since only a client configured there is granted scopes, so it would have no effect here.'
-            )
-        if self.operation_scopes is not None and 'required_scopes' in self.model_fields_set:
-            raise ValueError(
-                'auth.mcp.required_scopes cannot be combined with auth.mcp.operation_scopes. '
-                'Every token is minted from a client in auth.mcp.clients or auth.mcp.other_clients, '
-                'so an endpoint-wide scope would stop no one.'
             )
         scoped_clients = sorted(client_id for client_id, client in self.clients.items() if client.scopes)
         if self.operation_scopes is None and scoped_clients:
@@ -339,43 +314,9 @@ class McpAuthConfig(pydantic.BaseModel):
             return None if self.clients else OtherClientsConfig()
         return self.other_clients or None
 
-    @property
-    def accepts_dynamic_registration(self) -> bool:
-        """Whether clients may register themselves, which only a config naming neither kind of client allows.
-
-        The 2026-07-28 spec deprecates Dynamic Client Registration.
-        It cannot be held to ``other_clients.trusted_hosts``, since nothing a client registers is verified,
-        so setting ``other_clients`` at all turns it off.
-        """
-        return not self.clients and self.other_clients is None
-
     def resolve_issuer(self) -> str | None:
         """External authorization server issuer after env-var substitution."""
         return _resolve_env_var(self.issuer)
-
-    def refuse_client_settings_without_sign_in(self, server_name: str) -> None:
-        """Refuse what only a user signing in reads, for a server where agents obtain tokens as themselves.
-
-        Each client needs a secret, since it is its only proof of identity.
-        A redirect, default scopes and the consent page all belong to a sign-in that never happens.
-        A request with no scope is granted all of ``scopes``, so ``default_scopes`` would have nothing to narrow.
-        """
-        problems = [
-            f'auth.mcp.clients.{client_id}.{field} {reason}'
-            for client_id, client in self.clients.items()
-            for field, reason in client.find_settings_without_sign_in()
-        ]
-        problems += [
-            f'auth.mcp.clients.{client_id} names a Client ID Metadata Document, whose client signs a user in'
-            for client_id in self.clients
-            if is_url_client_id(client_id)
-        ]
-        if problems:
-            raise ValueError(
-                f'Server "{server_name}": agents here obtain tokens with their own credentials, and no user signs in. '
-                + '. '.join(problems)
-                + '.'
-            )
 
 
 class AuthConfig(pydantic.BaseModel):
@@ -405,54 +346,6 @@ class AuthConfig(pydantic.BaseModel):
         if moved:
             raise ValueError('. '.join(moved) + '.')
         return data
-
-    @pydantic.model_validator(mode='after')
-    def _reject_settings_that_cannot_take_effect(self) -> typing.Self:
-        """Refuse an ``auth.upstream`` field this combination will never read.
-
-        An unknown key is already refused,
-        and a known key in the wrong place is the same mistake wearing a better disguise.
-        Both leave an operator believing they configured something.
-        ``auth.mcp`` is checked once the server is assembled, against what its MCP half reads.
-
-        Only explicitly-set fields are checked, so defaults never trip this.
-        """
-        upstream = self.upstream
-        oauth = upstream.type == 'oauth2'
-        # ``authorization_code`` can be inferred from a spec, so an unset flow leaves its fields plausible.
-        receives_grant = upstream.flow == 'authorization_code' or (oauth and upstream.flow is None)
-
-        upstream_applicable: dict[str, tuple[bool, str]] = {
-            'token': (upstream.type in ('bearer', 'api_key'), 'auth.upstream.type bearer or api_key'),
-            'api_key_header': (upstream.type == 'api_key', 'auth.upstream.type api_key'),
-            'flow': (oauth, 'auth.upstream.type oauth2'),
-        }
-        oauth_fields = sorted(upstream.model_fields_set - {'type', *upstream_applicable})
-        if oauth_fields and not oauth:
-            named = ', '.join(oauth_fields)
-            raise ValueError(
-                f'auth.upstream ({named}) needs auth.upstream.type oauth2, so it would have no effect here.'
-            )
-        receives_grant_reason = {
-            # Only authorization_code receives an authorization response, the one place ``iss`` arrives.
-            'issuer': 'the only flow with an authorization response to check',
-            # Only authorization_code records each user's upstream grant on the token it mints.
-            'enforce_scopes': "the only flow that records each user's upstream grant",
-            'scope_implies': "the only flow that records each user's upstream grant",
-        }
-        for field, reason in receives_grant_reason.items():
-            upstream_applicable[field] = (receives_grant, f'auth.upstream.flow authorization_code, {reason}')
-        self._refuse_inapplicable(upstream, 'auth.upstream', upstream_applicable)
-        return self
-
-    @staticmethod
-    def _refuse_inapplicable(
-        section: pydantic.BaseModel, location: str, applicable: dict[str, tuple[bool, str]]
-    ) -> None:
-        """Refuse a field set in ``section`` that ``applicable`` marks as unread, naming what it needs."""
-        for field, (is_applicable, requirement) in applicable.items():
-            if field in section.model_fields_set and not is_applicable:
-                raise ValueError(f'{location}.{field} needs {requirement}, so it would have no effect here.')
 
 
 class CORSConfig(pydantic.BaseModel):

@@ -9,7 +9,11 @@ from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, ContentBlock, InputRequiredResult, TextContent
 
 from ..auth.upstream.reauthorization import UpstreamNoReauthorizer, UpstreamReauthorizer
-from ..auth.upstream.resolver import UpstreamAuthResolver, UpstreamNoCredentialAuthResolver
+from ..auth.upstream.resolver import (
+    UPSTREAM_CREDENTIAL_UNAVAILABLE,
+    UpstreamAuthResolver,
+    UpstreamNoCredentialAuthResolver,
+)
 from ..openapi import OperationInfo, ParameterInfo
 from ..upstream_http import UpstreamBinaryBody, UpstreamSharedHttpClient
 from ._content import binary_content
@@ -186,7 +190,7 @@ class UpstreamOperationCall:
             auth_headers = await connection.auth_resolver.resolve(context)
         except httpx.HTTPError as exception:
             # Failing to obtain a credential is the gateway's failure, so it is not reported as the API's.
-            raise RuntimeError('The gateway could not obtain its upstream credential') from exception
+            raise RuntimeError(UPSTREAM_CREDENTIAL_UNAVAILABLE) from exception
         headers = {**connection.headers, **_trace_context_headers(context), **auth_headers, **request.headers}
         # The client is shared by every call to this server, so every header, auth included, rides on the request.
         return await connection.client.get().request(

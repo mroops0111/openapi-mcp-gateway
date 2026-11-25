@@ -5,6 +5,15 @@ import typing
 from tests.constants import API_URL
 
 
+# The upstream scopes each petstore operation declares in its OpenAPI ``security``, keyed by operationId.
+PETSTORE_UPSTREAM_SECURITY = {
+    'listPets': [{'oauth2': ['read:pets']}],
+    'getPetById': [{'oauth2': ['read:pets']}],
+    'createPet': [{'oauth2': ['write:pets']}],
+    'deletePet': [{'oauth2': ['read:pets', 'write:pets']}],
+}
+
+
 def component_ref(name: str) -> dict[str, str]:
     """A reference to the component schema ``name``, as a spec writes it."""
     return {'$ref': f'#/components/schemas/{name}'}
@@ -55,3 +64,13 @@ def write_spec(directory: pathlib.Path, spec: dict[str, typing.Any], name: str =
     path = directory / name
     path.write_text(json.dumps(spec))
     return path
+
+
+def write_secured_petstore(petstore_path: pathlib.Path, directory: pathlib.Path) -> pathlib.Path:
+    """Write the petstore at ``petstore_path`` under ``directory`` with each operation's upstream scopes declared."""
+    spec = json.loads(petstore_path.read_text())
+    for path_item in spec['paths'].values():
+        for operation in path_item.values():
+            if isinstance(operation, dict) and operation.get('operationId') in PETSTORE_UPSTREAM_SECURITY:
+                operation['security'] = PETSTORE_UPSTREAM_SECURITY[operation['operationId']]
+    return write_spec(directory, spec, 'secured-petstore.json')

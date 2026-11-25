@@ -6,6 +6,11 @@ from mcp.server.mcpserver import Context
 from .token_source import UpstreamTokenSource
 
 
+# What a call is answered with when the gateway fails to obtain its upstream credential.
+# The failure is the gateway's, so its detail goes to the log rather than to the caller.
+UPSTREAM_CREDENTIAL_UNAVAILABLE = 'The gateway could not obtain its upstream credential'
+
+
 class UpstreamAuthResolver(abc.ABC):
     """Strategy that produces the upstream HTTP headers for one MCP tool call.
 

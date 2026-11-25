@@ -9,6 +9,13 @@ from starlette.types import ASGIApp
 from openapi_mcp_gateway.gateway import Gateway
 
 
+class ServingAddress(typing.NamedTuple):
+    """A loopback socket an app will be served on, with the base URL it serves at, settled before the app is built."""
+
+    sock: socket.socket
+    url: str
+
+
 @contextlib.asynccontextmanager
 async def serve(app: ASGIApp, sock: socket.socket | None = None) -> typing.AsyncIterator[str]:
     """Serve ``app`` with uvicorn on ``sock``, or on a free loopback port, and yield its base URL."""
@@ -36,19 +43,28 @@ async def serve(app: ASGIApp, sock: socket.socket | None = None) -> typing.Async
 
 @contextlib.asynccontextmanager
 async def serve_gateway(
-    build: typing.Callable[[str], Gateway], app_of: typing.Callable[[Gateway], ASGIApp] | None = None
+    build: typing.Callable[[str], Gateway],
+    app_of: typing.Callable[[Gateway], ASGIApp] | None = None,
+    address: ServingAddress | None = None,
 ) -> typing.AsyncIterator[str]:
     """Serve the gateway ``build`` makes for the address it is served at, and yield that address.
 
     The address is settled before the gateway is built, since the gateway publishes it in its documents.
+    ``address`` is that address when a test settled it earlier, and a free loopback port otherwise.
     ``app_of`` turns the gateway into the app that is served, its own streamable HTTP app by default.
     """
-    sock = bind_loopback_socket()
-    base_url = build_socket_url(sock)
-    gateway = build(base_url)
+    if address is None:
+        address = bind_serving_address()
+    gateway = build(address.url)
     app = app_of(gateway) if app_of is not None else gateway._build_app(transport='streamable-http')
-    async with serve(app, sock):
-        yield base_url
+    async with serve(app, address.sock):
+        yield address.url
+
+
+def bind_serving_address() -> ServingAddress:
+    """A free loopback address, for a test that needs the URL before it builds the app."""
+    sock = bind_loopback_socket()
+    return ServingAddress(sock, build_socket_url(sock))
 
 
 def bind_loopback_socket() -> socket.socket:

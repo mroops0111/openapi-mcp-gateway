@@ -95,7 +95,9 @@ class AnyScopeSetRequirement(ScopeRequirement):
         needed = ' or '.join(' '.join(sorted(scope_set)) for scope_set in self.scope_sets)
         return (
             f'The upstream token lacks the scopes {self._operation_id} needs ({needed}). '
-            f'Add them to auth.upstream.scopes and sign in again, or correct its security under {override}.'
+            'Add them to auth.upstream.scopes and have the authorization server grant them to this user, '
+            'which under authorization_code takes signing in again, '
+            f'or correct its security under {override}.'
         )
 
 

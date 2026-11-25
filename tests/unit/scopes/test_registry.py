@@ -4,6 +4,8 @@ from openapi_mcp_gateway.scopes import (
     McpUnrestrictedScopePolicy,
     ScopeRegistry,
     TokenGrant,
+    UpstreamGrantSource,
+    UpstreamGrantUnavailableError,
     UpstreamSpecSecurityScopePolicy,
 )
 from tests.scope import (
@@ -88,9 +90,35 @@ class TestScopeRegistryWithUpstreamScopes:
         grant = TokenGrant(frozenset(mcp_scopes), frozenset(upstream_scopes), frozenset({'pets:delete'}))
         assert scope_registry.lists('delete_pet', grant) is listed
 
+    def test_an_upstream_grant_not_yet_found_out_is_not_checked(self):
+        """A flow that learns the grant only on the call fills it in before the call is checked."""
+        scope_registry = ScopeRegistry(tag_scopes(DELETE_PET), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
+        scope_registry.register('delete_pet', DELETE_PET)
+        grant = TokenGrant(frozenset({'pets:delete'}), None, frozenset({'pets:delete'}))
+        assert scope_registry.lists('delete_pet', grant) is True
+        assert scope_registry.refusal('delete_pet', grant) is None
+
+    async def test_a_grant_that_cannot_be_found_out_refuses_the_call(self):
+        """An issuer refusing the whole exchange answers the call with its reason, not a server error."""
+        scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
+        scope_registry.register('delete_pet', DELETE_PET)
+
+        assert await scope_registry.call_refusal('delete_pet', _UnavailableGrantSource()) == 'exchange refused'
+
     def test_the_lists_are_cached_per_token_once_the_grant_is_enforced(self):
         scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
         assert scope_registry.list_cache_scope == 'private'
+
+
+class _UnavailableGrantSource(UpstreamGrantSource):
+    """A grant source whose every call finds the grant out of reach."""
+
+    @property
+    def records_user_grant(self) -> bool:
+        return True
+
+    async def read_call_grant(self) -> TokenGrant:
+        raise UpstreamGrantUnavailableError('exchange refused')
 
 
 def _mcp_grant(mcp_scopes: set[str], grantable: set[str] | None = None) -> TokenGrant:
@@ -114,25 +142,25 @@ class TestUpstreamSignInScopes:
         ],
     )
     def test_each_sign_in_asks_for_what_its_mcp_scopes_open(self, mcp_scopes, requested):
-        assert secured_registry().upstream_sign_in_scopes(SECURED_CEILING, [], mcp_scopes) == requested
+        assert secured_registry().requested_upstream_scopes(SECURED_CEILING, [], mcp_scopes) == requested
 
     def test_without_mcp_scopes_every_registered_operation_counts(self):
         scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
         scope_registry.register('delete_pet', DELETE_PET)
-        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, [], []) == SECURED_CEILING
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], []) == SECURED_CEILING
 
     def test_without_an_enforced_grant_every_sign_in_asks_for_the_whole_ceiling(self):
         scope_registry = ScopeRegistry(tag_scopes(DELETE_PET))
         scope_registry.register('delete_pet', DELETE_PET)
-        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, [], []) == SECURED_CEILING
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], []) == SECURED_CEILING
 
     def test_an_operation_registered_after_a_sign_in_counts_at_the_next_one(self):
         scope_registry = ScopeRegistry(tag_scopes(*SECURED_OPERATIONS), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
         scope_registry.register('delete_pet', DELETE_PET)
-        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, [], ['pets:write']) == []
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['pets:write']) == []
         scope_registry.register('create_pet', CREATE_PET)
-        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, [], ['pets:write']) == ['write:pets']
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['pets:write']) == ['write:pets']
 
     def test_a_scope_the_server_does_not_define_changes_nothing(self):
         scope_registry = secured_registry()
-        assert scope_registry.upstream_sign_in_scopes(SECURED_CEILING, [], ['pets:read', 'unknown']) == ['read:pets']
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['pets:read', 'unknown']) == ['read:pets']

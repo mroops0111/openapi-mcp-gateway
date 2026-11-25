@@ -41,11 +41,11 @@ HostResolver = collections.abc.Callable[[str, int], collections.abc.Awaitable[li
 _NAT64_NETWORK = ipaddress.IPv6Network('64:ff9b::/96')
 
 
-class ClientMetadataError(Exception):
+class McpClientMetadataError(Exception):
     """Why a client's metadata document cannot be used, worded to follow "its metadata document"."""
 
 
-class ClientMetadataDocument(pydantic.BaseModel):
+class McpClientMetadataDocument(pydantic.BaseModel):
     """The fields the gateway reads from a client's metadata document, named as RFC 7591 §2 names them."""
 
     client_id: str
@@ -72,10 +72,10 @@ class McpClientMetadataResolver:
         self._resolve_host = resolve_host or _resolve_host
         # Loading the CA bundle blocks, so it is loaded once rather than on every fetch.
         self._ssl_context = httpx.create_ssl_context(trust_env=False)
-        self._cache: collections.OrderedDict[str, tuple[float, ClientMetadataDocument]] = collections.OrderedDict()
+        self._cache: collections.OrderedDict[str, tuple[float, McpClientMetadataDocument]] = collections.OrderedDict()
 
-    async def resolve(self, client_id: str) -> ClientMetadataDocument:
-        """The document ``client_id`` points to, checked against the CIMD draft, or ``ClientMetadataError``."""
+    async def resolve(self, client_id: str) -> McpClientMetadataDocument:
+        """The document ``client_id`` points to, checked against the CIMD draft, or ``McpClientMetadataError``."""
         cached = self._cache.get(client_id)
         if cached is not None and cached[0] > time.monotonic():
             self._cache.move_to_end(client_id)
@@ -84,9 +84,9 @@ class McpClientMetadataResolver:
             async with asyncio.timeout(FETCH_TIMEOUT_SECONDS):
                 body, lifetime = await self._fetch(client_id)
         except TimeoutError as error:
-            raise ClientMetadataError(f'took longer than {FETCH_TIMEOUT_SECONDS:g} seconds to fetch') from error
+            raise McpClientMetadataError(f'took longer than {FETCH_TIMEOUT_SECONDS:g} seconds to fetch') from error
         except (httpx.HTTPError, httpx.InvalidURL) as error:
-            raise ClientMetadataError(f'could not be fetched ({type(error).__name__})') from error
+            raise McpClientMetadataError(f'could not be fetched ({type(error).__name__})') from error
         document = parse_client_metadata_document(client_id, body)
         self._remember(client_id, document, lifetime)
         return document
@@ -94,7 +94,7 @@ class McpClientMetadataResolver:
     async def _fetch(self, client_id: str) -> tuple[bytes, int]:
         """The body at ``client_id`` and how long it may be used, fetched from the public address its host names."""
         if not is_client_metadata_url(client_id):
-            raise ClientMetadataError('is not at an https URL with a path')
+            raise McpClientMetadataError('is not at an https URL with a path')
         url = urllib.parse.urlsplit(client_id)
         host = url.hostname or ''
         address = await self._pick_public_address(host, url.port or 443)
@@ -113,10 +113,10 @@ class McpClientMetadataResolver:
             response = await http.send(request, stream=True)
             try:
                 if response.status_code != 200:
-                    raise ClientMetadataError(f'answered HTTP {response.status_code}')
+                    raise McpClientMetadataError(f'answered HTTP {response.status_code}')
                 encoding = response.headers.get('content-encoding', 'identity').strip().lower()
                 if encoding != 'identity':
-                    raise ClientMetadataError(f'came {encoding}-encoded, while only an unencoded document is read')
+                    raise McpClientMetadataError(f'came {encoding}-encoded, while only an unencoded document is read')
                 body = await _read_within_limit(response)
             finally:
                 await response.aclose()
@@ -130,12 +130,12 @@ class McpClientMetadataResolver:
         try:
             addresses = await self._addresses_of(host, port)
         except OSError as error:
-            raise ClientMetadataError(f'is at {host}, which does not resolve') from error
+            raise McpClientMetadataError(f'is at {host}, which does not resolve') from error
         if not addresses:
-            raise ClientMetadataError(f'is at {host}, which does not resolve')
+            raise McpClientMetadataError(f'is at {host}, which does not resolve')
         for address in addresses:
             if not _is_public_address(address):
-                raise ClientMetadataError(f'is at {host}, which resolves to {address}, a private or local address')
+                raise McpClientMetadataError(f'is at {host}, which resolves to {address}, a private or local address')
         return addresses[0]
 
     async def _addresses_of(self, host: str, port: int) -> list[str]:
@@ -144,15 +144,15 @@ class McpClientMetadataResolver:
             return [str(ipaddress.ip_address(host))]
         return await self._resolve_host(host, port)
 
-    def _remember(self, client_id: str, document: ClientMetadataDocument, lifetime: int) -> None:
+    def _remember(self, client_id: str, document: McpClientMetadataDocument, lifetime: int) -> None:
         self._cache[client_id] = (time.monotonic() + lifetime, document)
         self._cache.move_to_end(client_id)
         while len(self._cache) > MAX_CACHED_DOCUMENTS:
             self._cache.popitem(last=False)
 
 
-def parse_client_metadata_document(client_id: str, body: bytes) -> ClientMetadataDocument:
-    """The document in ``body``, fetched from ``client_id``, or ``ClientMetadataError`` saying what is wrong.
+def parse_client_metadata_document(client_id: str, body: bytes) -> McpClientMetadataDocument:
+    """The document in ``body``, fetched from ``client_id``, or ``McpClientMetadataError`` saying what is wrong.
 
     It must name ``client_id`` as its own, with a name and redirect URIs that are ``https`` or loopback.
     The CIMD draft §4.1 forbids a shared secret, and the SDK verifies no ``private_key_jwt``,
@@ -161,30 +161,30 @@ def parse_client_metadata_document(client_id: str, body: bytes) -> ClientMetadat
     try:
         data = json.loads(body)
     except ValueError as error:
-        raise ClientMetadataError('is not JSON') from error
+        raise McpClientMetadataError('is not JSON') from error
     if not isinstance(data, dict):
-        raise ClientMetadataError('is not a JSON object')
+        raise McpClientMetadataError('is not a JSON object')
     if data.get('client_id') != client_id:
-        raise ClientMetadataError(f'names client_id {data.get("client_id")!r} rather than its own URL')
+        raise McpClientMetadataError(f'names client_id {data.get("client_id")!r} rather than its own URL')
     if 'client_secret' in data or 'client_secret_expires_at' in data:
-        raise ClientMetadataError('carries a client_secret, which the CIMD draft forbids')
+        raise McpClientMetadataError('carries a client_secret, which the CIMD draft forbids')
     method = data.get('token_endpoint_auth_method', 'none')
     if method != 'none':
-        raise ClientMetadataError(f'authenticates with {method!r}, while only public clients are accepted')
+        raise McpClientMetadataError(f'authenticates with {method!r}, while only public clients are accepted')
     for field, required in (('grant_types', 'authorization_code'), ('response_types', 'code')):
         listed = data.get(field, [required])
         if not isinstance(listed, list):
-            raise ClientMetadataError(f'has a {field} that is not a list')
+            raise McpClientMetadataError(f'has a {field} that is not a list')
         if required not in listed:
-            raise ClientMetadataError(f'does not list {required} among its {field}')
+            raise McpClientMetadataError(f'does not list {required} among its {field}')
     try:
-        document = ClientMetadataDocument.model_validate(data)
+        document = McpClientMetadataDocument.model_validate(data)
     except pydantic.ValidationError as error:
         fields = ', '.join(sorted({str(detail['loc'][0]) for detail in error.errors()}))
-        raise ClientMetadataError(f'has a missing or invalid {fields}') from error
+        raise McpClientMetadataError(f'has a missing or invalid {fields}') from error
     for redirect_uri in document.redirect_uris:
         if redirect_uri.scheme != 'https' and not is_loopback_redirect(redirect_uri):
-            raise ClientMetadataError(f'lists redirect URI {redirect_uri}, which is neither https nor loopback')
+            raise McpClientMetadataError(f'lists redirect URI {redirect_uri}, which is neither https nor loopback')
     return document
 
 
@@ -225,7 +225,7 @@ async def _read_within_limit(response: httpx.Response) -> bytes:
     async for chunk in response.aiter_bytes():
         body.extend(chunk)
         if len(body) > MAX_DOCUMENT_BYTES:
-            raise ClientMetadataError(f'is larger than {MAX_DOCUMENT_BYTES} bytes')
+            raise McpClientMetadataError(f'is larger than {MAX_DOCUMENT_BYTES} bytes')
     return bytes(body)
 
 

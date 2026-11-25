@@ -5,6 +5,7 @@ import pytest
 from openapi_mcp_gateway.auth.mcp.client import McpClientMetadataDirectory
 from openapi_mcp_gateway.auth.mcp.token_issuer import MCP_DEFAULT_SCOPE
 from openapi_mcp_gateway.auth.settings_mapping import (
+    accepts_mcp_dynamic_registration,
     build_mcp_client_directory,
     build_mcp_client_metadata_directory,
     build_mcp_other_clients,
@@ -140,6 +141,24 @@ class TestOtherClients:
 
     def test_an_id_that_is_no_metadata_document_url_is_never_admitted(self):
         assert build_mcp_other_clients(OtherClientsConfig(), ()).admits('agent') is False
+
+
+class TestDynamicRegistration:
+    """Clients may register themselves only where the config names neither kind of client."""
+
+    @pytest.mark.parametrize(
+        ('mcp', 'registration'),
+        [
+            ({}, True),
+            ({'clients': {'agent': {}}}, False),
+            ({'other_clients': {}}, False),
+            ({'other_clients': False, 'clients': {'agent': {}}}, False),
+        ],
+        ids=['nothing set', 'clients only', 'other clients', 'other clients off'],
+    )
+    def test_naming_any_client_turns_registration_off(self, mcp, registration):
+        """Registration cannot be held to ``trusted_hosts``, since nothing a client registers is verified."""
+        assert accepts_mcp_dynamic_registration(McpAuthConfig.model_validate(mcp)) is registration
 
 
 def _build_metadata_directory(

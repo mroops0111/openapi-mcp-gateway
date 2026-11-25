@@ -4,7 +4,7 @@ import typing
 from mcp.shared.uri_template import UriTemplate
 
 from ..openapi import OperationInfo
-from .grant import TokenGrant
+from .grant import TokenGrant, UpstreamGrantSource, UpstreamGrantUnavailableError, read_current_grant
 from .policy import McpScopePolicy, UpstreamScopePolicy, UpstreamUnrestrictedScopePolicy
 from .requirement import ScopeRequirement, UnrestrictedRequirement
 
@@ -17,7 +17,7 @@ class ScopeRegistry:
     A concrete URI a template expands to requires what the template does.
     A name it never registered, such as a dynamic meta-tool, requires nothing,
     since the operations behind it are what the scopes guard.
-    The operations it registered are also what a sign-in asks the upstream for, as ``upstream_sign_in_scopes`` says.
+    The operations it registered are also what a sign-in asks the upstream for, as ``requested_upstream_scopes`` says.
     """
 
     def __init__(self, mcp_policy: McpScopePolicy, upstream_policy: UpstreamScopePolicy | None = None) -> None:
@@ -25,7 +25,7 @@ class ScopeRegistry:
         self.upstream_policy = upstream_policy or UpstreamUnrestrictedScopePolicy()
         self._requirements: dict[str, _NameRequirements] = {}
         self._operations: dict[str, _RegisteredOperation] = {}
-        self._sign_in_scopes: dict[tuple[tuple[str, ...], tuple[str, ...], frozenset[str]], list[str]] = {}
+        self._requested_scopes: dict[tuple[tuple[str, ...], tuple[str, ...], frozenset[str]], list[str]] = {}
         self._resource_templates: list[tuple[UriTemplate, _NameRequirements]] = []
 
     @property
@@ -41,7 +41,7 @@ class ScopeRegistry:
         )
         self._requirements[name] = requirements
         self._operations[operation.operation_id] = _RegisteredOperation(operation, requirements.mcp)
-        self._sign_in_scopes.clear()
+        self._requested_scopes.clear()
 
     def register_resource(self, uri_template: str, operation: OperationInfo) -> None:
         """Record what ``operation``, exposed as a resource at ``uri_template``, requires."""
@@ -58,13 +58,33 @@ class ScopeRegistry:
 
         The MCP scopes are checked first, since a client steps up for those,
         and the sign-in a step-up starts is what asks the upstream for more.
+        An upstream grant not yet found out is not checked, as ``TokenGrant`` says.
         """
         requirements = self._requirements_of(name)
         if not requirements.mcp.is_met(grant.mcp_scopes):
             return requirements.mcp.refusal
-        if not requirements.upstream.is_met(self.upstream_policy.held_scopes(grant.upstream_scopes)):
+        if not self._meets_upstream(requirements.upstream, grant):
             return requirements.upstream.refusal
         return None
+
+    async def call_refusal(self, name: str, grant_source: UpstreamGrantSource) -> str | None:
+        """Why the call being handled may not use ``name``, or ``None`` when it may.
+
+        ``grant_source`` is asked for the upstream grant only once the MCP scopes are met,
+        and only where ``name`` needs an upstream grant at all, since finding it out may mean an exchange.
+        A grant that cannot be found out refuses the call with the reason.
+        """
+        requirements = self._requirements_of(name)
+        grant = read_current_grant()
+        if not requirements.mcp.is_met(grant.mcp_scopes):
+            return requirements.mcp.refusal
+        if requirements.upstream.is_met(frozenset()):
+            return None
+        try:
+            grant = await grant_source.read_call_grant()
+        except UpstreamGrantUnavailableError as error:
+            return str(error)
+        return self.refusal(name, grant)
 
     def lists(self, name: str, grant: TokenGrant) -> bool:
         """Whether ``name`` shows in the lists and searches a token with ``grant`` is answered with.
@@ -74,15 +94,16 @@ class ScopeRegistry:
         While the MCP scopes it needs are not yet held, the upstream grant is not checked,
         since the sign-in a step-up starts asks the upstream for what they need.
         Once they are held, stepping up cannot change the upstream grant, so it is checked as it stands.
+        An upstream grant not yet found out leaves the name in sight, as the call checks it.
         """
         requirements = self._requirements_of(name)
         if not requirements.mcp.is_met(grant.mcp_reachable_scopes):
             return False
         if not requirements.mcp.is_met(grant.mcp_scopes):
             return True
-        return requirements.upstream.is_met(self.upstream_policy.held_scopes(grant.upstream_scopes))
+        return self._meets_upstream(requirements.upstream, grant)
 
-    def upstream_sign_in_scopes(
+    def requested_upstream_scopes(
         self,
         ceiling: collections.abc.Sequence[str],
         required_scopes: collections.abc.Sequence[str],
@@ -97,14 +118,21 @@ class ScopeRegistry:
         """
         granted_scopes = frozenset(mcp_scopes).intersection(self.mcp_policy.mcp_defined_scopes)
         key = (tuple(ceiling), tuple(required_scopes), granted_scopes)
-        if key not in self._sign_in_scopes:
+        if key not in self._requested_scopes:
             opened_operations = [
                 registered.operation
                 for registered in self._operations.values()
                 if registered.mcp_requirement.is_met(granted_scopes)
             ]
-            self._sign_in_scopes[key] = self.upstream_policy.sign_in_scopes(ceiling, required_scopes, opened_operations)
-        return list(self._sign_in_scopes[key])
+            self._requested_scopes[key] = self.upstream_policy.requested_scopes(
+                ceiling, required_scopes, opened_operations
+            )
+        return list(self._requested_scopes[key])
+
+    def _meets_upstream(self, requirement: ScopeRequirement, grant: TokenGrant) -> bool:
+        if grant.upstream_scopes is None:
+            return True
+        return requirement.is_met(self.upstream_policy.held_scopes(grant.upstream_scopes))
 
     def _requirements_of(self, name: str) -> '_NameRequirements':
         if name in self._requirements:

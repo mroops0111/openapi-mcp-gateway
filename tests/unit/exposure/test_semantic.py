@@ -11,6 +11,7 @@ from openapi_mcp_gateway.exposure import MetaToolGenerator, SemanticSearchOption
 from openapi_mcp_gateway.exposure.meta_tool import _OperationRegistry, _RegisteredOperation
 from openapi_mcp_gateway.gateway import Gateway, _semantic_search_options
 from openapi_mcp_gateway.openapi import OperationInfo
+from openapi_mcp_gateway.scopes import UpstreamNoGrantSource
 from openapi_mcp_gateway.settings import GatewayConfig, SemanticSearchConfig
 from tests.constants import API_URL
 
@@ -112,7 +113,9 @@ class TestSemanticSearch:
         """The tool tells the model to use the API's words when matching by words, and plain words by meaning."""
         by_meaning = _register(SemanticSearchOptions(model='stand-in', embedder=embedder))
         by_words = MCPServer('test')
-        MetaToolGenerator(mcp=by_words, connection=UpstreamConnection(base_url=API_URL)).register([])
+        MetaToolGenerator(
+            mcp=by_words, connection=UpstreamConnection(base_url=API_URL), grant_source=UpstreamNoGrantSource()
+        ).register([])
         assert 'Matching is by meaning' in await _description(by_meaning)
         assert 'Matching is by shared words' in await _description(by_words)
 
@@ -187,7 +190,12 @@ def _operation(name: str, summary: str) -> _RegisteredOperation:
 
 def _register(options: SemanticSearchOptions) -> MCPServer:
     mcp = MCPServer('test')
-    MetaToolGenerator(mcp=mcp, connection=UpstreamConnection(base_url=API_URL), semantic_search=options).register(
+    MetaToolGenerator(
+        mcp=mcp,
+        connection=UpstreamConnection(base_url=API_URL),
+        grant_source=UpstreamNoGrantSource(),
+        semantic_search=options,
+    ).register(
         [
             OperationInfo(
                 operation_id='updateIssue',

@@ -1,13 +1,11 @@
 import pathlib
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
-from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import (
     AuthConfig,
@@ -20,15 +18,8 @@ from tests.constants import (
     API_URL,
     GATEWAY_URL,
     ISSUER,
-    JWKS_URL,
-    TOKEN_URL,
 )
-
-
-@pytest.fixture(scope='module')
-def signing_key():
-    """One RSA keypair for the module, since generation dominates the runtime."""
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+from tests.flow import discovered_external_issuer
 
 
 class TestTokenExchangeDiscovery:
@@ -64,10 +55,10 @@ class TestTokenExchangeDiscovery:
         assert delegating_client.post('/petstore/token').status_code == 404
 
     def test_healthz_reports_the_endpoint_as_protected(self, delegating_client):
-        """A delegating server is still OAuth-protected, so health must not report it as open."""
+        """A delegating server is still protected, so health names its issuer rather than reporting it as open."""
         servers = delegating_client.get('/healthz').json()['servers']
 
-        assert servers[0]['auth'] == 'oauth2'
+        assert servers[0]['auth'] == {'mcp': f'issuer ({ISSUER})', 'upstream': 'oauth2 (token_exchange)'}
 
 
 class TestRejectedTokenResponse:
@@ -146,7 +137,6 @@ class TestRejectedTokenResponse:
 
 def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = None) -> TestClient:
     """Test client over a petstore server that validates tokens from ``ISSUER``, an issuer it does not own."""
-    metadata = McpExternalIssuerMetadata(issuer=ISSUER, jwks_uri=JWKS_URL, token_endpoint=TOKEN_URL)
     config = GatewayConfig(
         url=GATEWAY_URL,
         servers=[
@@ -162,16 +152,11 @@ def _delegating_client(spec_path: pathlib.Path, jwk_client: MagicMock | None = N
                         client_secret='secret',
                         scopes=['read'],
                     ),
-                    mcp=McpAuthConfig(issuer=ISSUER),
+                    mcp=McpAuthConfig(issuer=ISSUER, required_scopes=['mcp']),
                 ),
             ),
         ],
     )
-    with (
-        patch(
-            'openapi_mcp_gateway.auth.flows.token_exchange.fetch_mcp_external_issuer_metadata', return_value=metadata
-        ),
-        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client', return_value=jwk_client or MagicMock()),
-    ):
+    with discovered_external_issuer(jwk_client):
         gateway = Gateway.from_config(config)
         return TestClient(gateway._build_app(transport='streamable-http'))

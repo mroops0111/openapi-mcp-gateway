@@ -24,7 +24,9 @@ SECURED_CEILING = ['read:pets', 'write:pets']
 # Why a token whose upstream grant lacks what ``deletePet`` declares is refused.
 DELETE_PET_UPSTREAM_REFUSAL = (
     'The upstream token lacks the scopes deletePet needs (read:pets write:pets). '
-    'Add them to auth.upstream.scopes and sign in again, or correct its security under operations.deletePet.security.'
+    'Add them to auth.upstream.scopes and have the authorization server grant them to this user, '
+    'which under authorization_code takes signing in again, '
+    'or correct its security under operations.deletePet.security.'
 )
 
 

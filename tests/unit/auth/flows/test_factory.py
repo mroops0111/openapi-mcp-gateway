@@ -1,24 +1,35 @@
 import pytest
 
-from openapi_mcp_gateway.auth.flows import (
-    build_oauth_flow,
-)
 from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeBridge
-from openapi_mcp_gateway.auth.flows.factory import resolve_upstream_oauth_flow
+from openapi_mcp_gateway.auth.flows.factory import OAUTH_FLOW_HANDLERS, resolve_upstream_oauth_flow
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamTokenSourceAuthResolver,
 )
 from openapi_mcp_gateway.settings import AuthConfig, McpAuthConfig, UpstreamAuthConfig
-from tests.constants import AUTHORIZE_URL, TOKEN_URL
+from tests.constants import API_URL, AUTHORIZE_URL, ISSUER, TOKEN_URL
 from tests.flow import (
     auth_context,
+    build_selected_oauth_flow,
     build_spec,
+    discovered_external_issuer,
     server_entry,
     spec_with_authorization_code,
     spec_with_both_flows,
     spec_with_client_credentials,
 )
 from tests.oauth import server_of
+
+
+# An ``auth`` block each flow builds from, with every setting it requires.
+_UPSTREAM_CLIENT = {'type': 'oauth2', 'client_id': 'cid', 'client_secret': 'sec'}
+_BUILDABLE_FLOW_AUTH = {
+    'authorization_code': {'upstream': {**_UPSTREAM_CLIENT, 'flow': 'authorization_code'}},
+    'client_credentials': {'upstream': {**_UPSTREAM_CLIENT, 'flow': 'client_credentials'}},
+    'token_exchange': {
+        'upstream': {**_UPSTREAM_CLIENT, 'flow': 'token_exchange', 'audience': API_URL},
+        'mcp': {'issuer': ISSUER},
+    },
+}
 
 
 class TestResolveUpstreamOAuthFlow:
@@ -119,7 +130,16 @@ class TestResolveUpstreamOAuthFlow:
 
 
 class TestBuildOAuthFlow:
-    """``build_oauth_flow`` dispatches to the right handler and returns a populated setup."""
+    """A selected flow builds through the right handler and returns a populated setup."""
+
+    @pytest.mark.parametrize('flow', sorted(OAUTH_FLOW_HANDLERS))
+    def test_a_flow_records_a_user_grant_exactly_when_its_class_says_so(self, flow):
+        """The settings that turn the grant check on follow from the class, so the grant it builds must agree."""
+        entry = server_entry(AuthConfig.model_validate(_BUILDABLE_FLOW_AUTH[flow]))
+        with discovered_external_issuer():
+            setup = build_selected_oauth_flow(auth_context(entry, spec_with_both_flows()))
+
+        assert setup.upstream_grant_source.records_user_grant is OAUTH_FLOW_HANDLERS[flow].records_user_grant
 
     def test_authorization_code_returns_provider_and_settings(self):
         """authorization_code yields a provider, AuthSettings, and a resolver reading the Bridge."""
@@ -128,7 +148,7 @@ class TestBuildOAuthFlow:
                 upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec', scopes=['api'])
             ),
         )
-        setup = build_oauth_flow(auth_context(entry, spec_with_authorization_code()))
+        setup = build_selected_oauth_flow(auth_context(entry, spec_with_authorization_code()))
         assert isinstance(setup.resolver, UpstreamTokenSourceAuthResolver)
         assert isinstance(setup.resolver._token_source, AuthorizationCodeBridge)
         assert setup.provider is not None
@@ -142,7 +162,7 @@ class TestBuildOAuthFlow:
                 upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec', scopes=['api'])
             ),
         )
-        setup = build_oauth_flow(auth_context(entry, spec_with_authorization_code()))
+        setup = build_selected_oauth_flow(auth_context(entry, spec_with_authorization_code()))
         assert setup.provider is not None
         assert server_of(setup.provider).tokens.policy.access_token_ttl == 3600
         assert server_of(setup.provider).tokens.policy.refresh_token_ttl == 86400
@@ -155,7 +175,7 @@ class TestBuildOAuthFlow:
                 mcp=McpAuthConfig(access_token_ttl=7200, refresh_token_ttl=604800),
             ),
         )
-        setup = build_oauth_flow(auth_context(entry, spec_with_authorization_code()))
+        setup = build_selected_oauth_flow(auth_context(entry, spec_with_authorization_code()))
         assert setup.provider is not None
         assert server_of(setup.provider).tokens.policy.access_token_ttl == 7200
         assert server_of(setup.provider).tokens.policy.refresh_token_ttl == 604800
@@ -167,7 +187,7 @@ class TestBuildOAuthFlow:
                 upstream=UpstreamAuthConfig(type='oauth2', client_id='cid', client_secret='sec', scopes=['api'])
             ),
         )
-        setup = build_oauth_flow(auth_context(entry, spec_with_client_credentials()))
+        setup = build_selected_oauth_flow(auth_context(entry, spec_with_client_credentials()))
         assert isinstance(setup.resolver, UpstreamTokenSourceAuthResolver)
         assert setup.provider is None
         assert setup.settings is None
@@ -177,7 +197,7 @@ class TestBuildOAuthFlow:
         """Missing client_id/client_secret on client_credentials raises ``ValueError``."""
         entry = server_entry(AuthConfig(upstream=UpstreamAuthConfig(type='oauth2')))
         with pytest.raises(ValueError, match='client_id and client_secret'):
-            build_oauth_flow(auth_context(entry, spec_with_client_credentials()))
+            build_selected_oauth_flow(auth_context(entry, spec_with_client_credentials()))
 
     def test_authorization_code_without_creds_raises(self):
         """Auto-detected authorization_code without client credentials fails fast.
@@ -191,10 +211,10 @@ class TestBuildOAuthFlow:
         """
         entry = server_entry(AuthConfig(upstream=UpstreamAuthConfig(type='oauth2')))
         with pytest.raises(ValueError, match='client_id/client_secret'):
-            build_oauth_flow(auth_context(entry, spec_with_authorization_code()))
+            build_selected_oauth_flow(auth_context(entry, spec_with_authorization_code()))
 
     def test_explicit_authorization_code_without_creds_raises(self):
         """Forcing ``flow='authorization_code'`` without credentials still fails fast."""
         entry = server_entry(AuthConfig(upstream=UpstreamAuthConfig(type='oauth2', flow='authorization_code')))
         with pytest.raises(ValueError, match='client_id and client_secret'):
-            build_oauth_flow(auth_context(entry, spec_with_authorization_code()))
+            build_selected_oauth_flow(auth_context(entry, spec_with_authorization_code()))

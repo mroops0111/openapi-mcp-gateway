@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.exceptions import HTTPException
 
-from openapi_mcp_gateway.auth.flows import authorization_code_upstream_token
-from openapi_mcp_gateway.auth.flows.authorization_code_upstream_token import UpstreamTokenRefresher
+from openapi_mcp_gateway.auth.upstream import authorization_code_refresh
+from openapi_mcp_gateway.auth.upstream.authorization_code_refresh import UpstreamAuthorizationCodeRefresher
 from tests.oauth import bridge_of, upstream_token_response
 
 
@@ -15,10 +15,13 @@ REFRESH_TOKEN = 'upstream-refresh-token'
 
 
 @pytest.fixture
-def gateway_instances(provider, memory_store) -> list[UpstreamTokenRefresher]:
+def gateway_instances(provider, memory_store) -> list[UpstreamAuthorizationCodeRefresher]:
     """Two gateway instances' refreshers, sharing one store as instances behind a load balancer do."""
     upstream = bridge_of(provider).upstream
-    return [UpstreamTokenRefresher(upstream, memory_store), UpstreamTokenRefresher(upstream, memory_store)]
+    return [
+        UpstreamAuthorizationCodeRefresher(upstream, memory_store),
+        UpstreamAuthorizationCodeRefresher(upstream, memory_store),
+    ]
 
 
 class TestUpstreamTokenRefresher:
@@ -48,7 +51,7 @@ class TestUpstreamTokenRefresher:
 
     async def test_a_claim_left_by_a_dead_instance_expires(self, gateway_instances, memory_store, monkeypatch):
         """An instance that died mid-refresh holds the others up only until its claim expires."""
-        monkeypatch.setattr(authorization_code_upstream_token, '_REFRESH_CLAIM_SECONDS', 1)
+        monkeypatch.setattr(authorization_code_refresh, '_REFRESH_CLAIM_SECONDS', 1)
         # Claims are keyed by the refresh token's hash, as the refresher keys them.
         claim_key = hashlib.sha256(REFRESH_TOKEN.encode()).hexdigest()
         await memory_store.set_if_absent('upstream_refresh_claim', claim_key, True, ttl=1)

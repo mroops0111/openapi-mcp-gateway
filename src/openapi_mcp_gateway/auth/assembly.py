@@ -9,12 +9,11 @@ from mcp.server.extension import Extension
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
 from ..openapi import OpenAPISpec
-from ..scopes import ScopeRegistry
+from ..scopes import ScopeRegistry, UpstreamGrantSource, UpstreamNoGrantSource
 from ..settings import AuthConfig, ServerConfig
 from ..stores.base import TokenStore
 from .mcp.client_metadata import McpClientMetadataResolver
 from .routes import AuthRoutes
-from .upstream.oauth_flow import UpstreamOAuthFlow
 from .upstream.reauthorization import UpstreamNoReauthorizer, UpstreamReauthorizer
 from .upstream.resolver import UpstreamAuthResolver
 
@@ -26,6 +25,24 @@ MCP_ENDPOINT_PATH = '/mcp'
 # ``gateway`` is one credential of the gateway's own, so every agent looks the same upstream.
 # ``user`` is each signed-in user's own, and ``caller`` is whatever the caller's header carries.
 UpstreamPrincipal = typing.Literal['gateway', 'user', 'caller']
+
+# The ``auth.upstream`` fields besides ``type``, which each upstream strategy names as the ones it reads.
+UpstreamSetting = typing.Literal[
+    'token',
+    'api_key_header',
+    'flow',
+    'client_id',
+    'client_secret',
+    'authorization_url',
+    'token_url',
+    'scopes',
+    'required_scopes',
+    'issuer',
+    'resource',
+    'audience',
+    'enforce_scopes',
+    'scope_implies',
+]
 
 # The ``auth.mcp`` fields, which a strategy building the MCP half names as the ones it reads.
 McpSetting = typing.Literal[
@@ -43,7 +60,8 @@ class AuthTypeContext(typing.NamedTuple):
     """Everything an ``AuthTypeHandler`` may need, whether or not it uses all of it.
 
     Passing one shape to every handler is what keeps the caller free of per-type branching.
-    Only ``oauth2`` reads the store, the URLs, ``scope_registry`` and ``client_metadata_resolver``.
+    The store, the URLs, ``scope_registry`` and ``client_metadata_resolver`` serve whichever strategy builds an MCP half
+    or an OAuth flow, and a static credential reads none of them.
     What a handler reads stays its own business.
     """
 
@@ -72,6 +90,19 @@ class AuthTypeContext(typing.NamedTuple):
         return f'{self.issuer_url.rstrip("/")}{MCP_ENDPOINT_PATH}'
 
 
+@dataclasses.dataclass(frozen=True)
+class UpstreamDescription:
+    """How an upstream strategy reaches the upstream, as ``describe`` and the dry-run table report it.
+
+    ``summary`` labels it as ``mechanism (detail)``.
+    ``resolved_settings`` are the ``auth.upstream`` fields the strategy settled, keyed as the config names them,
+    such as a flow picked from the spec. Each strategy lists only the fields it has, and never a credential.
+    """
+
+    summary: str = 'none'
+    resolved_settings: typing.Mapping[UpstreamSetting, str] = dataclasses.field(default_factory=dict)
+
+
 @dataclasses.dataclass
 class ServerAuthSetup:
     """What assembling one server's auth produces, for both directions, consumed by ``Gateway``.
@@ -87,12 +118,12 @@ class ServerAuthSetup:
     ``settings`` and ``protected_resource`` accompany either one and drive the discovery documents.
     ``protected_resource`` is the RFC 9728 document this server publishes, naming whoever mints its tokens.
     ``routes`` are mounted as they are, so the gateway never knows which flow asked for them.
-    ``mcp_tokens_carry_upstream_grant`` says each MCP token records what the upstream granted the user behind it,
-    which checking an operation's upstream scopes needs.
+    ``upstream_grant_source`` is where a call finds the upstream grant it is checked against.
     ``authorization_server_metadata`` is the RFC 8414 document of the gateway's own authorization server,
     set wherever the gateway issues this endpoint's tokens, whether through ``provider`` or its own routes.
     ``extensions`` are the MCP extensions the server advertises, such as how a client may obtain a token.
     ``mcp_summary`` labels who issues this endpoint's tokens, as ``mechanism (detail)``.
+    ``upstream_description`` says how the upstream is reached, for reporting only.
     ``on_shutdown`` lets a flow register a cleanup callback the gateway invokes on shutdown.
     """
 
@@ -103,20 +134,21 @@ class ServerAuthSetup:
     verifier: TokenVerifier | None = None
     protected_resource: ProtectedResourceMetadata | None = None
     routes: list[AuthRoutes] = dataclasses.field(default_factory=list)
-    mcp_tokens_carry_upstream_grant: bool = False
+    upstream_grant_source: UpstreamGrantSource = dataclasses.field(default_factory=UpstreamNoGrantSource)
     authorization_server_metadata: OAuthMetadata | None = None
     extensions: list[Extension] = dataclasses.field(default_factory=list)
     mcp_summary: str = 'open'
+    upstream_description: UpstreamDescription = dataclasses.field(default_factory=UpstreamDescription)
     on_shutdown: typing.Callable[[], typing.Awaitable[None]] | None = None
-    # The flow that was resolved, which is not always the one the config named.
-    # Set by the factory, so that every handler stays unaware of it.
-    flow_type: str | None = None
 
     def __post_init__(self) -> None:
         if self.provider is not None and self.verifier is not None:
             raise ValueError('A server takes either an authorization server provider or a token verifier, not both.')
         if self.authorization_server_metadata is not None and self.settings is None:
             raise ValueError('A server publishing authorization server metadata needs the auth settings it describes.')
+        if self.settings is not None and self.protected_resource is None:
+            # Each strategy states who mints its tokens, so the app never has to work it out.
+            raise ValueError('A server checking tokens needs the protected resource metadata naming their issuer.')
 
 
 class McpSettingsReader(abc.ABC):
@@ -150,96 +182,11 @@ class UpstreamSelection:
     """What an upstream strategy settles before it builds anything, so a config mistake is refused first.
 
     ``upstream_principal`` is whose identity the upstream sees.
+    ``upstream_settings`` are the ``auth.upstream`` fields the strategy reads, and any other one set is refused.
     ``mcp_settings_reader`` is set where the strategy builds the MCP half itself.
     Otherwise an ``McpTokenAuthority`` builds it.
     """
 
     upstream_principal: UpstreamPrincipal
+    upstream_settings: frozenset[UpstreamSetting] = frozenset()
     mcp_settings_reader: McpSettingsReader | None = None
-
-
-class AuthTypeHandler(abc.ABC):
-    """Strategy that turns one ``auth.upstream.type`` into the components the gateway wires up."""
-
-    @abc.abstractmethod
-    def select(self, context: AuthTypeContext) -> UpstreamSelection:
-        """Settle what this handler would build, without any I/O."""
-
-    @abc.abstractmethod
-    def build(self, context: AuthTypeContext) -> ServerAuthSetup:
-        """Return the resolver, and for OAuth also the provider or verifier and their settings."""
-
-
-@dataclasses.dataclass
-class OAuthFlowContext:
-    """What an ``OAuthFlowHandler`` assembles from, which is what every auth type gets plus the resolved flow.
-
-    Populated by ``build_oauth_flow`` before it dispatches to a concrete handler.
-    ``upstream_oauth_flow`` is unset for ``token_exchange``, which runs no flow against the upstream.
-    """
-
-    auth_context: AuthTypeContext
-    upstream_oauth_flow: UpstreamOAuthFlow | None = None
-
-    @property
-    def entry(self) -> ServerConfig:
-        return self.auth_context.entry
-
-    @property
-    def spec(self) -> OpenAPISpec:
-        return self.auth_context.spec
-
-    @property
-    def store(self) -> TokenStore:
-        return self.auth_context.store
-
-    @property
-    def client_metadata_resolver(self) -> McpClientMetadataResolver:
-        return self.auth_context.client_metadata_resolver
-
-    @property
-    def gateway_url(self) -> str:
-        return self.auth_context.gateway_url
-
-    @property
-    def scope_registry(self) -> ScopeRegistry:
-        return self.auth_context.scope_registry
-
-    @property
-    def mount_path(self) -> str:
-        return self.auth_context.entry.mount_path
-
-    @property
-    def issuer_url(self) -> str:
-        return self.auth_context.issuer_url
-
-    @property
-    def mcp_resource_url(self) -> str:
-        return self.auth_context.mcp_resource_url
-
-    def require_upstream_oauth_flow(self) -> UpstreamOAuthFlow:
-        """The upstream OAuth flow, which every flow but ``token_exchange`` runs."""
-        if self.upstream_oauth_flow is None:
-            raise ValueError(
-                f'Server "{self.entry.name}": this flow needs an upstream OAuth flow, and none was resolved.'
-            )
-        return self.upstream_oauth_flow
-
-
-class OAuthFlowHandler(abc.ABC):
-    """Strategy that assembles one ``auth.upstream.flow`` at startup.
-
-    A flow whose two directions are independent builds only the upstream half.
-    A flow that binds them builds both halves and the Bridge that joins them.
-    Subclasses register in ``OAUTH_FLOW_HANDLERS``, so the factory can dispatch by ``flow_type``.
-    A flow that builds the MCP half is also an ``McpSettingsReader``.
-    """
-
-    @property
-    @abc.abstractmethod
-    def upstream_principal(self) -> UpstreamPrincipal:
-        """Whose identity the upstream sees under this flow."""
-
-    @abc.abstractmethod
-    def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
-        """Return the upstream resolver and whatever MCP-side pieces and shutdown hook this flow brings."""

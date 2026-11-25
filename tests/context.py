@@ -1,6 +1,21 @@
+import collections.abc
+import contextlib
 import typing
 
+from mcp.server.auth.middleware.auth_context import auth_context_var
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+from mcp.server.auth.provider import AccessToken
 from mcp.server.mcpserver import Context
+
+
+@contextlib.contextmanager
+def authenticated_as(access_token: AccessToken | None) -> collections.abc.Iterator[None]:
+    """Run the block as a request the transport authenticated with ``access_token``, or with none for ``None``."""
+    reset = auth_context_var.set(AuthenticatedUser(access_token) if access_token else None)
+    try:
+        yield
+    finally:
+        auth_context_var.reset(reset)
 
 
 def stub_context(headers: dict[str, str] | None = None) -> Context:

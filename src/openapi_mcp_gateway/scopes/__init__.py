@@ -1,6 +1,15 @@
 from .derivation import SCOPE_DERIVATIONS, DerivedScope, NoDerivation, ScopeDerivation, TagMethodDerivation
 from .enforcement import NameHeaderTarget, RequestTarget, ScopeChallengeMiddleware, ScopeFilterMiddleware
-from .grant import McpAccessToken, TokenGrant, current_grant, grant_of
+from .grant import (
+    McpAccessToken,
+    TokenGrant,
+    UpstreamGrantSource,
+    UpstreamGrantUnavailableError,
+    UpstreamNoGrantSource,
+    UpstreamRecordedGrantSource,
+    read_current_grant,
+    read_grant,
+)
 from .policy import (
     McpConfiguredScopePolicy,
     McpScopePolicy,
@@ -21,6 +30,7 @@ from .requirement import (
     UnreachableRequirement,
     UnrestrictedRequirement,
 )
+from .setup import ServerScopeSetup
 
 
 __all__ = [
@@ -41,16 +51,21 @@ __all__ = [
     'ScopePolicy',
     'ScopeRegistry',
     'ScopeRequirement',
+    'ServerScopeSetup',
     'TagMethodDerivation',
     'TokenGrant',
     'UnreachableRequirement',
     'UnrestrictedRequirement',
     'UnrestrictedScopePolicy',
+    'UpstreamGrantSource',
+    'UpstreamGrantUnavailableError',
+    'UpstreamNoGrantSource',
+    'UpstreamRecordedGrantSource',
     'UpstreamScopePolicy',
     'UpstreamSpecSecurityScopePolicy',
     'UpstreamUnrestrictedScopePolicy',
     'build_mcp_scope_policy',
     'build_upstream_scope_policy',
-    'current_grant',
-    'grant_of',
+    'read_current_grant',
+    'read_grant',
 ]
