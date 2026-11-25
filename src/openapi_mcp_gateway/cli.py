@@ -84,7 +84,7 @@ def main() -> None:
     '--transport',
     type=click.Choice(['sse', 'streamable-http', 'stdio']),
     default=None,
-    help='MCP transport protocol (default: streamable-http; overridable in --config).',
+    help='MCP transport protocol, streamable-http by default, or stdio, or sse (deprecated). Overridable in --config.',
 )
 @click.option(
     '--host',
