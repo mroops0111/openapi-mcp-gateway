@@ -43,6 +43,16 @@ def refuse_unusable_mcp_token_scopes(config: McpAuthConfig, server_name: str) ->
         )
 
 
+def accepts_mcp_dynamic_registration(config: McpAuthConfig) -> bool:
+    """Whether clients may register themselves, which only a config naming neither kind of client allows.
+
+    The 2026-07-28 spec deprecates Dynamic Client Registration.
+    It cannot be held to ``other_clients.trusted_hosts``, since nothing a client registers is verified,
+    so setting ``other_clients`` at all turns it off.
+    """
+    return not config.clients and config.other_clients is None
+
+
 def build_mcp_client_directory(
     clients: collections.abc.Mapping[str, ClientConfig], mcp_endpoint_scopes: collections.abc.Sequence[str]
 ) -> McpPreRegisteredClientDirectory:

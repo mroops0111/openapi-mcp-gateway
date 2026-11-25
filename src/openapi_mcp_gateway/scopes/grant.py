@@ -59,7 +59,7 @@ class UpstreamGrantSource(abc.ABC):
 
         Raises ``UpstreamGrantUnavailableError`` when the grant cannot be found out, such as a refused exchange.
         """
-        return current_grant()
+        return read_current_grant()
 
 
 class UpstreamNoGrantSource(UpstreamGrantSource):
@@ -78,12 +78,12 @@ class UpstreamRecordedGrantSource(UpstreamGrantSource):
         return True
 
 
-def current_grant() -> TokenGrant:
+def read_current_grant() -> TokenGrant:
     """The grant of the token on the request being handled, or an empty one outside an authenticated request."""
-    return grant_of(get_access_token())
+    return read_grant(get_access_token())
 
 
-def grant_of(access_token: AccessToken | None) -> TokenGrant:
+def read_grant(access_token: AccessToken | None) -> TokenGrant:
     """The grant ``access_token`` carries, or an empty one for no token.
 
     Every verifier the gateway installs answers with an ``McpAccessToken``, so any other token is a wiring mistake.

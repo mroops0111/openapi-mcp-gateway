@@ -17,19 +17,19 @@ def build_upstream_links(access_token: str, refresh_token: str | None) -> dict[s
     return links
 
 
-def expiry_of(expires_in: int | None) -> int | None:
+def compute_expiry(expires_in: int | None) -> int | None:
     """When a token lasting ``expires_in`` seconds from now stops working, or ``None`` for one that never does."""
     return None if expires_in is None else int(time.time()) + expires_in
 
 
-def renewed_attachment(
+def build_renewed_attachment(
     attachment: McpTokenAttachment, refreshed: UpstreamTokenResponse, upstream_refresh_token: str
 ) -> McpTokenAttachment:
     """``attachment`` after the upstream refreshed its token, keeping the refresh token when no new one came."""
     return McpTokenAttachment(
         upstream_scopes=refreshed.resolve_granted_scopes(attachment.upstream_scopes),
         links=build_upstream_links(refreshed.access_token, refreshed.refresh_token or upstream_refresh_token),
-        links_expire_at=expiry_of(refreshed.expires_in),
+        links_expire_at=compute_expiry(refreshed.expires_in),
         browser_id=attachment.browser_id,
         grant_id=attachment.grant_id,
     )

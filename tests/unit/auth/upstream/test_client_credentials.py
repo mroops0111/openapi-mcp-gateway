@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from openapi_mcp_gateway.auth.upstream.token_source import UpstreamClientCredentialsTokenSource
+from openapi_mcp_gateway.auth.upstream.client_credentials import UpstreamClientCredentialsTokenSource
 from tests.constants import API_URL, TOKEN_URL
 
 

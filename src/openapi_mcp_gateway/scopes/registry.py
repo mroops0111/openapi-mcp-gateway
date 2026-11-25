@@ -4,7 +4,7 @@ import typing
 from mcp.shared.uri_template import UriTemplate
 
 from ..openapi import OperationInfo
-from .grant import TokenGrant, UpstreamGrantSource, UpstreamGrantUnavailableError, current_grant
+from .grant import TokenGrant, UpstreamGrantSource, UpstreamGrantUnavailableError, read_current_grant
 from .policy import McpScopePolicy, UpstreamScopePolicy, UpstreamUnrestrictedScopePolicy
 from .requirement import ScopeRequirement, UnrestrictedRequirement
 
@@ -75,7 +75,7 @@ class ScopeRegistry:
         A grant that cannot be found out refuses the call with the reason.
         """
         requirements = self._requirements_of(name)
-        grant = current_grant()
+        grant = read_current_grant()
         if not requirements.mcp.is_met(grant.mcp_scopes):
             return requirements.mcp.refusal
         if requirements.upstream.is_met(frozenset()):

@@ -196,9 +196,15 @@ def _refuse_client_settings_without_sign_in(config: McpAuthConfig, server_name: 
     A request with no scope is granted all of ``scopes``, so ``default_scopes`` would have nothing to narrow.
     """
     problems = [
-        f'auth.mcp.clients.{client_id}.{field} {reason}'
+        f'auth.mcp.clients.{client_id}.client_secret is required, since it is the only proof of who the agent is'
         for client_id, client in config.clients.items()
-        for field, reason in client.find_settings_without_sign_in()
+        if not client.client_secret
+    ]
+    problems += [
+        f'auth.mcp.clients.{client_id}.{field} has no effect, since no user signs in'
+        for client_id, client in config.clients.items()
+        for field in ('redirect_uris', 'default_scopes', 'consent')
+        if field in client.model_fields_set
     ]
     problems += [
         f'auth.mcp.clients.{client_id} names a Client ID Metadata Document, whose client signs a user in'

@@ -8,7 +8,6 @@ from starlette.exceptions import HTTPException
 from openapi_mcp_gateway.auth.assembly import AuthTypeContext
 from openapi_mcp_gateway.auth.flows import (
     AuthorizationCodeFlowHandler,
-    OAuthFlowContext,
 )
 from openapi_mcp_gateway.auth.flows.factory import resolve_upstream_oauth_flow
 from openapi_mcp_gateway.auth.mcp.authorization_code import McpAuthorizationCodeServer
@@ -58,17 +57,15 @@ class TestAuthorizationCodeFlowHandler:
         flow = resolve_upstream_oauth_flow(entry, spec)
 
         setup = handler.build(
-            OAuthFlowContext(
-                AuthTypeContext(
-                    entry=entry,
-                    spec=spec,
-                    store=MemoryTokenStore(),
-                    gateway_url='http://localhost:8000/',
-                    scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
-                    client_metadata_resolver=serving_resolver({}),
-                ),
-                upstream_oauth_flow=flow,
-            )
+            AuthTypeContext(
+                entry=entry,
+                spec=spec,
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000/',
+                scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
+                client_metadata_resolver=serving_resolver({}),
+            ),
+            flow,
         )
 
         assert setup.provider is not None
@@ -89,17 +86,15 @@ class TestAuthorizationCodeFlowHandler:
         spec = spec_with_authorization_code()
 
         setup = AuthorizationCodeFlowHandler().build(
-            OAuthFlowContext(
-                AuthTypeContext(
-                    entry=entry,
-                    spec=spec,
-                    store=MemoryTokenStore(),
-                    gateway_url='http://localhost:8000',
-                    scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
-                    client_metadata_resolver=serving_resolver({}),
-                ),
-                upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
-            )
+            AuthTypeContext(
+                entry=entry,
+                spec=spec,
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
+                client_metadata_resolver=serving_resolver({}),
+            ),
+            resolve_upstream_oauth_flow(entry, spec),
         )
 
         assert setup.provider is not None
@@ -119,17 +114,15 @@ class TestUpstreamAudienceWiring:
         spec = spec_with_authorization_code()
 
         setup = AuthorizationCodeFlowHandler().build(
-            OAuthFlowContext(
-                AuthTypeContext(
-                    entry=entry,
-                    spec=spec,
-                    store=MemoryTokenStore(),
-                    gateway_url='http://localhost:8000',
-                    scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
-                    client_metadata_resolver=serving_resolver({}),
-                ),
-                upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
-            )
+            AuthTypeContext(
+                entry=entry,
+                spec=spec,
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
+                client_metadata_resolver=serving_resolver({}),
+            ),
+            resolve_upstream_oauth_flow(entry, spec),
         )
 
         assert setup.provider is not None
@@ -143,17 +136,15 @@ class TestUpstreamAudienceWiring:
         spec = spec_with_authorization_code()
 
         setup = AuthorizationCodeFlowHandler().build(
-            OAuthFlowContext(
-                AuthTypeContext(
-                    entry=entry,
-                    spec=spec,
-                    store=MemoryTokenStore(),
-                    gateway_url='http://localhost:8000',
-                    scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
-                    client_metadata_resolver=serving_resolver({}),
-                ),
-                upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
-            )
+            AuthTypeContext(
+                entry=entry,
+                spec=spec,
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
+                client_metadata_resolver=serving_resolver({}),
+            ),
+            resolve_upstream_oauth_flow(entry, spec),
         )
 
         assert setup.provider is not None
@@ -169,17 +160,15 @@ class TestAuthorizationCodeScopes:
         entry = server_entry(AuthConfig.model_validate(auth))
         spec = spec_with_authorization_code()
         return AuthorizationCodeFlowHandler().build(
-            OAuthFlowContext(
-                AuthTypeContext(
-                    entry=entry,
-                    spec=spec,
-                    store=MemoryTokenStore(),
-                    gateway_url='http://localhost:8000',
-                    scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
-                    client_metadata_resolver=serving_resolver({}),
-                ),
-                upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
-            )
+            AuthTypeContext(
+                entry=entry,
+                spec=spec,
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
+                client_metadata_resolver=serving_resolver({}),
+            ),
+            resolve_upstream_oauth_flow(entry, spec),
         )
 
     def test_required_scopes_drive_what_the_gateway_issues(self):

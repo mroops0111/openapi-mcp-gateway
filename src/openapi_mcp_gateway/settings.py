@@ -225,16 +225,6 @@ class ClientConfig(ClientScopesConfig):
     redirect_uris: list[pydantic.AnyUrl] | None = pydantic.Field(default=None, min_length=1)
     consent: bool = True
 
-    def find_settings_without_sign_in(self) -> list[tuple[str, str]]:
-        """The fields this client sets, or lacks, that only make sense when a user signs in, each with why."""
-        problems = []
-        if not self.client_secret:
-            problems.append(('client_secret', 'is required, since it is the only proof of who the agent is'))
-        for field in ('redirect_uris', 'default_scopes', 'consent'):
-            if field in self.model_fields_set:
-                problems.append((field, 'has no effect, since no user signs in'))
-        return problems
-
     def resolve_client_secret(self) -> str | None:
         """Client secret after env-var substitution."""
         return _resolve_env_var(self.client_secret)
@@ -323,16 +313,6 @@ class McpAuthConfig(pydantic.BaseModel):
         if self.other_clients is None:
             return None if self.clients else OtherClientsConfig()
         return self.other_clients or None
-
-    @property
-    def accepts_dynamic_registration(self) -> bool:
-        """Whether clients may register themselves, which only a config naming neither kind of client allows.
-
-        The 2026-07-28 spec deprecates Dynamic Client Registration.
-        It cannot be held to ``other_clients.trusted_hosts``, since nothing a client registers is verified,
-        so setting ``other_clients`` at all turns it off.
-        """
-        return not self.clients and self.other_clients is None
 
     def resolve_issuer(self) -> str | None:
         """External authorization server issuer after env-var substitution."""

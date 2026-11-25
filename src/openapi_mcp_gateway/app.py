@@ -1,20 +1,17 @@
 import contextlib
 import logging
-import types
 import typing
 import urllib.parse
 
 from fastapi import FastAPI
 from mcp.server import MCPServer
 from mcp.server.auth.handlers.metadata import MetadataHandler, ProtectedResourceMetadataHandler
-from mcp.server.auth.provider import OAuthAuthorizationServerProvider
 from mcp.server.auth.routes import (
     build_resource_metadata_url,
     cors_middleware,
     create_auth_routes,
     create_protected_resource_routes,
 )
-from mcp.server.auth.settings import AuthSettings
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
@@ -24,7 +21,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .auth.assembly import MCP_ENDPOINT_PATH, UpstreamSetting
+from .auth.assembly import MCP_ENDPOINT_PATH, ServerAuthSetup
 from .openapi import ExposedTool, OpenAPISpec
 from .scopes import RequestTarget, ScopeChallengeMiddleware, ScopeRegistry
 from .settings import DNSRebindingProtectionConfig, GatewayConfig
@@ -34,16 +31,16 @@ from .stores.base import TokenStore
 logger = logging.getLogger(__name__)
 
 
-class _ServerBundle(typing.NamedTuple):
+class ServerBundle(typing.NamedTuple):
     """One registered MCP server, holding the objects the gateway mounts and what those objects would serve.
 
     The second half is captured at registration because it cannot be recovered afterwards.
     A tool name comes out of naming and shaping, a base URL may have come from the spec rather than the config,
     and an OAuth flow may have been resolved rather than declared.
 
-    No credential is held here.
-    ``AuthConfig`` carries the bearer token and the upstream client secret,
-    and this document gets piped, pasted into issues and rendered in a browser, so none should be added.
+    ``describe`` reports no credential.
+    ``auth`` holds the resolver that carries the upstream credential,
+    and the document gets piped, pasted into issues and rendered in a browser, so only named fields leave it.
     """
 
     # Mounted onto the FastAPI app.
@@ -51,15 +48,11 @@ class _ServerBundle(typing.NamedTuple):
     mount_path: str
     mcp: MCPServer
     spec: OpenAPISpec
-    auth_provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None
+    # Both halves of the server's auth, as its strategies built them.
+    auth: ServerAuthSetup
     # What each tool or operation requires of a token's scopes, and how a call names the one it reaches.
     scope_registry: ScopeRegistry
     tool_call_target: RequestTarget
-    auth_settings: AuthSettings | None = None
-    # The RFC 8414 document, set wherever the gateway is this server's authorization server.
-    authorization_server_metadata: OAuthMetadata | None = None
-    token_verifier: typing.Any | None = None
-    protected_resource: ProtectedResourceMetadata | None = None
 
     # Read back by ``describe`` and by the dry-run table.
     base_url: str = ''
@@ -68,14 +61,9 @@ class _ServerBundle(typing.NamedTuple):
     tools: tuple[ExposedTool, ...] = ()
     resource_names: tuple[str, ...] = ()
     auth_type: str = 'none'
-    # The ``auth.upstream`` fields the server's auth settled, holding only those it has and never a credential.
-    auth_upstream_settings: typing.Mapping[UpstreamSetting, str] = types.MappingProxyType({})
 
     # Prose for the dry-run table only.
-    # ``describe`` reports the structured fields above instead,
-    # so that a caller never has to read a sentence to find a value.
-    upstream_auth_summary: str = 'none'
-    mcp_auth_summary: str = 'open'
+    # ``describe`` reports structured fields instead, so that a caller never has to read a sentence to find a value.
     policy_summary: str = 'no filter'
 
     def describe(self) -> dict[str, typing.Any]:
@@ -90,7 +78,7 @@ class _ServerBundle(typing.NamedTuple):
             'base_url': self.base_url,
             # Shaped like ``auth`` in the config, with each value as resolved rather than as written.
             'auth': {
-                'upstream': {'type': self.auth_type, **self.auth_upstream_settings},
+                'upstream': {'type': self.auth_type, **self.auth.upstream_description.resolved_settings},
                 'mcp': self._describe_mcp_auth(),
             },
             'exposure': self.exposure,
@@ -114,13 +102,14 @@ class _ServerBundle(typing.NamedTuple):
 
         Every value is ``None`` where nothing checks a token.
         """
-        if self.auth_settings is None:
+        settings, protected_resource = self.auth.settings, self.auth.protected_resource
+        if settings is None or protected_resource is None:
             return {'issuer': None, 'grant_types': None, 'required_scopes': None}
-        metadata = self.authorization_server_metadata
+        metadata = self.auth.authorization_server_metadata
         return {
-            'issuer': str(_protected_resource(self).authorization_servers[0]),
+            'issuer': str(protected_resource.authorization_servers[0]),
             'grant_types': metadata.grant_types_supported if metadata else None,
-            'required_scopes': list(self.auth_settings.required_scopes or []),
+            'required_scopes': list(settings.required_scopes or []),
         }
 
 
@@ -146,7 +135,7 @@ def build_mcp_asgi_app(
 
 def mount_mcp_apps(
     app: FastAPI,
-    servers: list[_ServerBundle],
+    servers: list[ServerBundle],
     transport: str,
     protection: DNSRebindingProtectionConfig,
     host: str | None,
@@ -182,7 +171,7 @@ async def serve_lifespan(
 
 
 def build_app(
-    servers: list[_ServerBundle],
+    servers: list[ServerBundle],
     config: GatewayConfig,
     store: TokenStore,
     on_shutdown: typing.Callable[[], typing.Awaitable[None]],
@@ -223,7 +212,7 @@ def build_app(
     return app
 
 
-def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
+def register_auth_routes(app: FastAPI, servers: list[ServerBundle]) -> None:
     """Register the OAuth and ``.well-known`` discovery routes an embedder needs for ``servers``.
 
     ``mount`` adds these alongside the MCP sub-apps for a working OAuth flow.
@@ -234,22 +223,22 @@ def register_auth_routes(app: FastAPI, servers: list[_ServerBundle]) -> None:
     # For a delegating server,
     # advertising /authorize and /token would point clients at endpoints this app does not serve.
     for bundle in servers:
-        if bundle.authorization_server_metadata is None:
+        if bundle.auth.authorization_server_metadata is None:
             continue
         mount = bundle.mount_path.rstrip('/')
         app.router.add_route(
             path=f'{mount}/.well-known/oauth-authorization-server',
-            endpoint=_build_metadata_endpoint(bundle.authorization_server_metadata),
+            endpoint=_build_metadata_endpoint(bundle.auth.authorization_server_metadata),
             methods=['GET', 'OPTIONS'],
         )
-        if bundle.auth_provider is not None and bundle.auth_settings is not None:
+        if bundle.auth.provider is not None and bundle.auth.settings is not None:
             # The SDK serves the provider's OAuth endpoints, and its metadata route is replaced by the one above.
             oauth_routes = create_auth_routes(
-                provider=bundle.auth_provider,
-                issuer_url=bundle.auth_settings.issuer_url,
-                service_documentation_url=bundle.auth_settings.service_documentation_url,
-                client_registration_options=bundle.auth_settings.client_registration_options,
-                revocation_options=bundle.auth_settings.revocation_options,
+                provider=bundle.auth.provider,
+                issuer_url=bundle.auth.settings.issuer_url,
+                service_documentation_url=bundle.auth.settings.service_documentation_url,
+                client_registration_options=bundle.auth.settings.client_registration_options,
+                revocation_options=bundle.auth.settings.revocation_options,
             )
             for route in oauth_routes:
                 if route.path == '/.well-known/oauth-authorization-server':
@@ -303,15 +292,15 @@ def _transport_security(protection: DNSRebindingProtectionConfig, host: str | No
     return None
 
 
-def _guard_scopes(mcp_app: Starlette, bundle: _ServerBundle) -> None:
+def _guard_scopes(mcp_app: Starlette, bundle: ServerBundle) -> None:
     """Refuse a call the token's scopes do not cover with a ``403`` scope challenge, before the SDK reads the body.
 
     Appended rather than added, since ``add_middleware`` puts it first,
     and it needs the SDK's authentication middleware to have run.
     """
     resource_metadata_url = (
-        str(build_resource_metadata_url(bundle.auth_settings.resource_server_url))
-        if bundle.auth_settings and bundle.auth_settings.resource_server_url
+        str(build_resource_metadata_url(bundle.auth.settings.resource_server_url))
+        if bundle.auth.settings and bundle.auth.settings.resource_server_url
         else None
     )
     mcp_app.user_middleware.append(
@@ -324,8 +313,8 @@ def _guard_scopes(mcp_app: Starlette, bundle: _ServerBundle) -> None:
     )
 
 
-def _register_health_route(app: FastAPI, servers: list[_ServerBundle]) -> None:
-    """Register ``/healthz`` reporting per-server name, mount path, and auth mode."""
+def _register_health_route(app: FastAPI, servers: list[ServerBundle]) -> None:
+    """Register ``/healthz`` reporting per-server name, mount path, and how each side of its auth works."""
 
     @app.get('/healthz')
     async def healthz():
@@ -336,9 +325,8 @@ def _register_health_route(app: FastAPI, servers: list[_ServerBundle]) -> None:
                     'name': bundle.name,
                     'path': bundle.mount_path,
                     'title': bundle.spec.title,
-                    # A verifier protects the endpoint just as a provider does,
-                    # so a delegating server must not report itself as unprotected.
-                    'auth': 'oauth2' if (bundle.auth_provider or bundle.token_verifier) else 'static',
+                    # The same labels as the dry-run table, so an operator reads one vocabulary everywhere.
+                    'auth': {'mcp': bundle.auth.mcp_summary, 'upstream': bundle.auth.upstream_description.summary},
                 }
                 for bundle in servers
             ],
@@ -355,10 +343,10 @@ def _build_protected_resource_endpoint(document: ProtectedResourceMetadata) -> t
     return cors_middleware(ProtectedResourceMetadataHandler(document).handle, ['GET', 'OPTIONS'])
 
 
-def _build_authorization_server_discovery(bundle: _ServerBundle) -> typing.Callable[..., typing.Any]:
+def _build_authorization_server_discovery(bundle: ServerBundle) -> typing.Callable[..., typing.Any]:
     """The route serving ``bundle``'s RFC 8414 document, or explaining why a delegating server has none."""
-    if bundle.authorization_server_metadata is not None:
-        return _build_metadata_endpoint(bundle.authorization_server_metadata)
+    if bundle.auth.authorization_server_metadata is not None:
+        return _build_metadata_endpoint(bundle.auth.authorization_server_metadata)
 
     async def explain_external_issuer(_request: Request) -> JSONResponse:
         # This server delegates to an external issuer, so the gateway has no metadata to publish.
@@ -374,7 +362,7 @@ def _build_authorization_server_discovery(bundle: _ServerBundle) -> typing.Calla
     return explain_external_issuer
 
 
-def _index_servers_by_path(servers: list[_ServerBundle]) -> dict[str, _ServerBundle]:
+def _index_servers_by_path(servers: list[ServerBundle]) -> dict[str, ServerBundle]:
     """Each server under every path its well-known documents may be asked for at, without surrounding slashes.
 
     RFC 8414 and RFC 9728 insert the well-known prefix before the path of the issuer or resource URL,
@@ -389,11 +377,11 @@ def _index_servers_by_path(servers: list[_ServerBundle]) -> dict[str, _ServerBun
     discoverable = [
         bundle
         for bundle in servers
-        if bundle.auth_settings is not None and bundle.auth_settings.resource_server_url is not None
+        if bundle.auth.settings is not None and bundle.auth.settings.resource_server_url is not None
     ]
     published = [(bundle, (_find_issuer_path(bundle),)) for bundle in discoverable]
     fallbacks = [(bundle, (bundle.mount_path, f'/{bundle.name}')) for bundle in discoverable]
-    index: dict[str, _ServerBundle] = {}
+    index: dict[str, ServerBundle] = {}
     for bundle, paths in [*published, *fallbacks]:
         for path in paths:
             for candidate in (path, f'{path.rstrip("/")}{MCP_ENDPOINT_PATH}'):
@@ -401,33 +389,17 @@ def _index_servers_by_path(servers: list[_ServerBundle]) -> dict[str, _ServerBun
     return index
 
 
-def _find_issuer_path(bundle: _ServerBundle) -> str:
+def _find_issuer_path(bundle: ServerBundle) -> str:
     """The path of ``bundle``'s issuer URL, which its resource URL extends with the MCP endpoint path."""
-    assert bundle.auth_settings is not None and bundle.auth_settings.resource_server_url is not None  # noqa: S101
-    resource_path = urllib.parse.urlparse(str(bundle.auth_settings.resource_server_url)).path
+    assert bundle.auth.settings is not None and bundle.auth.settings.resource_server_url is not None  # noqa: S101
+    resource_path = urllib.parse.urlparse(str(bundle.auth.settings.resource_server_url)).path
     return resource_path.removesuffix(MCP_ENDPOINT_PATH)
 
 
-def _protected_resource(bundle: _ServerBundle) -> ProtectedResourceMetadata:
-    """Return the RFC 9728 document this server publishes.
+def _protected_resource(bundle: ServerBundle) -> ProtectedResourceMetadata:
+    """The RFC 9728 document ``bundle``'s auth built, which it holds wherever it checks tokens.
 
-    A strategy that builds its own document supplies it, such as one delegating to an external issuer.
-    Otherwise the gateway is both issuer and resource, so the document follows from the settings it built for itself.
-
-    Callers reach this only for a bundle carrying ``authorization_server_metadata``,
-    which ``ServerAuthSetup`` never holds without ``auth_settings``.
+    Callers reach this only for a bundle that checks tokens, since every other one publishes no discovery document.
     """
-    if bundle.protected_resource is not None:
-        return bundle.protected_resource
-
-    assert bundle.auth_settings is not None  # noqa: S101
-    # Exactly the metadata's ``issuer``, which a client compares with this as a plain string (RFC 8414 §3.3).
-    issuer = str(bundle.auth_settings.issuer_url)
-    registration = bundle.auth_settings.client_registration_options
-    return ProtectedResourceMetadata.model_validate(
-        {
-            'resource': str(bundle.auth_settings.resource_server_url),
-            'authorization_servers': [issuer],
-            'scopes_supported': registration.valid_scopes if registration else None,
-        }
-    )
+    assert bundle.auth.protected_resource is not None  # noqa: S101
+    return bundle.auth.protected_resource

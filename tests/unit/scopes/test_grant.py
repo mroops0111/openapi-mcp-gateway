@@ -5,7 +5,7 @@ from openapi_mcp_gateway.scopes import (
     McpAccessToken,
     UpstreamNoGrantSource,
     UpstreamRecordedGrantSource,
-    grant_of,
+    read_grant,
 )
 
 
@@ -15,7 +15,7 @@ class TestTokenGrant:
     def test_a_token_minted_before_recording_grantable_scopes_leaves_them_unknown(self):
         """Its challenge stays whole, so the client can still step up, while lists show only what it holds."""
         token = McpAccessToken(token='mcp_access', client_id='stepper', scopes=['pets:read'])
-        grant = grant_of(token)
+        grant = read_grant(token)
         assert grant.mcp_grantable_scopes is None
         assert grant.mcp_reachable_scopes == {'pets:read'}
 
@@ -26,16 +26,16 @@ class TestTokenGrant:
             scopes=['pets:read'],
             mcp_grantable_scopes=['pets:read', 'pets:write'],
         )
-        assert grant_of(token).mcp_reachable_scopes == {'pets:read', 'pets:write'}
+        assert read_grant(token).mcp_reachable_scopes == {'pets:read', 'pets:write'}
 
     def test_a_token_recording_no_upstream_grant_leaves_it_to_the_call(self):
         token = McpAccessToken(token='external', client_id='agent', scopes=['pets:read'], upstream_scopes=None)
-        assert grant_of(token).upstream_scopes is None
+        assert read_grant(token).upstream_scopes is None
 
     def test_a_token_no_gateway_verifier_returns_is_a_wiring_mistake(self):
         """Reading it as holding nothing would hide the mistake behind refusals."""
         with pytest.raises(TypeError, match='McpAccessToken'):
-            grant_of(AccessToken(token='plain', client_id='agent', scopes=[]))
+            read_grant(AccessToken(token='plain', client_id='agent', scopes=[]))
 
 
 class TestUpstreamGrantSource:

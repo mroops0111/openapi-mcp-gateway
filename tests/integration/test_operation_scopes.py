@@ -458,7 +458,7 @@ async def _sign_in(gateway: Gateway, client_id: str, requested: str | None = Non
 
 def _provider(gateway: Gateway) -> McpAuthorizationCodeServer:
     """The authorization server of the gateway's one server."""
-    return server_of(gateway.describe_servers()[0].auth_provider)
+    return server_of(gateway.describe_servers()[0].auth.provider)
 
 
 @contextlib.asynccontextmanager

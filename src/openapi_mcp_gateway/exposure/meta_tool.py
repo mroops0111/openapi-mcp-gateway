@@ -17,7 +17,7 @@ from ..scopes import (
     RequestTarget,
     ScopeRegistry,
     UpstreamGrantSource,
-    current_grant,
+    read_current_grant,
 )
 from ._bm25 import BM25FIndex
 from ._semantic import SemanticIndex, SemanticSearchOptions
@@ -226,7 +226,7 @@ class MetaToolGenerator:
 
         Operations the token can step up for show as well.
         """
-        grant = current_grant()
+        grant = read_current_grant()
         return lambda name: self.scope_registry.lists(name, grant)
 
 

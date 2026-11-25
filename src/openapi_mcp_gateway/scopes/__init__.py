@@ -7,8 +7,8 @@ from .grant import (
     UpstreamGrantUnavailableError,
     UpstreamNoGrantSource,
     UpstreamRecordedGrantSource,
-    current_grant,
-    grant_of,
+    read_current_grant,
+    read_grant,
 )
 from .policy import (
     McpConfiguredScopePolicy,
@@ -30,6 +30,7 @@ from .requirement import (
     UnreachableRequirement,
     UnrestrictedRequirement,
 )
+from .setup import ServerScopeSetup
 
 
 __all__ = [
@@ -50,6 +51,7 @@ __all__ = [
     'ScopePolicy',
     'ScopeRegistry',
     'ScopeRequirement',
+    'ServerScopeSetup',
     'TagMethodDerivation',
     'TokenGrant',
     'UnreachableRequirement',
@@ -64,6 +66,6 @@ __all__ = [
     'UpstreamUnrestrictedScopePolicy',
     'build_mcp_scope_policy',
     'build_upstream_scope_policy',
-    'current_grant',
-    'grant_of',
+    'read_current_grant',
+    'read_grant',
 ]

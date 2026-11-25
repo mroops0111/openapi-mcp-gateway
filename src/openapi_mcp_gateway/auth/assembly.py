@@ -14,7 +14,6 @@ from ..settings import AuthConfig, ServerConfig
 from ..stores.base import TokenStore
 from .mcp.client_metadata import McpClientMetadataResolver
 from .routes import AuthRoutes
-from .upstream.oauth_flow import UpstreamOAuthFlow
 from .upstream.reauthorization import UpstreamNoReauthorizer, UpstreamReauthorizer
 from .upstream.resolver import UpstreamAuthResolver
 
@@ -61,7 +60,8 @@ class AuthTypeContext(typing.NamedTuple):
     """Everything an ``AuthTypeHandler`` may need, whether or not it uses all of it.
 
     Passing one shape to every handler is what keeps the caller free of per-type branching.
-    Only ``oauth2`` reads the store, the URLs, ``scope_registry`` and ``client_metadata_resolver``.
+    The store, the URLs, ``scope_registry`` and ``client_metadata_resolver`` serve whichever strategy builds an MCP half
+    or an OAuth flow, and a static credential reads none of them.
     What a handler reads stays its own business.
     """
 
@@ -146,6 +146,9 @@ class ServerAuthSetup:
             raise ValueError('A server takes either an authorization server provider or a token verifier, not both.')
         if self.authorization_server_metadata is not None and self.settings is None:
             raise ValueError('A server publishing authorization server metadata needs the auth settings it describes.')
+        if self.settings is not None and self.protected_resource is None:
+            # Each strategy states who mints its tokens, so the app never has to work it out.
+            raise ValueError('A server checking tokens needs the protected resource metadata naming their issuer.')
 
 
 class McpSettingsReader(abc.ABC):
@@ -187,111 +190,3 @@ class UpstreamSelection:
     upstream_principal: UpstreamPrincipal
     upstream_settings: frozenset[UpstreamSetting] = frozenset()
     mcp_settings_reader: McpSettingsReader | None = None
-
-
-# What one ``AuthTypeHandler`` settles in ``select``, handed back to its ``build``.
-SelectionT = typing.TypeVar('SelectionT', bound=UpstreamSelection)
-
-
-class AuthTypeHandler(abc.ABC, typing.Generic[SelectionT]):
-    """Strategy that turns one ``auth.upstream.type`` into the components the gateway wires up.
-
-    ``build`` receives what ``select`` settled, so nothing is resolved twice.
-    """
-
-    @property
-    def upstream_settings(self) -> frozenset[UpstreamSetting]:
-        """The ``auth.upstream`` fields this type reads whatever else is selected. None, by default."""
-        return frozenset()
-
-    @abc.abstractmethod
-    def select(self, context: AuthTypeContext) -> SelectionT:
-        """Settle what this handler would build, without any I/O."""
-
-    @abc.abstractmethod
-    def build(self, context: AuthTypeContext, selection: SelectionT) -> ServerAuthSetup:
-        """Return the resolver, and for OAuth also the provider or verifier and their settings."""
-
-
-@dataclasses.dataclass
-class OAuthFlowContext:
-    """What an ``OAuthFlowHandler`` assembles from, which is what every auth type gets plus the resolved flow.
-
-    Populated by ``build_oauth_flow`` before it dispatches to a concrete handler.
-    ``upstream_oauth_flow`` is unset for a flow that reads none from the spec, as ``OAuthFlowHandler.reads_spec_oauth_flow`` says.
-    """
-
-    auth_context: AuthTypeContext
-    upstream_oauth_flow: UpstreamOAuthFlow | None = None
-
-    @property
-    def entry(self) -> ServerConfig:
-        return self.auth_context.entry
-
-    @property
-    def spec(self) -> OpenAPISpec:
-        return self.auth_context.spec
-
-    @property
-    def store(self) -> TokenStore:
-        return self.auth_context.store
-
-    @property
-    def client_metadata_resolver(self) -> McpClientMetadataResolver:
-        return self.auth_context.client_metadata_resolver
-
-    @property
-    def gateway_url(self) -> str:
-        return self.auth_context.gateway_url
-
-    @property
-    def scope_registry(self) -> ScopeRegistry:
-        return self.auth_context.scope_registry
-
-    @property
-    def mount_path(self) -> str:
-        return self.auth_context.entry.mount_path
-
-    @property
-    def issuer_url(self) -> str:
-        return self.auth_context.issuer_url
-
-    @property
-    def mcp_resource_url(self) -> str:
-        return self.auth_context.mcp_resource_url
-
-    def require_upstream_oauth_flow(self) -> UpstreamOAuthFlow:
-        """The upstream OAuth flow, which every flow reading one from the spec runs."""
-        if self.upstream_oauth_flow is None:
-            raise ValueError(
-                f'Server "{self.entry.name}": this flow needs an upstream OAuth flow, and none was resolved.'
-            )
-        return self.upstream_oauth_flow
-
-
-class OAuthFlowHandler(abc.ABC):
-    """Strategy that assembles one ``auth.upstream.flow`` at startup.
-
-    A flow whose two directions are independent builds only the upstream half.
-    A flow that binds them builds both halves and the Bridge that joins them.
-    Subclasses register in ``OAUTH_FLOW_HANDLERS``, so the factory can dispatch by ``flow_type``.
-    A flow that builds the MCP half is also an ``McpSettingsReader``.
-    """
-
-    # Whether the flow runs one the spec declares against the upstream, as every flow does by default.
-    # It is a fact of the class, so selecting a flow reads it without building a handler.
-    reads_spec_oauth_flow: typing.ClassVar[bool] = True
-
-    @property
-    @abc.abstractmethod
-    def upstream_principal(self) -> UpstreamPrincipal:
-        """Whose identity the upstream sees under this flow."""
-
-    @property
-    def upstream_settings(self) -> frozenset[UpstreamSetting]:
-        """The ``auth.upstream`` fields this flow reads beyond ``flow``. None, by default."""
-        return frozenset()
-
-    @abc.abstractmethod
-    def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
-        """Return the upstream resolver and whatever MCP-side pieces and shutdown hook this flow brings."""

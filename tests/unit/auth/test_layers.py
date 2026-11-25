@@ -27,7 +27,8 @@ ALLOWED_AUTH_IMPORTS = {
         'auth.settings_mapping',
         'auth.upstream',
     },
-    'auth.factory': {'auth.assembly', 'auth.authorities', 'auth.flows', 'auth.upstream'},
+    'auth.upstream_types': {'auth.assembly', 'auth.flows', 'auth.upstream'},
+    'auth.factory': {'auth.assembly', 'auth.authorities', 'auth.flows', 'auth.upstream_types'},
 }
 
 # The package's own ``__init__``, which re-exports from every layer and which no layer may import.

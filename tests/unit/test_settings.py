@@ -434,27 +434,22 @@ class TestClientConfig:
 
 
 class TestOtherClients:
-    """``auth.mcp.other_clients`` admits unlisted metadata document clients.
-
-    It also decides whether clients may register.
-    """
+    """``auth.mcp.other_clients`` admits unlisted metadata document clients."""
 
     @pytest.mark.parametrize(
-        ('mcp', 'admits_others', 'registration'),
+        ('mcp', 'admits_others'),
         [
-            ({}, True, True),
-            ({'clients': {'agent': {}}}, False, False),
-            ({'other_clients': {}}, True, False),
-            ({'clients': {'agent': {}}, 'other_clients': {}}, True, False),
-            ({'clients': {'agent': {}}, 'other_clients': False}, False, False),
+            ({}, True),
+            ({'clients': {'agent': {}}}, False),
+            ({'other_clients': {}}, True),
+            ({'clients': {'agent': {}}, 'other_clients': {}}, True),
+            ({'clients': {'agent': {}}, 'other_clients': False}, False),
         ],
         ids=['nothing set', 'clients only', 'other clients', 'both', 'other clients off'],
     )
-    def test_the_defaults_keep_a_listed_set_closed(self, mcp, admits_others, registration):
-        """Registration stays only for a config naming neither, since it cannot be held to ``trusted_hosts``."""
+    def test_the_defaults_keep_a_listed_set_closed(self, mcp, admits_others):
         config = McpAuthConfig.model_validate(mcp)
         assert (config.resolve_other_clients() is not None) is admits_others
-        assert config.accepts_dynamic_registration is registration
 
     def test_trusted_hosts_compare_without_case(self):
         assert OtherClientsConfig(trusted_hosts=['Claude.AI']).trusted_hosts == ['claude.ai']

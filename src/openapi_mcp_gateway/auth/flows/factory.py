@@ -3,16 +3,19 @@ import logging
 
 from ...openapi import OpenAPISpec
 from ...settings import ServerConfig
-from ..assembly import AuthTypeContext, OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup
+from ..assembly import AuthTypeContext, ServerAuthSetup
 from ..upstream.oauth_flow import UpstreamOAuthFlow, detect_upstream_oauth_flows
 from .authorization_code import AuthorizationCodeFlowHandler
 from .client_credentials import UpstreamClientCredentialsFlowHandler
+from .handler import OAuthFlowHandler
 from .token_exchange import TokenExchangeFlowHandler
 
 
 logger = logging.getLogger(__name__)
 
 
+# The extension point for ``auth.upstream.flow``, in order of preference.
+# A spec declaring several flows gets the first listed here, and a config without a spec flow the first it describes.
 OAUTH_FLOW_HANDLERS: dict[str, type[OAuthFlowHandler]] = {
     'authorization_code': AuthorizationCodeFlowHandler,
     'client_credentials': UpstreamClientCredentialsFlowHandler,
@@ -30,6 +33,10 @@ class OAuthFlowSelection:
     handler: OAuthFlowHandler
     flow_type: str
     upstream_oauth_flow: UpstreamOAuthFlow | None
+
+    def build(self, context: AuthTypeContext) -> ServerAuthSetup:
+        """Build the flow this selection settled for ``context.entry``."""
+        return self.handler.build(context, self.upstream_oauth_flow)
 
 
 def select_oauth_flow(context: AuthTypeContext) -> OAuthFlowSelection:
@@ -58,25 +65,12 @@ def select_oauth_flow(context: AuthTypeContext) -> OAuthFlowSelection:
     return OAuthFlowSelection(handler_class(), upstream_oauth_flow.flow_type, upstream_oauth_flow)
 
 
-def build_oauth_flow(context: AuthTypeContext, selection: OAuthFlowSelection) -> ServerAuthSetup:
-    """Build the OAuth flow ``selection`` settled for ``context.entry``."""
-    flow_context = OAuthFlowContext(context, selection.upstream_oauth_flow)
-    return selection.handler.build(flow_context)
-
-
 def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> UpstreamOAuthFlow:
     """Pick the effective OAuth flow for ``entry`` from the spec and config.
 
-    Honours ``auth.upstream.flow`` as an explicit override,
-    falls back to ``authorization_code`` when the spec declares both,
-    and synthesises a flow from explicit URLs if the spec declares none.
-
-    Raises ``ValueError`` when ``authorization_code`` is auto-selected,
-    but the gateway lacks the ``client_id`` / ``client_secret`` needed to act as an MCP-side OAuth server.
-
-    Forwarding the MCP client's token to a third-party upstream violates RFC 8707 audience binding,
-    the "confused deputy" pattern the MCP 2025-11-25 spec forbids,
-    so ``auth.upstream.type: passthrough`` is never reached from here and must be asked for by name.
+    Honours ``auth.upstream.flow`` as an explicit override.
+    Otherwise it takes the declared flow that comes first in ``OAUTH_FLOW_HANDLERS``,
+    and when the spec declares none, the first flow there whose handler ``synthesises_from`` the config.
     """
     explicit_flow_type = entry.auth.upstream.flow
     declared_flows = detect_upstream_oauth_flows(spec)
@@ -90,24 +84,6 @@ def resolve_upstream_oauth_flow(entry: ServerConfig, spec: OpenAPISpec) -> Upstr
         selected_flow.authorization_url = entry.auth.upstream.authorization_url
     if entry.auth.upstream.token_url:
         selected_flow.token_url = entry.auth.upstream.token_url
-
-    if (
-        selected_flow.flow_type == 'authorization_code'
-        and explicit_flow_type != 'authorization_code'
-        and not (entry.auth.upstream.resolve_client_id() and entry.auth.upstream.resolve_client_secret())
-    ):
-        raise ValueError(
-            f'Server "{entry.name}": authorization_code flow declared in spec but no client_id/client_secret configured.\n\n'
-            'For third-party APIs (GitHub, Stripe, Asana, any external SaaS): '
-            'you MUST register an OAuth app with the provider and set client_id/client_secret, '
-            'so the gateway can mint its own upstream tokens. '
-            "Forwarding the MCP client's token to a third-party upstream is forbidden by the MCP authorization spec "
-            '(RFC 8707 audience binding).\n\n'
-            'auth.upstream.type: passthrough is ONLY for the rare case where the gateway and the upstream share the same OAuth audience, '
-            'e.g. internal corporate SSO where both sides trust the same IdP-issued tokens, '
-            'or the FastAPI integration where the gateway is mounted onto the app it exposes. '
-            'It is NOT safe for third-party SaaS APIs.'
-        )
 
     logger.debug(
         'Resolved OAuth flow for "%s": flow=%s authorization_url=%s token_url=%s',
@@ -136,10 +112,7 @@ def _pick_from_declared_flows(
             f'Declared flows: {[candidate.flow_type for candidate in declared_flows]}'
         )
 
-    for candidate in declared_flows:
-        if candidate.flow_type == 'authorization_code':
-            return candidate
-    return declared_flows[0]
+    return min(declared_flows, key=lambda candidate: list(OAUTH_FLOW_HANDLERS).index(candidate.flow_type))
 
 
 def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None) -> UpstreamOAuthFlow:
@@ -150,15 +123,11 @@ def _synthesise_from_config(entry: ServerConfig, explicit_flow_type: str | None)
             'Set auth.upstream.token_url (and authorization_url if using authorization_code), or add a securitySchemes section to the spec.'
         )
 
-    if explicit_flow_type is not None:
-        flow_type = explicit_flow_type
-    elif entry.auth.upstream.authorization_url:
-        flow_type = 'authorization_code'
-    else:
-        flow_type = 'client_credentials'
-
-    if flow_type == 'authorization_code' and not entry.auth.upstream.authorization_url:
-        raise ValueError(f'Server "{entry.name}": authorization_code flow requires auth.upstream.authorization_url.')
+    flow_type = explicit_flow_type or next(
+        flow_type
+        for flow_type, handler_class in OAUTH_FLOW_HANDLERS.items()
+        if handler_class.synthesises_from(entry.auth.upstream)
+    )
 
     return UpstreamOAuthFlow(
         flow_type=flow_type,  # type: ignore[arg-type]

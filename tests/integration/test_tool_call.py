@@ -7,7 +7,7 @@ import pytest
 from mcp import Client
 from mcp.types import RequestParamsMeta, TextContent
 
-from openapi_mcp_gateway.auth.upstream import token_source as token_source_module
+from openapi_mcp_gateway.auth.upstream import client_credentials as client_credentials_module
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import (
     AuthConfig,
@@ -154,7 +154,7 @@ class TestClientCredentialsFlowEndToEnd:
         token_response.json.return_value = {'access_token': 'cc-bearer-xyz', 'expires_in': 3600}
         token_response.text = ''
         token_post_mock = AsyncMock(return_value=token_response)
-        monkeypatch.setattr(token_source_module.httpx.AsyncClient, 'post', token_post_mock, raising=False)
+        monkeypatch.setattr(client_credentials_module.httpx.AsyncClient, 'post', token_post_mock, raising=False)
         return token_post_mock
 
     def test_the_token_source_is_closed_at_shutdown(self, cc_gateway):

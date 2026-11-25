@@ -4,18 +4,18 @@ import logging
 import httpx
 from mcp.server.auth.middleware.auth_context import get_access_token
 
-from ...scopes import ScopeRegistry, TokenGrant, UpstreamGrantSource, UpstreamGrantUnavailableError, current_grant
+from ...scopes import ScopeRegistry, TokenGrant, UpstreamGrantSource, UpstreamGrantUnavailableError, read_current_grant
 from ...settings import AuthConfig
 from ..assembly import (
+    AuthTypeContext,
     McpSetting,
     McpSettingsReader,
-    OAuthFlowContext,
-    OAuthFlowHandler,
     ServerAuthSetup,
     UpstreamPrincipal,
     UpstreamSetting,
 )
 from ..external_issuer_setup import McpExternalIssuerSetup
+from ..upstream.oauth_flow import UpstreamOAuthFlow
 from ..upstream.resolver import UPSTREAM_CREDENTIAL_UNAVAILABLE, UpstreamTokenSourceAuthResolver
 from ..upstream.token_exchange import (
     UpstreamExchangedToken,
@@ -24,6 +24,7 @@ from ..upstream.token_exchange import (
     UpstreamTokenExchangeRefusedError,
 )
 from ..upstream.token_source import UpstreamTokenSource
+from .handler import OAuthFlowHandler
 
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ class TokenExchangeBridge(UpstreamTokenSource, UpstreamGrantSource):
         return True
 
     async def read_call_grant(self) -> TokenGrant:
-        grant = current_grant()
+        grant = read_current_grant()
         try:
             exchanged = await self._exchange_for_caller()
         except UpstreamTokenExchangeRefusedError as error:
@@ -111,6 +112,8 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     # No spec can declare token_exchange, and it talks to no upstream authorization server.
     # Consulting the spec would only report a misleading missing flow.
     reads_spec_oauth_flow = False
+    # Each exchange states what the issuer granted for the upstream.
+    records_user_grant = True
 
     def __init__(self) -> None:
         self._issuer_setup = McpExternalIssuerSetup()
@@ -120,7 +123,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
         return 'user'
 
     @property
-    def upstream_settings(self) -> frozenset[UpstreamSetting]:
+    def flow_settings(self) -> frozenset[UpstreamSetting]:
         return frozenset(
             {
                 'client_id',
@@ -129,8 +132,6 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
                 'required_scopes',
                 'resource',
                 'audience',
-                'enforce_scopes',
-                'scope_implies',
             }
         )
 
@@ -145,8 +146,8 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
         self._issuer_setup.refuse_unusable_settings(auth, server_name)
 
-    def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
-        entry = flow_context.entry
+    def build(self, context: AuthTypeContext, upstream_oauth_flow: UpstreamOAuthFlow | None) -> ServerAuthSetup:
+        entry = context.entry
 
         issuer = entry.auth.mcp.resolve_issuer()
         if not issuer:
@@ -187,7 +188,7 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
                 client_secret=client_secret,
                 audience_params=audience_params,
             ),
-            flow_context.scope_registry,
+            context.scope_registry,
             entry.auth.upstream.scopes,
             entry.auth.upstream.required_scopes,
         )
@@ -202,4 +203,4 @@ class TokenExchangeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             resolver=UpstreamTokenSourceAuthResolver(bridge), upstream_grant_source=bridge, on_shutdown=bridge.aclose
         )
         # The MCP half is the external issuer's, as on a server whose upstream sees only the gateway.
-        return self._issuer_setup.attach(upstream_setup, flow_context.auth_context, metadata)
+        return self._issuer_setup.attach(upstream_setup, context, metadata)

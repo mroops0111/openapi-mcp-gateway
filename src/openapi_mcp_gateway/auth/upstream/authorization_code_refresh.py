@@ -28,7 +28,7 @@ _REFRESH_ANSWER_SECONDS = 60
 _REFRESH_POLL_INTERVAL = 0.2
 
 
-class UpstreamTokenRefresher:
+class UpstreamAuthorizationCodeRefresher:
     """Refreshes an upstream token once per refresh token, however many callers ask at the same time.
 
     A rotated refresh token cannot be spent twice, and some upstreams revoke the whole family when one is.

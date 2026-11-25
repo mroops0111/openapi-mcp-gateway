@@ -1,22 +1,35 @@
 import pytest
 
 from openapi_mcp_gateway.auth.flows.authorization_code import AuthorizationCodeBridge
-from openapi_mcp_gateway.auth.flows.factory import resolve_upstream_oauth_flow
+from openapi_mcp_gateway.auth.flows.factory import OAUTH_FLOW_HANDLERS, resolve_upstream_oauth_flow
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamTokenSourceAuthResolver,
 )
 from openapi_mcp_gateway.settings import AuthConfig, McpAuthConfig, UpstreamAuthConfig
-from tests.constants import AUTHORIZE_URL, TOKEN_URL
+from tests.constants import API_URL, AUTHORIZE_URL, ISSUER, TOKEN_URL
 from tests.flow import (
     auth_context,
     build_selected_oauth_flow,
     build_spec,
+    discovered_external_issuer,
     server_entry,
     spec_with_authorization_code,
     spec_with_both_flows,
     spec_with_client_credentials,
 )
 from tests.oauth import server_of
+
+
+# An ``auth`` block each flow builds from, with every setting it requires.
+_UPSTREAM_CLIENT = {'type': 'oauth2', 'client_id': 'cid', 'client_secret': 'sec'}
+_BUILDABLE_FLOW_AUTH = {
+    'authorization_code': {'upstream': {**_UPSTREAM_CLIENT, 'flow': 'authorization_code'}},
+    'client_credentials': {'upstream': {**_UPSTREAM_CLIENT, 'flow': 'client_credentials'}},
+    'token_exchange': {
+        'upstream': {**_UPSTREAM_CLIENT, 'flow': 'token_exchange', 'audience': API_URL},
+        'mcp': {'issuer': ISSUER},
+    },
+}
 
 
 class TestResolveUpstreamOAuthFlow:
@@ -117,7 +130,16 @@ class TestResolveUpstreamOAuthFlow:
 
 
 class TestBuildOAuthFlow:
-    """``build_oauth_flow`` dispatches to the right handler and returns a populated setup."""
+    """A selected flow builds through the right handler and returns a populated setup."""
+
+    @pytest.mark.parametrize('flow', sorted(OAUTH_FLOW_HANDLERS))
+    def test_a_flow_records_a_user_grant_exactly_when_its_class_says_so(self, flow):
+        """The settings that turn the grant check on follow from the class, so the grant it builds must agree."""
+        entry = server_entry(AuthConfig.model_validate(_BUILDABLE_FLOW_AUTH[flow]))
+        with discovered_external_issuer():
+            setup = build_selected_oauth_flow(auth_context(entry, spec_with_both_flows()))
+
+        assert setup.upstream_grant_source.records_user_grant is OAUTH_FLOW_HANDLERS[flow].records_user_grant
 
     def test_authorization_code_returns_provider_and_settings(self):
         """authorization_code yields a provider, AuthSettings, and a resolver reading the Bridge."""

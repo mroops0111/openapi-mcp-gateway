@@ -1,10 +1,7 @@
 import pytest
 
-from openapi_mcp_gateway.auth.assembly import ServerAuthSetup
-from openapi_mcp_gateway.auth.upstream.resolver import UpstreamNoCredentialAuthResolver
 from openapi_mcp_gateway.gateway import (
     _apply_yaml_overrides,
-    _check_upstream_grant,
     _partition_operations,
     _validate_resource_eligibility,
 )
@@ -15,9 +12,7 @@ from openapi_mcp_gateway.openapi import (
     ResourceOverride,
     ToolOverride,
 )
-from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, UpstreamSpecSecurityScopePolicy
-from openapi_mcp_gateway.settings import AuthConfig, OperationOverride
-from tests.flow import server_entry
+from openapi_mcp_gateway.settings import OperationOverride
 from tests.operation import expose_resource
 
 
@@ -296,27 +291,6 @@ class TestApplyYamlOverrides:
         override = OperationOverride(security=[{'OAuth2': ['pets:read']}])
         with pytest.raises(ValueError, match=r"operations\.get_pet\.security .* \['OAuth2'\]"):
             _apply_yaml_overrides(operations, {'get_pet': override}, 'petstore', OAUTH2_SCHEMES)
-
-
-class TestCheckUpstreamGrant:
-    """``_check_upstream_grant`` decides which operations to expose from the upstream grant a flow records."""
-
-    def test_enforce_scopes_without_a_recorded_user_grant_is_refused(self):
-        """A flow that read ``enforce_scopes`` but records no user grant would let every call through unchecked."""
-        entry = server_entry(
-            AuthConfig.model_validate(
-                {'upstream': {'type': 'oauth2', 'flow': 'client_credentials', 'enforce_scopes': True}}
-            )
-        )
-
-        with pytest.raises(ValueError, match='enforce_scopes needs a flow'):
-            _check_upstream_grant(
-                entry,
-                ServerAuthSetup(resolver=UpstreamNoCredentialAuthResolver()),
-                UpstreamSpecSecurityScopePolicy({}, {}),
-                [_operation('get_pet')],
-                McpUnrestrictedScopePolicy(),
-            )
 
 
 def _expose_tool_and_resource() -> McpIntegration:

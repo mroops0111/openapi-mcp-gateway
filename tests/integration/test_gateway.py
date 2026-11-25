@@ -19,8 +19,8 @@ class TestGatewayAssembly:
         assert gateway._servers[0].mount_path == '/petstore'
 
     def test_no_auth_provider_for_no_auth(self, gateway):
-        """A server without auth config has no ``auth_provider`` attached."""
-        assert gateway._servers[0].auth_provider is None
+        """A server without auth config has no authorization server attached."""
+        assert gateway._servers[0].auth.provider is None
 
     def test_multiple_servers(self, petstore_json_path):
         """Multiple servers register on independent mount paths."""
@@ -62,7 +62,7 @@ class TestHealthEndpoint:
         assert data['status'] == 'ok'
         assert len(data['servers']) == 1
         assert data['servers'][0]['name'] == 'petstore'
-        assert data['servers'][0]['auth'] == 'static'
+        assert data['servers'][0]['auth'] == {'mcp': 'open', 'upstream': 'none'}
 
 
 class TestInstructions:

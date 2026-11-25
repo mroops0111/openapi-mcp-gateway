@@ -6,7 +6,7 @@ import pytest
 from starlette.exceptions import HTTPException
 
 from openapi_mcp_gateway.auth.upstream import authorization_code_refresh
-from openapi_mcp_gateway.auth.upstream.authorization_code_refresh import UpstreamTokenRefresher
+from openapi_mcp_gateway.auth.upstream.authorization_code_refresh import UpstreamAuthorizationCodeRefresher
 from tests.oauth import bridge_of, upstream_token_response
 
 
@@ -15,10 +15,13 @@ REFRESH_TOKEN = 'upstream-refresh-token'
 
 
 @pytest.fixture
-def gateway_instances(provider, memory_store) -> list[UpstreamTokenRefresher]:
+def gateway_instances(provider, memory_store) -> list[UpstreamAuthorizationCodeRefresher]:
     """Two gateway instances' refreshers, sharing one store as instances behind a load balancer do."""
     upstream = bridge_of(provider).upstream
-    return [UpstreamTokenRefresher(upstream, memory_store), UpstreamTokenRefresher(upstream, memory_store)]
+    return [
+        UpstreamAuthorizationCodeRefresher(upstream, memory_store),
+        UpstreamAuthorizationCodeRefresher(upstream, memory_store),
+    ]
 
 
 class TestUpstreamTokenRefresher:

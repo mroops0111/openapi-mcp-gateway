@@ -3,12 +3,13 @@ import typing
 import pytest
 
 from openapi_mcp_gateway.auth.assembly import AuthTypeContext, McpSetting, UpstreamSetting
-from openapi_mcp_gateway.auth.factory import AUTH_TYPE_HANDLERS, build_auth
+from openapi_mcp_gateway.auth.factory import build_auth
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
     UpstreamStaticAuthResolver,
 )
+from openapi_mcp_gateway.auth.upstream_types import AUTH_TYPE_HANDLERS
 from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, ScopeRegistry

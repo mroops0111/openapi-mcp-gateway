@@ -55,10 +55,10 @@ class TestTokenExchangeDiscovery:
         assert delegating_client.post('/petstore/token').status_code == 404
 
     def test_healthz_reports_the_endpoint_as_protected(self, delegating_client):
-        """A delegating server is still OAuth-protected, so health must not report it as open."""
+        """A delegating server is still protected, so health names its issuer rather than reporting it as open."""
         servers = delegating_client.get('/healthz').json()['servers']
 
-        assert servers[0]['auth'] == 'oauth2'
+        assert servers[0]['auth'] == {'mcp': f'issuer ({ISSUER})', 'upstream': 'oauth2 (token_exchange)'}
 
 
 class TestRejectedTokenResponse:

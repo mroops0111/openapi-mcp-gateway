@@ -10,7 +10,7 @@ from openapi_mcp_gateway.auth.mcp.external_issuer import (
     McpTokenVerificationError,
     fetch_mcp_external_issuer_metadata,
 )
-from openapi_mcp_gateway.scopes import grant_of
+from openapi_mcp_gateway.scopes import read_grant
 from tests.constants import ATTACKER_URL, GATEWAY_URL, ISSUER, JWKS_URL, TOKEN_URL
 
 
@@ -100,7 +100,7 @@ class TestExternalIssuerTokenVerifier:
         result = await verifier.verify_token(_issue(signing_key, scope='read'))
 
         assert result is not None
-        assert grant_of(result).mcp_reachable_scopes == reachable
+        assert read_grant(result).mcp_reachable_scopes == reachable
         assert result.upstream_scopes is None
 
     async def test_non_jwt_returns_none(self, signing_key):

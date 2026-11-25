@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.security import APIKeyHeader, HTTPBasic, HTTPBasicCredentials, OAuth2AuthorizationCodeBearer
 
 from openapi_mcp_gateway import Gateway, mcp_tool
-from openapi_mcp_gateway.auth.upstream import token_source as token_source_module
+from openapi_mcp_gateway.auth.upstream import client_credentials as client_credentials_module
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
 from tests.constants import AUTHORIZE_URL, TOKEN_URL
 from tests.context import stub_context
@@ -26,8 +26,8 @@ class TestGatewayFromFastapiAssembly:
 
         gateway = Gateway.from_fastapi(app, name='svc')
         bundle = gateway._servers[0]
-        assert bundle.auth_provider is None
-        assert bundle.auth_settings is None
+        assert bundle.auth.provider is None
+        assert bundle.auth.settings is None
         assert auth_shutdown_hooks(gateway) == []
 
     def test_no_marked_routes_raises(self):
@@ -190,7 +190,7 @@ class TestGatewayFromFastapiToolCall:
         token_response.json.return_value = {'access_token': 'gateway-token', 'expires_in': 3600}
         token_response.text = ''
         monkeypatch.setattr(
-            token_source_module.httpx.AsyncClient,
+            client_credentials_module.httpx.AsyncClient,
             'post',
             AsyncMock(return_value=token_response),
             raising=False,

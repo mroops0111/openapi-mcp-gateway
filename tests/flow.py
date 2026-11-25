@@ -3,7 +3,7 @@ import typing
 from unittest.mock import MagicMock, patch
 
 from openapi_mcp_gateway.auth.assembly import AuthTypeContext, ServerAuthSetup
-from openapi_mcp_gateway.auth.flows import build_oauth_flow, select_oauth_flow
+from openapi_mcp_gateway.auth.flows import select_oauth_flow
 from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerMetadata
 from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, ScopeRegistry
@@ -98,8 +98,8 @@ def server_entry(auth: AuthConfig, name: str = 'srv') -> ServerConfig:
 
 
 def build_selected_oauth_flow(context: AuthTypeContext) -> ServerAuthSetup:
-    """The OAuth flow ``context`` selects, built as ``OAuth2Handler`` builds it."""
-    return build_oauth_flow(context, select_oauth_flow(context))
+    """The OAuth flow ``context`` selects, built as ``UpstreamOAuth2Handler`` builds it."""
+    return select_oauth_flow(context).build(context)
 
 
 @contextlib.contextmanager

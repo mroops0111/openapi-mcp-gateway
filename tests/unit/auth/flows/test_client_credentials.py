@@ -1,13 +1,10 @@
 from openapi_mcp_gateway.auth.assembly import AuthTypeContext
-from openapi_mcp_gateway.auth.flows import (
-    OAuthFlowContext,
-)
 from openapi_mcp_gateway.auth.flows.client_credentials import UpstreamClientCredentialsFlowHandler
 from openapi_mcp_gateway.auth.flows.factory import resolve_upstream_oauth_flow
+from openapi_mcp_gateway.auth.upstream.client_credentials import UpstreamClientCredentialsTokenSource
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamTokenSourceAuthResolver,
 )
-from openapi_mcp_gateway.auth.upstream.token_source import UpstreamClientCredentialsTokenSource
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, ScopeRegistry
 from openapi_mcp_gateway.settings import AuthConfig, UpstreamAuthConfig
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
@@ -34,17 +31,15 @@ class TestClientCredentialsFlowHandler:
         flow = resolve_upstream_oauth_flow(entry, spec)
 
         setup = handler.build(
-            OAuthFlowContext(
-                AuthTypeContext(
-                    entry=entry,
-                    spec=spec,
-                    store=MemoryTokenStore(),
-                    gateway_url='http://localhost:8000',
-                    scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
-                    client_metadata_resolver=serving_resolver({}),
-                ),
-                upstream_oauth_flow=flow,
-            )
+            AuthTypeContext(
+                entry=entry,
+                spec=spec,
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
+                client_metadata_resolver=serving_resolver({}),
+            ),
+            flow,
         )
 
         token_source = setup.resolver._token_source  # type: ignore[attr-defined]
@@ -70,17 +65,15 @@ class TestClientCredentialsAudienceWiring:
         spec = spec_with_client_credentials()
 
         setup = UpstreamClientCredentialsFlowHandler().build(
-            OAuthFlowContext(
-                AuthTypeContext(
-                    entry=entry,
-                    spec=spec,
-                    store=MemoryTokenStore(),
-                    gateway_url='http://localhost:8000',
-                    scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
-                    client_metadata_resolver=serving_resolver({}),
-                ),
-                upstream_oauth_flow=resolve_upstream_oauth_flow(entry, spec),
-            )
+            AuthTypeContext(
+                entry=entry,
+                spec=spec,
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
+                client_metadata_resolver=serving_resolver({}),
+            ),
+            resolve_upstream_oauth_flow(entry, spec),
         )
 
         assert isinstance(setup.resolver, UpstreamTokenSourceAuthResolver)

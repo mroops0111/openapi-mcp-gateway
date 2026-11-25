@@ -6,7 +6,6 @@ import pytest
 
 from openapi_mcp_gateway.auth.assembly import AuthTypeContext, ServerAuthSetup
 from openapi_mcp_gateway.auth.flows import (
-    OAuthFlowContext,
     TokenExchangeFlowHandler,
 )
 from openapi_mcp_gateway.auth.flows.token_exchange import TokenExchangeBridge
@@ -130,8 +129,7 @@ class TestTokenExchangeFlowHandler:
         with handler_build as build:
             build_selected_oauth_flow(auth_context(entry, spec_with_authorization_code()))
 
-        flow_context = build.call_args.args[1]
-        assert flow_context.upstream_oauth_flow is None
+        assert build.call_args.args[2] is None
 
 
 class TestTokenExchangeBridge:
@@ -248,17 +246,15 @@ def _build_token_exchange(entry: ServerConfig):
     """Run the handler with issuer discovery stubbed out."""
     with discovered_external_issuer():
         return TokenExchangeFlowHandler().build(
-            OAuthFlowContext(
-                AuthTypeContext(
-                    entry=entry,
-                    spec=build_spec(),
-                    store=MemoryTokenStore(),
-                    gateway_url='http://localhost:8000',
-                    scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
-                    client_metadata_resolver=serving_resolver({}),
-                ),
-                upstream_oauth_flow=None,
-            )
+            AuthTypeContext(
+                entry=entry,
+                spec=build_spec(),
+                store=MemoryTokenStore(),
+                gateway_url='http://localhost:8000',
+                scope_registry=ScopeRegistry(McpUnrestrictedScopePolicy()),
+                client_metadata_resolver=serving_resolver({}),
+            ),
+            None,
         )
 
 

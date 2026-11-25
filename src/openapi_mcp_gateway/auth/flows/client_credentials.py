@@ -1,8 +1,11 @@
 import logging
 
-from ..assembly import OAuthFlowContext, OAuthFlowHandler, ServerAuthSetup, UpstreamPrincipal, UpstreamSetting
+from ...settings import UpstreamAuthConfig
+from ..assembly import AuthTypeContext, ServerAuthSetup, UpstreamPrincipal, UpstreamSetting
+from ..upstream.client_credentials import UpstreamClientCredentialsTokenSource
+from ..upstream.oauth_flow import UpstreamOAuthFlow
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
-from ..upstream.token_source import UpstreamClientCredentialsTokenSource
+from .handler import OAuthFlowHandler, require_upstream_oauth_flow
 
 
 logger = logging.getLogger(__name__)
@@ -21,13 +24,18 @@ class UpstreamClientCredentialsFlowHandler(OAuthFlowHandler):
     def upstream_principal(self) -> UpstreamPrincipal:
         return 'gateway'
 
+    @classmethod
+    def synthesises_from(cls, config: UpstreamAuthConfig) -> bool:
+        # A token URL is all it needs, so it is the flow a config naming no authorization URL describes.
+        return True
+
     @property
-    def upstream_settings(self) -> frozenset[UpstreamSetting]:
+    def flow_settings(self) -> frozenset[UpstreamSetting]:
         return frozenset({'client_id', 'client_secret', 'token_url', 'scopes', 'resource', 'audience'})
 
-    def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
-        entry = flow_context.entry
-        oauth_flow = flow_context.require_upstream_oauth_flow()
+    def build(self, context: AuthTypeContext, upstream_oauth_flow: UpstreamOAuthFlow | None) -> ServerAuthSetup:
+        entry = context.entry
+        oauth_flow = require_upstream_oauth_flow(context, upstream_oauth_flow)
 
         client_id = entry.auth.upstream.resolve_client_id()
         client_secret = entry.auth.upstream.resolve_client_secret()

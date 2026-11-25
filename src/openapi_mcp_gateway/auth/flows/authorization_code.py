@@ -8,20 +8,19 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import TokenError, construct_redirect_uri
 from mcp.server.auth.routes import build_metadata
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
-from mcp.shared.auth import OAuthMetadata
+from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import Response
 
 from ...scopes import ScopeRegistry, UpstreamRecordedGrantSource
-from ...settings import AuthConfig
+from ...settings import AuthConfig, UpstreamAuthConfig
 from ...stores.base import TokenStore
 from ..assembly import (
     AuthRoutes,
+    AuthTypeContext,
     McpSetting,
     McpSettingsReader,
-    OAuthFlowContext,
-    OAuthFlowHandler,
     ServerAuthSetup,
     UpstreamPrincipal,
     UpstreamSetting,
@@ -38,23 +37,26 @@ from ..mcp.consent_page import redirect_without_cache, render_error_page, render
 from ..mcp.record_origin import McpRecordOrigin
 from ..mcp.token_issuer import McpTokenAttachment, McpTokenIssuer, McpTokenPolicy
 from ..settings_mapping import (
+    accepts_mcp_dynamic_registration,
     build_mcp_client_directory,
     build_mcp_client_metadata_directory,
     build_mcp_token_policy,
     refuse_unusable_mcp_token_scopes,
 )
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
-from ..upstream.authorization_code_refresh import UpstreamTokenRefresher
+from ..upstream.authorization_code_refresh import UpstreamAuthorizationCodeRefresher
+from ..upstream.oauth_flow import UpstreamOAuthFlow
 from ..upstream.resolver import UpstreamTokenSourceAuthResolver
 from ..upstream.token_source import UpstreamTokenSource
 from .authorization_code_reauthorization import REAUTHORIZE_PATH, AuthorizationCodeReauthorizer
 from .authorization_code_upstream_token import (
     UPSTREAM_ACCESS_TOKEN_LINK,
     UPSTREAM_REFRESH_TOKEN_LINK,
+    build_renewed_attachment,
     build_upstream_links,
-    expiry_of,
-    renewed_attachment,
+    compute_expiry,
 )
+from .handler import OAuthFlowHandler, require_upstream_oauth_flow
 
 
 logger = logging.getLogger(__name__)
@@ -93,7 +95,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
         self,
         tokens: McpTokenIssuer,
         upstream: UpstreamAuthorizationCodeClient,
-        refresher: UpstreamTokenRefresher,
+        refresher: UpstreamAuthorizationCodeRefresher,
         scope_registry: ScopeRegistry,
         store: TokenStore,
     ) -> None:
@@ -156,7 +158,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
                 error='invalid_grant',
                 error_description='The upstream sign-in expired and could not be renewed; sign in again',
             ) from exception
-        return renewed_attachment(attachment, refreshed, upstream_refresh_token)
+        return build_renewed_attachment(attachment, refreshed, upstream_refresh_token)
 
     # UpstreamTokenSource
 
@@ -189,7 +191,7 @@ class AuthorizationCodeBridge(McpAuthorizationCodeContinuation, UpstreamTokenSou
             McpTokenAttachment(
                 upstream_scopes=upstream_token.resolve_granted_scopes(pending_authorization.next_sign_in_scopes),
                 links=build_upstream_links(upstream_token.access_token, upstream_token.refresh_token),
-                links_expire_at=expiry_of(upstream_token.expires_in),
+                links_expire_at=compute_expiry(upstream_token.expires_in),
                 browser_id=pending_authorization.browser_id,
                 grant_id=secrets.token_urlsafe(32),
             ),
@@ -319,12 +321,19 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     and the ``AuthorizationCodeBridge`` that joins them.
     """
 
+    # Each sign-in's token response states what the upstream granted, recorded on the MCP token.
+    records_user_grant = True
+
+    @classmethod
+    def synthesises_from(cls, config: UpstreamAuthConfig) -> bool:
+        return bool(config.authorization_url)
+
     @property
     def upstream_principal(self) -> UpstreamPrincipal:
         return 'user'
 
     @property
-    def upstream_settings(self) -> frozenset[UpstreamSetting]:
+    def flow_settings(self) -> frozenset[UpstreamSetting]:
         return frozenset(
             {
                 'client_id',
@@ -336,8 +345,6 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
                 'issuer',
                 'resource',
                 'audience',
-                'enforce_scopes',
-                'scope_implies',
             }
         )
 
@@ -354,18 +361,31 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
     def refuse_unusable_settings(self, auth: AuthConfig, server_name: str) -> None:
         refuse_unusable_mcp_token_scopes(auth.mcp, server_name)
 
-    def build(self, flow_context: OAuthFlowContext) -> ServerAuthSetup:
-        entry = flow_context.entry
-        oauth_flow = flow_context.require_upstream_oauth_flow()
+    def build(self, context: AuthTypeContext, upstream_oauth_flow: UpstreamOAuthFlow | None) -> ServerAuthSetup:
+        entry = context.entry
+        oauth_flow = require_upstream_oauth_flow(context, upstream_oauth_flow)
         upstream_config = entry.auth.upstream
         mcp_config = entry.auth.mcp
 
         client_id = upstream_config.resolve_client_id()
         client_secret = upstream_config.resolve_client_secret()
         if not client_id or not client_secret:
+            # The gateway mints its own upstream tokens with them.
+            # Forwarding the MCP client's token instead would break RFC 8707 audience binding,
+            # the confused deputy pattern the MCP authorization spec forbids,
+            # so passthrough is never a fallback and must be asked for by name.
             raise ValueError(
-                f'Server "{entry.name}": authorization_code flow requires client_id and client_secret. '
-                'Set them directly or use ${ENV_VAR} syntax.'
+                f'Server "{entry.name}": authorization_code flow needs client_id and client_secret. '
+                'Set them directly or use ${ENV_VAR} syntax.\n\n'
+                'For third-party APIs (GitHub, Stripe, Asana, any external SaaS): '
+                'you MUST register an OAuth app with the provider and set client_id/client_secret, '
+                'so the gateway can mint its own upstream tokens. '
+                "Forwarding the MCP client's token to a third-party upstream is forbidden by the MCP authorization spec "
+                '(RFC 8707 audience binding).\n\n'
+                'auth.upstream.type: passthrough is ONLY for the rare case where the gateway and the upstream share '
+                'the same OAuth audience, e.g. internal corporate SSO where both sides trust the same IdP-issued tokens, '
+                'or the FastAPI integration where the gateway is mounted onto the app it exposes. '
+                'It is NOT safe for third-party SaaS APIs.'
             )
 
         if not oauth_flow.authorization_url:
@@ -376,7 +396,8 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
         if not oauth_flow.token_url:
             raise ValueError(f'Server "{entry.name}": authorization_code flow requires token_url.')
 
-        server_url_base = f'{flow_context.gateway_url.rstrip("/")}{flow_context.mount_path.rstrip("/")}'
+        # The issuer as the metadata publishes it, so every URL below shares its normalised form.
+        server_url_base = context.issuer_url.rstrip('/')
         upstream = UpstreamAuthorizationCodeClient(
             authorization_url=oauth_flow.authorization_url,
             token_url=oauth_flow.token_url,
@@ -394,35 +415,44 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
         mcp_endpoint_scopes = policy.scopes
         # The same string the metadata publishes as ``issuer``,
         # since RFC 9207 compares the two without any normalisation.
-        issuer = flow_context.issuer_url
+        issuer = context.issuer_url
         server_url = pydantic.AnyHttpUrl(issuer)
-        clients = _build_client_directory(flow_context, mcp_endpoint_scopes, issuer)
+        clients = _build_client_directory(context, mcp_endpoint_scopes, issuer)
         server, bridge = build_authorization_code_server(
-            flow_context.store,
+            context.store,
             issuer,
             upstream,
-            flow_context.scope_registry,
+            context.scope_registry,
             policy,
             clients,
             entry.name,
-            flow_context.mcp_resource_url,
+            context.mcp_resource_url,
         )
         reauthorizer = AuthorizationCodeReauthorizer(
             bridge.tokens,
             upstream,
             bridge.refresher,
-            flow_context.scope_registry,
+            context.scope_registry,
             f'{server_url_base}{REAUTHORIZE_PATH}',
         )
         # One cookie for both pages, since the callback must read what the consent page set.
         cookie = McpBrowserCookie(secure=issuer.startswith('https://'))
+        registration_options = clients.build_registration_options(mcp_endpoint_scopes)
         settings = AuthSettings(
             issuer_url=server_url,
-            resource_server_url=pydantic.AnyHttpUrl(flow_context.mcp_resource_url),
+            resource_server_url=pydantic.AnyHttpUrl(context.mcp_resource_url),
             validate_token_resource=True,
             revocation_options=RevocationOptions(enabled=True),
-            client_registration_options=clients.build_registration_options(mcp_endpoint_scopes),
+            client_registration_options=registration_options,
             required_scopes=mcp_endpoint_scopes,
+        )
+        # The gateway is both issuer and resource here, so the document names this server's own issuer.
+        protected_resource = ProtectedResourceMetadata.model_validate(
+            {
+                'resource': context.mcp_resource_url,
+                'authorization_servers': [issuer],
+                'scopes_supported': registration_options.valid_scopes,
+            }
         )
 
         logger.debug(
@@ -439,10 +469,11 @@ class AuthorizationCodeFlowHandler(OAuthFlowHandler, McpSettingsReader):
             reauthorizer=reauthorizer,
             provider=server,
             settings=settings,
+            protected_resource=protected_resource,
             upstream_grant_source=UpstreamRecordedGrantSource(),
             authorization_server_metadata=_build_authorization_server_metadata(settings, clients),
             routes=[
-                McpAuthorizationCodeRoutes(server, flow_context.scope_registry.mcp_policy, cookie),
+                McpAuthorizationCodeRoutes(server, context.scope_registry.mcp_policy, cookie),
                 AuthorizationCodeCallbackRoutes(bridge, reauthorizer, cookie),
             ],
             mcp_summary='gateway (authorization_code)',
@@ -472,7 +503,9 @@ def build_authorization_code_server(
         policy=policy,
         resource=resource,
     )
-    bridge = AuthorizationCodeBridge(tokens, upstream, UpstreamTokenRefresher(upstream, store), scope_registry, store)
+    bridge = AuthorizationCodeBridge(
+        tokens, upstream, UpstreamAuthorizationCodeRefresher(upstream, store), scope_registry, store
+    )
     return McpAuthorizationCodeServer(tokens, clients, bridge, server_name=server_name), bridge
 
 
@@ -498,7 +531,7 @@ def _build_authorization_server_metadata(settings: AuthSettings, clients: McpCli
 
 
 def _build_client_directory(
-    flow_context: OAuthFlowContext, mcp_endpoint_scopes: list[str], issuer: str
+    context: AuthTypeContext, mcp_endpoint_scopes: list[str], issuer: str
 ) -> McpClientDirectory:
     """The MCP clients this server admits.
 
@@ -506,16 +539,16 @@ def _build_client_directory(
     with the Client ID Metadata Document clients ``other_clients`` admits.
     Where the config names neither, clients register themselves by Dynamic Client Registration.
     """
-    mcp_config = flow_context.entry.auth.mcp
+    mcp_config = context.entry.auth.mcp
     directories: list[McpClientDirectory] = [
         build_mcp_client_directory(mcp_config.clients, mcp_endpoint_scopes),
-        build_mcp_client_metadata_directory(mcp_config, mcp_endpoint_scopes, flow_context.client_metadata_resolver),
+        build_mcp_client_metadata_directory(mcp_config, mcp_endpoint_scopes, context.client_metadata_resolver),
     ]
-    if mcp_config.accepts_dynamic_registration:
+    if accepts_mcp_dynamic_registration(mcp_config):
         logger.warning(
             'Server "%s" accepts Dynamic Client Registration, which the MCP 2026-07-28 spec deprecates. '
             'Setting auth.mcp.clients or auth.mcp.other_clients turns it off.',
-            flow_context.entry.name,
+            context.entry.name,
         )
-        directories.append(McpDynamicClientRegistry(flow_context.store, issuer))
+        directories.append(McpDynamicClientRegistry(context.store, issuer))
     return McpClientDirectoryChain(directories)

@@ -12,7 +12,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .grant import UpstreamGrantSource, current_grant, grant_of
+from .grant import UpstreamGrantSource, read_current_grant, read_grant
 from .registry import ScopeRegistry
 from .requirement import ScopeRequirement
 
@@ -71,7 +71,7 @@ class ScopeChallengeMiddleware:
         if unmet is None:
             await self.app(scope, receive, send)
             return
-        challenged = unmet.challenge_within(grant_of(scope['user'].access_token).mcp_grantable_scopes)
+        challenged = unmet.challenge_within(read_grant(scope['user'].access_token).mcp_grantable_scopes)
         refusal = _UNREACHABLE_FOR_CLIENT if unmet.challenge and not challenged else unmet.refusal
         response = JSONResponse(
             status_code=403,
@@ -142,7 +142,7 @@ class ScopeFilterMiddleware:
         result = await call_next(ctx)
         listing = _LISTINGS.get(ctx.method)
         if listing is not None and isinstance(result, dict):
-            grant = current_grant()
+            grant = read_current_grant()
             return {
                 **result,
                 listing.items_key: [

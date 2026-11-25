@@ -13,14 +13,14 @@ from ..mcp.consent import PENDING_AUTHORIZATION_TTL
 from ..mcp.record_origin import McpRecordOrigin
 from ..mcp.token_issuer import MCP_GRANT_NAMESPACE, McpTokenAttachment, McpTokenIssuer
 from ..upstream.authorization_code import UpstreamAuthorizationCodeClient
-from ..upstream.authorization_code_refresh import UpstreamTokenRefresher
+from ..upstream.authorization_code_refresh import UpstreamAuthorizationCodeRefresher
 from ..upstream.reauthorization import UpstreamReauthorizer, UpstreamSignInOffer
 from ..upstream.rejection import UpstreamRejection
 from .authorization_code_upstream_token import (
     UPSTREAM_REFRESH_TOKEN_LINK,
+    build_renewed_attachment,
     build_upstream_links,
-    expiry_of,
-    renewed_attachment,
+    compute_expiry,
 )
 
 
@@ -78,7 +78,7 @@ class AuthorizationCodeReauthorizer(UpstreamReauthorizer):
         self,
         tokens: McpTokenIssuer,
         upstream: UpstreamAuthorizationCodeClient,
-        refresher: UpstreamTokenRefresher,
+        refresher: UpstreamAuthorizationCodeRefresher,
         scope_registry: ScopeRegistry,
         reauthorize_url: str,
     ) -> None:
@@ -103,7 +103,7 @@ class AuthorizationCodeReauthorizer(UpstreamReauthorizer):
             # A token endpoint that is down or answers garbage leaves the upstream's refusal as the answer.
             logger.info('Upstream token renewal failed: error=%s', exception)
             return False
-        renewed = renewed_attachment(attachment, refreshed, upstream_refresh_token)
+        renewed = build_renewed_attachment(attachment, refreshed, upstream_refresh_token)
         return await self.tokens.replace_grant_attachment(attachment.grant_id, renewed)
 
     async def offer_sign_in(self, rejection: UpstreamRejection) -> UpstreamSignInOffer | None:
@@ -205,7 +205,7 @@ class AuthorizationCodeReauthorizer(UpstreamReauthorizer):
         attachment = McpTokenAttachment(
             upstream_scopes=upstream_token.resolve_granted_scopes(pending_reauthorization.scopes),
             links=build_upstream_links(upstream_token.access_token, upstream_refresh_token),
-            links_expire_at=expiry_of(upstream_token.expires_in),
+            links_expire_at=compute_expiry(upstream_token.expires_in),
             browser_id=pending_reauthorization.browser_id,
             grant_id=pending_reauthorization.grant_id,
         )
