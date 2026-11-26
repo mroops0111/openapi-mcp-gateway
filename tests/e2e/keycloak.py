@@ -53,7 +53,7 @@ def create_realm(
     """Create a realm of its own for a gateway serving ``mcp_endpoint``, and yield its issuer.
 
     The gateway exchanges tokens as a client named by its endpoint's canonical URI,
-    which an audience mapper also puts in every agent's token, as the README's Keycloak notes describe.
+    which an audience mapper also puts in every agent's token, as docs/guides/identity-providers.md describes.
     That client may exchange for ``exchangeable_scopes`` only.
     """
     name = f'mcp-{next(_REALM_NUMBERS)}'

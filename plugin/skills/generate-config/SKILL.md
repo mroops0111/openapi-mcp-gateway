@@ -19,7 +19,7 @@ allowed-tools: Bash(uvx openapi-mcp-gateway *)
 
 Your job is to hand the user a runnable `config.yml`, starting from nothing more than an API they name or a spec they point at. The user may be non-technical, so you own the OpenAPI details and confirm intent in plain language.
 
-Most of the work is choosing which operations to expose and how to authenticate. Reach for shaping (`params` / `strategy` and JSONata) only when a raw operation makes a poor tool. A config that exposes the right operations under the right auth, with no shaping, is a fine result.
+Most of the work is choosing which operations to expose and how to authenticate. Reach for shaping (`params` / `params_strategy` and JSONata) only when a raw operation makes a poor tool. A config that exposes the right operations under the right auth, with no shaping, is a fine result.
 
 ## Config Model
 

@@ -61,8 +61,8 @@ def main() -> None:
     type=click.Path(exists=True),
     default=None,
     help=(
-        'Path to a YAML config file with multiple servers. See the README Configuration section '
-        'for the full schema (policy, operations, and tool shaping).'
+        'Path to a YAML config file with multiple servers. '
+        'See https://mroops0111.github.io/openapi-mcp-gateway/reference/configuration/ for every field.'
     ),
 )
 @click.option(
@@ -218,7 +218,7 @@ def serve(
 
     \b
     Multiple servers via config:
-        omgw serve --config servers.yml
+        omgw serve --config config.yml
 
     \b
     stdio transport (Claude Desktop / IDE integration):
@@ -230,7 +230,7 @@ def serve(
 
     \b
     Validate a config without serving (CI or an editor check):
-        omgw serve --config servers.yml --dry-run
+        omgw serve --config config.yml --dry-run
     """
     if not spec and not config_path:
         raise click.UsageError('Either --spec or --config is required.')
@@ -264,7 +264,10 @@ def serve(
         quiet=quiet,
     )
 
-    config = build_gateway_config(source_layer, cli_layer)
+    try:
+        config = build_gateway_config(source_layer, cli_layer)
+    except ValueError as error:
+        _refuse_invalid_config(error)
 
     setup(
         level=config.logging.level,
@@ -283,14 +286,19 @@ def serve(
         try:
             gateway = Gateway.from_config(config)
         except Exception as error:
-            click.secho('✗ Invalid', fg='red', bold=True, err=True)
-            click.echo(f'  {error}', err=True)
-            raise SystemExit(1) from error
+            _refuse_invalid_config(error)
         _echo_dry_run_summary(gateway, config, output)
         return
 
     gateway = Gateway.from_config(config)
     gateway.run()
+
+
+def _refuse_invalid_config(error: Exception) -> typing.NoReturn:
+    """Print why the config is invalid and exit with status 1, with no traceback."""
+    click.secho('✗ Invalid', fg='red', bold=True, err=True)
+    click.echo(f'  {error}', err=True)
+    raise SystemExit(1) from error
 
 
 def _command_entry_points() -> importlib.metadata.EntryPoints:

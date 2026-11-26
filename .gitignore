@@ -28,6 +28,8 @@ venv/
 !README.md
 # Plugin skills ship markdown that must be tracked
 !plugin/**/*.md
+# The documentation site's pages
+!docs/**/*.md
 
 # IDE
 .claude
@@ -39,3 +41,7 @@ venv/
 
 # coverage artifacts
 .coverage
+
+# Documentation site build output
+site/
+.cache/
