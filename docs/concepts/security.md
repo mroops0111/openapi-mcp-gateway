@@ -49,7 +49,7 @@ Beneath the four layers, the gateway follows the MCP specification's security ru
 - **Issuer Check**: with `auth.upstream.issuer` set, an upstream response that carries `iss` must name it, which stops an authorization server mix-up, as [Per-User Sign-In](../guides/authorization.md#per-user-sign-in) states.
 - **Browser Protection**: on a loopback bind, `Host` and `Origin` checks stop a web page from reaching a local gateway. The default bind is not loopback, so it accepts any `Host` until `dns_rebinding_protection.allowed_hosts` is set, as [Host and Origin Checks](../guides/deployment.md#host-and-origin-checks) states.
 - **Fail-Closed Config**: an unknown key is refused at startup, and credentials can come from environment variables, as [Values and Validation](../reference/configuration.md#values-and-validation) states.
-- **Model-Proof Limits**: policy, operation scopes and hidden parameters hold whatever a prompt asks, as [Features Outside Evaluation](../evaluation.md#features-outside-evaluation) notes.
+- **Model-Proof Limits**: policy, operation scopes and hidden parameters hold whatever a prompt asks, since the gateway applies them before a request leaves it, and the integration and end-to-end tests check them.
 
 ## Out of Scope
 

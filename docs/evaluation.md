@@ -14,23 +14,19 @@ The gateway has two benchmarks, one for each feature whose value depends on a mo
 | [Tool Calling](https://github.com/mroops0111/openapi-mcp-gateway/tree/master/benchmarks/tool_calling) | Does a model finish real work through the gateway, and at what cost? | 42 tasks over 7 scenarios | yes | on demand, with its data checked on every change |
 | [Search Ranking](https://github.com/mroops0111/openapi-mcp-gateway/tree/master/benchmarks/search_ranking) | Does `search_operations` rank the requested operation near the top? | 320 requests over 4 APIs | no | on every change, in CI |
 
-Each benchmark pins its specs by SHA-256 and keeps its tasks, configs, and prompts as data, so a result can be reproduced from the commit that produced it. [eval/README.md](https://github.com/mroops0111/openapi-mcp-gateway/blob/master/eval/README.md) holds the commands to rerun the benchmarks and links to how each dataset was built.
+Both keep their specs, tasks and configs as data in the repository, and [eval/README.md](https://github.com/mroops0111/openapi-mcp-gateway/blob/master/eval/README.md) holds the commands to rerun them.
 
 ## Run Method
 
 A tool calling run puts a model in front of the gateway and grades what reaches the upstream, never what the model says.
 
-- **No Real API**: a replay server stands in for every upstream and records each request. It answers from the task's data, else from the spec's example, so a model may call any operation.
+- **No Real API**: a replay server stands in for every upstream and records each request.
 - **Graded by Requests**: a run passes when every expected write reaches the upstream and no forbidden one does. No model grades another.
-- **Configs From the Intent**: each scenario states its use in one sentence. The generated configs are written from that sentence by Claude Sonnet (`anthropic:claude-sonnet-5-5`) running the generate-config skill, which never sees the tasks.
-- **Held-Out Tasks**: each scenario splits its tasks into 2 dev and 4 test. Only the 28 test tasks are reported.
-- **Every Task Can Pass**: CI replays each task's known solution through the real gateway, so a failure is the model's or the config's, not the task's.
+- **Unseen Tasks**: the generated configs are written by the generate-config skill from each scenario's one-sentence intent, and the skill never sees the tasks.
 
 ## Tool Calling on Claude Haiku
 
-These results come from the test split on Claude Haiku (`anthropic:claude-haiku-5-5`), 3 runs per task, run on 2026-11-24 with a 0.8.0 development build of openapi-mcp-gateway and Pydantic AI 2.69.0.
-
-Every scenario runs the same five variants. Three are the gateway, and two are the setups it is compared with.
+These results come from 28 held-out tasks on Claude Haiku, 3 runs per task. Every scenario runs the same five variants. Three are the gateway, and two are the setups it is compared with.
 
 | Variant | Side | What the Model Gets |
 | --- | --- | --- |
@@ -40,10 +36,9 @@ Every scenario runs the same five variants. Three are the gateway, and two are t
 | `generated` | gateway | the config the generate-config skill writes from the scenario's one-sentence intent |
 | `generated-shaped` | gateway | the config the skill writes when also asked to shape the tools |
 
-![Mean input tokens per run on Claude Haiku, with the share of runs passed. For comparison, the baseline used 940k tokens and passed 86%, and Pydantic AI's tool search used 272k and passed 71%. The gateway's generated configs used 130k and passed 92%, dynamic exposure used 76k and passed 100%, and generated-shaped configs used 68k and passed 86%.](assets/input-tokens-light.svg#only-light)
-![Mean input tokens per run on Claude Haiku, as described above.](assets/input-tokens-dark.svg#only-dark)
+![Mean input tokens per run on Claude Haiku, with the share of runs passed. For comparison, the baseline used 940k tokens and passed 86%, and Pydantic AI's tool search used 272k and passed 71%. The gateway's generated configs used 130k and passed 92%, dynamic exposure used 76k and passed 100%, and generated-shaped configs used 68k and passed 86%.](assets/input-tokens-light.svg#only-light) ![Mean input tokens per run on Claude Haiku, as described above.](assets/input-tokens-dark.svg#only-dark)
 
-The first table breaks the same runs down by scenario size, and the second gives each variant's input tokens and cost.
+The first table gives the share of runs passed by scenario size, and the second gives each variant's input tokens and cost. Bold marks the best value in a column where one variant stands out.
 
 | Variant | Small | Medium | Large | GitHub With Asana | All |
 | --- | --- | --- | --- | --- | --- |
@@ -61,16 +56,28 @@ The first table breaks the same runs down by scenario size, and the second gives
 | `generated` | 130,028 | $0.20 |
 | `generated-shaped` | **67,565** | **$0.12** |
 
-Bold marks the best value in a column where one variant stands out. Small is Petstore and Notion, medium is Asana and Discord, and large is GitHub and Stripe. GitHub with Asana serves both APIs together, 1,552 operations in all. Cost also counts output tokens, and Anthropic's prompt caching of the tool definitions lowers the price of repeated input, so cost does not track input tokens. The baseline's 12 GitHub with Asana runs fail at their first request, which exceeds the context window, so they count as failed runs with no tokens and no cost, and the baseline's token mean and cost would be higher had those runs fit. Each finding below holds on Claude Haiku only.
+The baseline's GitHub with Asana runs exceed the context window at their first request and count as zero tokens, so its true token mean is higher. Each finding below holds on Claude Haiku only.
 
 - **Dynamic Exposure**: it passed every run on 8% of the baseline's input tokens.
 - **The Baseline**: it cannot run GitHub with Asana at all. Its tool definitions come to more than a million tokens, past the model's context window.
-- **Pydantic AI's Tool Search**: it saves fewer tokens than dynamic exposure and loses runs on the medium scenarios.
-- **Generated Configs**: they cut input tokens by more than 85%. They fail where the generator left out an operation a task needs, which is why `generated-shaped` drops on GitHub with Asana.
+- **Pydantic AI's Tool Search**: it saves fewer tokens than dynamic exposure, and loses runs on the medium scenarios and on GitHub with Asana.
+- **Generated Configs**: they cut input tokens by more than 85%, and `generated-shaped` loses most of its failed runs on GitHub with Asana.
+
+??? note "Run Details"
+
+    These details matter when you rerun or check the results.
+
+    - **Versions**: run on 2026-11-24 with a 0.8.0 development build of openapi-mcp-gateway and Pydantic AI 2.69.0, on `anthropic:claude-haiku-5-5`. The generated configs were written by `anthropic:claude-sonnet-5-5`.
+    - **Scenario Sizes**: small is Petstore and Notion, medium is Asana and Discord, and large is GitHub and Stripe. GitHub with Asana serves both APIs together, 1,552 operations in all.
+    - **Task Split**: each scenario splits its tasks into 2 dev and 4 test, and only the test tasks are reported. CI replays each task's known solution through the real gateway, so every task can pass.
+    - **Replay Answers**: the replay server answers from the task's data, else from the spec's example, else from a sample built from the response schema, so a model may call any operation.
+    - **Cost**: cost also counts output tokens, and Anthropic's prompt caching of the tool definitions lowers the price of repeated input, so cost does not track input tokens.
+    - **Failed Runs**: on GitHub with Asana, `generated-shaped` hides the milestone list one task reads, and on two other tasks the model made no write or passed a GitHub login as the Asana assignee.
+    - **Pinned Specs**: each benchmark pins its specs by SHA-256, so a result can be reproduced from the commit that produced it.
 
 ## Search Ranking
 
-These results come from the test split of 200 requests, with a 0.8.0 development build of openapi-mcp-gateway. Search calls no model, so no model is named. A third of the requests use the operation's own words, and the rest paraphrase it or state only the goal. nDCG@10 scores the first ten results from 0 to 1, giving more credit the higher the requested operation, and any other that would serve, ranks. MRR@10 is one over the rank of the requested operation, or 0 when it falls outside the first ten. Bold marks the best value in each column.
+These results come from 200 held-out requests. A third use the operation's own words, and the rest paraphrase it or state only the goal. Bold marks the best value in each column.
 
 | Ranker | nDCG@10 | Answer on the First Page | MRR@10 | Answer First |
 | --- | --- | --- | --- | --- |
@@ -79,15 +86,23 @@ These results come from the test split of 200 requests, with a 0.8.0 development
 | Pydantic AI's Keyword Tool Search | 0.230 | 44.5% | 0.206 | 14% |
 | Random Order | 0.003 | 4% | 0.001 | 0% |
 
-By the style of request, under the default weights:
+Every literal request finds its operation on the first page, while a paraphrased or indirect one does so about three times in ten. Dynamic exposure still passed every tool calling run, and `search_operations` takes up to 10 phrasings in one call. Semantic search, set up in [Searching by Meaning](guides/exposure.md#searching-by-meaning), is meant to narrow the gap, and its results are not published yet.
 
-| Request Style | nDCG@10 | Answer on the First Page |
-| --- | --- | --- |
-| Literal | 0.891 | 100% |
-| Paraphrase | 0.117 | 32.4% |
-| Indirect | 0.107 | 28.1% |
+??? note "Run Details"
 
-The default weights beat Pydantic AI's keyword search by 0.147 nDCG@10, with a 95% interval of +0.101 to +0.192. Against equal weights the difference is 0.010, an interval of -0.008 to +0.027, which this set cannot tell apart from none. Every literal request finds its operation on the first page, while a paraphrased or indirect one does so about three times in ten. Dynamic exposure still passed every tool calling run, since the model searches several times and in several phrasings, and `search_operations` takes up to 10 phrasings in one call. Semantic search, set up in [Searching by Meaning](guides/exposure.md#searching-by-meaning), is meant to narrow the gap, though no benchmark measures it yet.
+    These details matter when you rerun or check the results.
+
+    - **Version**: run with a 0.8.0 development build of openapi-mcp-gateway. Search calls no model, so no model is named.
+    - **Metrics**: nDCG@10 scores the first ten results from 0 to 1, giving more credit the higher the requested operation, and any other that would serve, ranks. MRR@10 is one over the rank of the requested operation, or 0 when it falls outside the first ten.
+    - **Intervals**: the default weights beat Pydantic AI's keyword search by 0.147 nDCG@10, with a 95% interval of +0.101 to +0.192. Against equal weights the difference is 0.010, an interval of -0.008 to +0.027, which this set cannot tell apart from none.
+
+    By the style of request, under the default weights:
+
+    | Request Style | nDCG@10 | Answer on the First Page |
+    | --- | --- | --- |
+    | Literal | 0.891 | 100% |
+    | Paraphrase | 0.117 | 32.4% |
+    | Indirect | 0.107 | 28.1% |
 
 ## Limits of These Results
 
@@ -103,14 +118,9 @@ The benchmarks are a first version, and these limits apply before you cite a num
 
 The `eval` command runs the same tool calling harness on tasks you write for your own API, as [Measuring a Config](guides/authoring-with-ai.md#measuring-a-config) explains.
 
-## Features Outside Evaluation
+## Measuring Your Own Config
 
-Some features have one right answer whatever the model does, so tests cover them and evaluation does not.
-
-- **Operation Scopes**: a tool that no scope the client may hold opens is left out of `tools/list`, and a call its token lacks the scope for is refused. The integration and end-to-end tests check it.
-- **Enforced Shaping**: a hidden parameter is always sent with its default, and a value outside an enum is refused before the request leaves the gateway.
-
-A rule written in a prompt depends on the model following it, and a declarative boundary does not. A model run measures only the first, so tests show a boundary holds, and no breach rate is reported.
+The `eval` command runs the same tool calling harness on tasks you write for your own API, as [Measuring a Config](guides/authoring-with-ai.md#measuring-a-config) explains.
 
 ## Related
 

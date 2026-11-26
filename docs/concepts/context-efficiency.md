@@ -30,7 +30,7 @@ The levers combine, and the size of the API decides which to start from.
 - **Medium API**: as a rule of thumb, for roughly 200 to 1,000 operations, filter first, and turn on dynamic exposure when the filtered set is still large.
 - **Large API**: dynamic exposure suits a spec with 1,000+ operations, or several APIs together. Shaping still applies to each operation it calls, and a filter still keeps operations out of search.
 - **Read-Heavy Clients**: resources move reads off the tool list, for a client that surfaces resources. They cannot be combined with dynamic exposure.
-- **Paraphrased Requests**: under dynamic exposure, semantic search is meant to narrow the gap that word search leaves, though no benchmark measures it yet. [Searching by Meaning](../guides/exposure.md#searching-by-meaning) covers its setup.
+- **Paraphrased Requests**: under dynamic exposure, semantic search is meant to narrow the gap that word search leaves, though its benchmark results are not published yet. [Searching by Meaning](../guides/exposure.md#searching-by-meaning) covers its setup.
 
 Operation scopes also leave out of the tool list what a client may not hold, as a side effect of access control.
 
