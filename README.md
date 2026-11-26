@@ -8,7 +8,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
 </p>
 
-Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, or expose an existing FastAPI app the same way. One YAML file runs several APIs in one process, each with its own endpoint and auth, with no code to write.
+Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server from one YAML file, with no code to write. Per-user OAuth and per-operation scopes give fine-grained access control, and tool shaping and dynamic exposure give context efficiency on large APIs. One process runs several APIs, each with its own endpoint and auth.
 
 With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, one command serves the Petstore API:
 
@@ -20,12 +20,13 @@ Then connect any MCP client, such as Claude Code, Cursor or VS Code, to `http://
 
 ## Highlights
 
-Four things set it apart from a server generated once from a spec. The numbers come from [Evaluation](https://mroops0111.github.io/openapi-mcp-gateway/evaluation/).
+Five things set it apart from a server generated once from a spec.
 
-- **Many APIs, No Code**: one YAML file mounts GitHub, an OAuth2 SaaS and your internal API side by side, and reshapes their tools with JSONata instead of a fork, so adding an API is a config change.
-- **Authorization per Operation**: the gateway signs users in itself or accepts tokens from your identity provider, and grants access per operation, so each client reaches only the tools its task needs.
-- **Large APIs That Fit**: a spec with 1,000+ operations goes behind three search tools, so the model's context stays free for the task. On Claude Haiku this completed every benchmark task on 8% of the input tokens of one tool per operation. One tool per operation could not fit one of the scenarios in the context window at all.
-- **Configs Written by AI**: a Claude Code skill writes the config from one sentence, so you start from a working config rather than a raw spec. On Claude Haiku its configs used over 85% fewer input tokens than one tool per operation and passed 92% of runs.
+- **Many APIs, One File**: one YAML file mounts several OpenAPI specs side by side, each at its own endpoint with its own auth, with no code to write.
+- **Fine-Grained Access Control**: the gateway signs users in itself or trusts your identity provider, then grants scopes per operation, so each client reaches only the tools its task needs.
+- **Tool Shaping**: rename operations, hide or pin parameters, and rewrite requests and responses with JSONata, without forking the spec.
+- **Large APIs**: a spec with 1,000+ operations goes behind three search tools, and read-only GETs can become resources, so the model's context stays small.
+- **Spec-Compliant Security**: the gateway follows the MCP authorization rules, accepts only tokens minted for each endpoint, and reaches the API with a credential of its own rather than the client's token.
 
 ## Architecture
 

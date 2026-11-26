@@ -3,7 +3,7 @@ description: The four access control layers the gateway adds in front of an API,
 ---
 # Security
 
-This page explains the access control the gateway adds in front of an API. Each caller reaches only the operations its task needs, with a credential no wider than those operations, which a server sharing one API key cannot offer.
+This page explains the fine-grained access control the gateway adds in front of an API. Each caller reaches only the operations its task needs, with a credential no wider than those operations, which a server sharing one API key cannot offer.
 
 ## Access Control Layers
 

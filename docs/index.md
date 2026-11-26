@@ -1,9 +1,9 @@
 ---
-description: Mount OpenAPI specs and FastAPI apps as MCP servers from one YAML file, with per-API auth, operation scopes, tool shaping and dynamic exposure.
+description: Mount OpenAPI specs as MCP servers from one YAML file, with per-user OAuth and per-operation scopes for fine-grained access control, and tool shaping and dynamic exposure for context efficiency.
 ---
 # openapi-mcp-gateway
 
-Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, or expose an existing FastAPI app the same way. One YAML file runs several APIs in one process, each with its own endpoint and auth, with no code to write.
+Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server from one YAML file, with no code to write. Per-user OAuth and per-operation scopes give fine-grained access control, and tool shaping and dynamic exposure give context efficiency on large APIs. One process runs several APIs, each with its own endpoint and auth.
 
 ```bash
 uvx openapi-mcp-gateway serve \
@@ -35,7 +35,7 @@ Turn raw operations into tools a model uses well, without forking the spec. [Too
 
 ### Security
 
-Decide who may call each endpoint and what reaches the API behind it. Start with [Authorization](guides/authorization.md), then [Scopes](guides/scopes.md). [Security](concepts/security.md) lists the access layers and built-in safeguards.
+Fine-grained access control decides who may call each endpoint, which operations each client may use, and what reaches the API behind it. Start with [Authorization](guides/authorization.md), then [Scopes](guides/scopes.md). [Security](concepts/security.md) lists the access layers and built-in safeguards.
 
 - **Authorization Modes**: from a fixed API key to per-user sign-in and token exchange with your identity provider.
 - **Scopes per Operation**: each client gets only the operations its scopes open, and can ask for more scopes when a call needs them.
@@ -58,7 +58,7 @@ The container image, Redis for several replicas, and a reverse proxy in front ar
 
 ## Evaluation
 
-On Claude Haiku, dynamic exposure completed every benchmark task on 8% of the input tokens of one tool per operation. [Evaluation](evaluation.md) shows the method and full results.
+[Evaluation](evaluation.md) shows how the gateway is measured on benchmark tasks, and the input tokens each exposure style costs.
 
 ## Architecture
 
