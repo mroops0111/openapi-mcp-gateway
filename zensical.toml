@@ -1,11 +1,10 @@
 [project]
 site_name = "openapi-mcp-gateway"
-site_description = "Mount any OpenAPI spec as an MCP server, with per-API auth and tool shaping, from one YAML file."
+site_description = "Mount any OpenAPI spec as an MCP server from one YAML file, with per-user OAuth, per-operation scopes, tool shaping and dynamic exposure for fine-grained access control and context efficiency."
 site_url = "https://mroops0111.github.io/openapi-mcp-gateway/"
 repo_url = "https://github.com/mroops0111/openapi-mcp-gateway"
 repo_name = "mroops0111/openapi-mcp-gateway"
 edit_uri = "edit/master/docs/"
-copyright = "MIT License"
 extra_css = ["stylesheets/brand.css"]
 
 nav = [
@@ -35,6 +34,9 @@ nav = [
   ] },
   { "Evaluation" = "evaluation.md" },
 ]
+
+[project.extra]
+generator = false
 
 [project.theme]
 logo = "assets/icon.svg"

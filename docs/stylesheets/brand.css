@@ -67,3 +67,8 @@
   overflow-wrap: normal;
   white-space: nowrap;
 }
+
+/* The footer's meta bar holds no copyright or generator notice, so the empty strip is hidden. */
+.md-footer-meta {
+  display: none;
+}
