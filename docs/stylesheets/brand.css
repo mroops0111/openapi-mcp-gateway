@@ -1,0 +1,74 @@
+:root, [data-md-color-scheme="default"] {
+  --md-primary-fg-color: #0c8599;
+  --md-primary-fg-color--light: #3ba3b4;
+  --md-primary-fg-color--dark: #08606f;
+  --md-accent-fg-color: #08606f;
+  /* The brand teal reads at 3.9:1 on the paper background, so links take its darker shade for 6.5:1. */
+  --md-typeset-a-color: #08606f;
+  --md-default-bg-color: #f6f2ea;
+  --md-default-fg-color: #1d1c1a;
+  --md-code-bg-color: #ece5d9;
+  /* The theme's 55% black comments read at 4.4:1 on the warm code background, so they take 65% for 6:1. */
+  --md-code-hl-comment-color: rgba(0, 0, 0, 0.65);
+  /* The theme's highlight colors fall under 4.5:1 on the warm code background, so each takes a darker shade. */
+  --md-code-hl-keyword-color: #2f5aa8;
+  --md-code-hl-punctuation-color: rgba(0, 0, 0, 0.65);
+  --md-code-hl-variable-color: rgba(0, 0, 0, 0.65);
+  --md-code-hl-string-color: #16653e;
+  --md-code-hl-special-color: #b0104a;
+  --md-code-hl-constant-color: #5641c4;
+  --md-code-hl-number-color: #b21f1f;
+  --md-code-hl-function-color: #8c3a9c;
+  --md-code-hl-operator-color: rgba(0, 0, 0, 0.65);
+}
+[data-md-color-scheme="slate"],
+[data-md-color-scheme="slate"][data-md-color-primary] {
+  --md-primary-fg-color: #0c8599;
+  --md-accent-fg-color: #3ba3b4;
+  --md-typeset-a-color: #3ba3b4;
+}
+
+/* Tables and callouts default to 0.64rem, which puts their inline code under 11px. */
+.md-typeset table:not([class]),
+.md-typeset .admonition {
+  font-size: 0.7rem;
+}
+
+/* The gateway's column in a comparison table, so it reads as the subject against the alternatives. */
+.md-typeset .comparison table:not([class]) th:nth-child(2),
+.md-typeset .comparison table:not([class]) td:nth-child(2) {
+  background-color: color-mix(in srgb, var(--md-primary-fg-color) 12%, transparent);
+  font-weight: 600;
+}
+
+/* Every page ends with a Related section, set apart as a quiet footer rather than one more body section.
+   Its text is the body color at 70%, which keeps 5.9:1 on the paper background where the theme's lighter gray falls to 3.6:1. */
+.md-typeset h2#related {
+  margin-top: 2.4em;
+  padding-top: 1.2em;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--md-default-fg-color) 70%, transparent);
+}
+.md-typeset h2#related ~ p,
+.md-typeset h2#related ~ ul {
+  font-size: 0.72rem;
+  color: color-mix(in srgb, var(--md-default-fg-color) 70%, transparent);
+}
+.md-typeset h2#related ~ ul li {
+  margin-bottom: 0.2em;
+}
+
+/* Inline code in a table cell breaks only at spaces, so a field name such as required_scopes never splits mid-word.
+   A table wider than the column scrolls inside its own wrapper. */
+.md-typeset table:not([class]) code {
+  word-break: normal;
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+/* The footer's meta bar holds no copyright or generator notice, so the empty strip is hidden. */
+.md-footer-meta {
+  display: none;
+}

@@ -60,6 +60,8 @@ omgw = "openapi_mcp_gateway.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/mroops0111/openapi-mcp-gateway"
+Documentation = "https://mroops0111.github.io/openapi-mcp-gateway/"
+Changelog = "https://github.com/mroops0111/openapi-mcp-gateway/releases"
 Repository = "https://github.com/mroops0111/openapi-mcp-gateway"
 Issues = "https://github.com/mroops0111/openapi-mcp-gateway/issues"
 

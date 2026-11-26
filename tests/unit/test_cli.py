@@ -270,6 +270,20 @@ class TestDryRun:
         assert result.exit_code == 0, result.output
         gateway_run.assert_called_once()
 
+    @pytest.mark.parametrize('extra', [('--dry-run',), ()], ids=['dry-run', 'serve'])
+    def test_a_config_the_schema_refuses_reads_as_invalid(self, tmp_path: pathlib.Path, extra: tuple[str, ...]):
+        """An unknown key fails like any other invalid config, with a message and status 1 rather than a traceback."""
+        config = tmp_path / 'config.yml'
+        config.write_text(yaml.safe_dump({'servers': [{'name': 'pets', 'spec': str(PETSTORE_SPEC), 'polcy': {}}]}))
+
+        result, gateway_run = _run('--config', str(config), *extra)
+
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        assert '✗ Invalid' in result.output
+        assert 'polcy' in result.output
+        gateway_run.assert_not_called()
+
     def test_dry_run_summary_lists_server_details(self):
         """The summary names the server and prints its mount, auth, and exposure."""
         result, _ = _run('--spec', str(PETSTORE_SPEC), '--name', 'pets', '--dry-run')
