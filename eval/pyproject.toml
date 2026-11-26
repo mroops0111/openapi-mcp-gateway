@@ -1,10 +1,10 @@
 [project]
 name = "openapi-mcp-gateway-eval"
-version = "0.8.0"
+version = "1.0.0"
 description = "Benchmarks of what openapi-mcp-gateway does for a model: how search_operations ranks, and how models call tools through it."
 requires-python = ">=3.11"
 dependencies = [
-    "openapi-mcp-gateway[embeddings]==0.8.0",
+    "openapi-mcp-gateway[embeddings]==1.0.0",
     "click>=8.4.0",
     "httpx>=0.28.1",
     "mcp>=2.0.0",
