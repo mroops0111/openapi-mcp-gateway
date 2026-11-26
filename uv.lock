@@ -1264,7 +1264,7 @@ wheels = [
 
 [[package]]
 name = "openapi-mcp-gateway"
-version = "0.8.0"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -1338,7 +1338,7 @@ provides-extras = ["redis", "oidc", "embeddings", "eval", "dev"]
 
 [[package]]
 name = "openapi-mcp-gateway-eval"
-version = "0.8.0"
+version = "1.0.0"
 source = { editable = "eval" }
 dependencies = [
     { name = "click" },

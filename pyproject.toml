@@ -1,6 +1,6 @@
 [project]
 name = "openapi-mcp-gateway"
-version = "0.8.0"
+version = "1.0.0"
 description = "Mount any OpenAPI/Swagger API as an MCP server from one YAML file, with per-user OAuth2, token exchange, and tool shaping that turns raw endpoints into tools an LLM can actually use."
 authors = [
     {name = "Yun-Tai Yang"},
@@ -41,7 +41,7 @@ oidc = ["pyjwt[crypto]>=2.15.1"]
 # Search by meaning, through any embedding model Pydantic AI reaches over HTTP, such as OpenAI's or Ollama's.
 embeddings = ["pydantic-ai-slim[openai]>=2.69.0"]
 # The eval subcommand, which measures what a config gains for a model, released with the gateway at the same version.
-eval = ["openapi-mcp-gateway-eval==0.8.0"]
+eval = ["openapi-mcp-gateway-eval==1.0.0"]
 dev = [
     "pytest>=9.2.0",
     "pytest-asyncio>=1.5.0",
