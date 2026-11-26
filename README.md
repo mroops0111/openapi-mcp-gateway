@@ -16,7 +16,7 @@ With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, on
 uvx openapi-mcp-gateway serve --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
 ```
 
-Then connect any MCP client, such as Claude Code, Cursor or VS Code, to `http://127.0.0.1:8000/petstore/mcp`. [Read the documentation](https://mroops0111.github.io/openapi-mcp-gateway/), or start with [Getting Started](https://mroops0111.github.io/openapi-mcp-gateway/getting-started/).
+Then connect any MCP client, such as Claude Code, Cursor or VS Code, to `http://127.0.0.1:8000/petstore/mcp`. [Getting Started](https://mroops0111.github.io/openapi-mcp-gateway/getting-started/) continues from there to a config file with several APIs.
 
 ## Highlights
 
@@ -36,7 +36,7 @@ Each tool call is authorized, shaped and sent upstream, and its response is resh
 
 ## Documentation
 
-The full documentation lives at [mroops0111.github.io/openapi-mcp-gateway](https://mroops0111.github.io/openapi-mcp-gateway/).
+See the [documentation](https://mroops0111.github.io/openapi-mcp-gateway/) for the full guides, concepts and reference.
 
 - [Getting Started](https://mroops0111.github.io/openapi-mcp-gateway/getting-started/) covers installation, a connected client and a config file
 - [Guides](https://mroops0111.github.io/openapi-mcp-gateway/guides/authoring-with-ai/) covers AI authoring, exposure, tool shaping, authorization, scopes, identity providers, deployment and Python
