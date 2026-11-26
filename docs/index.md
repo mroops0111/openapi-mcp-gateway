@@ -48,6 +48,12 @@ Write a config and check it before you rely on it. [Authoring With AI](guides/au
 - **Dry Run**: validate a config and list what it exposes, without starting a server.
 - **Your Own Tasks**: the `eval` command runs your tasks under your config and reports success and cost.
 
+## Architecture
+
+Each tool call is authorized, shaped and sent upstream, and its response is reshaped on the way back. [Architecture](concepts/architecture.md) describes each step of a call.
+
+![openapi-mcp-gateway architecture. An MCP client calls an MCP endpoint, one per API, which config.yml builds at startup. Each call is authorized first, by its token and then by the scopes the operation needs, getting an upstream token from the API's authorization server or your identity provider when the mode calls for one. The request is shaped by params and JSONata and sent with the upstream credential, over HTTP to a REST API or over ASGI to a FastAPI app in the same process. The response comes back reshaped by JSONata.](assets/architecture-light.svg#only-light) ![openapi-mcp-gateway architecture, as described above.](assets/architecture-dark.svg#only-dark)
+
 ## FastAPI Apps
 
 An app you already run exposes its routes with one decorator, in the same process, as [Python and FastAPI](guides/python.md) shows.
@@ -59,9 +65,3 @@ The container image, Redis for several replicas, and a reverse proxy in front ar
 ## Evaluation
 
 [Evaluation](evaluation.md) shows how the gateway is measured on benchmark tasks, and the input tokens each exposure style costs.
-
-## Architecture
-
-Each tool call is authorized, shaped and sent upstream, and its response is reshaped on the way back. [Architecture](concepts/architecture.md) describes each step of a call.
-
-![openapi-mcp-gateway architecture. An MCP client calls an MCP endpoint, one per API, which config.yml builds at startup. Each call is authorized first, by its token and then by the scopes the operation needs, getting an upstream token from the API's authorization server or your identity provider when the mode calls for one. The request is shaped by params and JSONata and sent with the upstream credential, over HTTP to a REST API or over ASGI to a FastAPI app in the same process. The response comes back reshaped by JSONata.](assets/architecture-light.svg#only-light) ![openapi-mcp-gateway architecture, as described above.](assets/architecture-dark.svg#only-dark)

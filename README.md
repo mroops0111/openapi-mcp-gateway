@@ -22,11 +22,11 @@ Then connect any MCP client, such as Claude Code, Cursor or VS Code, to `http://
 
 Five things set it apart from a server generated once from a spec.
 
-- **Many APIs, One File**: one YAML file mounts several OpenAPI specs side by side, each at its own endpoint with its own auth, with no code to write.
-- **Fine-Grained Access Control**: the gateway signs users in itself or trusts your identity provider, then grants scopes per operation, so each client reaches only the tools its task needs.
-- **Tool Shaping**: rename operations, hide or pin parameters, and rewrite requests and responses with JSONata, without forking the spec.
-- **Large APIs**: a spec with 1,000+ operations goes behind three search tools, and read-only GETs can become resources, so the model's context stays small.
-- **Spec-Compliant Security**: the gateway follows the MCP authorization rules, accepts only tokens minted for each endpoint, and reaches the API with a credential of its own rather than the client's token.
+- **One Gateway for Many APIs**: one YAML file serves several OpenAPI specs, each at its own MCP endpoint with its own auth.
+- **Per-User OAuth**: users sign in to the API through the gateway, or bring a token from your identity provider for the gateway to exchange.
+- **Fine-Grained Access Control**: scopes assigned per operation decide which tools each client can list and call.
+- **Tool Shaping**: rename operations, hide or fix parameters, and rewrite requests and responses with JSONata.
+- **Dynamic Exposure**: an API with 1,000+ operations is served as three tools that search, describe and call them.
 
 ## Architecture
 
