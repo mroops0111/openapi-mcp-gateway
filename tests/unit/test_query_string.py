@@ -3,17 +3,11 @@ import typing
 import pytest
 
 from openapi_mcp_gateway.query_string import (
-    UNDECLARED_QUERY_SERIALIZER,
     QuerySerializer,
-    encode_query,
+    UndeclaredQuerySerializer,
+    encode_query_string,
     query_serializer,
 )
-
-
-def _query(serializer: QuerySerializer | None, value: typing.Any, name: str = 'opt_fields') -> str:
-    """The query string ``serializer`` sends ``value`` as, under the parameter ``name``."""
-    assert serializer is not None
-    return encode_query(serializer.pairs(name, value))
 
 
 class TestFormExploded:
@@ -36,7 +30,7 @@ class TestFormExploded:
     )
     def test_value(self, value, expected):
         """An array repeats the name per item, an object spreads into its own keys, and ``None`` sends nothing."""
-        assert _query(self.serializer, value) == expected
+        assert _query_string(self.serializer, value) == expected
 
 
 class TestFormJoined:
@@ -57,15 +51,15 @@ class TestFormJoined:
     )
     def test_value(self, value, expected):
         """An array or object is one value of comma-separated items, and an empty one sends nothing."""
-        assert _query(self.serializer, value) == expected
+        assert _query_string(self.serializer, value) == expected
 
     def test_comma_inside_an_item_stays_apart_from_the_separators(self):
         """An item's own comma is encoded, so only the commas between items are literal."""
-        assert _query(self.serializer, ['New York, NY', 'Paris']) == 'opt_fields=New%20York%2C%20NY,Paris'
+        assert _query_string(self.serializer, ['New York, NY', 'Paris']) == 'opt_fields=New%20York%2C%20NY,Paris'
 
     def test_nested_value_is_one_json_item(self):
         """A value nested inside an array, which ``form`` leaves undefined, is one item of compact JSON."""
-        assert _query(self.serializer, [{'x': 1, 'y': 2}]) == 'opt_fields=%7B%22x%22%3A1%2C%22y%22%3A2%7D'
+        assert _query_string(self.serializer, [{'x': 1, 'y': 2}]) == 'opt_fields=%7B%22x%22%3A1%2C%22y%22%3A2%7D'
 
 
 class TestUndeclared:
@@ -81,7 +75,7 @@ class TestUndeclared:
     )
     def test_value(self, value, expected):
         """An array repeats the key, and an object keeps its key as one JSON value."""
-        assert _query(UNDECLARED_QUERY_SERIALIZER, value, name='created') == expected
+        assert _query_string(UndeclaredQuerySerializer(), value, name='created') == expected
 
 
 @pytest.mark.parametrize(('style', 'explode'), [('deepObject', True), ('pipeDelimited', False), ('simple', False)])
@@ -92,4 +86,12 @@ def test_unsupported_style_has_no_serializer(style, explode):
 
 def test_name_is_encoded():
     """A name with brackets, as Klaviyo's sparse fieldsets have, is percent-encoded."""
-    assert _query(query_serializer('form', False), ['a', 'b'], name='fields[account]') == 'fields%5Baccount%5D=a,b'
+    assert (
+        _query_string(query_serializer('form', False), ['a', 'b'], name='fields[account]') == 'fields%5Baccount%5D=a,b'
+    )
+
+
+def _query_string(serializer: QuerySerializer | None, value: typing.Any, name: str = 'opt_fields') -> str:
+    """The query string ``serializer`` sends ``value`` as, under the parameter ``name``."""
+    assert serializer is not None
+    return encode_query_string(serializer.pairs(name, value))

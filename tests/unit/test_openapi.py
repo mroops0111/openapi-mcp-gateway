@@ -115,7 +115,7 @@ class TestExpandSchema:
         assert set(result['required']) == {'name', 'owner'}
 
     def test_oneof(self, petstore_spec_raw):
-        """``oneOf`` branches are kept as a list with each branch independently expanded."""
+        """``oneOf`` branches are kept_parameter as a list with each branch independently expanded."""
         defs: dict = {}
         _expand_schema(petstore_spec_raw, component_ref('PetOrError'), defs)
         assert defs['PetOrError']['oneOf'] == [defs_ref('Pet'), defs_ref('Error')]
@@ -607,7 +607,7 @@ class TestQueryStyle:
         )
 
     @staticmethod
-    def _unsendable(name: str, style: str = 'deepObject', **fields: typing.Any) -> dict:
+    def _unsendable_parameter(name: str, style: str = 'deepObject', **fields: typing.Any) -> dict:
         return {'name': name, 'in': 'query', 'style': style, 'schema': {'type': 'object'}, **fields}
 
     @pytest.mark.parametrize(
@@ -616,34 +616,34 @@ class TestQueryStyle:
     def test_query_defaults_to_form_which_explodes(self, declared, explode):
         """A query parameter with no ``style`` is ``form``, which explodes unless the spec says otherwise."""
         parameter = {'name': 'fields', 'in': 'query', 'schema': {'type': 'array'}, **declared}
-        kept = parse_spec(self._operation_spec(parameter)).operations[0].parameters[1]
-        assert (kept.name, kept.style, kept.explode) == ('fields', 'form', explode)
+        kept_parameter = parse_spec(self._operation_spec(parameter)).operations[0].parameters[1]
+        assert (kept_parameter.name, kept_parameter.style, kept_parameter.explode) == ('fields', 'form', explode)
 
     @pytest.mark.parametrize('location', ['path', 'header'])
     def test_path_and_header_default_to_simple_which_does_not_explode(self, location):
         """``simple``, the path and header default, has ``explode`` false."""
         parameter = {'name': 'ids', 'in': location, 'required': True, 'schema': {'type': 'array'}}
-        kept = parse_spec(self._operation_spec(parameter)).operations[0].parameters[1]
-        assert (kept.style, kept.explode) == ('simple', False)
+        kept_parameter = parse_spec(self._operation_spec(parameter)).operations[0].parameters[1]
+        assert (kept_parameter.style, kept_parameter.explode) == ('simple', False)
 
     @pytest.mark.parametrize(
         'parameter',
         [
-            _unsendable('filter', 'deepObject'),
-            _unsendable('filter', 'pipeDelimited'),
+            _unsendable_parameter('filter', 'deepObject'),
+            _unsendable_parameter('filter', 'pipeDelimited'),
             {'name': 'filter', 'in': 'query', 'content': {'application/json': {'schema': {'type': 'object'}}}},
         ],
     )
     def test_optional_unsendable_parameter_is_left_out(self, parameter):
         """An optional parameter in a style the gateway cannot send is left out, and the operation keeps the rest."""
         operation = parse_spec(self._operation_spec(parameter)).operations[0]
-        assert [kept.name for kept in operation.parameters] == ['id']
+        assert [kept_parameter.name for kept_parameter in operation.parameters] == ['id']
         assert operation.unsendable_query_parameters == ['filter']
 
     def test_required_unsendable_parameter_skips_the_operation(self, caplog):
         """A required parameter the gateway cannot send would fail every call, so its operation is skipped by name."""
         raw = combined_spec(
-            self._operation_spec(self._unsendable('created', required=True)),
+            self._operation_spec(self._unsendable_parameter('created', required=True)),
             self._operation_spec(operation_id='listRefunds', path='/refunds'),
         )
         assert [operation.operation_id for operation in parse_spec(raw).operations] == ['listRefunds']
@@ -654,9 +654,9 @@ class TestQueryStyle:
     def test_left_out_parameters_are_reported_once_per_spec(self, caplog):
         """Every optional parameter left out of a spec is counted in one warning, by what stops it."""
         parameters = (
-            self._unsendable('expand'),
-            self._unsendable('created'),
-            self._unsendable('tags', 'pipeDelimited'),
+            self._unsendable_parameter('expand'),
+            self._unsendable_parameter('created'),
+            self._unsendable_parameter('tags', 'pipeDelimited'),
         )
         raw = combined_spec(
             self._operation_spec(*parameters),
@@ -808,7 +808,7 @@ class TestResponseMedia:
         assert self._found(operation_spec(response=response, schemas=schemas), {'logo': 'l'}) == {'logo': 'image/png'}
 
     def test_a_reference_only_to_an_alias_keeps_nothing(self):
-        """A component kept only for the type it names leads nowhere, so a response of it alone has no media."""
+        """A component kept_parameter only for the type it names leads nowhere, so a response of it alone has no media."""
         schemas = {
             'Logo': {'type': 'object', 'properties': {'logo': {**component_ref('Typed'), 'contentEncoding': 'base64'}}},
             'Typed': component_ref('Png'),

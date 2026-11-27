@@ -5,6 +5,11 @@ import typing
 import urllib.parse
 
 
+# The serializers the gateway supports, by style and explode, each added by its subclass as it is defined.
+# A style missing here is one the gateway cannot send, so the parser leaves its parameters out.
+_QUERY_SERIALIZERS: dict[tuple[str, bool], 'QuerySerializer'] = {}
+
+
 @dataclasses.dataclass(frozen=True)
 class QueryPair:
     """One ``name=value`` of a query string, whose value a serializer has already percent-encoded.
@@ -23,8 +28,19 @@ class QueryPair:
 class QuerySerializer(abc.ABC):
     """How one query parameter's value becomes the pairs of a query string (OpenAPI 3.1.1 §4.8.12.4).
 
+    A subclass that declares ``style`` and ``explode`` in its own body serves parameters of that shape,
+    and one that declares neither, such as :class:`UndeclaredQuerySerializer`, serves none.
     An empty array or object sends nothing, and neither does a ``None`` item, as RFC 6570 leaves them undefined.
     """
+
+    style: typing.ClassVar[str]
+    explode: typing.ClassVar[bool]
+
+    def __init_subclass__(cls, **kwargs: typing.Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # Read from the subclass's own body, so a subclass of a supported serializer does not replace it.
+        if 'style' in cls.__dict__:
+            _QUERY_SERIALIZERS[(cls.style, cls.explode)] = cls()
 
     @abc.abstractmethod
     def pairs(self, name: str, value: typing.Any) -> list[QueryPair]:
@@ -36,6 +52,9 @@ class FormExplodedQuerySerializer(QuerySerializer):
 
     An array repeats ``name`` for each item, and an object spreads into its own property names.
     """
+
+    style = 'form'
+    explode = True
 
     def pairs(self, name: str, value: typing.Any) -> list[QueryPair]:
         if isinstance(value, list):
@@ -51,6 +70,9 @@ class FormJoinedQuerySerializer(QuerySerializer):
     An array becomes one value of comma-separated items, and an object one value of alternating names and values.
     Each item is encoded before the join, so a comma inside an item stays apart from the commas between them.
     """
+
+    style = 'form'
+    explode = False
 
     def pairs(self, name: str, value: typing.Any) -> list[QueryPair]:
         if isinstance(value, list):
@@ -81,20 +103,9 @@ def query_serializer(style: str, explode: bool) -> QuerySerializer | None:
     return _QUERY_SERIALIZERS.get((style, explode))
 
 
-def encode_query(pairs: typing.Iterable[QueryPair]) -> str:
+def encode_query_string(pairs: typing.Iterable[QueryPair]) -> str:
     """Join ``pairs`` into a query string, without the leading ``?``."""
     return '&'.join(pair.encode() for pair in pairs)
-
-
-# The serializer of every key a request expression adds that no query parameter declares.
-UNDECLARED_QUERY_SERIALIZER = UndeclaredQuerySerializer()
-
-# The serializers the gateway supports, by style and explode.
-# A style missing here is one the gateway cannot send, so the parser leaves its parameters out.
-_QUERY_SERIALIZERS: dict[tuple[str, bool], QuerySerializer] = {
-    ('form', True): FormExplodedQuerySerializer(),
-    ('form', False): FormJoinedQuerySerializer(),
-}
 
 
 def _encoded_text(value: typing.Any) -> str:

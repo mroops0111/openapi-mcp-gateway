@@ -77,11 +77,11 @@ class UpstreamHttpClient:
         self,
         method: str,
         path: str,
-        query: str = '',
+        query_string: str = '',
         data: dict[str, typing.Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> dict[str, typing.Any] | UpstreamBinaryBody:
-        """Send ``method`` to ``path`` with the already encoded ``query`` string, and return the decoded body.
+        """Send ``method`` to ``path`` with the already encoded ``query_string``, and return the decoded body.
 
         Returns decoded JSON for ``application/json`` responses, ``{'status': code}`` for empty 204 responses,
         ``{'data': text}`` for any other body that is text, or a ``UpstreamBinaryBody`` for one that is not.
@@ -95,7 +95,7 @@ class UpstreamHttpClient:
 
         logger.debug('Upstream request: %s %s', method.upper(), path)
         # A URL built with its query leaves the query's encoding as it is, so the comma a serializer kept stays one.
-        url = httpx.URL(path, query=query.encode()) if query else path
+        url = httpx.URL(path, query=query_string.encode()) if query_string else path
         response = await self._client.request(method.upper(), url, **request_kwargs)
         if response.is_error:
             logger.warning(
