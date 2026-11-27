@@ -610,13 +610,35 @@ class TestQueryStyle:
         operation = parse_spec(self._spec(parameter)).operations[0]
         assert operation.parameters[1].explode is explode
 
+    @pytest.mark.parametrize('location', ['path', 'header'])
+    def test_simple_style_does_not_explode_by_default(self, location):
+        """``simple``, the path and header default, has ``explode`` false."""
+        parameter = {'name': 'ids', 'in': location, 'required': True, 'schema': {'type': 'array'}}
+        operation = parse_spec(self._spec(parameter)).operations[0]
+        assert operation.parameters[1].explode is False
+
     @pytest.mark.parametrize('style', ['deepObject', 'spaceDelimited', 'pipeDelimited'])
-    def test_other_style_drops_only_that_parameter(self, caplog, style):
+    def test_other_style_drops_only_that_parameter(self, style):
         """A query parameter in a style the gateway cannot send is left out, and the operation keeps the rest."""
         parameter = {'name': 'filter', 'in': 'query', 'style': style, 'schema': {'type': 'object'}}
         operation = parse_spec(self._spec(parameter)).operations[0]
         assert [parameter.name for parameter in operation.parameters] == ['id']
-        assert style in caplog.text
+
+    def test_left_out_parameters_are_reported_once_per_spec(self, caplog):
+        """Every parameter left out of a spec is counted in one warning, by style."""
+        raw = operation_spec(method='get', path='/charges')
+        operation = raw['paths']['/charges']['get']
+        operation['parameters'] = [
+            {'name': 'expand', 'in': 'query', 'style': 'deepObject', 'schema': {'type': 'array'}},
+            {'name': 'created', 'in': 'query', 'style': 'deepObject', 'schema': {'type': 'object'}},
+            {'name': 'tags', 'in': 'query', 'style': 'pipeDelimited', 'schema': {'type': 'array'}},
+        ]
+        raw['paths']['/refunds'] = {'get': {**operation, 'operationId': 'listRefunds'}}
+        parse_spec(raw)
+        warnings = [record.getMessage() for record in caplog.records if 'form style' in record.getMessage()]
+        assert len(warnings) == 1
+        assert 'Left out 6 query parameters in 2 operations' in warnings[0]
+        assert 'deepObject (4), pipeDelimited (2)' in warnings[0]
 
 
 class TestResponseMedia:

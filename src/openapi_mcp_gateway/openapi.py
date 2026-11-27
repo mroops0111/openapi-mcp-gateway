@@ -62,9 +62,9 @@ class ParameterInfo(pydantic.BaseModel):
     required: bool = False
     description: str = ''
     schema_: dict[str, typing.Any] = pydantic.Field(default_factory=dict, alias='schema')
-    # Whether a query array is sent as one key per item and a query object as one key per property,
+    # Whether an array is sent as one key per item and an object as one key per property,
     # rather than as one comma-separated value (OpenAPI 3.1.1 §4.8.12.4).
-    # Only the ``form`` style is supported, so the spec's default for it applies.
+    # Only a query parameter reads it, and the gateway sends a query parameter only in the ``form`` style.
     explode: bool = True
     # Set by shape_operation from a ParamOverride default.
     # Marks a default the author wants sent upstream even when the LLM omits the parameter.
@@ -960,6 +960,9 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
     # Every component expanded so far, shared by all operations so each is expanded once.
     defs: dict[str, dict[str, typing.Any]] = {}
     response_media = _ResponseMediaBuilder(raw)
+    # Query parameters left out because the gateway cannot send their style, counted by style.
+    unsupported_styles: collections.Counter[str] = collections.Counter()
+    operations_with_unsupported_style: set[tuple[str, str]] = set()
 
     for path, path_item in raw.get('paths', {}).items():
         if not isinstance(path_item, dict):
@@ -993,13 +996,8 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                 style = param.get('style', 'form')
                 if param.get('in', 'query') == 'query' and style != 'form':
                     # The parameter cannot be sent in the shape the spec asks for, so the tool goes without it.
-                    logger.warning(
-                        'Skipping the query parameter %s on %s %s: only the form style is supported, not %s',
-                        param['name'],
-                        method,
-                        path,
-                        style,
-                    )
+                    unsupported_styles[style] += 1
+                    operations_with_unsupported_style.add((method, path))
                     continue
                 param_schema = _expand_schema(raw, param.get('schema', {}), defs)
                 params.append(
@@ -1009,7 +1007,8 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                         required=param.get('required', False),
                         description=param.get('description', ''),
                         schema=param_schema,
-                        explode=param.get('explode', True),
+                        # ``form`` explodes by default, and ``simple``, the path and header default, does not.
+                        explode=param.get('explode', param.get('in', 'query') in ('query', 'cookie')),
                     )
                 )
 
@@ -1052,6 +1051,15 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                     response_media=response_media.build(_success_response_schema(raw, operation)),
                 )
             )
+
+    if unsupported_styles:
+        logger.warning(
+            'Left out %d query parameters in %d operations of "%s", since only the form style is supported: %s',
+            unsupported_styles.total(),
+            len(operations_with_unsupported_style),
+            info.get('title', ''),
+            ', '.join(f'{style} ({count})' for style, count in unsupported_styles.most_common()),
+        )
 
     return OpenAPISpec(
         title=info.get('title', ''),

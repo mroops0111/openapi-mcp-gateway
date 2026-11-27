@@ -87,8 +87,6 @@ class UpstreamOperationCall:
         path_parameters, query_parameters, header_parameters, body_parameters = _split_by_location(operation.parameters)
         self._path_parameters = _parameters_keyed_by_sanitised_name(path_parameters)
         self._query_parameters = _parameters_keyed_by_sanitised_name(query_parameters)
-        # A ``request`` expression names query parameters by their spec name.
-        self._query_parameters_by_spec_name = {parameter.name: parameter for parameter in query_parameters}
         self._header_parameters = _parameters_keyed_by_sanitised_name(header_parameters)
         self._body_parameters = _parameters_keyed_by_sanitised_name(body_parameters)
         self._injected_defaults = {
@@ -192,7 +190,7 @@ class UpstreamOperationCall:
         """
         pairs: list[tuple[str, str]] = []
         for name, value in _to_jsonable(query).items():
-            parameter = self._query_parameters_by_spec_name.get(name)
+            parameter = self._query_parameters.get(_sanitize_name(name))
             pairs.extend(_form_query_pairs(name, value, explode=parameter.explode if parameter else True))
         return pairs
 
