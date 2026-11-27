@@ -593,6 +593,31 @@ class TestUnnamedParameters:
         assert 'no name' in caplog.text
 
 
+class TestQueryStyle:
+    """How a query parameter spreads an array or object into the query string, per OpenAPI 3.1.1 §4.8.12.2.2."""
+
+    @staticmethod
+    def _spec(parameter: dict) -> dict:
+        return operation_spec(
+            method='get',
+            parameters=[{'name': 'id', 'in': 'query', 'schema': {'type': 'string'}}, parameter],
+        )
+
+    @pytest.mark.parametrize(('declared', 'explode'), [({}, True), ({'explode': False}, False)])
+    def test_form_explode_is_kept_with_its_default(self, declared, explode):
+        """``form`` is the query default, and its ``explode`` defaults to true."""
+        parameter = {'name': 'fields', 'in': 'query', 'style': 'form', 'schema': {'type': 'array'}, **declared}
+        operation = parse_spec(self._spec(parameter)).operations[0]
+        assert operation.parameters[1].explode is explode
+
+    @pytest.mark.parametrize('style', ['deepObject', 'spaceDelimited', 'pipeDelimited'])
+    def test_other_style_skips_the_operation(self, caplog, style):
+        """An operation with a query style the gateway cannot send is left out, with a warning naming it."""
+        parameter = {'name': 'filter', 'in': 'query', 'style': style, 'schema': {'type': 'object'}}
+        assert parse_spec(self._spec(parameter)).operations == []
+        assert style in caplog.text
+
+
 class TestResponseMedia:
     """Fields the success response declares as ``contentEncoding: base64`` are found in each response at call time."""
 

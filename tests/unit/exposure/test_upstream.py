@@ -462,3 +462,63 @@ class TestHeaders:
         await tool.run({}, context=stub_context())
         assert captured['headers']['x-team'] == 'wren'
         assert captured['headers']['api-version'] == '2026-03-11'
+
+
+class TestQuerySerialization:
+    """Query arrays and objects reach the upstream in the ``form`` shape their ``explode`` asks for."""
+
+    @staticmethod
+    async def _sent_query(mock_upstream, parameter: ParameterInfo, value: typing.Any, request: str | None = None):
+        """Call a tool whose one query parameter is ``parameter`` and return the raw query string it sent."""
+        captured: dict = {}
+
+        def handler(sent: httpx.Request) -> httpx.Response:
+            captured['query'] = sent.url.query.decode()
+            return httpx.Response(200, json={})
+
+        mock_upstream(handler)
+        operation = shaped_operation([parameter], request=request)
+        result = await register_tool(operation).run({parameter.name: value}, context=stub_context())
+        assert result.is_error is False
+        return captured['query']
+
+    @pytest.mark.parametrize(
+        ('explode', 'expected'),
+        [(False, 'opt_fields=name%2Cdue_on'), (True, 'opt_fields=name&opt_fields=due_on')],
+    )
+    async def test_array_follows_explode(self, mock_upstream, explode, expected):
+        """An array is one comma-separated value without explode, and one key per item with it."""
+        parameter = ParameterInfo(
+            name='opt_fields',
+            location='query',
+            explode=explode,
+            schema={'type': 'array', 'items': {'type': 'string'}},
+        )
+        assert await self._sent_query(mock_upstream, parameter, ['name', 'due_on']) == expected
+
+    @pytest.mark.parametrize(
+        ('explode', 'expected'),
+        [(False, 'filter=color%2Cred%2Cdone%2Ctrue'), (True, 'color=red&done=true')],
+    )
+    async def test_object_follows_explode(self, mock_upstream, explode, expected):
+        """An object is spread into its own keys with explode, and alternates names and values without it."""
+        parameter = ParameterInfo(
+            name='filter',
+            location='query',
+            explode=explode,
+            schema={'type': 'object', 'properties': {'color': {'type': 'string'}, 'done': {'type': 'boolean'}}},
+        )
+        assert await self._sent_query(mock_upstream, parameter, {'color': 'red', 'done': True}) == expected
+
+    async def test_request_expression_result_follows_the_parameter_it_names(self, mock_upstream):
+        """A ``request`` result key naming a query parameter is serialised as that parameter declares."""
+        parameter = ParameterInfo(
+            name='opt_fields',
+            location='query',
+            explode=False,
+            schema={'type': 'array', 'items': {'type': 'string'}},
+        )
+        query = await self._sent_query(
+            mock_upstream, parameter, ['name'], request='{"opt_fields": [opt_fields, "gid"]}'
+        )
+        assert query == 'opt_fields=name%2Cgid'

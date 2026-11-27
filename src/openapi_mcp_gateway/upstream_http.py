@@ -77,7 +77,7 @@ class UpstreamHttpClient:
         self,
         method: str,
         path: str,
-        params: dict[str, typing.Any] | None = None,
+        params: list[tuple[str, str]] | None = None,
         data: dict[str, typing.Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> dict[str, typing.Any] | UpstreamBinaryBody:

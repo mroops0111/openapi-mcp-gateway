@@ -87,6 +87,8 @@ class UpstreamOperationCall:
         path_parameters, query_parameters, header_parameters, body_parameters = _split_by_location(operation.parameters)
         self._path_parameters = _parameters_keyed_by_sanitised_name(path_parameters)
         self._query_parameters = _parameters_keyed_by_sanitised_name(query_parameters)
+        # A ``request`` expression names query parameters by their spec name.
+        self._query_parameters_by_spec_name = {parameter.name: parameter for parameter in query_parameters}
         self._header_parameters = _parameters_keyed_by_sanitised_name(header_parameters)
         self._body_parameters = _parameters_keyed_by_sanitised_name(body_parameters)
         self._injected_defaults = {
@@ -166,7 +168,7 @@ class UpstreamOperationCall:
             path, query, headers, body = _route_upstream_object(
                 upstream_object or {}, self._path, self._method, self._header_parameters
             )
-            return _UpstreamRequest(path, query, headers, body)
+            return _UpstreamRequest(path, self._serialise_query(query), headers, body)
         path = self._path
         for parameter_name, parameter in self._path_parameters.items():
             value = arguments.get(parameter_name)
@@ -178,10 +180,21 @@ class UpstreamOperationCall:
         }
         return _UpstreamRequest(
             path=path,
-            query=_kwargs_to_upstream_arguments(arguments, self._query_parameters),
+            query=self._serialise_query(_kwargs_to_upstream_arguments(arguments, self._query_parameters)),
             headers=headers,
             body=_to_jsonable(_kwargs_to_upstream_arguments(arguments, self._body_parameters)),
         )
+
+    def _serialise_query(self, query: dict[str, typing.Any]) -> list[tuple[str, str]]:
+        """Turn query arguments keyed by spec name into the pairs the query string carries.
+
+        A key no query parameter declares, which only a ``request`` expression can produce, keeps the ``form`` default.
+        """
+        pairs: list[tuple[str, str]] = []
+        for name, value in _to_jsonable(query).items():
+            parameter = self._query_parameters_by_spec_name.get(name)
+            pairs.extend(_form_query_pairs(name, value, explode=parameter.explode if parameter else True))
+        return pairs
 
     async def _send(self, context: Context, request: '_UpstreamRequest') -> typing.Any:
         connection = self._connection
@@ -358,6 +371,35 @@ def _kwargs_to_upstream_arguments(
     }
 
 
+def _form_query_pairs(name: str, value: typing.Any, *, explode: bool) -> list[tuple[str, str]]:
+    """Serialise one query value in the ``form`` style (OpenAPI 3.1.1 §4.8.12.4).
+
+    With ``explode``, an array repeats ``name`` for each item and an object spreads into its own property names.
+    Without it, either becomes one comma-separated value, an object's names alternating with their values.
+    """
+    if isinstance(value, list):
+        items = [_query_text(item) for item in value if item is not None]
+        return [(name, item) for item in items] if explode else [(name, ','.join(items))]
+    if isinstance(value, dict):
+        fields = [(key, _query_text(item)) for key, item in value.items() if item is not None]
+        if explode:
+            return fields
+        return [(name, ','.join(text for field in fields for text in field))]
+    return [(name, _query_text(value))]
+
+
+def _query_text(value: typing.Any) -> str:
+    """Render one query item as text, with JSON's ``true`` and ``false`` for booleans.
+
+    The ``form`` style leaves a value nested inside an array or object undefined, so it is sent as JSON.
+    """
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, separators=(',', ':'))
+    return str(value)
+
+
 def _route_upstream_object(
     upstream_object: dict[str, typing.Any],
     path: str,
@@ -417,6 +459,6 @@ class _UpstreamRequest:
     """One upstream request, built from a call's arguments and ready to send."""
 
     path: str
-    query: dict[str, typing.Any]
+    query: list[tuple[str, str]]
     headers: dict[str, str]
     body: typing.Any
