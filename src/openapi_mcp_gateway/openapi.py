@@ -716,18 +716,6 @@ def _declares_object_properties(schema: dict[str, typing.Any]) -> bool:
     return schema_type == 'object'
 
 
-def _unsupported_query_style(params: list[dict[str, typing.Any]]) -> tuple[str, str] | None:
-    """Return the name and style of the first query parameter whose style is not ``form``, or ``None``.
-
-    ``form`` is the query default (OpenAPI 3.1.1 §4.8.12.2.2), so a parameter with no ``style`` counts as one.
-    """
-    for param in params:
-        style = param.get('style', 'form')
-        if param.get('in', 'query') == 'query' and style != 'form':
-            return param.get('name', ''), style
-    return None
-
-
 def _success_response_schema(raw: dict[str, typing.Any], operation: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Return the JSON schema of the operation's first ``2xx`` response, or ``{}`` when it declares none."""
     # A YAML spec can key a status as an integer, so every key is read as the string the spec means.
@@ -989,20 +977,9 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
             # Operation-level parameters override path-level (OpenAPI 3.0 §4.7.9.2).
             params: list[ParameterInfo] = []
             seen_params: set[str] = set()
-            declared_params = [
-                _resolve_ref(raw, param['$ref']) if '$ref' in param else param
-                for param in operation.get('parameters', []) + path_item.get('parameters', [])
-            ]
-            unsupported_style = _unsupported_query_style(declared_params)
-            if unsupported_style is not None:
-                logger.warning(
-                    'Skipping %s %s: its query parameter %s uses the %s style, and only form is supported',
-                    method.upper(),
-                    path,
-                    *unsupported_style,
-                )
-                continue
-            for param in declared_params:
+            for param in operation.get('parameters', []) + path_item.get('parameters', []):
+                if '$ref' in param:
+                    param = _resolve_ref(raw, param['$ref'])
                 if not param.get('name'):
                     # A parameter with no name cannot be sent, and would otherwise break the tool's signature.
                     logger.warning(
@@ -1013,6 +990,17 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                 if param_key in seen_params:
                     continue
                 seen_params.add(param_key)
+                style = param.get('style', 'form')
+                if param.get('in', 'query') == 'query' and style != 'form':
+                    # The parameter cannot be sent in the shape the spec asks for, so the tool goes without it.
+                    logger.warning(
+                        'Skipping the query parameter %s on %s %s: only the form style is supported, not %s',
+                        param['name'],
+                        method,
+                        path,
+                        style,
+                    )
+                    continue
                 param_schema = _expand_schema(raw, param.get('schema', {}), defs)
                 params.append(
                     ParameterInfo(

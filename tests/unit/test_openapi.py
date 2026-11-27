@@ -611,10 +611,11 @@ class TestQueryStyle:
         assert operation.parameters[1].explode is explode
 
     @pytest.mark.parametrize('style', ['deepObject', 'spaceDelimited', 'pipeDelimited'])
-    def test_other_style_skips_the_operation(self, caplog, style):
-        """An operation with a query style the gateway cannot send is left out, with a warning naming it."""
+    def test_other_style_drops_only_that_parameter(self, caplog, style):
+        """A query parameter in a style the gateway cannot send is left out, and the operation keeps the rest."""
         parameter = {'name': 'filter', 'in': 'query', 'style': style, 'schema': {'type': 'object'}}
-        assert parse_spec(self._spec(parameter)).operations == []
+        operation = parse_spec(self._spec(parameter)).operations[0]
+        assert [parameter.name for parameter in operation.parameters] == ['id']
         assert style in caplog.text
 
 
