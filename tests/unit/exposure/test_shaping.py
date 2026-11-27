@@ -254,6 +254,17 @@ class TestStrategy:
         with pytest.raises(ValueError, match='replace'):
             shape_operation(op)
 
+    def test_merge_skips_a_tweak_of_a_left_out_parameter(self, caplog):
+        """Under merge, a tweak naming a parameter the gateway left out is skipped with a warning, not rejected."""
+        op = shaped_operation(
+            [ParameterInfo(name='keep', location='query', schema={'type': 'string'})],
+            params={'expand': {'hidden': True}},
+            params_strategy='merge',
+            unsendable_query_parameters=['expand'],
+        )
+        assert [parameter.name for parameter in shape_operation(op).parameters] == ['keep']
+        assert "['expand']" in caplog.text
+
     def test_replace_drops_undeclared_spec_params(self):
         """Under replace, every spec parameter the override does not declare is dropped."""
         op = shaped_operation(

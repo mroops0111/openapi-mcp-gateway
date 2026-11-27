@@ -153,7 +153,11 @@ class MetaToolGenerator:
                     tags=shaped_operation.tags,
                     input_schema=input_schema,
                     callable_=build_tool_function(
-                        shaped_operation, self.connection, input_schema=input_schema, attach_signature=False
+                        shaped_operation,
+                        self.connection,
+                        input_schema=input_schema,
+                        attach_signature=False,
+                        spec_operation=operation,
                     ),
                 )
             )

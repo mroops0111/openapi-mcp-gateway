@@ -15,6 +15,7 @@ from ..auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
 )
 from ..openapi import OperationInfo, ParameterInfo
+from ..query_string import UNDECLARED_QUERY_SERIALIZER, QueryPair, QuerySerializer, encode_query
 from ..upstream_http import UpstreamBinaryBody, UpstreamSharedHttpClient
 from ._content import binary_content
 from ._media import MediaPromoter
@@ -70,6 +71,9 @@ class UpstreamOperationCall:
 
     A call takes the sanitised parameter names as keyword arguments,
     plus ``ctx`` for the MCPServer-injected :class:`Context`.
+
+    ``spec_operation`` is the operation as the spec declares it, before shaping, and defaults to ``operation``.
+    The query string follows its parameters, since shaping changes what the LLM sees, not what the upstream takes.
     """
 
     def __init__(
@@ -79,6 +83,7 @@ class UpstreamOperationCall:
         *,
         input_schema: dict[str, typing.Any] | None = None,
         sign_in_policy: UpstreamSignInPolicy = NO_SIGN_IN_POLICY,
+        spec_operation: OperationInfo | None = None,
     ) -> None:
         self._connection = connection
         self._sign_in_policy = sign_in_policy
@@ -89,6 +94,17 @@ class UpstreamOperationCall:
         self._query_parameters = _parameters_keyed_by_sanitised_name(query_parameters)
         self._header_parameters = _parameters_keyed_by_sanitised_name(header_parameters)
         self._body_parameters = _parameters_keyed_by_sanitised_name(body_parameters)
+        _, spec_query_parameters, _, _ = _split_by_location((spec_operation or operation).parameters)
+        # How each query parameter is sent, by spec name.
+        self._query_serializers: dict[str, QuerySerializer] = {
+            parameter.name: serializer
+            for parameter in spec_query_parameters
+            if (serializer := parameter.query_serializer) is not None
+        }
+        # The spec name of each header and query parameter, under its spec name and its sanitised name,
+        # since a ``request`` expression may name it by either.
+        self._header_names = _spec_names_by_either_name(header_parameters)
+        self._query_names = _spec_names_by_either_name(spec_query_parameters)
         self._injected_defaults = {
             _sanitize_name(parameter.name): parameter.schema_['default']
             for parameter in operation.parameters
@@ -156,7 +172,7 @@ class UpstreamOperationCall:
         return {**kwargs, **missing}
 
     def _build_request(self, arguments: dict[str, typing.Any]) -> '_UpstreamRequest | CallToolResult':
-        """Build the upstream request, or return the error result of a failed ``request`` transform."""
+        """Build the upstream request, or the error result of a failed ``request`` transform or query."""
         if self._request_transform is not None:
             provided = _to_jsonable({name: value for name, value in arguments.items() if value is not None})
             try:
@@ -164,9 +180,12 @@ class UpstreamOperationCall:
             except TransformError as error:
                 return _build_transform_error_result('request', error)
             path, query, headers, body = _route_upstream_object(
-                upstream_object or {}, self._path, self._method, self._header_parameters
+                upstream_object or {}, self._path, self._method, self._header_names, self._query_names
             )
-            return _UpstreamRequest(path, self._serialise_query(query), headers, body)
+            query_string = self._encode_query(query)
+            if isinstance(query_string, CallToolResult):
+                return query_string
+            return _UpstreamRequest(path, query_string, headers, body)
         path = self._path
         for parameter_name, parameter in self._path_parameters.items():
             value = arguments.get(parameter_name)
@@ -176,23 +195,32 @@ class UpstreamOperationCall:
             name: str(value)
             for name, value in _kwargs_to_upstream_arguments(arguments, self._header_parameters).items()
         }
+        query_string = self._encode_query(_kwargs_to_upstream_arguments(arguments, self._query_parameters))
+        if isinstance(query_string, CallToolResult):
+            return query_string
         return _UpstreamRequest(
             path=path,
-            query=self._serialise_query(_kwargs_to_upstream_arguments(arguments, self._query_parameters)),
+            query=query_string,
             headers=headers,
             body=_to_jsonable(_kwargs_to_upstream_arguments(arguments, self._body_parameters)),
         )
 
-    def _serialise_query(self, query: dict[str, typing.Any]) -> list[tuple[str, str]]:
-        """Turn query arguments keyed by spec name into the pairs the query string carries.
+    def _encode_query(self, query: dict[str, typing.Any]) -> str | CallToolResult:
+        """Encode query arguments keyed by spec name as the query string, without the leading ``?``.
 
-        A key no query parameter declares, which only a ``request`` expression can produce, keeps the ``form`` default.
+        An exploded object spreads into its own property names,
+        so one that names another query parameter is refused rather than allowed to override it.
         """
-        pairs: list[tuple[str, str]] = []
+        pairs: list[QueryPair] = []
+        overriding: list[str] = []
         for name, value in _to_jsonable(query).items():
-            parameter = self._query_parameters.get(_sanitize_name(name))
-            pairs.extend(_form_query_pairs(name, value, explode=parameter.explode if parameter else True))
-        return pairs
+            for pair in self._query_serializers.get(name, UNDECLARED_QUERY_SERIALIZER).pairs(name, value):
+                if pair.name != name and pair.name in self._query_serializers:
+                    overriding.append(f'{name}.{pair.name}')
+                pairs.append(pair)
+        if overriding:
+            return _build_query_override_error_result(overriding)
+        return encode_query(pairs)
 
     async def _send(self, context: Context, request: '_UpstreamRequest') -> typing.Any:
         connection = self._connection
@@ -205,7 +233,7 @@ class UpstreamOperationCall:
         headers = {**connection.headers, **_trace_context_headers(context), **auth_headers, **request.headers}
         # The client is shared by every call to this server, so every header, auth included, rides on the request.
         return await connection.client.get().request(
-            self._method, request.path, params=request.query or None, data=request.body or None, headers=headers
+            self._method, request.path, query=request.query, data=request.body or None, headers=headers
         )
 
     def _shape(self, body: typing.Any, request: '_UpstreamRequest') -> CallToolResult:
@@ -331,6 +359,18 @@ def _build_transform_error_result(stage: str, error: TransformError) -> CallTool
     )
 
 
+def _build_query_override_error_result(overriding: list[str]) -> CallToolResult:
+    """Wrap object properties that would override other query parameters as an ``is_error`` result.
+
+    ``overriding`` names each as ``parameter.property``, raised before any upstream call.
+    """
+    message = (
+        'These object properties are sent as query parameters of their own, '
+        f'and would override the parameters they name: {", ".join(overriding)}'
+    )
+    return CallToolResult(content=[TextContent(type='text', text=message)], structured_content=None, is_error=True)
+
+
 def _parameters_keyed_by_sanitised_name(parameters: list[ParameterInfo]) -> dict[str, ParameterInfo]:
     """Build a lookup from sanitised parameter name to the original :class:`ParameterInfo`."""
     return {_sanitize_name(parameter.name): parameter for parameter in parameters}
@@ -369,54 +409,27 @@ def _kwargs_to_upstream_arguments(
     }
 
 
-def _form_query_pairs(name: str, value: typing.Any, *, explode: bool) -> list[tuple[str, str]]:
-    """Serialise one query value in the ``form`` style (OpenAPI 3.1.1 §4.8.12.4).
-
-    With ``explode``, an array repeats ``name`` for each item and an object spreads into its own property names.
-    Without it, either becomes one comma-separated value, an object's names alternating with their values.
-    """
-    if isinstance(value, list):
-        items = [_query_text(item) for item in value if item is not None]
-        return [(name, item) for item in items] if explode else [(name, ','.join(items))]
-    if isinstance(value, dict):
-        fields = [(key, _query_text(item)) for key, item in value.items() if item is not None]
-        if explode:
-            return fields
-        return [(name, ','.join(text for field in fields for text in field))]
-    return [(name, _query_text(value))]
-
-
-def _query_text(value: typing.Any) -> str:
-    """Render one query item as text, with JSON's ``true`` and ``false`` for booleans.
-
-    The ``form`` style leaves a value nested inside an array or object undefined, so it is sent as JSON.
-    """
-    if isinstance(value, bool):
-        return 'true' if value else 'false'
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, separators=(',', ':'))
-    return str(value)
+def _spec_names_by_either_name(parameters: list[ParameterInfo]) -> dict[str, str]:
+    """Map each parameter's spec name and sanitised name to its spec name."""
+    return {key: parameter.name for parameter in parameters for key in (_sanitize_name(parameter.name), parameter.name)}
 
 
 def _route_upstream_object(
     upstream_object: dict[str, typing.Any],
     path: str,
     method: str,
-    header_parameters_by_name: dict[str, ParameterInfo],
+    header_names: dict[str, str],
+    query_names: dict[str, str],
 ) -> tuple[str, dict[str, typing.Any], dict[str, str], dict[str, typing.Any]]:
     """Route a ``request`` JSONata result into ``(resolved_path, query_arguments, header_arguments, body_arguments)``.
 
     A key that names a path-template placeholder fills the path.
-    A key that names a header parameter, by its spec name or its sanitised name, becomes that header.
+    A key that ``header_names`` or ``query_names`` maps, by spec or sanitised name,
+    becomes that header or query parameter under its spec name.
     Every other key becomes a query parameter for a body-less method (GET, DELETE, HEAD),
     or a JSON body field otherwise.
     ``None`` values are dropped, so an omitted friendly argument leaves no trace upstream.
     """
-    header_names = {
-        key: parameter.name
-        for sanitised_name, parameter in header_parameters_by_name.items()
-        for key in (sanitised_name, parameter.name)
-    }
     resolved_path = path
     query_arguments: dict[str, typing.Any] = {}
     header_arguments: dict[str, str] = {}
@@ -430,6 +443,8 @@ def _route_upstream_object(
             resolved_path = resolved_path.replace(placeholder, str(value))
         elif key in header_names:
             header_arguments[header_names[key]] = str(value)
+        elif key in query_names:
+            query_arguments[query_names[key]] = value
         elif method_has_body:
             body_arguments[key] = value
         else:
@@ -457,6 +472,7 @@ class _UpstreamRequest:
     """One upstream request, built from a call's arguments and ready to send."""
 
     path: str
-    query: list[tuple[str, str]]
+    # The encoded query string, without the leading ``?``.
+    query: str
     headers: dict[str, str]
     body: typing.Any

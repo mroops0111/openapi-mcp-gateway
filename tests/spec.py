@@ -59,6 +59,15 @@ def operation_spec(
     return spec
 
 
+def combined_spec(*specs: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """The first of ``specs`` with the operations of every other one added to its paths."""
+    combined = {**specs[0], 'paths': {}}
+    for spec in specs:
+        for path, path_item in spec['paths'].items():
+            combined['paths'].setdefault(path, {}).update(path_item)
+    return combined
+
+
 def write_spec(directory: pathlib.Path, spec: dict[str, typing.Any], name: str = 'spec.json') -> pathlib.Path:
     """Write ``spec`` as JSON to ``name`` under ``directory``, and return its path."""
     path = directory / name

@@ -75,12 +75,14 @@ def build_tool_function(
     *,
     input_schema: dict[str, typing.Any] | None = None,
     attach_signature: bool = True,
+    spec_operation: OperationInfo | None = None,
 ) -> typing.Callable:
     """Build the async callable for ``operation``.
 
     The callable checks its arguments against ``input_schema`` before any upstream call.
     Pass the schema the tool advertises, so the two cannot drift apart.
     Without it, the schema is built from ``operation`` with ``build_input_schema``.
+    ``spec_operation`` is the operation before shaping, which the upstream request is laid out from.
 
     With ``attach_signature=True`` (the default),
     the returned callable carries an ``inspect.Signature`` and ``__annotations__``,
@@ -91,7 +93,11 @@ def build_tool_function(
     if input_schema is None:
         input_schema = build_input_schema(operation)
     upstream_call = UpstreamOperationCall(
-        operation, connection, input_schema=input_schema, sign_in_policy=URL_ELICITATION_SIGN_IN_POLICY
+        operation,
+        connection,
+        input_schema=input_schema,
+        sign_in_policy=URL_ELICITATION_SIGN_IN_POLICY,
+        spec_operation=spec_operation,
     )
     if not attach_signature:
         return upstream_call
@@ -128,7 +134,9 @@ class ToolGenerator:
             # The input schema is the tool's contract, built once and both advertised and enforced.
             input_schema = build_input_schema(shaped_operation)
             tool_override = _get_override(shaped_operation, 'tool')
-            tool_function = build_tool_function(shaped_operation, self.connection, input_schema=input_schema)
+            tool_function = build_tool_function(
+                shaped_operation, self.connection, input_schema=input_schema, spec_operation=operation
+            )
             name = derive_name(shaped_operation, tool_override.name if tool_override else None)
             description = derive_description(shaped_operation, tool_override.description if tool_override else None)
             title = derive_tool_title(shaped_operation)

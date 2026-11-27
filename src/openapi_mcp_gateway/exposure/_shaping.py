@@ -111,7 +111,17 @@ def shape_operation(operation: OperationInfo) -> OperationInfo:
         shaped_operation.parameters = declared_parameters
         return shaped_operation
 
-    unknown_names = [name for name in params if name not in spec_names]
+    unsendable_names = [name for name in params if name in operation.unsendable_query_parameters]
+    if unsendable_names:
+        logger.warning(
+            'Operation "%s" tweaks query parameter(s) %s the gateway left out, since it cannot send their style. '
+            'The tweak is skipped.',
+            operation.operation_id,
+            unsendable_names,
+        )
+    unknown_names = [
+        name for name in params if name not in spec_names and name not in operation.unsendable_query_parameters
+    ]
     if unknown_names:
         raise ValueError(
             f'Operation "{operation.operation_id}" uses params_strategy "merge" but names parameter(s) '

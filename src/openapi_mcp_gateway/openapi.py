@@ -13,6 +13,7 @@ import pydantic
 import yaml
 
 from .field_path import FieldMatch, FieldPath
+from .query_string import QuerySerializer, query_serializer
 
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,10 @@ _DEFAULT_MEDIA_TYPE = 'application/octet-stream'
 # The keywords a walk for media descends through, each of which beside a reference replaces the target's.
 _MEDIA_WALK_KEYWORDS = frozenset({'properties', 'items', *_COMPOSITION_KEYWORDS})
 
+# The style a parameter takes when the spec gives none, by location (OpenAPI 3.1.1 §4.8.12.2.2).
+# A body field takes ``form``, the style of a form-encoded body's fields (§4.8.15.1.2).
+_DEFAULT_STYLES = {'path': 'simple', 'query': 'form', 'header': 'simple', 'cookie': 'form', 'body': 'form'}
+
 # Whatever ``_distinct`` dedupes, kept as the type it returns.
 _Item = typing.TypeVar('_Item')
 
@@ -62,10 +67,9 @@ class ParameterInfo(pydantic.BaseModel):
     required: bool = False
     description: str = ''
     schema_: dict[str, typing.Any] = pydantic.Field(default_factory=dict, alias='schema')
-    # Whether an array is sent as one key per item and an object as one key per property,
-    # rather than as one comma-separated value (OpenAPI 3.1.1 §4.8.12.4).
-    # Only a query parameter reads it, and the gateway sends a query parameter only in the ``form`` style.
-    explode: bool = True
+    # The ``style`` and ``explode`` the spec declares, or ``None`` where it leaves the default.
+    declared_style: str | None = None
+    declared_explode: bool | None = None
     # Set by shape_operation from a ParamOverride default.
     # Marks a default the author wants sent upstream even when the LLM omits the parameter.
     # The LLM never sees this flag.
@@ -75,6 +79,21 @@ class ParameterInfo(pydantic.BaseModel):
     visible: bool = True
 
     model_config = pydantic.ConfigDict(populate_by_name=True, extra='forbid')
+
+    @property
+    def style(self) -> str:
+        """The declared style, or the default of the parameter's location."""
+        return self.declared_style or _DEFAULT_STYLES[self.location]
+
+    @property
+    def explode(self) -> bool:
+        """The declared ``explode``, or the default of the style, which is true only for ``form``."""
+        return self.style == 'form' if self.declared_explode is None else self.declared_explode
+
+    @property
+    def query_serializer(self) -> QuerySerializer | None:
+        """How the gateway sends the parameter as a query value, or ``None`` when it cannot send its style."""
+        return query_serializer(self.style, self.explode)
 
 
 class ExposedTool(typing.NamedTuple):
@@ -342,6 +361,8 @@ class OperationInfo(pydantic.BaseModel):
     schema_defs: dict[str, dict[str, typing.Any]] = pydantic.Field(default_factory=dict)
     # Where the success response schema declares media, or ``None`` when it declares none anywhere.
     response_media: ResponseMedia | None = None
+    # The optional query parameters left out of ``parameters``, by spec name, since the gateway cannot send them.
+    unsendable_query_parameters: list[str] = pydantic.Field(default_factory=list)
 
     @property
     def tool_exposed(self) -> bool:
@@ -716,6 +737,18 @@ def _declares_object_properties(schema: dict[str, typing.Any]) -> bool:
     return schema_type == 'object'
 
 
+def _unsendable_reason(param: dict[str, typing.Any], parameter: ParameterInfo) -> str | None:
+    """Return what keeps the gateway from sending a query parameter, or ``None`` when it can send it.
+
+    The reason is the parameter's style, or ``content`` for one whose value a media type encodes instead of a schema.
+    """
+    if parameter.location != 'query':
+        return None
+    if 'content' in param:
+        return 'content'
+    return None if parameter.query_serializer is not None else parameter.style
+
+
 def _success_response_schema(raw: dict[str, typing.Any], operation: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Return the JSON schema of the operation's first ``2xx`` response, or ``{}`` when it declares none."""
     # A YAML spec can key a status as an integer, so every key is read as the string the spec means.
@@ -960,9 +993,9 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
     # Every component expanded so far, shared by all operations so each is expanded once.
     defs: dict[str, dict[str, typing.Any]] = {}
     response_media = _ResponseMediaBuilder(raw)
-    # Query parameters left out because the gateway cannot send their style, counted by style.
-    unsupported_styles: collections.Counter[str] = collections.Counter()
-    operations_with_unsupported_style: set[tuple[str, str]] = set()
+    # Optional query parameters left out because the gateway cannot send them, counted by what stops them.
+    unsendable_reasons: collections.Counter[str] = collections.Counter()
+    operations_with_unsendable_parameters = 0
 
     for path, path_item in raw.get('paths', {}).items():
         if not isinstance(path_item, dict):
@@ -980,37 +1013,49 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
             # Operation-level parameters override path-level (OpenAPI 3.0 §4.7.9.2).
             params: list[ParameterInfo] = []
             seen_params: set[str] = set()
+            unsendable_names: list[str] = []
+            # A required parameter the gateway cannot send, as its name and what stops it, makes every call fail.
+            blocking_parameter: tuple[str, str] | None = None
             for param in operation.get('parameters', []) + path_item.get('parameters', []):
                 if '$ref' in param:
                     param = _resolve_ref(raw, param['$ref'])
+                location = param.get('in', 'query')
                 if not param.get('name'):
                     # A parameter with no name cannot be sent, and would otherwise break the tool's signature.
-                    logger.warning(
-                        'Skipping a %s parameter with no name on %s %s', param.get('in', 'query'), method, path
-                    )
+                    logger.warning('Skipping a %s parameter with no name on %s %s', location, method, path)
                     continue
-                param_key = f'{param.get("in", "query")}:{param["name"]}'
+                param_key = f'{location}:{param["name"]}'
                 if param_key in seen_params:
                     continue
                 seen_params.add(param_key)
-                style = param.get('style', 'form')
-                if param.get('in', 'query') == 'query' and style != 'form':
-                    # The parameter cannot be sent in the shape the spec asks for, so the tool goes without it.
-                    unsupported_styles[style] += 1
-                    operations_with_unsupported_style.add((method, path))
-                    continue
-                param_schema = _expand_schema(raw, param.get('schema', {}), defs)
-                params.append(
-                    ParameterInfo(
-                        name=param['name'],
-                        location=param.get('in', 'query'),
-                        required=param.get('required', False),
-                        description=param.get('description', ''),
-                        schema=param_schema,
-                        # ``form`` explodes by default, and ``simple``, the path and header default, does not.
-                        explode=param.get('explode', param.get('in', 'query') in ('query', 'cookie')),
-                    )
+                parameter = ParameterInfo(
+                    name=param['name'],
+                    location=location,
+                    required=param.get('required', False),
+                    description=param.get('description', ''),
+                    schema=_expand_schema(raw, param.get('schema', {}), defs),
+                    declared_style=param.get('style'),
+                    declared_explode=param.get('explode'),
                 )
+                unsendable_reason = _unsendable_reason(param, parameter)
+                if unsendable_reason is None:
+                    params.append(parameter)
+                elif parameter.required:
+                    blocking_parameter = (parameter.name, unsendable_reason)
+                    break
+                else:
+                    unsendable_names.append(parameter.name)
+                    unsendable_reasons[unsendable_reason] += 1
+
+            if blocking_parameter is not None:
+                logger.warning(
+                    'Skipping %s %s: the gateway cannot send its required query parameter %s, which uses %s',
+                    method.upper(),
+                    path,
+                    *blocking_parameter,
+                )
+                continue
+            operations_with_unsendable_parameters += bool(unsendable_names)
 
             request_body = operation.get('requestBody', {})
             if '$ref' in request_body:
@@ -1049,16 +1094,17 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                         for name in count_defs_references((parameter.schema_ for parameter in params), defs)
                     },
                     response_media=response_media.build(_success_response_schema(raw, operation)),
+                    unsendable_query_parameters=unsendable_names,
                 )
             )
 
-    if unsupported_styles:
+    if unsendable_reasons:
         logger.warning(
-            'Left out %d query parameters in %d operations of "%s", since only the form style is supported: %s',
-            unsupported_styles.total(),
-            len(operations_with_unsupported_style),
+            'Left out %d optional query parameters in %d operations of "%s", which the gateway cannot send: %s',
+            unsendable_reasons.total(),
+            operations_with_unsendable_parameters,
             info.get('title', ''),
-            ', '.join(f'{style} ({count})' for style, count in unsupported_styles.most_common()),
+            ', '.join(f'{reason} ({count})' for reason, count in unsendable_reasons.most_common()),
         )
 
     return OpenAPISpec(
