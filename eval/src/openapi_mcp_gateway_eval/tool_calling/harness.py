@@ -1,4 +1,5 @@
 import contextlib
+import pathlib
 import typing
 
 import fastapi
@@ -21,6 +22,7 @@ from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import load_spec
 from openapi_mcp_gateway.settings import GatewayConfig, ServerConfig
 
+from ..spec_pins import without_security
 from .dataset import Benchmark, ModelSpec, Scenario, Task
 from .grading import Grade, grade, reads
 from .local_server import serve
@@ -29,6 +31,9 @@ from .replay import RecordedRequest, ReplayUpstream
 
 # Errors that say nothing about the variant or the model's skill, which the evaluation retries instead of scoring.
 TRANSIENT_ERRORS = (ModelRateLimitError, ModelUnavailableError, ModelConnectionError, ModelServerError)
+
+# The server fields that override a spec's security, left out since every spec is served without it.
+_SECURITY_OVERRIDE_FIELDS = ('security_schemes', 'security')
 
 # The outcomes of a tool call that the model has to recover from, such as arguments the gateway refused.
 FAILED_TOOL_OUTCOMES = frozenset({'failed', 'retried'})
@@ -63,12 +68,13 @@ class ScenarioRun:
     """One scenario served for a run, with the replay upstream and a gateway per variant, both on loopback ports.
 
     A model reaches each server over HTTP, as a real client would, through Pydantic AI's MCP toolset.
+    The gateway loads each spec without its ``security``, since the replay checks no credential.
     """
 
     def __init__(self, benchmark: Benchmark, scenario: Scenario, spec_paths: typing.Mapping[str, str]):
         self.benchmark = benchmark
         self.scenario = scenario
-        self._spec_paths = dict(spec_paths)
+        self._spec_paths = {spec: str(without_security(pathlib.Path(path))) for spec, path in spec_paths.items()}
         self.replay = ReplayUpstream({server: load_spec(spec_paths[spec]) for server, spec in scenario.servers.items()})
         self._replay_url = ''
 
@@ -83,7 +89,7 @@ class ScenarioRun:
         servers = [
             ServerConfig.model_validate(
                 {
-                    **self.scenario.variants[variant].server_fragment(server),
+                    **_without_security_overrides(self.scenario.variants[variant].server_fragment(server)),
                     'name': server,
                     'spec': self._spec_paths[spec],
                     'base_url': f'{self._replay_url}/{server}',
@@ -210,3 +216,20 @@ def _price(responses: typing.Sequence[ModelResponse]) -> float | None:
         return float(sum(response.cost().total_price for response in responses))
     except (LookupError, ValueError):
         return None
+
+
+def _without_security_overrides(fragment: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
+    """``fragment`` without the security it would override, at the root and on each operation.
+
+    The specs are served without ``security``, so an override would name schemes they no longer declare,
+    or ask for credentials no replay upstream checks.
+    """
+    kept = {key: value for key, value in fragment.items() if key not in _SECURITY_OVERRIDE_FIELDS}
+    if isinstance(operations := kept.get('operations'), dict):
+        kept['operations'] = {
+            operation_id: {key: value for key, value in override.items() if key != 'security'}
+            if isinstance(override, dict)
+            else override
+            for operation_id, override in operations.items()
+        }
+    return kept

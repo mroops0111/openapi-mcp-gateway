@@ -1,0 +1,28 @@
+# Notion API with an integration token, and the version header every Notion call needs.
+#
+# Prerequisites:
+#   export NOTION_TOKEN="ntn_..."   # https://www.notion.so/profile/integrations
+#
+# Usage: openapi-mcp-gateway serve --config examples/notion.yml
+
+host: "127.0.0.1"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: notion
+    spec: https://raw.githubusercontent.com/APIs-guru/openapi-directory/main/APIs/notion.com/1.0.0/openapi.yaml
+    headers:
+      Notion-Version: "2022-06-28"
+    # The description declares no security scheme, so the server declares the bearer token Notion takes.
+    security_schemes:
+      token:
+        type: http
+        scheme: bearer
+    security:
+      - token: []
+    auth:
+      upstream:
+        credentials:
+          token:
+            value: ${NOTION_TOKEN}

@@ -1,0 +1,257 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Shop",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://shop.example.com/v1"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Product": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ProductWithOwner": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Product"
+          },
+          {
+            "type": "object",
+            "required": [
+              "owner"
+            ],
+            "properties": {
+              "owner": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "ProductOrError": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Product"
+          },
+          {
+            "$ref": "#/components/schemas/Error"
+          }
+        ]
+      },
+      "MaybeProduct": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/Product"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "NestedOwner": {
+        "type": "object",
+        "properties": {
+          "product": {
+            "$ref": "#/components/schemas/Product"
+          },
+          "products": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Product"
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "LimitParam": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Max items to return",
+        "schema": {
+          "type": "integer"
+        }
+      }
+    },
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://auth.example.com/authorize",
+            "tokenUrl": "https://auth.example.com/token",
+            "scopes": {
+              "read:products": "Read products",
+              "write:products": "Write products"
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/products": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/LimitParam"
+        }
+      ],
+      "get": {
+        "operationId": "listProducts",
+        "summary": "List all products",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createProduct",
+        "summary": "Create a product",
+        "tags": [
+          "products"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Product"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
+      }
+    },
+    "/products/{productId}": {
+      "get": {
+        "operationId": "getProductById",
+        "summary": "Get a product by ID",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "name": "productId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteProduct",
+        "summary": "Delete a product",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "name": "productId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/products/with-owner": {
+      "post": {
+        "operationId": "createProductWithOwner",
+        "summary": "Create a product with owner",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductWithOwner"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
+      }
+    },
+    "/admin/products": {
+      "get": {
+        "operationId": "adminListProducts",
+        "summary": "Admin list products",
+        "x-mcp-integration": {
+          "tool": {
+            "name": "listAdminProducts",
+            "description": "List products visible only to admin users."
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}

@@ -58,9 +58,9 @@ class TestScopeRequirements:
     @pytest.mark.parametrize(
         ('grantable', 'challenged'),
         [
-            ({'pets:read', 'pets:write'}, ('pets:read', 'pets:write')),
-            ({'pets:read'}, ()),
-            (None, ('pets:read', 'pets:write')),
+            ({'products:read', 'products:write'}, ('products:read', 'products:write')),
+            ({'products:read'}, ()),
+            (None, ('products:read', 'products:write')),
         ],
     )
     def test_a_challenge_stands_only_when_every_scope_is_grantable_by_default(self, grantable, challenged):
@@ -69,15 +69,15 @@ class TestScopeRequirements:
 
 
 class _EveryScopeRequirement(ScopeRequirement):
-    """A requirement for ``pets:read`` and ``pets:write`` together, whose challenge the base class narrows."""
+    """A requirement for ``products:read`` and ``products:write`` together, whose challenge the base class narrows."""
 
     def is_met(self, granted: collections.abc.Set[str]) -> bool:
-        return {'pets:read', 'pets:write'} <= granted
+        return {'products:read', 'products:write'} <= granted
 
     @property
     def challenge(self) -> tuple[str, ...]:
-        return ('pets:read', 'pets:write')
+        return ('products:read', 'products:write')
 
     @property
     def refusal(self) -> str:
-        return 'This operation needs both pets:read and pets:write.'
+        return 'This operation needs both products:read and products:write.'

@@ -101,7 +101,7 @@ class McpClientCredentialsRoutes(AuthRoutes):
             tokens = self._grant.tokens
             if not all(tokens.serves_resource(str(resource)) for resource in form.getlist('resource')):
                 raise McpClientCredentialsError('invalid_target', f'Tokens here are for {tokens.resource}')
-            client_id, client_secret = _read_client_credentials(request, form)
+            client_id, client_secret = read_client_credentials(request, form)
             client = await self._grant.authenticate(client_id, client_secret)
             scope = form.get('scope')
             token = await self._grant.exchange(client, str(scope) if scope is not None else None)
@@ -129,7 +129,7 @@ class McpClientCredentialsExtension(Extension):
     identifier = CLIENT_CREDENTIALS_EXTENSION
 
 
-def _read_client_credentials(request: Request, form: typing.Any) -> tuple[str, str]:
+def read_client_credentials(request: Request, form: typing.Any) -> tuple[str, str]:
     """The client id and secret a token request presents, by HTTP Basic or in the form body.
 
     RFC 6749 §2.3.1 lets a client use one method per request, so presenting both is refused.

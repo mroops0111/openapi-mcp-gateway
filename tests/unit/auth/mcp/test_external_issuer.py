@@ -1,13 +1,17 @@
+import collections.abc
+import contextlib
+import logging
+import re
 import time
 from unittest.mock import MagicMock, patch
 
 import jwt
 import pytest
 
+from openapi_mcp_gateway.auth.mcp import external_issuer as external_issuer_module
 from openapi_mcp_gateway.auth.mcp.external_issuer import (
     McpExternalIssuerConfigurationError,
     McpExternalIssuerTokenVerifier,
-    McpTokenVerificationError,
     fetch_mcp_external_issuer_metadata,
 )
 from openapi_mcp_gateway.scopes import read_grant
@@ -68,14 +72,16 @@ class TestExternalIssuerTokenVerifier:
     """Inbound tokens are accepted only when minted by the issuer for this MCP endpoint.
 
     Every rejection reports as ``None``, the only refusal the SDK's bearer backend understands,
-    while the reason stays reachable on the inner method for logging and for these tests.
+    while the reason is logged for an operator to diagnose.
     """
 
     async def _assert_rejected(self, verifier, token, reason_matches):
-        """A token must both report as unacceptable and carry a diagnosable reason."""
-        assert await verifier.verify_token(token) is None
-        with pytest.raises(McpTokenVerificationError, match=reason_matches):
-            verifier._verified_access_token(token)
+        """A token must both report as unacceptable and log a diagnosable reason."""
+        with _logged(external_issuer_module.logger) as records:
+            assert await verifier.verify_token(token) is None
+        assert any(re.search(reason_matches, record.getMessage()) for record in records), [
+            record.getMessage() for record in records
+        ]
 
     async def test_accepts_token_for_this_resource(self, signing_key):
         """A well-formed token yields an ``AccessToken`` carrying the caller's subject."""
@@ -174,7 +180,7 @@ def _issue(signing_key, **claims) -> str:
 
 def _verifier(signing_key, **kwargs) -> McpExternalIssuerTokenVerifier:
     """Build a verifier whose JWKS client resolves to ``signing_key``'s public half."""
-    with patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client') as build:
+    with patch('openapi_mcp_gateway.auth.mcp.external_issuer.build_jwk_client') as build:
         jwk = MagicMock()
         jwk.key = signing_key.public_key()
         jwk.key_type = 'RSA'
@@ -185,3 +191,27 @@ def _verifier(signing_key, **kwargs) -> McpExternalIssuerTokenVerifier:
             jwks_uri=JWKS_URL,
             **kwargs,
         )
+
+
+@contextlib.contextmanager
+def _logged(logger: logging.Logger) -> collections.abc.Iterator[list[logging.LogRecord]]:
+    """The records ``logger`` writes at INFO or above while the block runs."""
+    handler = _RecordingHandler(logging.INFO)
+    records = handler.records
+    previous = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+
+
+class _RecordingHandler(logging.Handler):
+    def __init__(self, level: int) -> None:
+        super().__init__(level)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)

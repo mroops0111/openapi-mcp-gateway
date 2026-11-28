@@ -8,10 +8,10 @@ import pytest
 import pytest_asyncio
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from openapi_mcp_gateway.exposure._upstream_http import UpstreamHttpClient
+from openapi_mcp_gateway.exposure import UpstreamHttpClient
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from openapi_mcp_gateway.stores.redis import RedisTokenStore
-from tests.spec import write_secured_petstore
+from tests.spec import write_secured_shop
 
 
 # Where the spec fixtures every test reads live.
@@ -23,19 +23,19 @@ _HttpHandler = typing.Callable[[httpx.Request], httpx.Response]
 
 
 @pytest.fixture
-def petstore_json_path() -> pathlib.Path:
-    return FIXTURES_DIR / 'petstore.json'
+def shop_json_path() -> pathlib.Path:
+    return FIXTURES_DIR / 'shop.json'
 
 
 @pytest.fixture
-def petstore_yml_path() -> pathlib.Path:
-    return FIXTURES_DIR / 'petstore.yml'
+def shop_yml_path() -> pathlib.Path:
+    return FIXTURES_DIR / 'shop.yml'
 
 
 @pytest.fixture
-def secured_spec(petstore_json_path: pathlib.Path, tmp_path: pathlib.Path) -> pathlib.Path:
-    """The petstore fixture with each operation's upstream scopes declared."""
-    return write_secured_petstore(petstore_json_path, tmp_path)
+def secured_spec(shop_json_path: pathlib.Path, tmp_path: pathlib.Path) -> pathlib.Path:
+    """The shop fixture with each operation's upstream scopes declared."""
+    return write_secured_shop(shop_json_path, tmp_path)
 
 
 @pytest.fixture
@@ -45,8 +45,8 @@ def client_credentials_spec_path() -> pathlib.Path:
 
 
 @pytest.fixture
-def petstore_spec_raw() -> dict:
-    return json.loads((FIXTURES_DIR / 'petstore.json').read_text())
+def shop_spec_raw() -> dict:
+    return json.loads((FIXTURES_DIR / 'shop.json').read_text())
 
 
 @pytest.fixture(scope='session')
@@ -62,12 +62,14 @@ async def memory_store():
     await store.close()
 
 
+@pytest.fixture
+def fake_redis() -> fakeredis.aioredis.FakeRedis:
+    return fakeredis.aioredis.FakeRedis(decode_responses=True)
+
+
 @pytest_asyncio.fixture
-async def redis_store():
-    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    store = RedisTokenStore.__new__(RedisTokenStore)
-    store._prefix = 'test'
-    store._redis = fake_redis
+async def redis_store(fake_redis):
+    store = RedisTokenStore(prefix='test', client=fake_redis)
     yield store
     await store.close()
 

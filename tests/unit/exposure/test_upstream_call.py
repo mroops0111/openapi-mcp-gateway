@@ -11,19 +11,14 @@ from mcp.types import CallToolResult, InputRequiredResult, TextContent
 
 from openapi_mcp_gateway.auth.upstream.reauthorization import UpstreamReauthorizer
 from openapi_mcp_gateway.exposure import (
+    CallProgress,
     MetaToolGenerator,
     ToolGenerator,
     UpstreamConnection,
-    _shaping,
-)
-from openapi_mcp_gateway.exposure import meta_tool as meta_tool_module
-from openapi_mcp_gateway.exposure import tool as tool_module
-from openapi_mcp_gateway.exposure._progress import CallProgress
-from openapi_mcp_gateway.exposure._reauthorization import UpstreamSignInPolicy
-from openapi_mcp_gateway.exposure._shared import (
+    UpstreamOperationCall,
     build_input_schema,
 )
-from openapi_mcp_gateway.exposure._upstream_call import UpstreamOperationCall
+from openapi_mcp_gateway.exposure.reauthorization import UpstreamSignInPolicy
 from openapi_mcp_gateway.openapi import (
     OperationInfo,
     ParameterInfo,
@@ -32,6 +27,8 @@ from openapi_mcp_gateway.scopes import UpstreamNoGrantSource
 from tests.constants import API_URL
 from tests.context import stub_context
 from tests.operation import register_tool, shaped_operation
+from tests.served_tool import ServedTool
+from tests.tool_result import text_of
 
 
 # The one required string query parameter the sign-in wait tests call with.
@@ -50,25 +47,25 @@ class TestStructuredContent:
         """A JSON object response lands in both ``content[0].text`` and ``structuredContent``."""
         mock_upstream(lambda _request: httpx.Response(200, json={'id': 7, 'name': 'rex'}))
         generator, mcp = self._generator()
-        generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/7')])
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
+        generator.register([OperationInfo(operation_id='get_product', method='get', path='/products/7')])
+        tool = ServedTool(mcp, 'get_product')
 
-        result = await tool.run({}, context=stub_context())
+        result = await tool.call({})
         assert result.is_error is False
         assert result.structured_content == {'id': 7, 'name': 'rex'}
-        assert json.loads(result.content[0].text) == {'id': 7, 'name': 'rex'}
+        assert json.loads(text_of(result)) == {'id': 7, 'name': 'rex'}
 
     async def test_list_body_omits_structured_content(self, mock_upstream):
         """JSON arrays stay text-only since ``structuredContent`` is object-typed in the MCP spec."""
         mock_upstream(lambda _request: httpx.Response(200, json=[{'id': 1}]))
         generator, mcp = self._generator()
-        generator.register([OperationInfo(operation_id='list_pets', method='get', path='/pets')])
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'list_pets')
+        generator.register([OperationInfo(operation_id='list_products', method='get', path='/products')])
+        tool = ServedTool(mcp, 'list_products')
 
-        result = await tool.run({}, context=stub_context())
+        result = await tool.call({})
         assert result.is_error is False
         assert result.structured_content is None
-        assert json.loads(result.content[0].text) == [{'id': 1}]
+        assert json.loads(text_of(result)) == [{'id': 1}]
 
 
 class TestBodySerialization:
@@ -118,9 +115,9 @@ class TestBodySerialization:
             ],
         )
         generator.register([operation])
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'create_order')
+        tool = ServedTool(mcp, 'create_order')
 
-        result = await tool.run({'line_items': [{'id': 1, 'name': 'rex'}]}, context=stub_context())
+        result = await tool.call({'line_items': [{'id': 1, 'name': 'rex'}]})
         assert result.is_error is False
         assert captured['body'] == {'line_items': [{'id': 1, 'name': 'rex'}]}
 
@@ -155,9 +152,9 @@ class TestBodySerialization:
             ],
         )
         generator.register([operation])
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'create_doc')
+        tool = ServedTool(mcp, 'create_doc')
 
-        result = await tool.run({'meta': {'title': 'hello'}}, context=stub_context())
+        result = await tool.call({'meta': {'title': 'hello'}})
         assert result.is_error is False
         assert captured['body'] == {'meta': {'title': 'hello'}}
 
@@ -179,17 +176,33 @@ class TestErrorResult:
             )
         )
         generator, mcp = self._generator()
-        generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/9')])
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
+        generator.register([OperationInfo(operation_id='get_product', method='get', path='/products/9')])
+        tool = ServedTool(mcp, 'get_product')
 
-        result = await tool.run({}, context=stub_context())
+        result = await tool.call({})
         assert result.is_error is True
         assert result.structured_content == {
             'message': 'Not Found',
             'documentation_url': f'{API_URL}/docs',
         }
-        assert '404' in result.content[0].text
-        assert 'Not Found' in result.content[0].text
+        assert '404' in text_of(result)
+        assert 'Not Found' in text_of(result)
+
+    async def test_a_json_suffixed_error_body_in_structured_content(self, mock_upstream):
+        """A problem detail (RFC 9457) is JSON by its ``+json`` suffix."""
+        problem = {'type': 'about:blank', 'title': 'Unprocessable', 'status': 422}
+        mock_upstream(
+            lambda _request: httpx.Response(
+                422, content=json.dumps(problem), headers={'content-type': 'application/problem+json'}
+            )
+        )
+        generator, mcp = self._generator()
+        generator.register([OperationInfo(operation_id='get_product', method='get', path='/products/9')])
+
+        result = await ServedTool(mcp, 'get_product').call({})
+
+        assert result.is_error is True
+        assert result.structured_content == problem
 
     async def test_text_error_body_no_structured_content(self, mock_upstream):
         """A non-JSON error body leaves ``structuredContent`` as ``None`` and surfaces the text only."""
@@ -197,13 +210,13 @@ class TestErrorResult:
             lambda _request: httpx.Response(500, text='internal boom', headers={'content-type': 'text/plain'})
         )
         generator, mcp = self._generator()
-        generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/9')])
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
+        generator.register([OperationInfo(operation_id='get_product', method='get', path='/products/9')])
+        tool = ServedTool(mcp, 'get_product')
 
-        result = await tool.run({}, context=stub_context())
+        result = await tool.call({})
         assert result.is_error is True
         assert result.structured_content is None
-        assert 'internal boom' in result.content[0].text
+        assert 'internal boom' in text_of(result)
 
     async def test_network_error_wrapped_as_iserror(self, mock_upstream):
         """A transport failure (connect, timeout, DNS) becomes an ``isError`` result with the exception type."""
@@ -213,14 +226,14 @@ class TestErrorResult:
 
         mock_upstream(boom)
         generator, mcp = self._generator()
-        generator.register([OperationInfo(operation_id='get_pet', method='get', path='/pets/9')])
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_pet')
+        generator.register([OperationInfo(operation_id='get_product', method='get', path='/products/9')])
+        tool = ServedTool(mcp, 'get_product')
 
-        result = await tool.run({}, context=stub_context())
+        result = await tool.call({})
         assert result.is_error is True
         assert result.structured_content is None
-        assert 'ConnectError' in result.content[0].text
-        assert 'connection refused' in result.content[0].text
+        assert 'ConnectError' in text_of(result)
+        assert 'connection refused' in text_of(result)
 
 
 class TestInputSchemaEnforcement:
@@ -256,41 +269,35 @@ class TestInputSchemaEnforcement:
             ),
         ],
     )
-    def test_schema_is_built_once_and_enforced_as_built(self, monkeypatch, generator_class):
-        """Each operation's schema is built once, and the validator checks against that very schema."""
-        built: list[dict] = []
-        enforced: list[dict] = []
+    async def test_schema_is_built_once_and_enforced_as_built(self, generator_class):
+        """The schema a client is shown is the one built from the operation, and every call is checked against it.
 
-        def counting_build(operation: OperationInfo) -> dict:
-            built.append(build_input_schema(operation))
-            return built[-1]
-
-        validator_class = _shaping.Draft202012Validator
-
-        def capturing_validator(schema: dict, **options: typing.Any) -> typing.Any:
-            enforced.append(schema)
-            return validator_class(schema, **options)
-
-        monkeypatch.setattr(tool_module, 'build_input_schema', counting_build)
-        monkeypatch.setattr(meta_tool_module, 'build_input_schema', counting_build)
-        monkeypatch.setattr(_shaping, 'Draft202012Validator', capturing_validator)
+        ``maximum`` sits only in that schema, not in the Python signature, so a refusal for it comes from the schema.
+        """
         mcp = MCPServer('test')
         operation = OperationInfo(
             operation_id='do_thing',
             method='get',
             path='/things',
-            parameters=[ParameterInfo(name='n', location='query', required=True, schema={'type': 'integer'})],
+            parameters=[
+                ParameterInfo(name='n', location='query', required=True, schema={'type': 'integer', 'maximum': 10})
+            ],
         )
 
         generator_class(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([operation])
 
-        assert len(built) == 1
-        assert len(enforced) == 1
-        assert enforced[0] is built[0]
         if generator_class is ToolGenerator:
-            tool = mcp._tool_manager.get_tool('do_thing')
-            assert tool is not None
-            assert tool.parameters is built[0]
+            shown = await ServedTool(mcp, 'do_thing').input_schema()
+            result = await ServedTool(mcp, 'do_thing').call({'n': 99})
+        else:
+            described = await ServedTool(mcp, 'get_operation').call({'name': 'do_thing'})
+            assert described.structured_content is not None
+            shown = described.structured_content['input_schema']
+            result = await ServedTool(mcp, 'call_operation').call({'name': 'do_thing', 'arguments': {'n': 99}})
+        assert shown == build_input_schema(operation)
+        assert result.is_error
+        assert result.structured_content is not None
+        assert result.structured_content['errors'][0]['keyword'] == 'maximum'
 
     async def test_maximum_enforced(self):
         """A value above ``maximum`` is rejected even though its type is correct."""
@@ -319,6 +326,24 @@ class TestInputSchemaEnforcement:
         self._register_single_param(mcp, 'email', {'type': 'string', 'format': 'email'})
         result = await self._call(mcp, {'email': 'not-an-email'})
         assert result.is_error
+
+    @pytest.mark.parametrize('value', [41.8826, -87.9065, 43.0389, 7])
+    async def test_a_decimal_multiple_passes_multiple_of(self, value, upstream_requests):
+        """A coordinate written to four decimal places is a multiple of 0.0001, however a float divides it."""
+        mcp = MCPServer('test')
+        self._register_single_param(mcp, 'latitude', {'type': 'number', 'multipleOf': 0.0001})
+        result = await self._call(mcp, {'latitude': value})
+        assert not result.is_error
+        assert len(upstream_requests) == 1
+
+    @pytest.mark.parametrize('value', [41.88265, 0.00005])
+    async def test_a_value_off_the_step_fails_multiple_of(self, value):
+        mcp = MCPServer('test')
+        self._register_single_param(mcp, 'latitude', {'type': 'number', 'multipleOf': 0.0001})
+        result = await self._call(mcp, {'latitude': value})
+        assert result.is_error
+        assert result.structured_content is not None
+        assert result.structured_content['errors'][0]['keyword'] == 'multipleOf'
 
     async def test_valid_input_reaches_upstream(self, mock_upstream):
         """An in-range value passes validation and the upstream call is made."""
@@ -352,7 +377,7 @@ class TestSendDefault:
             [ParameterInfo(name='limit', location='query', required=False, schema={'type': 'integer'})],
             params={'limit': {'default': 10}},
         )
-        await register_tool(op).run({}, context=stub_context())
+        await register_tool(op).call({})
         assert captured['params']['limit'] == '10'
 
     async def test_llm_value_overrides_default(self, mock_upstream):
@@ -368,7 +393,7 @@ class TestSendDefault:
             [ParameterInfo(name='limit', location='query', required=False, schema={'type': 'integer'})],
             params={'limit': {'default': 10}},
         )
-        await register_tool(op).run({'limit': 99}, context=stub_context())
+        await register_tool(op).call({'limit': 99})
         assert captured['params']['limit'] == '99'
 
 
@@ -391,7 +416,7 @@ class TestHeaders:
         params = {'Api-Version': {'hidden': True, 'default': '2026-03-11'}}
         for request in ('{"q": $uppercase(q)}', '$merge([$, {"q": $uppercase(q)}])'):
             op = shaped_operation(parameters, params=params, params_strategy='merge', request=request)
-            await register_tool(op).run({'q': 'abc'}, context=stub_context())
+            await register_tool(op).call({'q': 'abc'})
         dropped, carried = captured
         assert 'api-version' not in dropped['headers']
         assert carried['headers']['api-version'] == '2026-03-11'
@@ -417,7 +442,7 @@ class TestHeaders:
             request='$merge([$, {"Api_Version": "2026-03-11"}])',
             method='post',
         )
-        await register_tool(op).run({'name': 'x'}, context=stub_context())
+        await register_tool(op).call({'name': 'x'})
         assert captured['headers']['api-version'] == '2026-03-11'
         assert captured['body'] == {'name': 'x'}
 
@@ -445,8 +470,8 @@ class TestHeaders:
             path='/pages/{page_id}',
         )
         tool = register_tool(op)
-        assert list(tool.parameters['properties']) == ['doc']
-        await tool.run({'doc': 'home'}, context=stub_context())
+        assert list((await tool.input_schema())['properties']) == ['doc']
+        await tool.call({'doc': 'home'})
         assert captured['headers']['api-version'] == '2026-03-11'
         assert captured['path'] == '/pages/abc123'
 
@@ -462,7 +487,7 @@ class TestHeaders:
             request='{"Api-Version": version}',
             method='post',
         )
-        await register_tool(operation).run({'version': '2026-03-11'}, context=stub_context())
+        await register_tool(operation).call({'version': '2026-03-11'})
         sent = upstream_requests[-1]
         assert sent.headers['api-version'] == '2026-03-11'
         assert sent.content == b''
@@ -484,8 +509,8 @@ class TestHeaders:
         mcp = MCPServer('test')
         connection = UpstreamConnection(base_url=API_URL, headers={'Api-Version': '2025-01-01', 'X-Team': 'wren'})
         ToolGenerator(mcp=mcp, connection=connection).register([op])
-        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'do_thing')
-        await tool.run({}, context=stub_context())
+        tool = ServedTool(mcp, 'do_thing')
+        await tool.call({})
         assert captured['headers']['x-team'] == 'wren'
         assert captured['headers']['api-version'] == '2026-03-11'
 

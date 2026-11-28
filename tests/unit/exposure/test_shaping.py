@@ -3,7 +3,7 @@ import inspect
 import httpx
 import pytest
 
-from openapi_mcp_gateway.exposure._shaping import shape_operation
+from openapi_mcp_gateway.exposure import UpstreamConnection, build_tool_function, shape_operation
 from openapi_mcp_gateway.openapi import (
     McpIntegration,
     OperationInfo,
@@ -11,7 +11,7 @@ from openapi_mcp_gateway.openapi import (
     ParamOverride,
     ToolOverride,
 )
-from tests.context import stub_context
+from tests.constants import API_URL
 from tests.operation import register_tool, shaped_operation
 
 
@@ -70,7 +70,7 @@ class TestShapeOperation:
 class TestParamShapingSchema:
     """Shaped overrides reach the advertised schema and Python signature of the registered tool."""
 
-    def test_hidden_absent_from_schema_and_signature(self):
+    async def test_hidden_absent_from_schema_and_signature(self):
         """A hidden param is in neither the advertised schema nor the Python signature."""
         op = shaped_operation(
             [
@@ -80,34 +80,39 @@ class TestParamShapingSchema:
             params={'secret': {'hidden': True}},
         )
         tool = register_tool(op)
-        assert 'secret' not in tool.parameters['properties']
-        assert 'secret' not in tool.parameters.get('required', [])
-        assert 'secret' not in inspect.signature(tool.fn).parameters
-        assert 'visible' in tool.parameters['properties']
+        assert 'secret' not in (await tool.input_schema())['properties']
+        assert 'secret' not in (await tool.input_schema()).get('required', [])
+        assert (
+            'secret'
+            not in inspect.signature(
+                build_tool_function(shape_operation(op), UpstreamConnection(base_url=API_URL))
+            ).parameters
+        )
+        assert 'visible' in (await tool.input_schema())['properties']
 
-    def test_default_present_and_optional(self):
+    async def test_default_present_and_optional(self):
         """A default override appears in the schema and drops out of ``required``."""
         op = shaped_operation(
             [ParameterInfo(name='limit', location='query', required=True, schema={'type': 'integer'})],
             params={'limit': {'default': 50}},
         )
         tool = register_tool(op)
-        assert tool.parameters['properties']['limit']['default'] == 50
-        assert 'limit' not in tool.parameters.get('required', [])
+        assert (await tool.input_schema())['properties']['limit']['default'] == 50
+        assert 'limit' not in (await tool.input_schema()).get('required', [])
 
-    def test_description_override_in_schema(self):
+    async def test_description_override_in_schema(self):
         """A description override reaches the advertised property schema."""
         op = shaped_operation(
             [ParameterInfo(name='q', location='query', required=True, description='old', schema={'type': 'string'})],
             params={'q': {'description': 'new'}},
         )
-        assert register_tool(op).parameters['properties']['q']['description'] == 'new'
+        assert (await register_tool(op).input_schema())['properties']['q']['description'] == 'new'
 
 
 class TestHiddenParameterInjection:
     """A hidden parameter with a default is injected upstream while staying out of the LLM surface."""
 
-    def test_hidden_with_default_is_kept_but_not_visible(self):
+    async def test_hidden_with_default_is_kept_but_not_visible(self):
         """The parameter stays for upstream assembly, marked send_default and not visible."""
         operation = shaped_operation(
             [ParameterInfo(name='format', location='path', required=True, schema={'type': 'string'})],
@@ -119,7 +124,7 @@ class TestHiddenParameterInjection:
         format_parameter = next(parameter for parameter in shaped.parameters if parameter.name == 'format')
         assert format_parameter.visible is False
         assert format_parameter.send_default is True
-        assert 'format' not in register_tool(operation).parameters['properties']
+        assert 'format' not in (await register_tool(operation).input_schema())['properties']
 
     async def test_hidden_default_fills_the_upstream_path(self, mock_upstream):
         """The default fills the path placeholder even though the LLM never supplies the parameter."""
@@ -136,7 +141,7 @@ class TestHiddenParameterInjection:
             params_strategy='merge',
             path='/issues.{format}',
         )
-        await register_tool(operation).run({}, context=stub_context())
+        await register_tool(operation).call({})
         assert captured_request['path'] == '/issues.json'
 
     def test_hidden_required_path_parameter_without_default_raises(self):
@@ -154,7 +159,7 @@ class TestHiddenParameterInjection:
 class TestParamDeclaration:
     """Declared params (carrying a ``type``) rebuild the LLM input schema and drop the spec parameters."""
 
-    def test_declared_params_replace_spec_params(self):
+    async def test_declared_params_replace_spec_params(self):
         """When params declare a schema, the tool advertises only the declared params, not the spec's."""
         op = shaped_operation(
             [ParameterInfo(name='sort_by', location='query', required=True, schema={'type': 'string'})],
@@ -165,23 +170,23 @@ class TestParamDeclaration:
             request='{"sort_by": sort, "page": page}',
         )
         tool = register_tool(op)
-        props = tool.parameters['properties']
+        props = (await tool.input_schema())['properties']
         assert set(props) == {'sort', 'page'}
         assert props['sort']['enum'] == ['popular', 'newest']
         assert props['sort']['default'] == 'popular'
         assert props['page']['type'] == 'integer'
 
-    def test_declared_required_flag(self):
+    async def test_declared_required_flag(self):
         """``required: true`` lifts a declared param into the schema's required list."""
         op = shaped_operation(
             [],
-            params={'movie_id': {'type': 'integer', 'required': True}},
-            request='{"movie_id": movie_id}',
-            path='/movie/{movie_id}',
+            params={'product_id': {'type': 'integer', 'required': True}},
+            request='{"product_id": product_id}',
+            path='/products/{product_id}',
         )
-        assert register_tool(op).parameters['required'] == ['movie_id']
+        assert (await register_tool(op).input_schema())['required'] == ['product_id']
 
-    def test_declared_description_reaches_schema_and_signature(self):
+    async def test_declared_description_reaches_schema_and_signature(self):
         """A declared param's description reaches the schema and the param appears on the signature."""
         op = shaped_operation(
             [],
@@ -189,8 +194,13 @@ class TestParamDeclaration:
             request='{"query": q}',
         )
         tool = register_tool(op)
-        assert tool.parameters['properties']['q']['description'] == 'Search text.'
-        assert 'q' in inspect.signature(tool.fn).parameters
+        assert (await tool.input_schema())['properties']['q']['description'] == 'Search text.'
+        assert (
+            'q'
+            in inspect.signature(
+                build_tool_function(shape_operation(op), UpstreamConnection(base_url=API_URL))
+            ).parameters
+        )
 
     async def test_declared_param_maps_through_request(self, mock_upstream):
         """A declared friendly param reaches the upstream under the name the request expression gives it."""
@@ -206,7 +216,7 @@ class TestParamDeclaration:
             params={'sort': {'type': 'string', 'enum': ['popular'], 'default': 'popular'}},
             request='{"sort_by": $lookup({"popular": "popularity.desc"}, sort)}',
         )
-        await register_tool(op).run({}, context=stub_context())
+        await register_tool(op).call({})
         assert captured['params']['sort_by'] == 'popularity.desc'
         assert 'sort' not in captured['params']
 

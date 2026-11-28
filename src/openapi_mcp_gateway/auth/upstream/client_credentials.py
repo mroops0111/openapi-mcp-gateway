@@ -21,6 +21,8 @@ class UpstreamClientCredentialsTokenSource(UpstreamTokenSource):
 
     ``audience_params`` names the API the token is for,
     for an upstream whose API and authorization server are different parties.
+    ``transport`` routes the token requests off-network, and ``clock`` is the monotonic time expiry is measured by,
+    both for tests.
     """
 
     def __init__(
@@ -31,6 +33,8 @@ class UpstreamClientCredentialsTokenSource(UpstreamTokenSource):
         scopes: list[str] | None = None,
         audience_params: dict[str, str] | None = None,
         refresh_skew_seconds: float = DEFAULT_REFRESH_SKEW_SECONDS,
+        transport: httpx.AsyncBaseTransport | None = None,
+        clock: typing.Callable[[], float] = time.monotonic,
     ) -> None:
         self.token_url = token_url
         self.client_id = client_id
@@ -42,6 +46,8 @@ class UpstreamClientCredentialsTokenSource(UpstreamTokenSource):
         self._expires_at_monotonic: float = 0.0
         self._lock = asyncio.Lock()
         self._http_client: httpx.AsyncClient | None = None
+        self._transport = transport
+        self._clock = clock
 
     async def get_token(self) -> str:
         """Return a cached token if still valid, otherwise fetch a new one."""
@@ -59,9 +65,7 @@ class UpstreamClientCredentialsTokenSource(UpstreamTokenSource):
             self._http_client = None
 
     def _is_token_valid(self) -> bool:
-        return (
-            self._access_token is not None and time.monotonic() < self._expires_at_monotonic - self.refresh_skew_seconds
-        )
+        return self._access_token is not None and self._clock() < self._expires_at_monotonic - self.refresh_skew_seconds
 
     async def _fetch_token(self) -> None:
         # Grant fields last, so a stray audience key can never displace ``grant_type`` or the credentials.
@@ -75,7 +79,7 @@ class UpstreamClientCredentialsTokenSource(UpstreamTokenSource):
             request_data['scope'] = ' '.join(self.scopes)
 
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient()
+            self._http_client = httpx.AsyncClient(transport=self._transport)
 
         logger.debug(
             'Client credentials token fetch: url=%s scopes=%s audience_params=%s',
@@ -105,7 +109,7 @@ class UpstreamClientCredentialsTokenSource(UpstreamTokenSource):
 
         expires_in = parse_expires_in(payload.get('expires_in')) or DEFAULT_TOKEN_LIFETIME_SECONDS
         self._access_token = access_token
-        self._expires_at_monotonic = time.monotonic() + expires_in
+        self._expires_at_monotonic = self._clock() + expires_in
         logger.info(
             'Client credentials token acquired: url=%s expires_in=%s scope=%r',
             self.token_url,

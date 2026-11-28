@@ -20,6 +20,81 @@ _INSTRUCTIONS_PREVIEW_LENGTH = 60
 COMMAND_ENTRY_POINTS = 'openapi_mcp_gateway.commands'
 
 
+def command_entry_points() -> importlib.metadata.EntryPoints:
+    return importlib.metadata.entry_points(group=COMMAND_ENTRY_POINTS)
+
+
+def build_auth_config(
+    auth_upstream_type: typing.Literal['none', 'oauth2'] | None,
+    auth_upstream_credentials: tuple[str, ...],
+    auth_upstream_client_id: str | None,
+    auth_upstream_client_secret: str | None,
+    auth_upstream_scopes: str | None,
+    auth_upstream_authorization_url: str | None,
+    auth_upstream_token_url: str | None,
+    auth_upstream_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
+) -> AuthConfig:
+    """Construct ``AuthConfig`` from the auth-related CLI flags."""
+    has_auth_flags = any(
+        [
+            auth_upstream_type,
+            auth_upstream_credentials,
+            auth_upstream_client_id,
+            auth_upstream_client_secret,
+            auth_upstream_scopes,
+            auth_upstream_authorization_url,
+            auth_upstream_token_url,
+            auth_upstream_flow,
+        ]
+    )
+
+    if not has_auth_flags:
+        return AuthConfig()
+
+    if not auth_upstream_type:
+        if auth_upstream_client_id or auth_upstream_flow:
+            auth_upstream_type = 'oauth2'
+        elif auth_upstream_credentials:
+            auth_upstream_type = 'none'
+        else:
+            raise click.UsageError(
+                'Cannot infer --auth-upstream-type from the provided flags. Specify --auth-upstream-type explicitly.'
+            )
+
+    scopes = [scope.strip() for scope in auth_upstream_scopes.split(',')] if auth_upstream_scopes else []
+
+    # Only flags the caller actually gave.
+    # AuthConfig reads which fields were set to tell a decision from a default,
+    # so passing None for an absent flag would read as a decision.
+    upstream: dict[str, typing.Any] = {
+        key: value
+        for key, value in {
+            'client_id': auth_upstream_client_id,
+            'client_secret': auth_upstream_client_secret,
+            'authorization_url': auth_upstream_authorization_url,
+            'token_url': auth_upstream_token_url,
+            'scopes': scopes or None,
+        }.items()
+        if value is not None
+    }
+    upstream['type'] = auth_upstream_type
+    if auth_upstream_credentials:
+        upstream['credentials'] = _parse_credentials(auth_upstream_credentials)
+    if auth_upstream_flow is not None:
+        upstream['flow'] = auth_upstream_flow
+    return AuthConfig.model_validate({'upstream': upstream})
+
+
+def instructions_label(instructions: str | None) -> str:
+    """Render a server's instructions as their first line, marking anything left out."""
+    if instructions is None:
+        return 'none'
+    first_line, _, rest = instructions.partition('\n')
+    if len(first_line) > _INSTRUCTIONS_PREVIEW_LENGTH:
+        return f'{first_line[:_INSTRUCTIONS_PREVIEW_LENGTH]}…'
+    return f'{first_line} …' if rest else first_line
+
+
 class _CommandGroup(click.Group):
     """The gateway's commands, its own and those installed packages add.
 
@@ -27,13 +102,13 @@ class _CommandGroup(click.Group):
     """
 
     def list_commands(self, ctx: click.Context) -> list[str]:
-        return sorted({*super().list_commands(ctx), *(entry_point.name for entry_point in _command_entry_points())})
+        return sorted({*super().list_commands(ctx), *(entry_point.name for entry_point in command_entry_points())})
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         command = super().get_command(ctx, cmd_name)
         if command is not None:
             return command
-        for entry_point in _command_entry_points():
+        for entry_point in command_entry_points():
             if entry_point.name == cmd_name:
                 return entry_point.load()
         return None
@@ -45,7 +120,7 @@ def main() -> None:
 
     \b
     Serve an API:
-        omgw serve --spec petstore.json
+        omgw serve --spec api.json
 
     \b
     Measure what a config gains for a model, with openapi-mcp-gateway[eval] installed:
@@ -100,15 +175,39 @@ def main() -> None:
 )
 @click.option(
     '--auth-upstream-type',
-    type=click.Choice(['none', 'bearer', 'api_key', 'oauth2']),
+    type=click.Choice(['none', 'oauth2']),
     default=None,
     help='Authentication type for the upstream API.',
 )
 @click.option(
-    '--auth-upstream-token',
+    '--auth-upstream-credential',
+    'auth_upstream_credentials',
     type=str,
-    default=None,
-    help='Static token or ${ENV_VAR} reference (for bearer / api_key auth).',
+    multiple=True,
+    metavar='SCHEME=VALUE',
+    help='Static credential for a security scheme the spec declares, as SCHEME=VALUE or SCHEME=${ENV_VAR}. Repeatable.',
+)
+@click.option(
+    '--security-scheme',
+    'security_schemes',
+    type=str,
+    multiple=True,
+    metavar='NAME=JSON',
+    help=(
+        'Declare or replace a security scheme, as NAME and its OpenAPI scheme object in JSON, '
+        'such as token={"type": "http", "scheme": "bearer"}. Repeatable.'
+    ),
+)
+@click.option(
+    '--security',
+    'security',
+    type=str,
+    multiple=True,
+    metavar='SCHEME[+SCHEME]',
+    help=(
+        "Replace the spec's root security with one alternative per flag, "
+        'joining with + the schemes it needs together. Repeatable.'
+    ),
 )
 @click.option(
     '--auth-upstream-client-id',
@@ -180,8 +279,10 @@ def serve(
     transport: typing.Literal['sse', 'streamable-http', 'stdio'] | None,
     host: str | None,
     port: int | None,
-    auth_upstream_type: typing.Literal['none', 'bearer', 'api_key', 'oauth2'] | None,
-    auth_upstream_token: str | None,
+    auth_upstream_type: typing.Literal['none', 'oauth2'] | None,
+    auth_upstream_credentials: tuple[str, ...],
+    security_schemes: tuple[str, ...],
+    security: tuple[str, ...],
     auth_upstream_client_id: str | None,
     auth_upstream_client_secret: str | None,
     auth_upstream_scopes: str | None,
@@ -198,11 +299,16 @@ def serve(
 
     \b
     Single spec (no auth):
-        omgw serve --spec petstore.json
+        omgw serve --spec api.json
 
     \b
-    Single spec with bearer token (via env var):
-        omgw serve --spec api.json --auth-upstream-type bearer --auth-upstream-token '${MY_API_TOKEN}'
+    Single spec with a static credential for the spec's bearerAuth scheme (via env var):
+        omgw serve --spec api.json --auth-upstream-credential 'bearerAuth=${MY_API_TOKEN}'
+
+    \b
+    Single spec that declares no scheme, with a bearer token for every operation:
+        omgw serve --spec api.json --security-scheme 'token={"type": "http", "scheme": "bearer"}' \\
+            --security token --auth-upstream-credential 'token=${MY_API_TOKEN}'
 
     \b
     Single spec with OAuth2 (URLs detected from spec):
@@ -222,11 +328,11 @@ def serve(
 
     \b
     stdio transport (Claude Desktop / IDE integration):
-        omgw serve --spec petstore.json --transport stdio
+        omgw serve --spec api.json --transport stdio
 
     \b
     Verbose JSON logs written to a file:
-        omgw serve --spec petstore.json -v --log-format json --log-file gateway.log
+        omgw serve --spec api.json -v --log-format json --log-file gateway.log
 
     \b
     Validate a config without serving (CI or an editor check):
@@ -241,9 +347,9 @@ def serve(
     if config_path:
         source_layer = yaml_layer(config_path)
     else:
-        auth = _build_auth_config(
+        auth = build_auth_config(
             auth_upstream_type=auth_upstream_type,
-            auth_upstream_token=auth_upstream_token,
+            auth_upstream_credentials=auth_upstream_credentials,
             auth_upstream_client_id=auth_upstream_client_id,
             auth_upstream_client_secret=auth_upstream_client_secret,
             auth_upstream_scopes=auth_upstream_scopes,
@@ -251,7 +357,14 @@ def serve(
             auth_upstream_token_url=auth_upstream_token_url,
             auth_upstream_flow=auth_upstream_flow,
         )
-        source_layer = single_spec_layer(spec=typing.cast(str, spec), name=name, base_url=base_url, auth=auth)
+        source_layer = single_spec_layer(
+            spec=typing.cast(str, spec),
+            name=name,
+            base_url=base_url,
+            auth=auth,
+            security_schemes=_parse_security_schemes(security_schemes),
+            security=_parse_security(security) if security else None,
+        )
 
     cli_layer = _cli_layer(
         host=host,
@@ -301,69 +414,41 @@ def _refuse_invalid_config(error: Exception) -> typing.NoReturn:
     raise SystemExit(1) from error
 
 
-def _command_entry_points() -> importlib.metadata.EntryPoints:
-    return importlib.metadata.entry_points(group=COMMAND_ENTRY_POINTS)
+def _parse_credentials(credentials: tuple[str, ...]) -> dict[str, dict[str, str]]:
+    """Read each ``SCHEME=VALUE`` of ``--auth-upstream-credential`` into ``auth.upstream.credentials``."""
+    parsed: dict[str, dict[str, str]] = {}
+    for credential in credentials:
+        scheme, separator, value = credential.partition('=')
+        if not separator or not scheme:
+            raise click.UsageError(f'--auth-upstream-credential takes SCHEME=VALUE, got {credential!r}.')
+        parsed[scheme] = {'value': value}
+    return parsed
 
 
-def _build_auth_config(
-    auth_upstream_type: typing.Literal['none', 'bearer', 'api_key', 'oauth2'] | None,
-    auth_upstream_token: str | None,
-    auth_upstream_client_id: str | None,
-    auth_upstream_client_secret: str | None,
-    auth_upstream_scopes: str | None,
-    auth_upstream_authorization_url: str | None,
-    auth_upstream_token_url: str | None,
-    auth_upstream_flow: typing.Literal['authorization_code', 'client_credentials'] | None,
-) -> AuthConfig:
-    """Construct ``AuthConfig`` from the auth-related CLI flags."""
-    has_auth_flags = any(
-        [
-            auth_upstream_type,
-            auth_upstream_token,
-            auth_upstream_client_id,
-            auth_upstream_client_secret,
-            auth_upstream_scopes,
-            auth_upstream_authorization_url,
-            auth_upstream_token_url,
-            auth_upstream_flow,
-        ]
-    )
+def _parse_security_schemes(security_schemes: tuple[str, ...]) -> dict[str, dict[str, typing.Any]]:
+    """Read each ``NAME=JSON`` of ``--security-scheme`` into ``security_schemes``."""
+    parsed: dict[str, dict[str, typing.Any]] = {}
+    for security_scheme in security_schemes:
+        name, separator, document = security_scheme.partition('=')
+        try:
+            scheme = json.loads(document) if separator and name else None
+        except json.JSONDecodeError:
+            scheme = None
+        if not isinstance(scheme, dict):
+            raise click.UsageError(f'--security-scheme takes NAME=JSON with a JSON object, got {security_scheme!r}.')
+        parsed[name] = scheme
+    return parsed
 
-    if not has_auth_flags:
-        return AuthConfig()
 
-    if not auth_upstream_type:
-        if auth_upstream_client_id or auth_upstream_flow:
-            auth_upstream_type = 'oauth2'
-        elif auth_upstream_token:
-            auth_upstream_type = 'bearer'
-        else:
-            raise click.UsageError(
-                'Cannot infer --auth-upstream-type from the provided flags. Specify --auth-upstream-type explicitly.'
-            )
-
-    scopes = [scope.strip() for scope in auth_upstream_scopes.split(',')] if auth_upstream_scopes else []
-
-    # Only flags the caller actually gave.
-    # AuthConfig reads which fields were set to tell a decision from a default,
-    # so passing None for an absent flag would read as a decision.
-    upstream: dict[str, typing.Any] = {
-        key: value
-        for key, value in {
-            'client_id': auth_upstream_client_id,
-            'client_secret': auth_upstream_client_secret,
-            'authorization_url': auth_upstream_authorization_url,
-            'token_url': auth_upstream_token_url,
-            'scopes': scopes or None,
-        }.items()
-        if value is not None
-    }
-    upstream['type'] = auth_upstream_type
-    if auth_upstream_token is not None:
-        upstream['token'] = auth_upstream_token
-    if auth_upstream_flow is not None:
-        upstream['flow'] = auth_upstream_flow
-    return AuthConfig.model_validate({'upstream': upstream})
+def _parse_security(security: tuple[str, ...]) -> list[dict[str, list[str]]]:
+    """Read each ``SCHEME[+SCHEME]`` of ``--security`` into one alternative of the root ``security``."""
+    alternatives: list[dict[str, list[str]]] = []
+    for alternative in security:
+        schemes = [scheme.strip() for scheme in alternative.split('+')]
+        if not all(schemes):
+            raise click.UsageError(f'--security takes SCHEME or SCHEME+SCHEME, got {alternative!r}.')
+        alternatives.append({scheme: [] for scheme in schemes})
+    return alternatives
 
 
 def _cli_layer(
@@ -422,16 +507,6 @@ def _shaping_label(tool: ExposedTool) -> str:
     return ', '.join(parts)
 
 
-def _instructions_label(instructions: str | None) -> str:
-    """Render a server's instructions as their first line, marking anything left out."""
-    if instructions is None:
-        return 'none'
-    first_line, _, rest = instructions.partition('\n')
-    if len(first_line) > _INSTRUCTIONS_PREVIEW_LENGTH:
-        return f'{first_line[:_INSTRUCTIONS_PREVIEW_LENGTH]}…'
-    return f'{first_line} …' if rest else first_line
-
-
 def _dry_run_tool_table(tools: tuple[ExposedTool, ...]) -> None:
     """Print a server's tools as an aligned table with a dim header row."""
     labels = {tool.name: _shaping_label(tool) for tool in tools}
@@ -469,7 +544,7 @@ def _echo_dry_run_summary(gateway: Gateway, config: GatewayConfig, output: str =
         _dry_run_kv('mcp auth', server.auth.mcp_summary)
         _dry_run_kv('policy', server.policy_summary)
         _dry_run_kv('exposure', server.exposure)
-        _dry_run_kv('instructions', _instructions_label(server.instructions))
+        _dry_run_kv('instructions', instructions_label(server.instructions))
         if server.tools:
             _dry_run_kv('tools', str(len(server.tools)))
             _dry_run_tool_table(server.tools)

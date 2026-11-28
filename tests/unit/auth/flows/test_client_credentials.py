@@ -42,7 +42,8 @@ class TestClientCredentialsFlowHandler:
             flow,
         )
 
-        token_source = setup.resolver._token_source  # type: ignore[attr-defined]
+        assert isinstance(setup.resolver, UpstreamTokenSourceAuthResolver)
+        token_source = setup.resolver.token_source
         assert isinstance(token_source, UpstreamClientCredentialsTokenSource)
         assert token_source.client_id == 'cid'
         assert token_source.client_secret == 'sec'
@@ -77,6 +78,6 @@ class TestClientCredentialsAudienceWiring:
         )
 
         assert isinstance(setup.resolver, UpstreamTokenSourceAuthResolver)
-        token_source = setup.resolver._token_source
+        token_source = setup.resolver.token_source
         assert isinstance(token_source, UpstreamClientCredentialsTokenSource)
         assert token_source.audience_params == {'resource': API_URL}

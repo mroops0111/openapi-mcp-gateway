@@ -1,0 +1,28 @@
+# Discord API with a bot token, sent in the header Discord's BotToken scheme names.
+#
+# The scheme is an apiKey in Authorization, so the value carries Discord's "Bot " prefix itself.
+#
+# Prerequisites:
+#   export DISCORD_BOT_TOKEN="Bot <token>"   # https://discord.com/developers/applications
+#
+# Usage: openapi-mcp-gateway serve --config examples/discord.yml
+
+host: "127.0.0.1"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: discord
+    spec: https://raw.githubusercontent.com/discord/discord-api-spec/main/specs/openapi.json
+    auth:
+      upstream:
+        credentials:
+          BotToken:
+            value: ${DISCORD_BOT_TOKEN}
+    policy:
+      # These act as a signed-in user and take only a user's OAuth token, which a bot does not hold.
+      deny:
+        - "* /users/@me/applications/*"
+        - "GET /users/@me/guilds/*/member"
+    exposure:
+      style: dynamic

@@ -1,0 +1,18 @@
+[
+  {
+    "model": "anthropic:claude-sonnet-5-5",
+    "instructions_sha256": "ccb6a0871b081af46f55120a32156692666d123c6e3f5dfd82551c849d65fd8f",
+    "finished_at": "2026-11-27T16:08:06+00:00",
+    "pydantic_ai_version": "2.69.0",
+    "input_tokens": 87228,
+    "output_tokens": 2232,
+    "model_requests": 7,
+    "scenario": "weather",
+    "variant": "generated",
+    "skill": "generate-config",
+    "skill_sha256": "d11c01ebd784968d37d45292f208c28ef3dd408b766269bbfd76b5a23fec4bba",
+    "request": "Keep a small outdoor-events team informed about the forecast, current conditions and weather alerts where their events take place.",
+    "gateway_version": "1.0.0",
+    "summary": "`config.yaml` now validates with `--dry-run`: 1 server and 9 tools, all passed through unshaped. The tools are the weather.gov operations an events team needs for a location.\n\n- **Location lookup:** `point` turns a latitude and longitude into the forecast grid, nearby stations and zone.\n- **Forecast:** `gridpoint_forecast` for the 7-day forecast and `gridpoint_forecast_hourly` for hour by hour.\n- **Current conditions:** `gridpoint_stations` finds the nearby stations, and `station_observation_latest` gives the latest reading.\n- **Alerts:** `alerts_active` (filterable by point), `alerts_active_zone` and `alerts_active_area` for active alerts, and `alerts_single` for the full text of one alert.\n\nI left out the rest of the spec (radar, aviation products, text products, glossary and so on) because it isn't relevant to this request. The spec has no auth requirement, so upstream auth stays `none`. The API does ask callers to send a `User-Agent` header, so I added one that reads from the `WEATHER_USER_AGENT` environment variable. Set it to something like `\"EventsTeam (you@example.com)\"`. I also added short server instructions telling the model to call `point` first.\n\nI kept the placeholder `base_url: https://upstream.invalid`, as you asked. Change it to `https://api.weather.gov` before running it for real."
+  }
+]

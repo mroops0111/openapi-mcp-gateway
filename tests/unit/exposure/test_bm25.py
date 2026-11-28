@@ -1,4 +1,4 @@
-from openapi_mcp_gateway.exposure._bm25 import BM25FIndex, tokenize
+from openapi_mcp_gateway.exposure import BM25FIndex, tokenize
 
 
 # One plain-text field with unit weight, for tests that are not about field weighting.

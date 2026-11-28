@@ -36,44 +36,44 @@ These results come from 28 held-out tasks on Claude Haiku, 3 runs per task. Ever
 | `generated` | gateway | the config the generate-config skill writes from the scenario's one-sentence intent |
 | `generated-shaped` | gateway | the config the skill writes when also asked to shape the tools |
 
-![Mean input tokens per run on Claude Haiku, with the share of runs passed. For comparison, the baseline used 940k tokens and passed 86%, and Pydantic AI's tool search used 272k and passed 71%. The gateway's generated configs used 130k and passed 92%, dynamic exposure used 76k and passed 100%, and generated-shaped configs used 68k and passed 86%.](assets/input-tokens-light.svg#only-light) ![Mean input tokens per run on Claude Haiku, as described above.](assets/input-tokens-dark.svg#only-dark)
+![Mean input tokens per run on Claude Haiku, with the share of runs passed. For comparison, the baseline used 953k tokens and passed 86%, and Pydantic AI's tool search used 271k and passed 68%. The gateway's generated configs used 131k and passed 88%, dynamic exposure used 76k and passed 100%, and generated-shaped configs used 67k and passed 82%.](assets/input-tokens-light.svg#only-light) ![Mean input tokens per run on Claude Haiku, as described above.](assets/input-tokens-dark.svg#only-dark)
 
 The first table gives the share of runs passed by scenario size, and the second gives each variant's input tokens and cost. Bold marks the best value in a column where one variant stands out.
 
 | Variant | Small | Medium | Large | GitHub With Asana | All |
 | --- | --- | --- | --- | --- | --- |
 | `baseline` | 100% | 100% | 100% | 0% | 86% |
-| `pydantic-ai-tool-search` | 100% | 46% | 100% | 8% | 71% |
+| `pydantic-ai-tool-search` | 88% | 46% | 100% | 8% | 68% |
 | `dynamic` | 100% | 100% | 100% | **100%** | **100%** |
-| `generated` | 96% | 100% | 88% | 75% | 92% |
-| `generated-shaped` | 100% | 100% | 88% | 25% | 86% |
+| `generated` | 83% | 100% | 88% | 75% | 88% |
+| `generated-shaped` | 88% | 100% | 88% | 25% | 82% |
 
 | Variant | Input Tokens per Run | Cost of 84 Runs |
 | --- | --- | --- |
-| `baseline` | 940,145 | $4.94 |
-| `pydantic-ai-tool-search` | 271,522 | $3.02 |
-| `dynamic` | 76,348 | $0.22 |
-| `generated` | 130,028 | $0.20 |
-| `generated-shaped` | **67,565** | **$0.12** |
+| `baseline` | 953,116 | $4.95 |
+| `pydantic-ai-tool-search` | 271,359 | $3.02 |
+| `dynamic` | 75,860 | $0.21 |
+| `generated` | 131,462 | $0.20 |
+| `generated-shaped` | **67,078** | **$0.12** |
 
 The baseline's GitHub with Asana runs exceed the context window at their first request and count as zero tokens, so its true token mean is higher. Each finding below holds on Claude Haiku only.
 
 - **Dynamic Exposure**: it passed every run on 8% of the baseline's input tokens.
 - **The Baseline**: it cannot run GitHub with Asana at all. Its tool definitions come to more than a million tokens, past the model's context window.
-- **Pydantic AI's Tool Search**: it saves fewer tokens than dynamic exposure, and loses runs on the medium scenarios and on GitHub with Asana.
+- **Pydantic AI's Tool Search**: it saves fewer tokens than dynamic exposure, and loses runs on the National Weather Service, on the medium scenarios and on GitHub with Asana.
 - **Generated Configs**: they cut input tokens by more than 85%, and `generated-shaped` loses most of its failed runs on GitHub with Asana.
 
 ??? note "Run Details"
 
     These details matter when you rerun or check the results.
 
-    - **Versions**: run on 2026-11-24 with a 0.8.0 development build of openapi-mcp-gateway and Pydantic AI 2.69.0, on `anthropic:claude-haiku-5-5`. The generated configs were written by `anthropic:claude-sonnet-5-5`.
-    - **Scenario Sizes**: small is Petstore and Notion, medium is Asana and Discord, and large is GitHub and Stripe. GitHub with Asana serves both APIs together, 1,552 operations in all.
+    - **Versions**: on `anthropic:claude-haiku-5-5` with Pydantic AI 2.69.0. Six scenarios ran on benchmark version 2 on 2026-11-24, with a 0.8.0 development build of openapi-mcp-gateway. The National Weather Service scenario ran on version 5 on 2026-11-28 UTC, with a 1.0.0 development build. The generated configs were written by `anthropic:claude-sonnet-5-5`.
+    - **Scenario Sizes**: small is the National Weather Service and Notion, medium is Asana and Discord, and large is GitHub and Stripe. GitHub with Asana serves both APIs together, 1,552 operations in all.
     - **Task Split**: each scenario splits its tasks into 2 dev and 4 test, and only the test tasks are reported. CI replays each task's known solution through the real gateway, so every task can pass.
     - **Replay Answers**: the replay server answers from the task's data, else from the spec's example, else from a sample built from the response schema, so a model may call any operation.
     - **Cost**: cost also counts output tokens, and Anthropic's prompt caching of the tool definitions lowers the price of repeated input, so cost does not track input tokens.
-    - **Failed Runs**: on GitHub with Asana, `generated-shaped` hides the milestone list one task reads, and on two other tasks the model made no write or passed a GitHub login as the Asana assignee.
-    - **Pinned Specs**: each benchmark pins its specs by SHA-256, so a result can be reproduced from the commit that produced it.
+    - **Failed Runs**: on GitHub with Asana, `generated-shaped` hides the milestone list one task reads, and on two other tasks the model made no write or passed a GitHub login as the Asana assignee. On the National Weather Service, both generated configs leave out the office headlines one task needs, and under `pydantic-ai-tool-search` the model read the Miami office's headlines by its well-known id without looking up the office that covers the venue.
+    - **Pinned Specs**: each benchmark pins its specs by SHA-256, so each scenario's result can be reproduced from the commit that holds its benchmark version.
 
 ## Search Ranking
 
@@ -106,7 +106,7 @@ Every literal request finds its operation on the first page, while a paraphrased
 
 ## Limits of These Results
 
-The benchmarks are a first version, and these limits apply before you cite a number.
+These limits apply before you cite a number.
 
 - **One Model**: only Claude Haiku has run the tool calling benchmark. OpenAI's and Google's small models are configured but not yet run.
 - **Self-Authored Data**: Claude wrote the tasks, and Claude running the generate-config skill wrote the generated configs. Both may be phrased the way a Claude model expects to read them.

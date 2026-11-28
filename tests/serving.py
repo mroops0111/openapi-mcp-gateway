@@ -56,7 +56,7 @@ async def serve_gateway(
     if address is None:
         address = bind_serving_address()
     gateway = build(address.url)
-    app = app_of(gateway) if app_of is not None else gateway._build_app(transport='streamable-http')
+    app = app_of(gateway) if app_of is not None else gateway.build_app()
     async with serve(app, address.sock):
         yield address.url
 

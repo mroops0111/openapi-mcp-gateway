@@ -133,7 +133,7 @@ class MetaToolGenerator:
 
     def register(self, operations: list[OperationInfo]) -> list[ExposedTool]:
         """Build the operation registry from ``operations`` and bind the three meta-tools, returning them."""
-        registered: list[_RegisteredOperation] = []
+        registered: list[RegisteredOperation] = []
         for operation in operations:
             # Same shaping as the static path, so a dynamic operation exposes the identical surface.
             # Meta-tools carry no per-operation annotations, so annotation overrides do not apply here.
@@ -144,7 +144,7 @@ class MetaToolGenerator:
             name = derive_name(shaped_operation, tool_override.name if tool_override else None)
             self.scope_registry.register(name, operation)
             registered.append(
-                _RegisteredOperation(
+                RegisteredOperation(
                     name=name,
                     summary=shaped_operation.summary,
                     description=derive_description(
@@ -168,7 +168,7 @@ class MetaToolGenerator:
                 shaped_operation.method.upper(),
                 shaped_operation.path,
             )
-        registry = _OperationRegistry(registered, self.field_weights, self.semantic_search)
+        registry = OperationRegistry(registered, self.field_weights, self.semantic_search)
         self._bind_meta_tools(registry)
         logger.info(
             'Registered %d operation(s) behind dynamic meta-tools on server "%s"',
@@ -181,7 +181,7 @@ class MetaToolGenerator:
             ExposedTool('call_operation', '-', '-'),
         ]
 
-    def _bind_meta_tools(self, registry: '_OperationRegistry') -> None:
+    def _bind_meta_tools(self, registry: 'OperationRegistry') -> None:
         guidance = _SEARCH_BY_MEANING_GUIDANCE if self.semantic_search else _SEARCH_BY_WORDS_GUIDANCE
         description = f'Search the operations available on this server. {guidance}{_SEARCH_OPERATIONS_RESULTS}'
 
@@ -236,7 +236,7 @@ class MetaToolGenerator:
 
 
 @dataclasses.dataclass(frozen=True)
-class _RegisteredOperation:
+class RegisteredOperation:
     """One operation behind the meta-tools, carrying what search, get, and call need."""
 
     name: str
@@ -267,7 +267,7 @@ class _RegisteredOperation:
         return '\n'.join(part for part in dict.fromkeys(parts) if part)
 
 
-class _OperationRegistry:
+class OperationRegistry:
     """The operations of one dynamically exposed server, looked up by name or searched by query and tag.
 
     Everything derived from the operations, such as the search index and tag counts, is built once here,
@@ -277,7 +277,7 @@ class _OperationRegistry:
 
     def __init__(
         self,
-        operations: typing.Iterable[_RegisteredOperation],
+        operations: typing.Iterable[RegisteredOperation],
         field_weights: typing.Mapping[str, float],
         semantic_search: SemanticSearchOptions | None = None,
     ):
@@ -305,7 +305,7 @@ class _OperationRegistry:
     def __len__(self) -> int:
         return len(self._operations)
 
-    def get(self, name: str) -> _RegisteredOperation | None:
+    def get(self, name: str) -> RegisteredOperation | None:
         return self._operations.get(name)
 
     async def search(

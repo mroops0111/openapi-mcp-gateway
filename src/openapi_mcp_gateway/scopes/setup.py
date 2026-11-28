@@ -29,15 +29,27 @@ class ServerScopeSetup:
 
     @classmethod
     def build(
-        cls, server_config: ServerConfig, spec: OpenAPISpec, operations: collections.abc.Sequence[OperationInfo]
+        cls,
+        server_config: ServerConfig,
+        spec: OpenAPISpec,
+        operations: collections.abc.Sequence[OperationInfo],
+        met_without_credentials: collections.abc.Collection[str] = (),
     ) -> typing.Self:
-        """Settle the scopes of ``server_config``'s operations, refusing a client scope no operation defines."""
+        """Settle the scopes of ``server_config``'s operations, refusing a client scope no operation defines.
+
+        ``met_without_credentials`` are the schemes the credential plan counts as met without a static credential.
+        """
         mcp_scope_policy = build_mcp_scope_policy(
             server_config.auth.mcp.operation_scopes, operations, server_config.name
         )
         _refuse_undefined_mcp_scopes(server_config, mcp_scope_policy)
         upstream = server_config.auth.upstream
-        spec_security = UpstreamSpecSecurityScopePolicy(spec.security_schemes, upstream.scope_implies)
+        spec_security = UpstreamSpecSecurityScopePolicy(
+            spec.security_schemes,
+            upstream.scope_implies,
+            credential_schemes=upstream.credentials,
+            met_without_credentials=met_without_credentials,
+        )
         if upstream.enforce_scopes and not upstream.scopes:
             server_config = _with_requested_upstream_scopes(server_config, spec_security.declared_scopes(operations))
         registry = ScopeRegistry(mcp_scope_policy, build_upstream_scope_policy(upstream.enforce_scopes, spec_security))

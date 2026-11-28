@@ -1,0 +1,404 @@
+- id: weather-t01
+  prompt: >-
+    Our picnic is at Gas Works Park in Seattle, at 47.6456, -122.3344, this Saturday.
+    What's the forecast for Saturday there?
+  split: dev
+  expected_calls:
+    # The forecast office and grid square come only from the point's record.
+    - any_of:
+        - server: weather
+          method: GET
+          path: /gridpoints/{wfo}/{x},{y}/forecast
+          path_parameters: {wfo: SEW, x: '124', y: '69'}
+        - server: weather
+          method: GET
+          path: /gridpoints/{wfo}/{x},{y}/forecast/hourly
+          path_parameters: {wfo: SEW, x: '124', y: '69'}
+  solution:
+    - server: weather
+      operation: point
+      arguments: {latitude: 47.6456, longitude: -122.3344}
+    - server: weather
+      operation: gridpoint_forecast
+      arguments: {wfo: SEW, x: 124, y: 69}
+  upstream_responses:
+    - server: weather
+      method: GET
+      path: /points/47.6456,-122.3344
+      body:
+        properties:
+          gridId: SEW
+          gridX: 124
+          gridY: 69
+          forecast: https://api.weather.gov/gridpoints/SEW/124,69/forecast
+          forecastHourly: https://api.weather.gov/gridpoints/SEW/124,69/forecast/hourly
+          observationStations: https://api.weather.gov/gridpoints/SEW/124,69/stations
+          forecastZone: https://api.weather.gov/zones/forecast/WAZ558
+          relativeLocation: {properties: {city: Seattle, state: WA}}
+    - server: weather
+      method: GET
+      path: /gridpoints/SEW/124,69/forecast
+      body:
+        properties:
+          periods:
+            - {number: 1, name: Friday, temperature: 52, temperatureUnit: F, shortForecast: Light Rain}
+            - {number: 2, name: Saturday, temperature: 57, temperatureUnit: F, shortForecast: Partly Sunny, detailedForecast: 'Partly sunny, with a high near 57. Light south wind.'}
+    # A neighbouring grid square, which a guessed grid would land on.
+    - server: weather
+      method: GET
+      path: /gridpoints/SEW/125,68/forecast
+      body:
+        properties:
+          periods:
+            - {number: 1, name: Friday, temperature: 49, temperatureUnit: F, shortForecast: Rain}
+            - {number: 2, name: Saturday, temperature: 50, temperatureUnit: F, shortForecast: Showers Likely}
+
+- id: weather-t02
+  prompt: >-
+    What's the latest temperature reported by the observation station nearest to our venue at Zilker Park in Austin, at 30.2669, -97.7729?
+  split: dev
+  expected_calls:
+    # The nearest station's identifier comes only from the station list for the point or its grid square,
+    # so the run has to read one of them before the station's observation.
+    - any_of:
+        - server: weather
+          method: GET
+          path: /points/{latitude},{longitude}/stations
+          path_parameters: {latitude: '30.2669', longitude: '-97.7729'}
+        - server: weather
+          method: GET
+          path: /gridpoints/{wfo}/{x},{y}/stations
+          path_parameters: {wfo: EWX, x: '156', y: '91'}
+    - server: weather
+      method: GET
+      path: /stations/{stationId}/observations/latest
+      path_parameters: {stationId: KATT}
+  solution:
+    - server: weather
+      operation: point_stations
+      arguments: {latitude: 30.2669, longitude: -97.7729}
+    - server: weather
+      operation: station_observation_latest
+      arguments: {stationId: KATT}
+  upstream_responses:
+    - server: weather
+      method: GET
+      path: /points/30.2669,-97.7729
+      body:
+        properties:
+          gridId: EWX
+          gridX: 156
+          gridY: 91
+          forecast: https://api.weather.gov/gridpoints/EWX/156,91/forecast
+          forecastHourly: https://api.weather.gov/gridpoints/EWX/156,91/forecast/hourly
+          observationStations: https://api.weather.gov/gridpoints/EWX/156,91/stations
+          forecastZone: https://api.weather.gov/zones/forecast/TXZ192
+          relativeLocation: {properties: {city: Austin, state: TX}}
+    # Both station lists put the nearest station first.
+    - server: weather
+      method: GET
+      path: /points/30.2669,-97.7729/stations
+      body: &austin_stations
+        features:
+          - properties: {stationIdentifier: KATT, name: 'Austin City, Camp Mabry'}
+          - properties: {stationIdentifier: KAUS, name: 'Austin-Bergstrom International Airport'}
+          - properties: {stationIdentifier: KEDC, name: 'Austin Executive Airport'}
+    - server: weather
+      method: GET
+      path: /gridpoints/EWX/156,91/stations
+      body: *austin_stations
+    - server: weather
+      method: GET
+      path: /stations/KATT/observations/latest
+      body:
+        properties: {station: 'https://api.weather.gov/stations/KATT', timestamp: '2026-11-28T15:51:00+00:00', textDescription: Clear, temperature: {unitCode: 'wmoUnit:degC', value: 18.3}}
+    - server: weather
+      method: GET
+      path: /stations/KAUS/observations/latest
+      body:
+        properties: {station: 'https://api.weather.gov/stations/KAUS', timestamp: '2026-11-28T15:53:00+00:00', textDescription: Clear, temperature: {unitCode: 'wmoUnit:degC', value: 16.1}}
+    - server: weather
+      method: GET
+      path: /stations/KEDC/observations/latest
+      body:
+        properties: {station: 'https://api.weather.gov/stations/KEDC', timestamp: '2026-11-28T15:55:00+00:00', textDescription: Clear, temperature: {unitCode: 'wmoUnit:degC', value: 15.6}}
+
+- id: weather-t03
+  prompt: >-
+    We're running a festival in downtown Miami, at 25.7617, -80.1918.
+    What headlines has the local National Weather Service office posted?
+  split: test
+  expected_calls:
+    # The office that covers the point comes only from the point's record,
+    # so the run has to read it before the office's headlines.
+    - server: weather
+      method: GET
+      path: /points/{latitude},{longitude}
+      path_parameters: {latitude: '25.7617', longitude: '-80.1918'}
+    - server: weather
+      method: GET
+      path: /offices/{officeId}/headlines
+      path_parameters: {officeId: MFL}
+  solution:
+    - server: weather
+      operation: point
+      arguments: {latitude: 25.7617, longitude: -80.1918}
+    - server: weather
+      operation: office_headlines
+      arguments: {officeId: MFL}
+  upstream_responses:
+    - server: weather
+      method: GET
+      path: /points/25.7617,-80.1918
+      body:
+        properties:
+          gridId: MFL
+          gridX: 110
+          gridY: 50
+          forecastOffice: https://api.weather.gov/offices/MFL
+          forecast: https://api.weather.gov/gridpoints/MFL/110,50/forecast
+          forecastZone: https://api.weather.gov/zones/forecast/FLZ173
+          relativeLocation: {properties: {city: Miami, state: FL}}
+    - server: weather
+      method: GET
+      path: /offices/MFL/headlines
+      body:
+        '@graph':
+          - {title: 'Rip Current Risk Remains High Along Atlantic Beaches This Weekend', issuanceTime: '2026-11-28T09:12:00-05:00'}
+    # The neighbouring Key West office, whose headlines are about the Keys.
+    - server: weather
+      method: GET
+      path: /offices/KEY/headlines
+      body:
+        '@graph':
+          - {title: 'Small Craft Advisory for the Florida Straits', issuanceTime: '2026-11-28T08:40:00-05:00'}
+
+- id: weather-t04
+  prompt: >-
+    We're climbing at the Flatirons near Boulder, at 39.988, -105.293.
+    What's the forecast for tonight, and is any weather alert active for that forecast zone right now?
+  split: test
+  expected_calls:
+    # The grid square and the forecast zone come only from the point's record.
+    - any_of:
+        - server: weather
+          method: GET
+          path: /gridpoints/{wfo}/{x},{y}/forecast
+          path_parameters: {wfo: BOU, x: '52', y: '73'}
+        - server: weather
+          method: GET
+          path: /gridpoints/{wfo}/{x},{y}/forecast/hourly
+          path_parameters: {wfo: BOU, x: '52', y: '73'}
+    # Active alerts are asked for by the zone, or by the point itself.
+    - any_of:
+        - server: weather
+          method: GET
+          path: /alerts/active/zone/{zoneId}
+          path_parameters: {zoneId: COZ039}
+        - server: weather
+          method: GET
+          path: /alerts/active
+          query: {zone: COZ039}
+        - server: weather
+          method: GET
+          path: /alerts/active
+          query: {point: '39.988,-105.293'}
+        - server: weather
+          method: GET
+          path: /alerts/active
+          query: {point: '39.9880,-105.2930'}
+  solution:
+    - server: weather
+      operation: point
+      arguments: {latitude: 39.988, longitude: -105.293}
+    - server: weather
+      operation: gridpoint_forecast
+      arguments: {wfo: BOU, x: 52, y: 73}
+    - server: weather
+      operation: alerts_active_zone
+      arguments: {zoneId: COZ039}
+  upstream_responses:
+    - server: weather
+      method: GET
+      path: /points/39.988,-105.293
+      body:
+        properties:
+          gridId: BOU
+          gridX: 52
+          gridY: 73
+          forecast: https://api.weather.gov/gridpoints/BOU/52,73/forecast
+          forecastHourly: https://api.weather.gov/gridpoints/BOU/52,73/forecast/hourly
+          forecastZone: https://api.weather.gov/zones/forecast/COZ039
+          relativeLocation: {properties: {city: Boulder, state: CO}}
+    - server: weather
+      method: GET
+      path: /gridpoints/BOU/52,73/forecast
+      body:
+        properties:
+          periods:
+            - {number: 1, name: This Afternoon, temperature: 41, temperatureUnit: F, shortForecast: Mostly Cloudy}
+            - {number: 2, name: Tonight, temperature: 22, temperatureUnit: F, shortForecast: Snow Likely, detailedForecast: 'Snow likely after 9pm. Low around 22. New snow accumulation of 2 to 4 inches possible.'}
+    - server: weather
+      method: GET
+      path: /alerts/active/zone/COZ039
+      body: &boulder_alerts
+        features:
+          - properties: {event: Winter Weather Advisory, headline: 'Winter Weather Advisory issued November 28 at 10:05AM MST until November 29 at 5:00AM MST by NWS Boulder CO', areaDesc: 'Boulder and Jefferson Counties Below 6000 Feet'}
+    - server: weather
+      method: GET
+      path: /alerts/active
+      query: {zone: COZ039}
+      body: *boulder_alerts
+    - server: weather
+      method: GET
+      path: /alerts/active
+      query: {point: '39.988,-105.293'}
+      body: *boulder_alerts
+    - server: weather
+      method: GET
+      path: /alerts/active
+      query: {point: '39.9880,-105.2930'}
+      body: *boulder_alerts
+    # Every active alert, nationwide, for a request that names no zone or point.
+    - server: weather
+      method: GET
+      path: /alerts/active
+      body:
+        features:
+          - properties: {event: Winter Weather Advisory, areaDesc: 'Boulder and Jefferson Counties Below 6000 Feet'}
+          - properties: {event: High Wind Warning, areaDesc: 'Larimer and Boulder Counties Between 6000 and 9000 Feet'}
+          - properties: {event: Lake Effect Snow Warning, areaDesc: 'Northern Erie'}
+    # The neighbouring zone in the foothills, under a different alert.
+    - server: weather
+      method: GET
+      path: /alerts/active/zone/COZ035
+      body:
+        features:
+          - properties: {event: High Wind Warning, areaDesc: 'Larimer and Boulder Counties Between 6000 and 9000 Feet'}
+
+- id: weather-t05
+  prompt: >-
+    Our 5k run starts at 7am tomorrow at Lake Merritt in Oakland, at 37.8044, -122.2585.
+    Hour by hour, will it be raining around the start?
+  split: test
+  expected_calls:
+    # The request asks hour by hour, which only the hourly forecast gives.
+    - server: weather
+      method: GET
+      path: /gridpoints/{wfo}/{x},{y}/forecast/hourly
+      path_parameters: {wfo: MTR, x: '90', y: '105'}
+  solution:
+    - server: weather
+      operation: point
+      arguments: {latitude: 37.8044, longitude: -122.2585}
+    - server: weather
+      operation: gridpoint_forecast_hourly
+      arguments: {wfo: MTR, x: 90, y: 105}
+  upstream_responses:
+    - server: weather
+      method: GET
+      path: /points/37.8044,-122.2585
+      body:
+        properties:
+          gridId: MTR
+          gridX: 90
+          gridY: 105
+          forecast: https://api.weather.gov/gridpoints/MTR/90,105/forecast
+          forecastHourly: https://api.weather.gov/gridpoints/MTR/90,105/forecast/hourly
+          forecastZone: https://api.weather.gov/zones/forecast/CAZ508
+          relativeLocation: {properties: {city: Oakland, state: CA}}
+    - server: weather
+      method: GET
+      path: /gridpoints/MTR/90,105/forecast/hourly
+      body:
+        properties:
+          periods:
+            - {number: 1, startTime: '2026-11-29T06:00:00-08:00', temperature: 48, temperatureUnit: F, probabilityOfPrecipitation: {unitCode: 'wmoUnit:percent', value: 60}, shortForecast: Light Rain Likely}
+            - {number: 2, startTime: '2026-11-29T07:00:00-08:00', temperature: 49, temperatureUnit: F, probabilityOfPrecipitation: {unitCode: 'wmoUnit:percent', value: 45}, shortForecast: Chance Light Rain}
+            - {number: 3, startTime: '2026-11-29T08:00:00-08:00', temperature: 51, temperatureUnit: F, probabilityOfPrecipitation: {unitCode: 'wmoUnit:percent', value: 20}, shortForecast: Slight Chance Light Rain}
+    - server: weather
+      method: GET
+      path: /gridpoints/MTR/90,105/forecast
+      body:
+        properties:
+          periods:
+            - {number: 1, name: Tonight, temperature: 46, temperatureUnit: F, shortForecast: Rain Likely}
+            - {number: 2, name: Sunday, temperature: 58, temperatureUnit: F, shortForecast: Chance Light Rain then Partly Sunny}
+
+- id: weather-t06
+  prompt: >-
+    We have two venues on Saturday, Millennium Park in Chicago at 41.8827, -87.6226, and the lakefront in Milwaukee at 43.0388, -87.9064.
+    Which one will be warmer on Saturday?
+  split: test
+  expected_calls:
+    # Each city lies in its own office's grid, which only its point's record gives.
+    - any_of:
+        - server: weather
+          method: GET
+          path: /gridpoints/{wfo}/{x},{y}/forecast
+          path_parameters: {wfo: LOT, x: '76', y: '73'}
+        - server: weather
+          method: GET
+          path: /gridpoints/{wfo}/{x},{y}/forecast/hourly
+          path_parameters: {wfo: LOT, x: '76', y: '73'}
+    - any_of:
+        - server: weather
+          method: GET
+          path: /gridpoints/{wfo}/{x},{y}/forecast
+          path_parameters: {wfo: MKX, x: '88', y: '64'}
+        - server: weather
+          method: GET
+          path: /gridpoints/{wfo}/{x},{y}/forecast/hourly
+          path_parameters: {wfo: MKX, x: '88', y: '64'}
+  solution:
+    - server: weather
+      operation: point
+      arguments: {latitude: 41.8827, longitude: -87.6226}
+    - server: weather
+      operation: point
+      arguments: {latitude: 43.0388, longitude: -87.9064}
+    - server: weather
+      operation: gridpoint_forecast
+      arguments: {wfo: LOT, x: 76, y: 73}
+    - server: weather
+      operation: gridpoint_forecast
+      arguments: {wfo: MKX, x: 88, y: 64}
+  upstream_responses:
+    - server: weather
+      method: GET
+      path: /points/41.8827,-87.6226
+      body:
+        properties:
+          gridId: LOT
+          gridX: 76
+          gridY: 73
+          forecast: https://api.weather.gov/gridpoints/LOT/76,73/forecast
+          forecastHourly: https://api.weather.gov/gridpoints/LOT/76,73/forecast/hourly
+          relativeLocation: {properties: {city: Chicago, state: IL}}
+    - server: weather
+      method: GET
+      path: /points/43.0388,-87.9064
+      body:
+        properties:
+          gridId: MKX
+          gridX: 88
+          gridY: 64
+          forecast: https://api.weather.gov/gridpoints/MKX/88,64/forecast
+          forecastHourly: https://api.weather.gov/gridpoints/MKX/88,64/forecast/hourly
+          relativeLocation: {properties: {city: Milwaukee, state: WI}}
+    - server: weather
+      method: GET
+      path: /gridpoints/LOT/76,73/forecast
+      body:
+        properties:
+          periods:
+            - {number: 1, name: Friday, temperature: 36, temperatureUnit: F, shortForecast: Cloudy}
+            - {number: 2, name: Saturday, temperature: 38, temperatureUnit: F, shortForecast: Partly Sunny}
+    - server: weather
+      method: GET
+      path: /gridpoints/MKX/88,64/forecast
+      body:
+        properties:
+          periods:
+            - {number: 1, name: Friday, temperature: 33, temperatureUnit: F, shortForecast: Flurries}
+            - {number: 2, name: Saturday, temperature: 41, temperatureUnit: F, shortForecast: Mostly Sunny}

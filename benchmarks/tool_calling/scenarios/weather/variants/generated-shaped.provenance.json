@@ -1,0 +1,18 @@
+[
+  {
+    "model": "anthropic:claude-sonnet-5-5",
+    "instructions_sha256": "ccb6a0871b081af46f55120a32156692666d123c6e3f5dfd82551c849d65fd8f",
+    "finished_at": "2026-11-27T16:09:12+00:00",
+    "pydantic_ai_version": "2.69.0",
+    "input_tokens": 330957,
+    "output_tokens": 9293,
+    "model_requests": 13,
+    "scenario": "weather",
+    "variant": "generated-shaped",
+    "skill": "generate-config",
+    "skill_sha256": "d11c01ebd784968d37d45292f208c28ef3dd408b766269bbfd76b5a23fec4bba",
+    "request": "Keep a small outdoor-events team informed about the forecast, current conditions and weather alerts where their events take place. Also shape the operations, so that each tool is easy for a model to call correctly.",
+    "gateway_version": "1.0.0",
+    "summary": "`config.yaml` now validates with `--dry-run`: one server and six tools. I didn't run any tool against the live API, and the response trimming is untested against real data.\n\nThe tools follow the team's workflow of venue, then forecast, conditions and alerts:\n- **`get_location`:** takes a venue's latitude and longitude and returns the forecast grid the other tools need.\n- **`get_forecast`:** a 12-hour-period forecast, about 7 days.\n- **`get_hourly_forecast`:** the next 48 hours.\n- **`get_nearby_stations`:** the nearest observation stations, closest first.\n- **`get_current_conditions`:** the latest observation at a station.\n- **`get_active_alerts`:** active alerts for a latitude and longitude, with no lookup step first.\n\nFor ease of calling, I gave the tools plain names and descriptions. I also added server-level `instructions` that spell out the call order. The forecast and station tools take `gridId`, `gridX` and `gridY` under the same names `get_location` returns. I hid the parameters a model shouldn't set: alert filters, `Feature-Flags`, `limit`, and the alert status, which is pinned to actual alerts. Responses are trimmed to the useful fields, and the trimming handles both JSON response formats.\n\nI left out the other roughly 70 operations (aviation, radar, products, zones, icons and so on) because the request doesn't need them.\n\n- **Placeholder `base_url`:** I kept it as you asked. Set the real `https://api.weather.gov` before running.\n- **`User-Agent` header:** weather.gov requires one that identifies your app and a contact email. I wired it to `${WEATHER_USER_AGENT}`, so set that variable.\n- **Auth:** none, because the API is open."
+  }
+]

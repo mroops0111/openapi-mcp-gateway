@@ -150,7 +150,7 @@ class TestBuildOAuthFlow:
         )
         setup = build_selected_oauth_flow(auth_context(entry, spec_with_authorization_code()))
         assert isinstance(setup.resolver, UpstreamTokenSourceAuthResolver)
-        assert isinstance(setup.resolver._token_source, AuthorizationCodeBridge)
+        assert isinstance(setup.resolver.token_source, AuthorizationCodeBridge)
         assert setup.provider is not None
         assert setup.settings is not None
         assert setup.on_shutdown is None

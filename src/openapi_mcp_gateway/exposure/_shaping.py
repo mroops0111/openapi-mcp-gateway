@@ -1,9 +1,10 @@
+import decimal
 import logging
 import re
 import typing
 
 import pydantic
-from jsonschema import Draft202012Validator, FormatChecker
+from jsonschema import Draft202012Validator, FormatChecker, ValidationError, validators
 from mcp.types import CallToolResult
 
 from ..openapi import OperationInfo, ParameterInfo, ParamOverride
@@ -146,7 +147,7 @@ class RequestShaper:
             else None
         )
         self._validator = (
-            Draft202012Validator(input_schema, format_checker=FormatChecker()) if input_schema is not None else None
+            _ArgumentValidator(input_schema, format_checker=FormatChecker()) if input_schema is not None else None
         )
 
     def shape_request(self, arguments: dict[str, typing.Any]) -> UpstreamArguments | CallToolResult:
@@ -290,3 +291,29 @@ def _to_jsonable(value: typing.Any) -> typing.Any:
     if isinstance(value, list):
         return [_to_jsonable(item) for item in value]
     return value
+
+
+def _decimal_multiple_of(
+    validator: typing.Any, divisor: typing.Any, instance: typing.Any, schema: dict[str, typing.Any]
+) -> typing.Iterator[ValidationError]:
+    """Check ``multipleOf`` on the decimal values a model writes, not on their binary floats.
+
+    A float cannot hold 41.8826 or 0.0001 exactly, so dividing them leaves a remainder,
+    and the stock check refuses a coordinate written to four places against ``multipleOf: 0.0001``.
+    Each number is read back from its shortest decimal form, which is the one the model wrote.
+    A quotient too large for decimal arithmetic falls back to the stock check.
+    """
+    if not validator.is_type(instance, 'number'):
+        return
+    try:
+        remainder = decimal.Decimal(repr(instance)) % decimal.Decimal(repr(divisor))
+    except decimal.InvalidOperation:
+        yield from Draft202012Validator.VALIDATORS['multipleOf'](validator, divisor, instance, schema)
+        return
+    if remainder != 0:
+        yield ValidationError(f'{instance!r} is not a multiple of {divisor!r}')
+
+
+# The tool argument validator, with ``multipleOf`` checked in decimal.
+# It follows the function it uses, since Python builds it at import time.
+_ArgumentValidator = validators.extend(Draft202012Validator, {'multipleOf': _decimal_multiple_of})

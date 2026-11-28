@@ -25,15 +25,28 @@ cors:
   allow_headers: ["*"]
 
 servers:
-  - name: petstore
-    spec: https://petstore3.swagger.io/api/v3/openapi.json
+  - name: pokeapi
+    spec: https://pokeapi.co/openapi.yml
+    policy:
+      # The Pokémon themselves and their species, without the game's items, moves or locations.
+      allow:
+        - "GET /api/v2/pokemon/*"
+        - "GET /api/v2/pokemon-species/*"
 
   - name: github
     spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
+    # GitHub's description declares no security scheme, so the server declares the bearer token GitHub takes.
+    security_schemes:
+      token:
+        type: http
+        scheme: bearer
+    security:
+      - token: []
     auth:
       upstream:
-        type: bearer
-        token: ${GITHUB_TOKEN}
+        credentials:
+          token:
+            value: ${GITHUB_TOKEN}
     policy:
       allow:
         - "GET /repos/*"

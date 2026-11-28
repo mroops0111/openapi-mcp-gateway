@@ -9,7 +9,7 @@ from openapi_mcp_gateway.scopes import (
 class TestRequestTargets:
     """Which name a 2026-07-28 request reaches, read from its headers alone."""
 
-    @pytest.mark.parametrize('name', ['delete_pet', 'petstore://pets/7'])
+    @pytest.mark.parametrize('name', ['delete_product', 'shop://products/7'])
     def test_the_name_header_names_a_tool_or_a_resource(self, name):
         """``Mcp-Name`` carries the tool of a ``tools/call`` and the URI of a ``resources/read``."""
         assert NameHeaderTarget().resolve({'mcp-name': name}) == name
@@ -17,7 +17,7 @@ class TestRequestTargets:
     @pytest.mark.parametrize(
         ('headers', 'expected'),
         [
-            ({'mcp-name': 'call_operation', 'mcp-param-operation': 'delete_pet'}, 'delete_pet'),
+            ({'mcp-name': 'call_operation', 'mcp-param-operation': 'delete_product'}, 'delete_product'),
             ({'mcp-name': 'search_operations'}, None),
             ({'mcp-name': 'call_operation'}, None),
         ],

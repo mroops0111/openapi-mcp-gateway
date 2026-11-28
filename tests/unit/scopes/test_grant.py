@@ -14,22 +14,22 @@ class TestTokenGrant:
 
     def test_a_token_minted_before_recording_grantable_scopes_leaves_them_unknown(self):
         """Its challenge stays whole, so the client can still step up, while lists show only what it holds."""
-        token = McpAccessToken(token='mcp_access', client_id='stepper', scopes=['pets:read'])
+        token = McpAccessToken(token='mcp_access', client_id='stepper', scopes=['products:read'])
         grant = read_grant(token)
         assert grant.mcp_grantable_scopes is None
-        assert grant.mcp_reachable_scopes == {'pets:read'}
+        assert grant.mcp_reachable_scopes == {'products:read'}
 
     def test_a_recorded_token_reaches_what_its_client_may_be_granted(self):
         token = McpAccessToken(
             token='mcp_access',
             client_id='stepper',
-            scopes=['pets:read'],
-            mcp_grantable_scopes=['pets:read', 'pets:write'],
+            scopes=['products:read'],
+            mcp_grantable_scopes=['products:read', 'products:write'],
         )
-        assert read_grant(token).mcp_reachable_scopes == {'pets:read', 'pets:write'}
+        assert read_grant(token).mcp_reachable_scopes == {'products:read', 'products:write'}
 
     def test_a_token_recording_no_upstream_grant_leaves_it_to_the_call(self):
-        token = McpAccessToken(token='external', client_id='agent', scopes=['pets:read'], upstream_scopes=None)
+        token = McpAccessToken(token='external', client_id='agent', scopes=['products:read'], upstream_scopes=None)
         assert read_grant(token).upstream_scopes is None
 
     def test_a_token_no_gateway_verifier_returns_is_a_wiring_mistake(self):

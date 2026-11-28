@@ -13,7 +13,7 @@ from openapi_mcp_gateway.auth.mcp.client_credentials import (
 from openapi_mcp_gateway.auth.mcp.external_issuer import McpExternalIssuerTokenVerifier
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpGatewayIssuerTokenVerifier
 from openapi_mcp_gateway.settings import AuthConfig
-from tests.constants import ISSUER
+from tests.constants import ISSUER, SHARED_CREDENTIAL_UPSTREAM
 from tests.flow import auth_context, build_spec, discovered_external_issuer, server_entry, spec_with_client_credentials
 
 
@@ -28,20 +28,19 @@ class TestAuthoritySelection:
         assert MCP_TOKEN_AUTHORITIES[-1] is McpNoTokenAuthority
 
     def test_declared_clients_select_client_credentials(self):
-        auth = AuthConfig.model_validate({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': AGENT}})
+        auth = AuthConfig.model_validate({'upstream': SHARED_CREDENTIAL_UPSTREAM, 'mcp': {'clients': AGENT}})
         assert McpClientCredentialsAuthority().applies_to(auth, 'gateway')
 
     @pytest.mark.parametrize(
         'upstream',
         [
             {'type': 'none'},
-            {'type': 'bearer', 'token': 't'},
-            {'type': 'api_key', 'token': 'k'},
+            SHARED_CREDENTIAL_UPSTREAM,
             {'type': 'oauth2', 'flow': 'client_credentials', 'client_id': 'cid', 'client_secret': 'sec'},
         ],
     )
     def test_a_shared_credential_server_with_clients_issues_tokens(self, upstream):
-        spec = spec_with_client_credentials() if upstream['type'] == 'oauth2' else build_spec()
+        spec = spec_with_client_credentials() if upstream.get('type') == 'oauth2' else build_spec()
         setup = build_auth(auth_context(_build_entry({'upstream': upstream, 'mcp': {'clients': AGENT}}), spec))
 
         assert isinstance(setup.verifier, McpGatewayIssuerTokenVerifier)
@@ -59,13 +58,13 @@ class TestAuthoritySelection:
         'upstream',
         [
             {'type': 'none'},
-            {'type': 'bearer', 'token': 't'},
+            SHARED_CREDENTIAL_UPSTREAM,
             {'type': 'oauth2', 'flow': 'client_credentials', 'client_id': 'cid', 'client_secret': 'sec'},
         ],
     )
     def test_a_shared_credential_server_with_an_issuer_verifies_its_tokens(self, upstream):
         """The gateway is only a resource server here, so it publishes no authorization server of its own."""
-        spec = spec_with_client_credentials() if upstream['type'] == 'oauth2' else build_spec()
+        spec = spec_with_client_credentials() if upstream.get('type') == 'oauth2' else build_spec()
         entry = _build_entry({'upstream': upstream, 'mcp': {'issuer': ISSUER, 'required_scopes': ['mcp']}})
         with discovered_external_issuer():
             setup = build_auth(auth_context(entry, spec))
@@ -81,7 +80,7 @@ class TestAuthoritySelection:
     def test_discovery_names_the_endpoint_scopes(self):
         """A client asking for fewer than these would be refused on every call."""
         entry = _build_entry(
-            {'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': AGENT, 'required_scopes': ['api', 'mcp']}}
+            {'upstream': SHARED_CREDENTIAL_UPSTREAM, 'mcp': {'clients': AGENT, 'required_scopes': ['api', 'mcp']}}
         )
         setup = build_auth(auth_context(entry, build_spec()))
 
@@ -91,7 +90,7 @@ class TestAuthoritySelection:
         assert setup.protected_resource.scopes_supported == ['api', 'mcp']
 
     def test_a_server_without_clients_stays_open(self):
-        setup = build_auth(auth_context(_build_entry({'upstream': {'type': 'bearer', 'token': 't'}}), build_spec()))
+        setup = build_auth(auth_context(_build_entry({'upstream': SHARED_CREDENTIAL_UPSTREAM}), build_spec()))
 
         assert setup.verifier is None
         assert setup.authorization_server_metadata is None
@@ -99,7 +98,7 @@ class TestAuthoritySelection:
 
     @pytest.mark.parametrize('principal', ['user', 'caller'])
     def test_clients_select_nothing_where_the_upstream_sees_someone_else(self, principal):
-        auth = AuthConfig.model_validate({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': AGENT}})
+        auth = AuthConfig.model_validate({'upstream': SHARED_CREDENTIAL_UPSTREAM, 'mcp': {'clients': AGENT}})
         assert not McpClientCredentialsAuthority().applies_to(auth, principal)
 
     def test_a_resolved_client_credentials_flow_checks_its_clients(self):
@@ -127,14 +126,14 @@ class TestClientSettingsWithoutSignIn:
         ],
     )
     def test_sign_in_settings_are_refused(self, client, refusal):
-        entry = _build_entry({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': {'agent': client}}})
+        entry = _build_entry({'upstream': SHARED_CREDENTIAL_UPSTREAM, 'mcp': {'clients': {'agent': client}}})
         with pytest.raises(ValueError, match=refusal):
             build_auth(auth_context(entry, build_spec()))
 
     def test_a_metadata_document_client_is_refused(self):
         """Such a client signs a user in through a browser, which never happens here."""
         client_id = 'https://app.example.com/client.json'
-        entry = _build_entry({'upstream': {'type': 'bearer', 'token': 't'}, 'mcp': {'clients': {client_id: {}}}})
+        entry = _build_entry({'upstream': SHARED_CREDENTIAL_UPSTREAM, 'mcp': {'clients': {client_id: {}}}})
         with pytest.raises(ValueError, match=r'names a Client ID Metadata Document, whose client signs a user in'):
             build_auth(auth_context(entry, build_spec()))
 

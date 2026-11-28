@@ -73,7 +73,7 @@ dns_rebinding_protection:
 `--transport stdio` lets a desktop client launch the gateway as a child process. It has two limits.
 
 - **One Server**: stdio serves exactly one server, so a config with several fails to start.
-- **No MCP Auth**: a stdio client presents no token, so a server that checks MCP tokens, such as one under `authorization_code`, is refused. A shared credential such as `bearer` works.
+- **No MCP Auth**: a stdio client presents no token, so a server that checks MCP tokens, such as one under `authorization_code`, is refused. A shared credential, such as static `credentials`, works.
 
 ## Security Notes
 

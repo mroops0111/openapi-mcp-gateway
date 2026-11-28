@@ -1,0 +1,96 @@
+# GitHub's issue search and issue read, shaped into a small, LLM-friendly tool surface.
+#
+# The gateway points at GitHub's raw spec and never edits it, so the friendly interface lives entirely here.
+# `params` declares what the model sees, `request` builds GitHub's search query and path from those arguments,
+# and `response` trims each body down to what a model reads.
+#
+# Prerequisites:
+#   export GITHUB_TOKEN="ghp_..."
+#
+# Usage: openapi-mcp-gateway serve --config examples/github-shaping.yml
+
+host: "127.0.0.1"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: github
+    spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
+    security_schemes:
+      token:
+        type: http
+        scheme: bearer
+    security:
+      - token: []
+    auth:
+      upstream:
+        credentials:
+          token:
+            value: ${GITHUB_TOKEN}
+    policy:
+      allow:
+        - search/issues-and-pull-requests
+        - issues/get
+    operations:
+      search/issues-and-pull-requests:
+        tool:
+          name: find_issues
+          params_strategy: replace  # the declared params are the whole surface
+          params:
+            repository:
+              type: string
+              required: true
+              description: The repository, as owner/name.
+            state:
+              type: string
+              enum: [open, closed]
+              default: open
+            label:
+              type: string
+              description: Only issues carrying this label.
+            limit:
+              type: integer
+              default: 10
+          request: |
+            {
+              "q": "repo:" & repository & " is:issue is:" & state & ($exists(label) ? " label:\"" & label & "\"" : ""),
+              "sort": "updated",
+              "per_page": limit
+            }
+          response: |  # the [ ... ] wrapper keeps a list even when a single issue matches
+            [items.{
+              "number": number,
+              "title": title,
+              "state": state,
+              "author": user.login,
+              "labels": [labels.name],
+              "url": html_url
+            }]
+      issues/get:
+        tool:
+          name: read_issue
+          params_strategy: replace
+          params:
+            repository:
+              type: string
+              required: true
+              description: The repository, as owner/name.
+            number:
+              type: integer
+              required: true
+              description: The issue number.
+          request: |
+            {
+              "owner": $substringBefore(repository, "/"),
+              "repo": $substringAfter(repository, "/"),
+              "issue_number": number
+            }
+          response: |
+            {
+              "number": number,
+              "title": title,
+              "state": state,
+              "author": user.login,
+              "body": body,
+              "comments": comments
+            }

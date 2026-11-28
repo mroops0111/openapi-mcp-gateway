@@ -12,7 +12,7 @@ One `auth:` block decides who may call an MCP endpoint and what credential reach
 | Mode | MCP Endpoint | Credential Sent Upstream |
 | --- | --- | --- |
 | `none` | open | none |
-| `bearer`, `api_key` | open | a token from config, shared by every caller |
+| `credentials` | open | keys or tokens from config, shared by every caller |
 | `oauth2` + `client_credentials` | open | one service token, shared by every caller |
 | `passthrough` | open | the caller's own header, forwarded unchanged |
 | `oauth2` + `authorization_code` | the gateway is the authorization server | a per-user token the gateway obtained on their behalf |
@@ -20,7 +20,7 @@ One `auth:` block decides who may call an MCP endpoint and what credential reach
 | Shared Credential With `auth.mcp.clients` | the gateway issues tokens to each agent | the shared credential, while each agent reaches only what its scopes open |
 | Shared Credential With `auth.mcp.issuer` | an external issuer is the authorization server | the shared credential, while each caller reaches only what the issuer granted |
 
-An authorization server is the service that signs users in and issues tokens. An issuer is an authorization server named by its URL, and an external issuer is one your deployment already runs, such as an identity provider. A shared credential is `none`, `bearer`, `api_key` or `oauth2` + `client_credentials`. `passthrough` exists for the [FastAPI integration](python.md#fastapi-integration) only.
+An authorization server is the service that signs users in and issues tokens. An issuer is an authorization server named by its URL, and an external issuer is one your deployment already runs, such as an identity provider. A shared credential is `none`, `credentials` or `oauth2` + `client_credentials`. `passthrough` exists for the [FastAPI integration](python.md#fastapi-integration) only.
 
 Under `authorization_code`, MCP scopes are granted per client rather than per person, as [Granting Scopes to Clients](scopes.md#granting-scopes-to-clients) explains.
 
@@ -30,7 +30,7 @@ Two questions decide the mode.
 flowchart LR
     Start{"Per-user<br>upstream?"}
     Start -->|"no"| Shared{"Who calls<br>the endpoint?"}
-    Shared -->|"anyone"| Open["none, bearer,<br>api_key,<br>client_credentials"]
+    Shared -->|"anyone"| Open["none,<br>credentials,<br>client_credentials"]
     Shared -->|"your<br>agents"| Clients["auth.mcp.clients"]
     Shared -->|"identity<br>provider<br>callers"| Issuer["auth.mcp.issuer"]
     Start -->|"yes"| PerUser{"Who signs<br>users in?"}
@@ -45,29 +45,42 @@ flowchart LR
 
 A shared credential sends the same upstream identity on every call, whoever the caller is. Set its environment variable and reference it with `${VAR}`, so no secret is stored in the file.
 
-=== "Bearer"
+`auth.upstream.credentials` gives a value for each security scheme the spec declares, keyed by the scheme's name. Where each value travels comes from the scheme. An `apiKey` scheme names its header, query parameter or cookie, and an HTTP `bearer` scheme travels as `Authorization: Bearer`.
+
+=== "API Key"
+
+    The National Weather Service spec declares a `User-Agent` header as its `userAgent` scheme:
+
+    ```yaml
+    servers:
+      - name: weather
+        spec: https://api.weather.gov/openapi.json
+        auth:
+          upstream:
+            credentials:
+              userAgent:
+                value: ${WEATHER_USER_AGENT}
+    ```
+
+=== "Spec Without a Scheme"
+
+    GitHub's spec declares no security scheme, so the server declares the one GitHub takes and makes it the root `security`:
 
     ```yaml
     servers:
       - name: github
         spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
+        security_schemes:
+          token:
+            type: http
+            scheme: bearer
+        security:
+          - token: []
         auth:
           upstream:
-            type: bearer
-            token: ${GITHUB_TOKEN}
-    ```
-
-=== "API Key"
-
-    ```yaml
-    servers:
-      - name: petstore
-        spec: https://petstore3.swagger.io/api/v3/openapi.json
-        auth:
-          upstream:
-            type: api_key
-            token: ${PETSTORE_API_KEY}
-            api_key_header: api_key
+            credentials:
+              token:
+                value: ${GITHUB_TOKEN}
     ```
 
 === "Client Credentials"
@@ -86,7 +99,16 @@ A shared credential sends the same upstream identity on every call, whoever the 
             scopes: [read]
     ```
 
-[`auth.upstream`](../reference/configuration.md#authupstream) gives the default `api_key_header`. Under `client_credentials` the gateway fetches one service token on the first call and renews it shortly before it expires. `token_url` and `scopes` come from the spec's `securitySchemes` when it declares a `clientCredentials` flow. Set them only when the spec declares no OAuth flow at all, since a spec whose OAuth flows leave out `clientCredentials` makes `flow: client_credentials` fail at startup.
+Under `client_credentials` the gateway fetches one service token on the first call and renews it shortly before it expires. `token_url` and `scopes` come from the spec's `securitySchemes` when it declares a `clientCredentials` flow. Set them only when the spec declares no OAuth flow at all, since a spec whose OAuth flows leave out `clientCredentials` makes `flow: client_credentials` fail at startup.
+
+### Which Credential Each Operation Carries
+
+An operation's `security` lists alternatives, and each names the schemes it needs together. At startup, each exposed operation settles on the first alternative in spec order that the config meets, and every call to it carries that alternative's credentials. An empty alternative, `{}`, makes the credential optional, so it is chosen only when the config meets no other alternative. `operations.<id>.security` picks another alternative for one operation.
+
+- **Overrides**: `security_schemes` merges into the spec's schemes, replacing one of the same name, and `security` replaces the spec's root `security`. An operation that declares its own `security` keeps it.
+- **Startup Check**: an exposed operation that no alternative is met for refuses startup, and so does a credential that no exposed operation uses. `policy.deny` leaves an operation out of both checks.
+- **Beside a Flow**: `credentials` combines with `type: oauth2` and one `flow`, so an operation served by a key carries the key and one served by OAuth carries the token. An operation the keys serve alone never fetches the token, and a refusal of its key starts no renewal or sign-in. Upstream scopes count only the OAuth part of the alternative each operation settled on. `type: passthrough` refuses `credentials`.
+- **Redaction**: a credential sent in the query string is replaced by `[REDACTED]` in the gateway's logs and in the errors it returns to the client.
 
 ## Per-User Sign-In
 
@@ -229,10 +251,14 @@ A shared credential sees every agent as one identity. Declare each agent under `
 servers:
   - name: github
     spec: https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
+    security_schemes:
+      token: {type: http, scheme: bearer}
+    security:
+      - token: []
     auth:
       upstream:
-        type: bearer
-        token: ${GITHUB_TOKEN}
+        credentials:
+          token: {value: "${GITHUB_TOKEN}"}
       mcp:
         operation_scopes:
           # issues:read comes from the spec's issues tag.

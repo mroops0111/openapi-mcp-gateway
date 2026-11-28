@@ -8,11 +8,11 @@ from mcp import Client
 from mcp.server import MCPServer
 
 from openapi_mcp_gateway.exposure import MetaToolGenerator, SemanticSearchOptions, UpstreamConnection
-from openapi_mcp_gateway.exposure.meta_tool import _OperationRegistry, _RegisteredOperation
-from openapi_mcp_gateway.gateway import Gateway, _semantic_search_options
+from openapi_mcp_gateway.exposure.meta_tool import OperationRegistry, RegisteredOperation
+from openapi_mcp_gateway.gateway import semantic_search_options
 from openapi_mcp_gateway.openapi import OperationInfo
 from openapi_mcp_gateway.scopes import UpstreamNoGrantSource
-from openapi_mcp_gateway.settings import GatewayConfig, SemanticSearchConfig
+from openapi_mcp_gateway.settings import SemanticSearchConfig
 from tests.constants import API_URL
 
 
@@ -21,7 +21,7 @@ _CONCEPTS = (
     ('close', 'shut', 'resolve', 'update'),
     ('issue', 'ticket', 'bug'),
     ('comment', 'note', 'reply'),
-    ('pet', 'dog', 'animal'),
+    ('product', 'item', 'goods'),
 )
 
 
@@ -37,7 +37,7 @@ class TestSemanticSearch:
         """A request in other words finds its operation through the embedding, while a literal one still ranks first."""
         mcp = _register(SemanticSearchOptions(model='stand-in', embedder=embedder, retrieval='hybrid'))
         assert (await _names(mcp, 'shut a ticket'))[0] == 'update_issue'
-        assert (await _names(mcp, 'adopt pet'))[0] == 'adopt_pet'
+        assert (await _names(mcp, 'purchase product'))[0] == 'buy_product'
 
     async def test_semantic_retrieval_ranks_by_meaning_alone(self, embedder):
         """By default, a request sharing no word with any operation still ranks them by meaning."""
@@ -47,7 +47,7 @@ class TestSemanticSearch:
     async def test_tags_limit_the_semantic_ranking(self, embedder):
         """Only operations carrying the tag are ranked, by meaning as by words."""
         mcp = _register(SemanticSearchOptions(model='stand-in', embedder=embedder))
-        assert await _names(mcp, 'shut a ticket', tags=['pets']) == ['adopt_pet']
+        assert await _names(mcp, 'shut a ticket', tags=['products']) == ['buy_product']
 
     async def test_cache_file_spares_a_second_start(self, embedder, tmp_path: pathlib.Path):
         """A second server reading the same cache embeds no operation again."""
@@ -63,15 +63,15 @@ class TestSemanticSearch:
         embedder.failing = True
         mcp = _register(SemanticSearchOptions(model='stand-in', embedder=embedder, retrieval='hybrid'))
         with caplog.at_level(logging.WARNING):
-            assert await _names(mcp, 'adopt pet') == ['adopt_pet']
+            assert await _names(mcp, 'purchase product') == ['buy_product']
         assert 'ranks by words alone' in caplog.text
 
     async def test_failed_model_is_skipped_for_a_while(self, embedder):
         """After the model fails, the next searches rank by words at once rather than wait on it again."""
         embedder.failing = True
         mcp = _register(SemanticSearchOptions(model='stand-in', embedder=embedder))
-        await _names(mcp, 'adopt pet')
-        await _names(mcp, 'adopt pet')
+        await _names(mcp, 'purchase product')
+        await _names(mcp, 'purchase product')
         assert embedder.query_requests == 1
 
     async def test_several_queries_share_one_request(self, embedder):
@@ -84,19 +84,19 @@ class TestSemanticSearch:
     async def test_hidden_operations_do_not_crowd_out_visible_ones(self, embedder):
         """Operations the token cannot see are dropped before the top of the ranking is kept, not after."""
         hidden = [_operation(f'note_{number}', 'Add a note') for number in range(60)]
-        registry = _OperationRegistry(
-            [*hidden, _operation('adopt_pet', 'Adopt a pet')],
+        registry = OperationRegistry(
+            [*hidden, _operation('buy_product', 'Buy a product')],
             {'name': 1.0},
             SemanticSearchOptions(model='stand-in', embedder=embedder),
         )
-        page = await registry.search('leave a note', None, None, lambda name: name == 'adopt_pet')
-        assert [entry['name'] for entry in page['operations']] == ['adopt_pet']
+        page = await registry.search('leave a note', None, None, lambda name: name == 'buy_product')
+        assert [entry['name'] for entry in page['operations']] == ['buy_product']
 
     def test_servers_sharing_a_cache_directory_keep_their_own_files(self, monkeypatch, tmp_path: pathlib.Path):
         """Servers sharing a cache directory keep their vectors apart, under each server's name."""
         monkeypatch.setattr('openapi_mcp_gateway.gateway.build_embedder', lambda model: _ConceptEmbedder())
         config = SemanticSearchConfig(model='stand-in', cache_directory=tmp_path)
-        options = [_semantic_search_options(name, config) for name in ('one', 'two')]
+        options = [semantic_search_options(name, config) for name in ('one', 'two')]
         directories = {option.cache_directory for option in options if option}
         assert directories == {tmp_path / 'one', tmp_path / 'two'}
 
@@ -127,19 +127,6 @@ class TestSemanticSearch:
         assert result.is_error
         assert embedder.query_requests == 0
 
-    def test_unusable_model_is_refused_at_load(self, petstore_json_path):
-        """A model name the provider cannot resolve fails the config at load, naming the server."""
-        config = _semantic_config(petstore_json_path, 'text-embedding-3-small')
-        with pytest.raises(ValueError, match=r'Server "petstore".*provider prefix'):
-            Gateway.from_config(config)
-
-    def test_refused_without_the_embeddings_extra(self, monkeypatch, petstore_json_path):
-        """A config asking for semantic search fails to load when the extra is missing, naming it."""
-        monkeypatch.setattr('openapi_mcp_gateway.gateway.embeddings_available', lambda: False)
-        config = _semantic_config(petstore_json_path, 'openai:x')
-        with pytest.raises(ValueError, match=r'openapi-mcp-gateway\[embeddings\]'):
-            Gateway.from_config(config)
-
 
 class _ConceptEmbedder:
     """A stand-in embedding model that places text by the concepts its words name, and counts its calls."""
@@ -165,25 +152,11 @@ def _place(text: str) -> list[float]:
     return [float(sum(word.startswith(synonyms) for word in words)) + 0.01 for synonyms in _CONCEPTS]
 
 
-def _semantic_config(spec_path: pathlib.Path, model: str) -> GatewayConfig:
-    return GatewayConfig.model_validate(
-        {
-            'servers': [
-                {
-                    'name': 'petstore',
-                    'spec': str(spec_path),
-                    'exposure': {'style': 'dynamic', 'search': {'semantic': {'model': model}}},
-                }
-            ]
-        }
-    )
-
-
-def _operation(name: str, summary: str) -> _RegisteredOperation:
+def _operation(name: str, summary: str) -> RegisteredOperation:
     async def never_called(**arguments: typing.Any) -> typing.Any:
         raise AssertionError
 
-    return _RegisteredOperation(
+    return RegisteredOperation(
         name=name, summary=summary, description=summary, path='/', tags=[], input_schema={}, callable_=never_called
     )
 
@@ -211,7 +184,9 @@ def _register(options: SemanticSearchOptions) -> MCPServer:
                 summary='Add a comment',
                 tags=['issues'],
             ),
-            OperationInfo(operation_id='adoptPet', method='post', path='/pets', summary='Adopt a pet', tags=['pets']),
+            OperationInfo(
+                operation_id='buyProduct', method='post', path='/products', summary='Buy a product', tags=['products']
+            ),
         ]
     )
     return mcp

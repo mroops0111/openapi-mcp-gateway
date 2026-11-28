@@ -31,20 +31,6 @@ class UpstreamNoCredentialAuthResolver(UpstreamAuthResolver):
         return {}
 
 
-class UpstreamStaticAuthResolver(UpstreamAuthResolver):
-    """Fixed credential header captured at construction time.
-
-    Used for ``bearer`` (``Authorization: Bearer ...``) and ``api_key`` (``<api_key_header>: ...``) configs.
-    """
-
-    def __init__(self, header_value: str, header_name: str = 'Authorization') -> None:
-        self._header_name = header_name
-        self._header_value = header_value
-
-    async def resolve(self, ctx: Context) -> dict[str, str]:
-        return {self._header_name: self._header_value}
-
-
 class UpstreamTokenSourceAuthResolver(UpstreamAuthResolver):
     """Send the bearer an ``UpstreamTokenSource`` supplies, or nothing when it has none for this call.
 
@@ -54,10 +40,10 @@ class UpstreamTokenSourceAuthResolver(UpstreamAuthResolver):
     """
 
     def __init__(self, token_source: UpstreamTokenSource) -> None:
-        self._token_source = token_source
+        self.token_source = token_source
 
     async def resolve(self, ctx: Context) -> dict[str, str]:
-        token = await self._token_source.get_token()
+        token = await self.token_source.get_token()
         if token:
             return {'Authorization': f'Bearer {token}'}
         return {}

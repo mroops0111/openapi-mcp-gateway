@@ -40,10 +40,10 @@ Follow these two rules:
 
 Match features to the user's situation, do not reach for all of them.
 
-- **Local, Single User, One API (stdio).** A static token is enough, `bearer` or `api_key` with the provider's header, such as a GitHub personal access token. No OAuth. Expose a handful of operations with `policy.allow`.
+- **Local, Single User, One API (stdio).** A static key or token under `auth.upstream.credentials` is enough, such as a GitHub personal access token. No OAuth. Expose a handful of operations with `policy.allow`.
 - **A Huge Spec of Hundreds of Operations.** Prefer dynamic exposure, which fronts the spec with a few meta-tools, over listing every operation, so the tool list never floods the model. Still scope it with `policy.allow`.
 - **A Messy API That Makes Poor Tools.** Shape it. Hide the knobs the model should not set, and trim the response.
-- **Several Agents Sharing One Credential.** Keep the static token or `client_credentials` upstream and declare each agent under `auth.mcp.clients` with its own `client_secret` and `scopes`, plus `auth.mcp.operation_scopes`. Each agent then obtains a token as itself and reaches only the operations its scopes open, which the shared upstream credential cannot tell apart. When an identity provider the user runs already mints the agents' tokens, set `auth.mcp.issuer` to it instead of `auth.mcp.clients`, together with `auth.mcp.required_scopes` and `auth.mcp.operation_scopes`.
+- **Several Agents Sharing One Credential.** Keep the static credentials or `client_credentials` upstream and declare each agent under `auth.mcp.clients` with its own `client_secret` and `scopes`, plus `auth.mcp.operation_scopes`. Each agent then obtains a token as itself and reaches only the operations its scopes open, which the shared upstream credential cannot tell apart. When an identity provider the user runs already mints the agents' tokens, set `auth.mcp.issuer` to it instead of `auth.mcp.clients`, together with `auth.mcp.required_scopes` and `auth.mcp.operation_scopes`.
 - **Multiple Users, or a Provider That Mandates It.** Use `oauth2`, so each user signs in with their own credentials. `authorization_code` is the default and fits nearly every case.
 - **Least Privilege at the Upstream.** Set `auth.upstream.enforce_scopes: true` only under `authorization_code` or `token_exchange`, when the spec's operations declare `security` and the user wants each sign-in or exchange to grant the upstream no more than the agent can reach. Leave it off otherwise. Off, no scope hierarchy matters.
   - **Scope Hierarchies.** When it is on, look up the upstream's official OAuth scope documentation, such as GitHub's "Scopes for OAuth apps", for scopes that include others. Record each in `auth.upstream.scope_implies`, with the source URL in a YAML comment. Never infer one from scope names. `repo` covers `repo_deployment`, but Slack's `chat:write` does not cover `chat:write.public`. When no documentation states a hierarchy, set none. A missing entry only refuses more than the upstream would, and the startup warnings show where.
@@ -77,7 +77,7 @@ Get a machine-readable OpenAPI spec first. Work down this ladder, stop at the fi
 
 Fetch the spec candidate yourself and confirm it parses as OpenAPI before you rely on it.
 
-Once you have the spec, read its security schemes to fix the auth type and any header name, and confirm the base URL, before moving on. Never invent a token value. Reference it as an environment variable, for example `token: ${GITHUB_TOKEN}`.
+Once you have the spec, read its security schemes to fix the auth type and the scheme names credentials are keyed by, and confirm the base URL, before moving on. Never invent a credential value. Reference it as an environment variable, for example `value: ${GITHUB_TOKEN}`.
 
 ### Stage 2: Select and Shape the Operations
 
@@ -121,8 +121,10 @@ servers:
       <when to use this server, and which tool to call first>
     auth:
       upstream: # how the gateway reaches the API
-        type: bearer # or api_key / oauth2 / passthrough / none
-        token: ${SOME_TOKEN}
+        type: none # or oauth2 / passthrough
+        credentials: # static values, keyed by the spec's security scheme; the scheme says where each travels
+          <scheme>:
+            value: ${SOME_TOKEN}
         # oauth2 also takes flow: authorization_code (default) / client_credentials / token_exchange
         # client_id, client_secret, scopes and the rest below are for oauth2 only
         client_id: ${SOME_ID}
@@ -135,7 +137,7 @@ servers:
         # scope_implies: {repo: [public_repo]}, an upstream scope covering narrower ones
       mcp: # who may call this MCP endpoint; leave it out to keep the endpoint open
         # issuer: the authorization server that mints tokens for this endpoint, under token_exchange
-        #   or in front of a shared upstream credential (bearer, api_key, client_credentials, none)
+        #   or in front of a shared upstream credential (credentials, client_credentials, none)
         # required_scopes: what every token must carry, checked with an issuer, granted otherwise; required with an issuer
         # operation_scopes: which MCP scopes open which operations, whoever issues the tokens
         #   {auto: tags, unscoped: deny, manual: {<scope>: {description: ..., operations: ["DELETE *"]}}}
@@ -146,7 +148,7 @@ servers:
         #   consent: false skips the gateway's consent page for a client the operator trusts (default true)
         #   a key may be a client's metadata document URL (https://claude.ai/oauth/claude-code-client-metadata),
         #   which takes no client_secret or redirect_uris, since its document lists them
-        #   behind none, bearer, api_key or client_credentials no user signs in: each agent gets a token with
+        #   behind none, credentials or client_credentials no user signs in: each agent gets a token with
         #   its own client_secret (required) at /<server>/token, and default_scopes, redirect_uris and consent are refused
         # other_clients: the clients signing in with a metadata document URL that clients does not list
         #   {trusted_hosts: [claude.ai, vscode.dev], scopes: [...], default_scopes: [...]}, or false for none
@@ -176,14 +178,17 @@ servers:
               media_type: image/png # defaults to application/octet-stream
 ```
 
-For API-key auth with a custom header, name the header, since it defaults to `X-API-Key`:
+Each credential is keyed by a scheme the spec declares, and every exposed operation needs one of its `security` alternatives met, or startup is refused. For a spec that declares no scheme, declare it beside the server and make it the root `security`:
 
 ```yaml
+    security_schemes: # merged into the spec's securitySchemes
+      acme_key: {type: apiKey, in: header, name: X-Acme-Api-Key}
+    security: [{acme_key: []}] # replaces the spec's root security
     auth:
       upstream:
-        type: api_key
-        token: ${SOME_TOKEN}
-        api_key_header: X-Acme-Api-Key
+        credentials:
+          acme_key:
+            value: ${SOME_TOKEN}
 ```
 
 Both JSONata expressions compile when the gateway loads the config, so a broken expression fails validation with a message naming the side that broke. Validate with:
@@ -195,6 +200,8 @@ uvx openapi-mcp-gateway serve --config <config.yml> --dry-run
 It loads every spec, applies the policy, and compiles the shaping, then exits without serving and prints a summary of what would run, the resolved filter included. Exit 0 means the config is valid. An unrecognised key is a hard error, so a misspelled field is caught here rather than silently ignored. On failure, read the named side (request or response), fix the JSONata, and re-run until it validates clean.
 
 Under `enforce_scopes`, read the scope warnings too. A ceiling scope no operation declares is often a broad scope that needs `scope_implies` or belongs in `required_scopes`. An operation no sign-in can open needs a scope added to `auth.upstream.scopes`, or a hierarchy entry. Check the upstream documentation before acting on either.
+
+Every environment variable the config references must be set for `--dry-run`, since a credential that resolves to nothing refuses startup. A placeholder value is enough, so set one rather than reporting the config invalid.
 
 One config shape cannot be validated offline. A server with `auth.mcp.issuer` contacts the issuer during startup to discover its JWKS and, under `token_exchange`, its token endpoint, so `--dry-run` needs that provider reachable. Say so rather than reporting the config unverified.
 

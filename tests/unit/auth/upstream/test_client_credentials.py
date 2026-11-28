@@ -1,11 +1,12 @@
 import asyncio
-import time
-from unittest.mock import AsyncMock, MagicMock
+import typing
 
+import httpx
 import pytest
 
 from openapi_mcp_gateway.auth.upstream.client_credentials import UpstreamClientCredentialsTokenSource
 from tests.constants import API_URL, TOKEN_URL
+from tests.token_endpoint import TokenEndpoint
 
 
 class TestClientCredentialsTokenSourceFetch:
@@ -13,91 +14,62 @@ class TestClientCredentialsTokenSourceFetch:
 
     async def test_first_call_posts_client_credentials(self):
         """The first ``get_token`` POSTs ``grant_type=client_credentials`` to ``token_url``."""
-        source = UpstreamClientCredentialsTokenSource(
-            token_url=TOKEN_URL,
-            client_id='cid',
-            client_secret='secret',
-            scopes=['read', 'write'],
-        )
-        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'fresh-token', 'expires_in': 3600}))
-        source._http_client = MagicMock()
-        source._http_client.post = post_mock
+        endpoint = TokenEndpoint(_token(200, {'access_token': 'fresh-token', 'expires_in': 3600}))
+        source = _source(endpoint, scopes=['read', 'write'])
 
         token = await source.get_token()
 
         assert token == 'fresh-token'
-        post_mock.assert_awaited_once()
-        assert post_mock.await_args is not None
-        call_kwargs = post_mock.await_args.kwargs
-        assert call_kwargs['data']['grant_type'] == 'client_credentials'
-        assert call_kwargs['data']['client_id'] == 'cid'
-        assert call_kwargs['data']['client_secret'] == 'secret'
-        assert call_kwargs['data']['scope'] == 'read write'
+        assert len(endpoint.forms) == 1
+        form = endpoint.forms[0]
+        assert form['grant_type'] == 'client_credentials'
+        assert form['client_id'] == 'cid'
+        assert form['client_secret'] == 'secret'
+        assert form['scope'] == 'read write'
 
     async def test_second_call_uses_cached_token(self):
         """A still-fresh token is returned from cache without a second POST."""
-        source = UpstreamClientCredentialsTokenSource(
-            token_url=TOKEN_URL,
-            client_id='cid',
-            client_secret='secret',
-        )
-        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'cached-token', 'expires_in': 3600}))
-        source._http_client = MagicMock()
-        source._http_client.post = post_mock
+        endpoint = TokenEndpoint(_token(200, {'access_token': 'cached-token', 'expires_in': 3600}))
+        source = _source(endpoint)
 
         first = await source.get_token()
         second = await source.get_token()
 
         assert first == second == 'cached-token'
-        post_mock.assert_awaited_once()
+        assert len(endpoint.forms) == 1
 
     async def test_expired_token_triggers_refresh(self):
         """When the cached token is past the refresh skew, a fresh token is fetched."""
-        source = UpstreamClientCredentialsTokenSource(
-            token_url=TOKEN_URL,
-            client_id='cid',
-            client_secret='secret',
-            refresh_skew_seconds=30,
+        endpoint = TokenEndpoint(
+            _token(200, {'access_token': 'first', 'expires_in': 60}),
+            _token(200, {'access_token': 'second', 'expires_in': 60}),
         )
-        responses = [
-            _build_response(200, {'access_token': 'first', 'expires_in': 60}),
-            _build_response(200, {'access_token': 'second', 'expires_in': 60}),
-        ]
-        post_mock = AsyncMock(side_effect=responses)
-        source._http_client = MagicMock()
-        source._http_client.post = post_mock
+        now = [1000.0]
+        source = _source(endpoint, refresh_skew_seconds=30, clock=lambda: now[0])
 
         first = await source.get_token()
-        # Force the cached token into the refresh window.
-        source._expires_at_monotonic = time.monotonic() + 5
+        # Five seconds before expiry, the cached token is inside the refresh window.
+        now[0] += 55
         second = await source.get_token()
 
         assert first == 'first'
         assert second == 'second'
-        assert post_mock.await_count == 2
+        assert len(endpoint.forms) == 2
 
     async def test_concurrent_callers_share_one_fetch(self):
         """N parallel ``get_token`` calls trigger exactly one upstream fetch."""
-        source = UpstreamClientCredentialsTokenSource(
-            token_url=TOKEN_URL,
-            client_id='cid',
-            client_secret='secret',
-        )
 
-        call_counter = {'n': 0}
-
-        async def slow_post(*_args, **_kwargs):
-            call_counter['n'] += 1
+        async def slow_token(request: httpx.Request) -> httpx.Response:
             await asyncio.sleep(0.01)
-            return _build_response(200, {'access_token': f'token-{call_counter["n"]}', 'expires_in': 3600})
+            return _token(200, {'access_token': f'token-{len(endpoint.forms)}', 'expires_in': 3600})
 
-        source._http_client = MagicMock()
-        source._http_client.post = AsyncMock(side_effect=slow_post)
+        endpoint = TokenEndpoint(slow_token)
+        source = _source(endpoint)
 
         results = await asyncio.gather(*(source.get_token() for _ in range(10)))
 
         assert all(result == 'token-1' for result in results)
-        assert call_counter['n'] == 1
+        assert len(endpoint.forms) == 1
 
 
 class TestClientCredentialsTokenSourceErrors:
@@ -105,26 +77,14 @@ class TestClientCredentialsTokenSourceErrors:
 
     async def test_non_200_raises(self):
         """A non-200 token response raises ``RuntimeError`` and does not cache anything."""
-        source = UpstreamClientCredentialsTokenSource(
-            token_url=TOKEN_URL,
-            client_id='cid',
-            client_secret='secret',
-        )
-        source._http_client = MagicMock()
-        source._http_client.post = AsyncMock(return_value=_build_response(401, payload={}, text='invalid_client'))
+        source = _source(TokenEndpoint(httpx.Response(401, text='invalid_client')))
 
         with pytest.raises(RuntimeError, match='401'):
             await source.get_token()
 
     async def test_missing_access_token_raises(self):
         """A 200 response without ``access_token`` raises ``RuntimeError``."""
-        source = UpstreamClientCredentialsTokenSource(
-            token_url=TOKEN_URL,
-            client_id='cid',
-            client_secret='secret',
-        )
-        source._http_client = MagicMock()
-        source._http_client.post = AsyncMock(return_value=_build_response(200, payload={'expires_in': 3600}))
+        source = _source(TokenEndpoint(_token(200, {'expires_in': 3600})))
 
         with pytest.raises(RuntimeError, match='access_token'):
             await source.get_token()
@@ -134,29 +94,26 @@ class TestClientCredentialsTokenSourceClose:
     """``aclose`` releases the underlying HTTP client when one was created."""
 
     async def test_aclose_closes_http_client(self):
-        """``aclose`` calls ``aclose`` on the internal ``httpx.AsyncClient`` if present."""
-        source = UpstreamClientCredentialsTokenSource(
-            token_url=TOKEN_URL,
-            client_id='cid',
-            client_secret='secret',
+        """``aclose`` closes the HTTP client a fetch opened, and a later fetch opens another."""
+        endpoint = TokenEndpoint(
+            _token(200, {'access_token': 'first', 'expires_in': 60}),
+            _token(200, {'access_token': 'second', 'expires_in': 60}),
         )
-        client_mock = MagicMock()
-        client_mock.aclose = AsyncMock()
-        source._http_client = client_mock
+        now = [1000.0]
+        source = _source(endpoint, clock=lambda: now[0])
+        await source.get_token()
 
         await source.aclose()
 
-        client_mock.aclose.assert_awaited_once()
-        assert source._http_client is None
+        assert endpoint.closed == 1
+        now[0] += 60
+        assert await source.get_token() == 'second'
 
     async def test_aclose_is_safe_when_unused(self):
         """``aclose`` on a never-used source is a no-op."""
-        source = UpstreamClientCredentialsTokenSource(
-            token_url=TOKEN_URL,
-            client_id='cid',
-            client_secret='secret',
-        )
-        await source.aclose()  # Should not raise.
+        endpoint = TokenEndpoint()
+        await _source(endpoint).aclose()
+        assert endpoint.closed == 0
 
 
 class TestClientCredentialsTokenSourceAudience:
@@ -164,43 +121,29 @@ class TestClientCredentialsTokenSourceAudience:
 
     async def test_audience_params_are_posted(self):
         """Configured audience parameters ride along with the client_credentials grant."""
-        source = UpstreamClientCredentialsTokenSource(
-            token_url=TOKEN_URL,
-            client_id='cid',
-            client_secret='secret',
-            audience_params={'audience': API_URL},
-        )
-        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'tok', 'expires_in': 3600}))
-        source._http_client = MagicMock()
-        source._http_client.post = post_mock
+        endpoint = TokenEndpoint(_token(200, {'access_token': 'tok', 'expires_in': 3600}))
+        source = _source(endpoint, audience_params={'audience': API_URL})
 
         await source.get_token()
 
-        assert post_mock.await_args is not None
-        assert post_mock.await_args.kwargs['data']['audience'] == API_URL
+        assert endpoint.forms[0]['audience'] == API_URL
 
     async def test_no_audience_params_leaves_request_unchanged(self):
         """Without configuration the grant carries no audience keys at all."""
-        source = UpstreamClientCredentialsTokenSource(
-            token_url=TOKEN_URL,
-            client_id='cid',
-            client_secret='secret',
-        )
-        post_mock = AsyncMock(return_value=_build_response(200, {'access_token': 'tok', 'expires_in': 3600}))
-        source._http_client = MagicMock()
-        source._http_client.post = post_mock
+        endpoint = TokenEndpoint(_token(200, {'access_token': 'tok', 'expires_in': 3600}))
+        source = _source(endpoint)
 
         await source.get_token()
 
-        assert post_mock.await_args is not None
-        assert 'audience' not in post_mock.await_args.kwargs['data']
-        assert 'resource' not in post_mock.await_args.kwargs['data']
+        assert 'audience' not in endpoint.forms[0]
+        assert 'resource' not in endpoint.forms[0]
 
 
-def _build_response(status_code: int, payload: dict | None = None, text: str = '') -> MagicMock:
-    """Construct a MagicMock that mimics ``httpx.Response`` enough for the source."""
-    response = MagicMock()
-    response.status_code = status_code
-    response.json.return_value = payload or {}
-    response.text = text
-    return response
+def _source(endpoint: TokenEndpoint, **options: typing.Any) -> UpstreamClientCredentialsTokenSource:
+    return UpstreamClientCredentialsTokenSource(
+        token_url=TOKEN_URL, client_id='cid', client_secret='secret', transport=endpoint, **options
+    )
+
+
+def _token(status_code: int, payload: dict[str, typing.Any]) -> httpx.Response:
+    return httpx.Response(status_code, json=payload)

@@ -28,8 +28,7 @@ UpstreamPrincipal = typing.Literal['gateway', 'user', 'caller']
 
 # The ``auth.upstream`` fields besides ``type``, which each upstream strategy names as the ones it reads.
 UpstreamSetting = typing.Literal[
-    'token',
-    'api_key_header',
+    'credentials',
     'flow',
     'client_id',
     'client_secret',

@@ -22,5 +22,5 @@ def gateway_address() -> ServingAddress:
 @pytest.fixture
 def issuer(keycloak, gateway_address) -> typing.Iterator[str]:
     """The issuer of a realm made for this test's gateway, removed afterwards."""
-    with create_realm(keycloak, f'{gateway_address.url}/petstore/mcp') as issuer_url:
+    with create_realm(keycloak, f'{gateway_address.url}/shop/mcp') as issuer_url:
         yield issuer_url

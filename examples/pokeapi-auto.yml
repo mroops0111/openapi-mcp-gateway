@@ -1,0 +1,17 @@
+# PokéAPI with exposure.promote_resources, resource exposure with zero spec edits.
+#
+# `promote_resources: true` runs every operation through resource eligibility at startup.
+# GETs with no required query, header or body parameter become MCP resources, and everything else stays a tool.
+# Every PokéAPI operation is such a GET, so all 102 become resources, the lists concrete and the lookups templates.
+#
+# Usage: openapi-mcp-gateway serve --config examples/pokeapi-auto.yml
+
+host: "127.0.0.1"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: pokeapi
+    spec: https://pokeapi.co/openapi.yml
+    exposure:
+      promote_resources: true

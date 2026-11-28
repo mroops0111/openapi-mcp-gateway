@@ -24,12 +24,12 @@ To opt operations in from the spec instead, mark each with `x-mcp-integration: {
 
 A read-only `GET` fully identified by its URL suits an MCP resource, which the client or the user reads when they choose, better than a tool, which the model calls.
 
-Set `exposure.promote_resources: true` and every eligible GET becomes a resource. Eligible means no required parameter outside the path. A required path parameter turns the operation into a resource template. Against the Petstore spec, that yields 13 tools, 3 resources and 3 resource templates with no spec edits.
+Set `exposure.promote_resources: true` and every eligible GET becomes a resource. Eligible means no required parameter outside the path. A required path parameter turns the operation into a resource template. Every PokéAPI operation is such a GET, so all 102 become resources with no spec edits. Each list becomes a resource, and each lookup by id a resource template. An operation with a required query parameter, or a method other than GET, stays a tool.
 
 ```yaml
 servers:
-  - name: petstore
-    spec: https://petstore3.swagger.io/api/v3/openapi.json
+  - name: pokeapi
+    spec: https://pokeapi.co/openapi.yml
     exposure:
       promote_resources: true
 ```
@@ -45,36 +45,38 @@ Each resource can take its own name, URI template, or MIME type, in either form 
 
     ```yaml
     servers:
-      - name: petstore
-        spec: https://petstore3.swagger.io/api/v3/openapi.json
+      - name: pokeapi
+        spec: https://pokeapi.co/openapi.yml
         exposure:
           promote_resources: true
         operations:
-          getPetById:
+          pokemon_retrieve:
             resource:
-              name: pet
+              name: pokemon
               mime_type: application/json
-          getInventory:
+          pokemon_list:
+            tool:
+              name: list_pokemon
             resource:
-              name: inventory
+              name: pokemon_index
     ```
 
 === "In the spec"
 
     ```yaml
     paths:
-      /pet/{petId}:
+      /api/v2/pokemon/{id}/:
         get:
-          operationId: getPetById
+          operationId: pokemon_retrieve
           x-mcp-integration:
             resource:
-              name: pet
+              name: pokemon
               mime_type: application/json
               # Optional, and must start with "{name}://".
-              # uri_template: petstore://pets/{petId}
+              # uri_template: pokeapi://pokemon/{id}
     ```
 
-Declaring both `tool` and `resource` registers the operation on both surfaces. [`examples/petstore-override.yml`](https://github.com/mroops0111/openapi-mcp-gateway/blob/master/examples/petstore-override.yml) is a runnable demo.
+Declaring both `tool` and `resource` registers the operation on both surfaces, as `pokemon_list` does above. [`examples/pokeapi-override.yml`](https://github.com/mroops0111/openapi-mcp-gateway/blob/master/examples/pokeapi-override.yml) is a runnable demo.
 
 The gateway checks these declarations at startup.
 
@@ -84,7 +86,7 @@ The gateway checks these declarations at startup.
 
 ## Dynamic Exposure
 
-`exposure.style: dynamic` puts a server's operations behind three meta-tools, which search, describe and call operations. It is set per server, so one process can serve GitHub dynamically beside a static Petstore. [Dynamic Exposure](../concepts/dynamic-exposure.md) explains the meta-tools and the ranking.
+`exposure.style: dynamic` puts a server's operations behind three meta-tools, which search, describe and call operations. It is set per server, so one process can serve GitHub dynamically beside a static PokéAPI. [Dynamic Exposure](../concepts/dynamic-exposure.md) explains the meta-tools and the ranking.
 
 ```yaml
 servers:

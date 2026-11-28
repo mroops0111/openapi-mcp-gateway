@@ -122,7 +122,7 @@ def build_mcp_asgi_app(
     mcp v2 moved that argument off the ``MCPServer`` constructor onto these factory methods.
     ``host`` is the address the gateway binds, or ``None`` when it is mounted into an app someone else serves.
     """
-    transport_security = _transport_security(protection, host)
+    transport_security = build_transport_security(protection, host)
     # The SDK reads ``host`` only when ``transport_security`` is ``None``, which never happens for a mounted gateway,
     # so the empty string standing in for its missing bind is never read.
     if transport == 'sse':
@@ -277,7 +277,9 @@ def register_auth_routes(app: FastAPI, servers: list[ServerBundle]) -> None:
         )
 
 
-def _transport_security(protection: DNSRebindingProtectionConfig, host: str | None) -> TransportSecuritySettings | None:
+def build_transport_security(
+    protection: DNSRebindingProtectionConfig, host: str | None
+) -> TransportSecuritySettings | None:
     """Settle the ``Host`` / ``Origin`` checks, where ``None`` leaves them to the SDK's default for ``host``."""
     if protection.allowed_hosts:
         return TransportSecuritySettings(

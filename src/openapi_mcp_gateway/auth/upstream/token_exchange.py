@@ -3,6 +3,7 @@ import collections.abc
 import dataclasses
 import logging
 import time
+import typing
 
 import httpx
 
@@ -67,6 +68,9 @@ class UpstreamTokenExchangeClient:
     Expired entries are dropped on each new exchange, so callers whose tokens rotate do not grow the cache forever.
     Concurrent first calls with one key share one exchange, while calls for other keys do not wait on it.
 
+    ``transport`` routes the exchanges off-network, and ``clock`` is the monotonic time expiry is measured by,
+    both for tests.
+
     Support is uneven across authorization servers.
     Keycloak has it generally available, authentik added it in 2026.8,
     Auth0 gates it behind a paid plan, and some servers only allow narrowing an existing audience.
@@ -79,6 +83,8 @@ class UpstreamTokenExchangeClient:
         client_secret: str,
         audience_params: dict[str, str] | None = None,
         refresh_skew_seconds: float = DEFAULT_REFRESH_SKEW_SECONDS,
+        transport: httpx.AsyncBaseTransport | None = None,
+        clock: typing.Callable[[], float] = time.monotonic,
     ) -> None:
         self.token_endpoint = token_endpoint
         self.client_id = client_id
@@ -89,6 +95,8 @@ class UpstreamTokenExchangeClient:
         self._cache: dict[_CacheKey, tuple[UpstreamExchangedToken, float, float]] = {}
         self._locks: dict[_CacheKey, asyncio.Lock] = {}
         self._http_client: httpx.AsyncClient | None = None
+        self._transport = transport
+        self._clock = clock
 
     async def exchange(self, subject_token: str, scopes: collections.abc.Sequence[str]) -> UpstreamExchangedToken:
         """Return an upstream token for ``subject_token`` asking for ``scopes``, from cache when one is still fresh.
@@ -123,7 +131,7 @@ class UpstreamTokenExchangeClient:
 
     def _drop_expired(self) -> None:
         """Forget every cached result whose token has expired."""
-        now = time.monotonic()
+        now = self._clock()
         for key in [key for key, (_, _, expires_at) in self._cache.items() if now >= expires_at]:
             del self._cache[key]
 
@@ -132,7 +140,7 @@ class UpstreamTokenExchangeClient:
         if entry is None:
             return None
         exchanged, renew_at, _ = entry
-        if time.monotonic() >= renew_at:
+        if self._clock() >= renew_at:
             return None
         return exchanged
 
@@ -150,7 +158,7 @@ class UpstreamTokenExchangeClient:
             request_data['scope'] = ' '.join(scopes)
 
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient()
+            self._http_client = httpx.AsyncClient(transport=self._transport)
 
         logger.debug(
             'Token exchange: endpoint=%s audience_params=%s scopes=%s',
@@ -197,7 +205,7 @@ class UpstreamTokenExchangeClient:
             access_token, tuple(str(granted).split()) if granted is not None else tuple(scopes)
         )
         expires_in = parse_expires_in(payload.get('expires_in')) or DEFAULT_TOKEN_LIFETIME_SECONDS
-        now = time.monotonic()
+        now = self._clock()
         self._cache[key] = (
             exchanged,
             now + max(expires_in - self.refresh_skew_seconds, expires_in / 2),

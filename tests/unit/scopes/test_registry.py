@@ -9,9 +9,9 @@ from openapi_mcp_gateway.scopes import (
     UpstreamSpecSecurityScopePolicy,
 )
 from tests.scope import (
-    CREATE_PET,
-    DELETE_PET,
-    DELETE_PET_UPSTREAM_REFUSAL,
+    CREATE_PRODUCT,
+    DELETE_PRODUCT,
+    DELETE_PRODUCT_UPSTREAM_REFUSAL,
     SCHEMES,
     SECURED_CEILING,
     SECURED_OPERATIONS,
@@ -27,29 +27,31 @@ class TestScopeRegistry:
 
     def test_a_registered_name_carries_its_requirement(self):
         scope_registry = ScopeRegistry(configured_policy(auto='tags'))
-        scope_registry.register('delete_pet', operation_named('deletePet'))
-        assert scope_registry.refusal('delete_pet', _mcp_grant({'pets:delete'})) is None
-        assert scope_registry.refusal('delete_pet', _mcp_grant({'pets:write'})) is not None
+        scope_registry.register('delete_product', operation_named('deleteProduct'))
+        assert scope_registry.refusal('delete_product', _mcp_grant({'products:delete'})) is None
+        assert scope_registry.refusal('delete_product', _mcp_grant({'products:write'})) is not None
 
     def test_an_unregistered_name_requires_nothing(self):
         """A dynamic meta-tool is never registered, since the operations behind it are what scopes guard."""
         scope_registry = ScopeRegistry(configured_policy(auto='tags'))
         assert scope_registry.refusal('search_operations', _mcp_grant(set())) is None
 
-    @pytest.mark.parametrize('uri', ['petstore://pets/{petId}', 'petstore://pets/7'])
+    @pytest.mark.parametrize('uri', ['shop://products/{productId}', 'shop://products/7'])
     def test_a_resource_template_covers_every_uri_it_expands_to(self, uri):
         """The template is what a listing names and the concrete URI what a read names, and both require the same."""
         scope_registry = ScopeRegistry(configured_policy(auto='tags'))
-        scope_registry.register_resource('petstore://pets/{petId}', operation_named('getPetById'))
-        assert scope_registry.refusal(uri, _mcp_grant({'pets:read'})) is None
-        assert scope_registry.refusal(uri, _mcp_grant({'pets:write'})) is not None
+        scope_registry.register_resource('shop://products/{productId}', operation_named('getProductById'))
+        assert scope_registry.refusal(uri, _mcp_grant({'products:read'})) is None
+        assert scope_registry.refusal(uri, _mcp_grant({'products:write'})) is not None
 
-    @pytest.mark.parametrize(('grantable', 'listed'), [({'pets:read', 'pets:delete'}, True), ({'pets:read'}, False)])
+    @pytest.mark.parametrize(
+        ('grantable', 'listed'), [({'products:read', 'products:delete'}, True), ({'products:read'}, False)]
+    )
     def test_lists_show_what_the_client_may_step_up_for(self, grantable, listed):
         """A tool hidden until the token holds its scope could never be called, so the step-up would never start."""
         scope_registry = ScopeRegistry(configured_policy(auto='tags'))
-        scope_registry.register('delete_pet', operation_named('deletePet'))
-        assert scope_registry.lists('delete_pet', _mcp_grant({'pets:read'}, grantable)) is listed
+        scope_registry.register('delete_product', operation_named('deleteProduct'))
+        assert scope_registry.lists('delete_product', _mcp_grant({'products:read'}, grantable)) is listed
 
 
 class TestScopeRegistryWithUpstreamScopes:
@@ -58,52 +60,52 @@ class TestScopeRegistryWithUpstreamScopes:
     @pytest.mark.parametrize(
         ('mcp_scopes', 'upstream_scopes', 'refused_for'),
         [
-            (set(), set(), 'This operation needs one of these scopes: pets:delete.'),
-            ({'pets:delete'}, {'read:pets'}, DELETE_PET_UPSTREAM_REFUSAL),
-            ({'pets:delete'}, {'admin'}, None),
+            (set(), set(), 'This operation needs one of these scopes: products:delete.'),
+            ({'products:delete'}, {'read:products'}, DELETE_PRODUCT_UPSTREAM_REFUSAL),
+            ({'products:delete'}, {'admin'}, None),
         ],
     )
     def test_the_mcp_scopes_are_refused_before_the_upstream_grant(self, mcp_scopes, upstream_scopes, refused_for):
         """Only the MCP scopes can be stepped up for, so a client hears about them first."""
         scope_registry = ScopeRegistry(
-            tag_scopes(DELETE_PET),
-            UpstreamSpecSecurityScopePolicy(SCHEMES, {'admin': ['read:pets', 'write:pets']}),
+            tag_scopes(DELETE_PRODUCT),
+            UpstreamSpecSecurityScopePolicy(SCHEMES, {'admin': ['read:products', 'write:products']}),
         )
-        scope_registry.register('delete_pet', DELETE_PET)
+        scope_registry.register('delete_product', DELETE_PRODUCT)
         grant = TokenGrant(frozenset(mcp_scopes), frozenset(upstream_scopes), frozenset(mcp_scopes))
-        refusal = scope_registry.refusal('delete_pet', grant)
+        refusal = scope_registry.refusal('delete_product', grant)
         assert refusal == refused_for
 
     @pytest.mark.parametrize(
         ('mcp_scopes', 'upstream_scopes', 'listed'),
         [
             (set(), set(), True),
-            ({'pets:delete'}, {'read:pets'}, False),
-            ({'pets:delete'}, {'read:pets', 'write:pets'}, True),
+            ({'products:delete'}, {'read:products'}, False),
+            ({'products:delete'}, {'read:products', 'write:products'}, True),
         ],
         ids=['mcp scopes still to step up for', 'mcp scopes held, grant short', 'both held'],
     )
     def test_lists_ignore_the_upstream_grant_until_the_mcp_scopes_are_held(self, mcp_scopes, upstream_scopes, listed):
         """The sign-in a step-up starts asks the upstream again, so only a short grant behind held scopes is final."""
-        scope_registry = ScopeRegistry(tag_scopes(DELETE_PET), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
-        scope_registry.register('delete_pet', DELETE_PET)
-        grant = TokenGrant(frozenset(mcp_scopes), frozenset(upstream_scopes), frozenset({'pets:delete'}))
-        assert scope_registry.lists('delete_pet', grant) is listed
+        scope_registry = ScopeRegistry(tag_scopes(DELETE_PRODUCT), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
+        scope_registry.register('delete_product', DELETE_PRODUCT)
+        grant = TokenGrant(frozenset(mcp_scopes), frozenset(upstream_scopes), frozenset({'products:delete'}))
+        assert scope_registry.lists('delete_product', grant) is listed
 
     def test_an_upstream_grant_not_yet_found_out_is_not_checked(self):
         """A flow that learns the grant only on the call fills it in before the call is checked."""
-        scope_registry = ScopeRegistry(tag_scopes(DELETE_PET), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
-        scope_registry.register('delete_pet', DELETE_PET)
-        grant = TokenGrant(frozenset({'pets:delete'}), None, frozenset({'pets:delete'}))
-        assert scope_registry.lists('delete_pet', grant) is True
-        assert scope_registry.refusal('delete_pet', grant) is None
+        scope_registry = ScopeRegistry(tag_scopes(DELETE_PRODUCT), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
+        scope_registry.register('delete_product', DELETE_PRODUCT)
+        grant = TokenGrant(frozenset({'products:delete'}), None, frozenset({'products:delete'}))
+        assert scope_registry.lists('delete_product', grant) is True
+        assert scope_registry.refusal('delete_product', grant) is None
 
     async def test_a_grant_that_cannot_be_found_out_refuses_the_call(self):
         """An issuer refusing the whole exchange answers the call with its reason, not a server error."""
         scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
-        scope_registry.register('delete_pet', DELETE_PET)
+        scope_registry.register('delete_product', DELETE_PRODUCT)
 
-        assert await scope_registry.call_refusal('delete_pet', _UnavailableGrantSource()) == 'exchange refused'
+        assert await scope_registry.call_refusal('delete_product', _UnavailableGrantSource()) == 'exchange refused'
 
     def test_the_lists_are_cached_per_token_once_the_grant_is_enforced(self):
         scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
@@ -135,9 +137,9 @@ class TestUpstreamSignInScopes:
     @pytest.mark.parametrize(
         ('mcp_scopes', 'requested'),
         [
-            (['pets:read'], ['read:pets']),
-            (['pets:write'], ['write:pets']),
-            (['pets:delete'], ['read:pets', 'write:pets']),
+            (['products:read'], ['read:products']),
+            (['products:write'], ['write:products']),
+            (['products:delete'], ['read:products', 'write:products']),
             ([], []),
         ],
     )
@@ -146,21 +148,23 @@ class TestUpstreamSignInScopes:
 
     def test_without_mcp_scopes_every_registered_operation_counts(self):
         scope_registry = ScopeRegistry(McpUnrestrictedScopePolicy(), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
-        scope_registry.register('delete_pet', DELETE_PET)
+        scope_registry.register('delete_product', DELETE_PRODUCT)
         assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], []) == SECURED_CEILING
 
     def test_without_an_enforced_grant_every_sign_in_asks_for_the_whole_ceiling(self):
-        scope_registry = ScopeRegistry(tag_scopes(DELETE_PET))
-        scope_registry.register('delete_pet', DELETE_PET)
+        scope_registry = ScopeRegistry(tag_scopes(DELETE_PRODUCT))
+        scope_registry.register('delete_product', DELETE_PRODUCT)
         assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], []) == SECURED_CEILING
 
     def test_an_operation_registered_after_a_sign_in_counts_at_the_next_one(self):
         scope_registry = ScopeRegistry(tag_scopes(*SECURED_OPERATIONS), UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
-        scope_registry.register('delete_pet', DELETE_PET)
-        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['pets:write']) == []
-        scope_registry.register('create_pet', CREATE_PET)
-        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['pets:write']) == ['write:pets']
+        scope_registry.register('delete_product', DELETE_PRODUCT)
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['products:write']) == []
+        scope_registry.register('create_product', CREATE_PRODUCT)
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['products:write']) == ['write:products']
 
     def test_a_scope_the_server_does_not_define_changes_nothing(self):
         scope_registry = secured_registry()
-        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['pets:read', 'unknown']) == ['read:pets']
+        assert scope_registry.requested_upstream_scopes(SECURED_CEILING, [], ['products:read', 'unknown']) == [
+            'read:products'
+        ]

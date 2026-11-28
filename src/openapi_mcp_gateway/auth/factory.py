@@ -1,7 +1,11 @@
+import dataclasses
+import typing
+
 from .assembly import (
     AuthTypeContext,
     McpSettingsReader,
     ServerAuthSetup,
+    UpstreamDescription,
     UpstreamPrincipal,
 )
 from .authorities import MCP_TOKEN_AUTHORITIES, select_mcp_token_authority
@@ -46,8 +50,24 @@ def build_auth(context: AuthTypeContext) -> ServerAuthSetup:
     if reader is not None:
         reader.refuse_unusable_settings(entry.auth, entry.name)
 
-    setup = handler.build(context, selection)
+    setup = _with_credentials_described(handler.build(context, selection), entry.auth.upstream.credentials)
     return authority.attach(setup, context) if authority else setup
+
+
+def _with_credentials_described(setup: ServerAuthSetup, credentials: typing.Collection[str]) -> ServerAuthSetup:
+    """Name the static credentials' schemes beside what the flow reports, as ``credentials (<schemes>)``."""
+    if not credentials:
+        return setup
+    schemes = ', '.join(credentials)
+    described = f'credentials ({schemes})'
+    description = setup.upstream_description
+    return dataclasses.replace(
+        setup,
+        upstream_description=UpstreamDescription(
+            described if description.summary == 'none' else f'{description.summary} + {described}',
+            {**description.resolved_settings, 'credentials': schemes},
+        ),
+    )
 
 
 def _refuse_unread_upstream_settings(server_name: str, unread: set[str]) -> None:

@@ -17,7 +17,7 @@ from openapi_mcp_gateway.openapi import (
     parse_spec,
 )
 from tests.constants import API_URL
-from tests.context import stub_context
+from tests.served_tool import ServedTool
 from tests.spec import operation_spec
 
 
@@ -46,8 +46,8 @@ class TestMediaFields:
             x_mcp_integration=McpIntegration(tool=tool),
         )
         ToolGenerator(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([operation])
-        registered = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'get_contract')
-        return await registered.run({}, context=stub_context())
+        registered = ServedTool(mcp, 'get_contract')
+        return await registered.call({})
 
     @staticmethod
     def _encode(data: bytes) -> str:

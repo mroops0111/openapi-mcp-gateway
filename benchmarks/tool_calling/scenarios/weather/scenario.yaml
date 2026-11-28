@@ -1,0 +1,4 @@
+# What the user wants these APIs for. The scenario's own config was written from this sentence alone.
+intent: "Keep a small outdoor-events team informed about the forecast, current conditions and weather alerts where their events take place."
+servers:
+  weather: weather

@@ -26,23 +26,23 @@ class TestResourceUriDerivation:
     def test_no_path_params(self):
         """A path with no params yields a concrete URI under the server scheme."""
         operation = OperationInfo(
-            operation_id='list_pets',
+            operation_id='list_products',
             method='get',
-            path='/pets',
+            path='/products',
             x_mcp_integration=expose_resource(),
         )
-        assert derive_resource_uri('petstore', operation) == 'petstore://pets'
+        assert derive_resource_uri('shop', operation) == 'shop://products'
 
     def test_single_path_param_preserved(self):
         """An identifier-safe path placeholder passes through unchanged."""
         operation = OperationInfo(
-            operation_id='get_pet',
+            operation_id='get_product',
             method='get',
-            path='/pets/{petId}',
-            parameters=[ParameterInfo(name='petId', location='path', required=True)],
+            path='/products/{productId}',
+            parameters=[ParameterInfo(name='productId', location='path', required=True)],
             x_mcp_integration=expose_resource(),
         )
-        assert derive_resource_uri('petstore', operation) == 'petstore://pets/{petId}'
+        assert derive_resource_uri('shop', operation) == 'shop://products/{productId}'
 
     def test_dashed_path_param_sanitized(self):
         """A dashed placeholder is rewritten to a Python identifier so MCPServer's regex matches."""
@@ -58,13 +58,13 @@ class TestResourceUriDerivation:
     def test_uri_template_override_used_verbatim(self):
         """An explicit ``uri_template`` overrides the auto-derived URI exactly."""
         operation = OperationInfo(
-            operation_id='get_pet',
+            operation_id='get_product',
             method='get',
-            path='/pets/{petId}',
-            parameters=[ParameterInfo(name='petId', location='path', required=True)],
-            x_mcp_integration=expose_resource(uri_template='petstore://v2/pets/{petId}'),
+            path='/products/{productId}',
+            parameters=[ParameterInfo(name='productId', location='path', required=True)],
+            x_mcp_integration=expose_resource(uri_template='shop://v2/products/{productId}'),
         )
-        assert derive_resource_uri('petstore', operation) == 'petstore://v2/pets/{petId}'
+        assert derive_resource_uri('shop', operation) == 'shop://v2/products/{productId}'
 
 
 class TestResourceMimeType:
@@ -73,9 +73,9 @@ class TestResourceMimeType:
     def test_default_is_json(self):
         """Default mime type is ``application/json``."""
         operation = OperationInfo(
-            operation_id='getPet',
+            operation_id='getProduct',
             method='get',
-            path='/pets/{petId}',
+            path='/products/{productId}',
             x_mcp_integration=expose_resource(),
         )
         assert derive_resource_mime_type(operation) == 'application/json'
@@ -83,9 +83,9 @@ class TestResourceMimeType:
     def test_override_wins(self):
         """An explicit ``mime_type`` override replaces the default."""
         operation = OperationInfo(
-            operation_id='getPet',
+            operation_id='getProduct',
             method='get',
-            path='/pets/{petId}',
+            path='/products/{productId}',
             x_mcp_integration=expose_resource(mime_type='text/plain'),
         )
         assert derive_resource_mime_type(operation) == 'text/plain'
@@ -103,18 +103,18 @@ class TestResourceReadFunctionSignature:
     def test_path_params_signature_includes_ctx(self):
         """Path-param signature is ``[path_params..., ctx]``, and query / body parameters are dropped."""
         operation = OperationInfo(
-            operation_id='get_pet',
+            operation_id='get_product',
             method='get',
-            path='/pets/{petId}',
+            path='/products/{productId}',
             parameters=[
-                ParameterInfo(name='petId', location='path', required=True, schema={'type': 'string'}),
+                ParameterInfo(name='productId', location='path', required=True, schema={'type': 'string'}),
                 ParameterInfo(name='verbose', location='query', required=False, schema={'type': 'boolean'}),
             ],
             x_mcp_integration=expose_resource(),
         )
         fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
         names = list(inspect.signature(fn).parameters)
-        assert names == ['petId', 'ctx']
+        assert names == ['productId', 'ctx']
 
     def test_no_path_params_yields_empty_signature(self):
         """A GET with no path params has zero signature parameters, qualifying it as a concrete resource."""
@@ -151,7 +151,7 @@ class TestResourceGeneration:
             ResourceGenerator(
                 mcp=mcp,
                 connection=UpstreamConnection(base_url=API_URL),
-                server_name='petstore',
+                server_name='shop',
             ),
             mcp,
         )
@@ -160,34 +160,34 @@ class TestResourceGeneration:
         """A GET with a path param registers as a ``ResourceTemplate`` under the derived URI."""
         generator, mcp = self._generator()
         operation = OperationInfo(
-            operation_id='getPet',
+            operation_id='getProduct',
             method='get',
-            path='/pets/{petId}',
-            description='Fetch one pet.',
-            parameters=[ParameterInfo(name='petId', location='path', required=True, schema={'type': 'string'})],
+            path='/products/{productId}',
+            description='Fetch one product.',
+            parameters=[ParameterInfo(name='productId', location='path', required=True, schema={'type': 'string'})],
             x_mcp_integration=expose_resource(),
         )
         generator.register([operation])
         templates = await mcp.list_resource_templates()
         uris = {t.uri_template for t in templates}
-        assert 'petstore://pets/{petId}' in uris
-        template = next(t for t in templates if t.uri_template == 'petstore://pets/{petId}')
-        assert template.description == 'Fetch one pet.'
+        assert 'shop://products/{productId}' in uris
+        template = next(t for t in templates if t.uri_template == 'shop://products/{productId}')
+        assert template.description == 'Fetch one product.'
         assert template.mime_type == 'application/json'
 
     async def test_no_path_param_registered_as_concrete_resource(self):
         """A GET with no path params surfaces under ``resources/list`` as a concrete resource."""
         generator, mcp = self._generator()
         operation = OperationInfo(
-            operation_id='listPets',
+            operation_id='listProducts',
             method='get',
-            path='/pets',
+            path='/products',
             x_mcp_integration=expose_resource(),
         )
         generator.register([operation])
         resources = await mcp.list_resources()
         uris = {str(r.uri) for r in resources}
-        assert 'petstore://pets' in uris
+        assert 'shop://products' in uris
 
 
 class TestResourceRead:
@@ -209,15 +209,15 @@ class TestResourceRead:
         mock_upstream(handler)
 
         operation = OperationInfo(
-            operation_id='getPet',
+            operation_id='getProduct',
             method='get',
-            path='/pets/{petId}',
-            parameters=[ParameterInfo(name='petId', location='path', required=True, schema={'type': 'string'})],
+            path='/products/{productId}',
+            parameters=[ParameterInfo(name='productId', location='path', required=True, schema={'type': 'string'})],
             x_mcp_integration=expose_resource(),
         )
         read_fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
-        text = await read_fn(petId='123', ctx=stub_context())
-        assert captured['path'] == '/pets/123'
+        text = await read_fn(productId='123', ctx=stub_context())
+        assert captured['path'] == '/products/123'
         assert '"id": 123' in text
 
     async def test_no_path_param_read_calls_upstream(self, mock_upstream):
@@ -287,12 +287,12 @@ class TestResourceRead:
         mock_upstream(handler)
 
         operation = OperationInfo(
-            operation_id='getPet',
+            operation_id='getProduct',
             method='get',
-            path='/pets/{petId}',
-            parameters=[ParameterInfo(name='petId', location='path', required=True, schema={'type': 'string'})],
+            path='/products/{productId}',
+            parameters=[ParameterInfo(name='productId', location='path', required=True, schema={'type': 'string'})],
             x_mcp_integration=expose_resource(),
         )
         read_fn = build_resource_read_function(operation, UpstreamConnection(base_url=API_URL))
         with pytest.raises(RuntimeError, match='404'):
-            await read_fn(petId='nope', ctx=stub_context())
+            await read_fn(productId='nope', ctx=stub_context())

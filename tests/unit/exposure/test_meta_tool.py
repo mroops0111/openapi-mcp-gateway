@@ -4,6 +4,7 @@ import typing
 import httpx
 import pytest
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import UnexpectedToolError
 
 from openapi_mcp_gateway.exposure import (
     MetaToolGenerator,
@@ -15,25 +16,26 @@ from openapi_mcp_gateway.openapi import (
 )
 from openapi_mcp_gateway.scopes import UpstreamNoGrantSource
 from tests.constants import API_URL
-from tests.context import stub_context
 from tests.operation import shaped_operation
+from tests.served_tool import ServedTool, tool_names
+from tests.tool_result import text_of
 
 
 class TestMetaToolRegistration:
     """``MetaToolGenerator.register`` produces exactly three meta-tools regardless of N operations."""
 
-    def test_exactly_three_tools_registered(self):
+    async def test_exactly_three_tools_registered(self):
         """Three operations in, three meta-tools out, namely search, get, and call."""
         generator, mcp = _meta_generator()
         generator.register(_ops())
-        names = {tool.name for tool in mcp._tool_manager.list_tools()}
+        names = set(await tool_names(mcp))
         assert names == {'search_operations', 'get_operation', 'call_operation'}
 
-    def test_empty_ops_still_registers_three(self):
+    async def test_empty_ops_still_registers_three(self):
         """No operations still produces three meta-tools (callable on an empty registry)."""
         generator, mcp = _meta_generator()
         generator.register([])
-        names = {tool.name for tool in mcp._tool_manager.list_tools()}
+        names = set(await tool_names(mcp))
         assert names == {'search_operations', 'get_operation', 'call_operation'}
 
 
@@ -46,11 +48,11 @@ class TestSearchOperations:
         generator.register(_tagged_ops())
         assert await _search(mcp) == {
             'operations': [
-                {'name': 'list_pets', 'description': 'List pets.'},
-                {'name': 'adopt_pet', 'description': 'Adopt a pet.'},
+                {'name': 'list_products', 'description': 'List products.'},
+                {'name': 'buy_product', 'description': 'Buy a product.'},
                 {'name': 'list_orders', 'description': 'List orders.'},
             ],
-            'tags': [{'name': 'pets', 'operations': 2}, {'name': 'store', 'operations': 1}],
+            'tags': [{'name': 'products', 'operations': 2}, {'name': 'store', 'operations': 1}],
         }
 
     async def test_tag_counts_only_on_the_first_page(self):
@@ -73,8 +75,8 @@ class TestSearchOperations:
         generator.register(_ops())
         assert await _search(mcp) == {
             'operations': [
-                {'name': 'list_pets', 'description': 'List all pets.'},
-                {'name': 'get_pet_by_id', 'description': 'Get one pet.'},
+                {'name': 'list_products', 'description': 'List all products.'},
+                {'name': 'get_product_by_id', 'description': 'Get one product.'},
             ]
         }
 
@@ -88,8 +90,8 @@ class TestSearchOperations:
         """The best match comes first, and an operation sharing no term with the query is left out."""
         generator, mcp = _meta_generator()
         generator.register(_tagged_ops())
-        payload = await _search(mcp, query='adopt a pet')
-        assert [entry['name'] for entry in payload['operations']] == ['adopt_pet', 'list_pets']
+        payload = await _search(mcp, query='buy a product')
+        assert [entry['name'] for entry in payload['operations']] == ['buy_product', 'list_products']
 
     async def test_tags_filter_without_query(self):
         """Tags alone list the operations carrying any of them, matched without regard to case."""
@@ -121,8 +123,10 @@ class TestSearchOperations:
         """A cursor that does not decode to an offset raises."""
         generator, mcp = _meta_generator()
         generator.register(_ops())
-        with pytest.raises(ValueError, match='Invalid cursor'):
-            await _search(mcp, query='pets', cursor='not-a-cursor')
+        with pytest.raises(UnexpectedToolError) as raised:
+            await _search(mcp, query='products', cursor='not-a-cursor')
+        assert isinstance(raised.value.__cause__, ValueError)
+        assert 'Invalid cursor' in str(raised.value.__cause__)
 
     async def test_blank_query_filters_nothing(self):
         """A query of only whitespace is treated as omitted and lists everything."""
@@ -135,13 +139,13 @@ class TestSearchOperations:
         generator, mcp = _meta_generator()
         generator.register(
             [
-                OperationInfo(operation_id='listPets', method='get', path='/pets', tags=['Pets']),
-                OperationInfo(operation_id='adoptPet', method='post', path='/pets/adopt', tags=['pets']),
+                OperationInfo(operation_id='listProducts', method='get', path='/products', tags=['Products']),
+                OperationInfo(operation_id='buyProduct', method='post', path='/products/buy', tags=['products']),
             ]
         )
         payload = await _search(mcp)
-        assert payload['tags'] == [{'name': 'Pets', 'operations': 2}]
-        assert len((await _search(mcp, tags=['PETS']))['operations']) == 2
+        assert payload['tags'] == [{'name': 'Products', 'operations': 2}]
+        assert len((await _search(mcp, tags=['PRODUCTS']))['operations']) == 2
 
     async def test_description_cut_to_first_paragraph(self):
         """A result shows only the first paragraph of a long description, capped in length."""
@@ -173,16 +177,18 @@ class TestSearchOperations:
         """Each phrasing finds its own match, and an operation both find ranks first."""
         generator, mcp = _meta_generator()
         generator.register(_tagged_ops())
-        payload = await _search(mcp, query=['adopt', 'orders'])
-        assert [entry['name'] for entry in payload['operations']] == ['adopt_pet', 'list_orders']
-        payload = await _search(mcp, query=['list pets', 'pets'])
-        assert payload['operations'][0]['name'] == 'list_pets'
+        payload = await _search(mcp, query=['buy', 'orders'])
+        assert [entry['name'] for entry in payload['operations']] == ['buy_product', 'list_orders']
+        payload = await _search(mcp, query=['list products', 'products'])
+        assert payload['operations'][0]['name'] == 'list_products'
 
     async def test_one_query_in_a_list_ranks_as_a_string(self):
         """A list holding one query, repeated or padded with blanks, ranks exactly as that query alone."""
         generator, mcp = _meta_generator()
         generator.register(_tagged_ops())
-        assert await _search(mcp, query=['adopt a pet', ' ', 'adopt a pet']) == await _search(mcp, query='adopt a pet')
+        assert await _search(mcp, query=['buy a product', ' ', 'buy a product']) == await _search(
+            mcp, query='buy a product'
+        )
 
     async def test_blank_queries_filter_nothing(self):
         """A list of only blank queries is treated as omitted and lists everything."""
@@ -195,8 +201,8 @@ class TestSearchOperations:
         """The advertised schema lets a model pass one query or several."""
         generator, mcp = _meta_generator()
         generator.register(_tagged_ops())
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'search_operations')
-        branches = tool.parameters['properties']['query']['anyOf']
+        tool = ServedTool(mcp, 'search_operations')
+        branches = (await tool.input_schema())['properties']['query']['anyOf']
         assert {'type': 'string'} in branches
         assert {'type': 'array', 'items': {'type': 'string'}, 'maxItems': 10} in branches
 
@@ -226,29 +232,31 @@ class TestGetOperation:
         """A known name yields ``{name, description, input_schema}`` with the JSON Schema for inputs."""
         generator, mcp = _meta_generator()
         generator.register(_ops())
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = (await tool.fn(name='get_pet_by_id', ctx=stub_context())).structured_content
-        assert payload['name'] == 'get_pet_by_id'
-        assert payload['description'] == 'Get one pet.'
+        tool = ServedTool(mcp, 'get_operation')
+        payload = (await tool.call({'name': 'get_product_by_id'})).structured_content
+        assert payload['name'] == 'get_product_by_id'
+        assert payload['description'] == 'Get one product.'
         schema = payload['input_schema']
         assert schema['type'] == 'object'
-        assert schema['properties']['petId']['type'] == 'integer'
-        assert schema['required'] == ['petId']
+        assert schema['properties']['productId']['type'] == 'integer'
+        assert schema['required'] == ['productId']
 
     async def test_unknown_raises(self):
         """An unknown name raises ``ValueError`` so MCPServer surfaces it as a tool error."""
         generator, mcp = _meta_generator()
         generator.register(_ops())
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        with pytest.raises(ValueError, match='Unknown operation'):
-            await tool.fn(name='no_such_op', ctx=stub_context())
+        tool = ServedTool(mcp, 'get_operation')
+        with pytest.raises(UnexpectedToolError) as raised:
+            await tool.call({'name': 'no_such_op'})
+        assert isinstance(raised.value.__cause__, ValueError)
+        assert 'Unknown operation' in str(raised.value.__cause__)
 
     async def test_no_required_key_when_all_optional(self):
         """When no parameter is required, the schema omits the ``required`` array entirely."""
         generator, mcp = _meta_generator()
         generator.register(_ops())
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = (await tool.fn(name='list_pets', ctx=stub_context())).structured_content
+        tool = ServedTool(mcp, 'get_operation')
+        payload = (await tool.call({'name': 'list_products'})).structured_content
         assert 'required' not in payload['input_schema']
 
     async def test_param_description_propagates(self):
@@ -257,9 +265,9 @@ class TestGetOperation:
         generator.register(
             [
                 OperationInfo(
-                    operation_id='listPets',
+                    operation_id='listProducts',
                     method='get',
-                    path='/pets',
+                    path='/products',
                     parameters=[
                         ParameterInfo(
                             name='limit',
@@ -272,8 +280,8 @@ class TestGetOperation:
                 )
             ]
         )
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'get_operation')
-        payload = (await tool.fn(name='list_pets', ctx=stub_context())).structured_content
+        tool = ServedTool(mcp, 'get_operation')
+        payload = (await tool.call({'name': 'list_products'})).structured_content
         assert payload['input_schema']['properties']['limit']['description'] == 'Max items.'
 
 
@@ -293,22 +301,24 @@ class TestCallOperation:
 
         generator, mcp = _meta_generator()
         generator.register(_ops())
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'call_operation')
+        tool = ServedTool(mcp, 'call_operation')
 
-        result = await tool.fn(name='get_pet_by_id', arguments={'petId': 7}, ctx=stub_context())
+        result = await tool.call({'name': 'get_product_by_id', 'arguments': {'productId': 7}})
         assert captured['method'] == 'GET'
-        assert captured['url'].endswith('/pets/7')
+        assert captured['url'].endswith('/products/7')
         assert result.is_error is False
         assert result.structured_content == {'id': 7, 'name': 'rex'}
-        assert json.loads(result.content[0].text) == {'id': 7, 'name': 'rex'}
+        assert json.loads(text_of(result)) == {'id': 7, 'name': 'rex'}
 
     async def test_unknown_raises(self):
         """An unknown name raises ``ValueError`` without contacting upstream."""
         generator, mcp = _meta_generator()
         generator.register(_ops())
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'call_operation')
-        with pytest.raises(ValueError, match='Unknown operation'):
-            await tool.fn(name='no_such_op', arguments={}, ctx=stub_context())
+        tool = ServedTool(mcp, 'call_operation')
+        with pytest.raises(UnexpectedToolError) as raised:
+            await tool.call({'name': 'no_such_op', 'arguments': {}})
+        assert isinstance(raised.value.__cause__, ValueError)
+        assert 'Unknown operation' in str(raised.value.__cause__)
 
     async def test_sanitised_arg_name_reaches_upstream(self, mock_upstream):
         """Dashed query params are exposed with sanitised keys, while upstream sees the original name."""
@@ -338,8 +348,8 @@ class TestCallOperation:
                 )
             ]
         )
-        tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'call_operation')
-        await tool.fn(name='get_thing', arguments={'enterprise_team': 'acme'}, ctx=stub_context())
+        tool = ServedTool(mcp, 'call_operation')
+        await tool.call({'name': 'get_thing', 'arguments': {'enterprise_team': 'acme'}})
         assert 'enterprise-team=acme' in captured['url']
 
 
@@ -357,8 +367,8 @@ class TestDynamicParamShaping:
         )
         generator, mcp = _meta_generator()
         generator.register([op])
-        get_operation = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'get_operation')
-        payload = (await get_operation.fn(name='do_thing', ctx=stub_context())).structured_content
+        get_operation = ServedTool(mcp, 'get_operation')
+        payload = (await get_operation.call({'name': 'do_thing'})).structured_content
         schema = payload['input_schema']
         assert 'secret' not in schema['properties']
         assert 'visible' in schema['properties']
@@ -382,8 +392,8 @@ class TestDynamicParamShaping:
         )
         generator, mcp = _meta_generator()
         generator.register([op])
-        call_operation = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'call_operation')
-        await call_operation.fn(name='do_thing', arguments={'status': 'open'}, ctx=stub_context())
+        call_operation = ServedTool(mcp, 'call_operation')
+        await call_operation.call({'name': 'do_thing', 'arguments': {'status': 'open'}})
         assert captured['params']['op[status_id]'] == 'o'
 
 
@@ -400,21 +410,21 @@ def _ops() -> list[OperationInfo]:
     """Two operations covering required path param + optional query param."""
     return [
         OperationInfo(
-            operation_id='listPets',
+            operation_id='listProducts',
             method='get',
-            path='/pets',
-            description='List all pets.',
+            path='/products',
+            description='List all products.',
             parameters=[
                 ParameterInfo(name='limit', location='query', required=False, schema={'type': 'integer'}),
             ],
         ),
         OperationInfo(
-            operation_id='getPetById',
+            operation_id='getProductById',
             method='get',
-            path='/pets/{petId}',
-            summary='Get one pet.',
+            path='/products/{productId}',
+            summary='Get one product.',
             parameters=[
-                ParameterInfo(name='petId', location='path', required=True, schema={'type': 'integer'}),
+                ParameterInfo(name='productId', location='path', required=True, schema={'type': 'integer'}),
             ],
         ),
     ]
@@ -422,16 +432,22 @@ def _ops() -> list[OperationInfo]:
 
 async def _search(mcp: MCPServer, **arguments: typing.Any) -> dict[str, typing.Any]:
     """Call ``search_operations`` with ``arguments`` and return its structured payload."""
-    tool = next(t for t in mcp._tool_manager.list_tools() if t.name == 'search_operations')
-    return (await tool.fn(ctx=stub_context(), **arguments)).structured_content
+    tool = ServedTool(mcp, 'search_operations')
+    return (await tool.call(arguments)).structured_content
 
 
 def _tagged_ops() -> list[OperationInfo]:
-    """Two pet operations and one store operation."""
+    """Two product operations and one store operation."""
     return [
-        OperationInfo(operation_id='listPets', method='get', path='/pets', summary='List pets.', tags=['pets']),
         OperationInfo(
-            operation_id='adoptPet', method='post', path='/pets/{petId}/adopt', summary='Adopt a pet.', tags=['pets']
+            operation_id='listProducts', method='get', path='/products', summary='List products.', tags=['products']
+        ),
+        OperationInfo(
+            operation_id='buyProduct',
+            method='post',
+            path='/products/{productId}/buy',
+            summary='Buy a product.',
+            tags=['products'],
         ),
         OperationInfo(operation_id='listOrders', method='get', path='/orders', summary='List orders.', tags=['store']),
     ]

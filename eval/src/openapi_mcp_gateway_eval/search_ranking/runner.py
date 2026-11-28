@@ -6,6 +6,7 @@ import pydantic
 
 from openapi_mcp_gateway.settings import ServerConfig
 
+from ..spec_pins import without_security
 from .dataset import Benchmark, DatasetError, JudgedQuery, Manifest, Split, Style
 from .scoring import RANKING_DEPTH, score_all
 from .variants import SpecCorpus, Variant, served_operations
@@ -42,8 +43,11 @@ def select_variants(benchmark: Benchmark, names: typing.Sequence[str] = ()) -> d
 
 
 def corpus_server(manifest: Manifest, root: pathlib.Path, spec: str) -> ServerConfig:
-    """The server config that lists ``spec``'s operations, with its pinned document fetched to a local file."""
-    path = manifest.specs[spec].fetch(root)
+    """The server config that lists ``spec``'s operations, with its pinned document fetched to a local file.
+
+    The document is listed without its ``security``, since ranking calls no upstream and so carries no credential.
+    """
+    path = without_security(manifest.specs[spec].fetch(root))
     return ServerConfig.model_validate({**CORPUS_SERVER, 'name': spec, 'spec': str(path)})
 
 

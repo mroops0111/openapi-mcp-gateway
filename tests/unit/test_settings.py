@@ -30,18 +30,18 @@ class TestServerConfig:
 
     def test_mount_path_default(self):
         """Mount path defaults to ``/<name>`` when no prefix is set."""
-        server = ServerConfig(name='petstore', spec='petstore.json')
-        assert server.mount_path == '/petstore'
+        server = ServerConfig(name='shop', spec='shop.json')
+        assert server.mount_path == '/shop'
 
     def test_mount_path_custom(self):
         """``path_prefix`` overrides the name-based default."""
-        server = ServerConfig(name='petstore', spec='petstore.json', path_prefix='pets')
-        assert server.mount_path == '/pets'
+        server = ServerConfig(name='shop', spec='shop.json', path_prefix='products')
+        assert server.mount_path == '/products'
 
     def test_mount_path_strips_slashes(self):
         """Surrounding slashes on ``path_prefix`` are normalised away."""
-        server = ServerConfig(name='petstore', spec='petstore.json', path_prefix='/pets/')
-        assert server.mount_path == '/pets'
+        server = ServerConfig(name='shop', spec='shop.json', path_prefix='/products/')
+        assert server.mount_path == '/products'
 
     def test_name_validation_valid(self):
         """Alphanumerics, dashes and underscores are accepted in ``name``."""
@@ -90,32 +90,28 @@ class TestAuthConfig:
         assert auth.upstream.client_id == '1214443090174193'
         assert isinstance(auth.upstream.client_id, str)
 
-    def test_numeric_token_coerced_to_string(self):
-        """Same coercion applies to ``token`` and ``client_secret`` for consistency."""
-        auth = AuthConfig.model_validate({'upstream': {'type': 'bearer', 'token': 99999}})
-        assert auth.upstream.token == '99999'
-        assert isinstance(auth.upstream.token, str)
+    def test_numeric_credential_coerced_to_string(self):
+        """Same coercion applies to a credential value and ``client_secret`` for consistency."""
+        auth = AuthConfig.model_validate({'upstream': {'credentials': {'api_key': {'value': 99999}}}})
+        assert auth.upstream.credentials['api_key'].value == '99999'
 
-    def test_resolve_bearer_from_env(self, monkeypatch):
-        """``${VAR}`` placeholders are resolved against the environment."""
+    def test_resolve_credential_from_env(self, monkeypatch):
+        """``${VAR}`` in a credential value resolves from the environment."""
         monkeypatch.setenv('TEST_TOKEN', 'env-token')
-        auth = AuthConfig(upstream=UpstreamAuthConfig(type='bearer', token='${TEST_TOKEN}'))
-        assert auth.upstream.resolve_token() == 'env-token'
+        auth = AuthConfig.model_validate({'upstream': {'credentials': {'api_key': {'value': '${TEST_TOKEN}'}}}})
+        assert auth.upstream.resolve_credentials() == {'api_key': 'env-token'}
 
     def test_resolve_env_var_with_default(self):
-        """``${VAR:-default}`` falls back to the default when the var is unset."""
-        auth = AuthConfig(upstream=UpstreamAuthConfig(type='bearer', token='${NONEXISTENT_VAR:-fallback-token}'))
-        assert auth.upstream.resolve_token() == 'fallback-token'
+        """``${VAR:-default}`` falls back when the variable is unset."""
+        auth = AuthConfig.model_validate(
+            {'upstream': {'credentials': {'api_key': {'value': '${NONEXISTENT_VAR:-fallback-token}'}}}}
+        )
+        assert auth.upstream.resolve_credentials() == {'api_key': 'fallback-token'}
 
     def test_resolve_env_var_unset_no_default(self):
-        """An unset env var with no default resolves to ``None``."""
-        auth = AuthConfig(upstream=UpstreamAuthConfig(type='bearer', token='${NONEXISTENT_VAR}'))
-        assert auth.upstream.resolve_token() is None
-
-    def test_resolve_no_token(self):
-        """A config without a token resolves to ``None``."""
-        auth = AuthConfig(upstream=UpstreamAuthConfig(type='bearer'))
-        assert auth.upstream.resolve_token() is None
+        """An unset variable with no default resolves to ``None``, which startup refuses."""
+        auth = AuthConfig.model_validate({'upstream': {'credentials': {'api_key': {'value': '${NONEXISTENT_VAR}'}}}})
+        assert auth.upstream.resolve_credentials() == {'api_key': None}
 
     def test_resolve_client_id(self, monkeypatch):
         """OAuth ``client_id`` honours ``${VAR}`` substitution."""
@@ -168,10 +164,10 @@ class TestGatewayConfig:
 
     def test_from_single_spec(self):
         """``from_single_spec`` produces a one-server config with overridden port."""
-        config = GatewayConfig.from_single_spec('petstore.json', name='pets', port=3000)
+        config = GatewayConfig.from_single_spec('shop.json', name='products', port=3000)
         assert len(config.servers) == 1
-        assert config.servers[0].name == 'pets'
-        assert config.servers[0].spec == 'petstore.json'
+        assert config.servers[0].name == 'products'
+        assert config.servers[0].spec == 'shop.json'
         assert config.port == 3000
 
     def test_store_config_redis(self, tmp_path):
@@ -278,11 +274,11 @@ class TestLayerHelpers:
             spec='api.json',
             name='api',
             base_url='https://example.com',
-            auth=AuthConfig(upstream=UpstreamAuthConfig(type='bearer', token='${TOK}')),
+            auth=AuthConfig.model_validate({'upstream': {'credentials': {'api_key': {'value': '${TOK}'}}}}),
         )
         server = layer['servers'][0]
         assert server['base_url'] == 'https://example.com'
-        assert server['auth']['upstream'] == {'type': 'bearer', 'token': '${TOK}'}
+        assert server['auth']['upstream'] == {'credentials': {'api_key': {'value': '${TOK}'}}}
 
 
 class TestAuthLayout:
@@ -292,7 +288,7 @@ class TestAuthLayout:
         ('old_key', 'new_place'),
         [
             ('type', 'auth.upstream.type'),
-            ('token', 'auth.upstream.token'),
+            ('token', 'auth.upstream.credentials'),
             ('flow', 'auth.upstream.flow'),
             ('issuer', 'auth.mcp.issuer'),
             ('clients', 'auth.mcp.clients'),
@@ -467,9 +463,9 @@ class TestOtherClients:
         [
             ({'other_clients': True}, 'other_clients'),
             ({'other_clients': False}, 'so no client could sign in'),
-            ({'other_clients': {'scopes': ['pets:read']}}, 'other_clients grants scopes but'),
+            ({'other_clients': {'scopes': ['products:read']}}, 'other_clients grants scopes but'),
             (
-                {'other_clients': {'scopes': ['pets:read'], 'default_scopes': ['pets:write']}},
+                {'other_clients': {'scopes': ['products:read'], 'default_scopes': ['products:write']}},
                 r'other_clients\.default_scopes names .* not in its scopes',
             ),
             ({'other_clients': {'trusted_hosts': []}}, 'at least 1 item'),
@@ -482,9 +478,9 @@ class TestOtherClients:
     def test_other_clients_alone_can_hold_operation_scopes(self):
         """A server with operation scopes can then be offered to clients the operator never listed."""
         config = McpAuthConfig.model_validate(
-            {'operation_scopes': {'auto': 'tags'}, 'other_clients': {'scopes': ['pets:read']}}
+            {'operation_scopes': {'auto': 'tags'}, 'other_clients': {'scopes': ['products:read']}}
         )
-        assert config.resolve_other_clients() == OtherClientsConfig(scopes=['pets:read'])
+        assert config.resolve_other_clients() == OtherClientsConfig(scopes=['products:read'])
 
 
 class TestScopeSettings:
@@ -493,16 +489,16 @@ class TestScopeSettings:
     @pytest.mark.parametrize(
         ('auth', 'refusal'),
         [
-            ({'mcp': {'clients': {'agent': {'scopes': ['pets:read']}}}}, r'clients \(agent\) grant scopes'),
+            ({'mcp': {'clients': {'agent': {'scopes': ['products:read']}}}}, r'clients \(agent\) grant scopes'),
             (
-                {'mcp': {'clients': {'agent': {'scopes': ['pets read']}}}},
+                {'mcp': {'clients': {'agent': {'scopes': ['products read']}}}},
                 r'auth\.mcp\.clients\.<client>\.scopes names invalid scopes',
             ),
             ({'upstream': {'scope_implies': {'repo': ['public repo']}}}, 'invalid scopes'),
             (
                 {
                     'mcp': {
-                        'operation_scopes': {'manual': {'pets admin': {'description': 'd', 'operations': ['*']}}},
+                        'operation_scopes': {'manual': {'products admin': {'description': 'd', 'operations': ['*']}}},
                         'clients': {'a': {}},
                     }
                 },
@@ -583,8 +579,8 @@ class TestSearchFieldWeights:
                 id='promote_resources',
             ),
             pytest.param(
-                {'exposure': {'style': 'dynamic'}, 'operations': {'getPet': {'resource': {}}}},
-                r'operations\.getPet\.resource needs exposure\.style static, so it would have no effect',
+                {'exposure': {'style': 'dynamic'}, 'operations': {'getProduct': {'resource': {}}}},
+                r'operations\.getProduct\.resource needs exposure\.style static, so it would have no effect',
                 id='an operation resource',
             ),
         ],
@@ -598,10 +594,10 @@ class TestSearchFieldWeights:
         """Without ``exposure.promote_resources`` every operation is a tool, so a resource override has no effect."""
         with pytest.raises(
             pydantic.ValidationError,
-            match=r'operations\.getPet\.resource needs exposure\.promote_resources true, so it would have no effect',
+            match=r'operations\.getProduct\.resource needs exposure\.promote_resources true, so it would have no effect',
         ):
             build_gateway_config(
-                {'servers': [{'name': 'b', 'spec': 'x.json', 'operations': {'getPet': {'resource': {}}}}]}
+                {'servers': [{'name': 'b', 'spec': 'x.json', 'operations': {'getProduct': {'resource': {}}}}]}
             )
 
     def test_accepts_an_operation_resource_under_promotion(self):
@@ -613,12 +609,12 @@ class TestSearchFieldWeights:
                         'name': 'b',
                         'spec': 'x.json',
                         'exposure': {'promote_resources': True},
-                        'operations': {'getPet': {'resource': {}}},
+                        'operations': {'getProduct': {'resource': {}}},
                     }
                 ]
             }
         )
-        assert config.servers[0].operations['getPet'].resource is not None
+        assert config.servers[0].operations['getProduct'].resource is not None
 
 
 class TestDNSRebindingProtectionConfig:

@@ -1,0 +1,30 @@
+# PokéAPI with YAML-side per-operation overrides.
+#
+# Each `operations.<operation_id>` entry mirrors the OpenAPI `x-mcp-integration` extension,
+# and fully replaces any spec-side x-mcp-integration for that operation, with no need to fork the spec.
+# pokemon_retrieve becomes the resource template `pokeapi://pokemon/{id}`,
+# pokemon_list is registered as both a tool and the resource `pokemon_index`,
+# and the rest follow `promote_resources: true`.
+#
+# Usage: openapi-mcp-gateway serve --config examples/pokeapi-override.yml
+
+host: "127.0.0.1"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: pokeapi
+    spec: https://pokeapi.co/openapi.yml
+    exposure:
+      promote_resources: true
+    operations:
+      pokemon_retrieve:
+        resource:
+          name: pokemon
+          mime_type: application/json
+      pokemon_list:
+        tool:
+          name: list_pokemon
+        resource:
+          name: pokemon_index
+          mime_type: application/json

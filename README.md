@@ -10,13 +10,13 @@
 
 Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server from one YAML file, with no code to write. Per-user OAuth and per-operation scopes give fine-grained access control, and tool shaping and dynamic exposure give context efficiency on large APIs. One process runs several APIs, each with its own endpoint and auth.
 
-With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, one command serves the Petstore API:
+With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, one command serves PokéAPI:
 
 ```bash
-uvx openapi-mcp-gateway serve --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
+uvx openapi-mcp-gateway serve --spec https://pokeapi.co/openapi.yml --name pokeapi
 ```
 
-Then connect any MCP client, such as Claude Code, Cursor or VS Code, to `http://127.0.0.1:8000/petstore/mcp`. [Getting Started](https://mroops0111.github.io/openapi-mcp-gateway/getting-started/) continues from there to a config file with several APIs.
+Then connect any MCP client, such as Claude Code, Cursor or VS Code, to `http://127.0.0.1:8000/pokeapi/mcp`. [Getting Started](https://mroops0111.github.io/openapi-mcp-gateway/getting-started/) continues from there to a config file with several APIs.
 
 ## Highlights
 

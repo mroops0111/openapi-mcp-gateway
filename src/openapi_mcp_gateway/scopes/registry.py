@@ -24,7 +24,7 @@ class ScopeRegistry:
         self.mcp_policy = mcp_policy
         self.upstream_policy = upstream_policy or UpstreamUnrestrictedScopePolicy()
         self._requirements: dict[str, _NameRequirements] = {}
-        self._operations: dict[str, _RegisteredOperation] = {}
+        self._operations: dict[str, RegisteredOperation] = {}
         self._requested_scopes: dict[tuple[tuple[str, ...], tuple[str, ...], frozenset[str]], list[str]] = {}
         self._resource_templates: list[tuple[UriTemplate, _NameRequirements]] = []
 
@@ -40,7 +40,7 @@ class ScopeRegistry:
             self.mcp_policy.requirement_for(operation), self.upstream_policy.requirement_for(operation)
         )
         self._requirements[name] = requirements
-        self._operations[operation.operation_id] = _RegisteredOperation(operation, requirements.mcp)
+        self._operations[operation.operation_id] = RegisteredOperation(operation, requirements.mcp)
         self._requested_scopes.clear()
 
     def register_resource(self, uri_template: str, operation: OperationInfo) -> None:
@@ -150,7 +150,7 @@ class _NameRequirements(typing.NamedTuple):
     upstream: ScopeRequirement
 
 
-class _RegisteredOperation(typing.NamedTuple):
+class RegisteredOperation(typing.NamedTuple):
     """A registered operation, with what it requires of the MCP scopes."""
 
     operation: OperationInfo

@@ -70,6 +70,8 @@ These fields name the server and say where its API is.
 | `base_url` | string | from spec | Override the upstream base URL |
 | `timeout` | float | `90` | Upstream HTTP timeout in seconds |
 | `headers` | map | `{}` | Static headers sent on every upstream call, such as an API version. Values take `${ENV_VAR}`, and an unset variable leaves the header out. A header the call itself sends takes precedence. `Authorization` is refused, since it belongs to `auth`. |
+| `security_schemes` | map | `{}` | Security schemes in the OpenAPI `securitySchemes` shape, merged into the spec's, each replacing one of the same name. For a spec that declares none, or declares one wrongly |
+| `security` | list | from spec | Replaces the spec's root `security`, in its OpenAPI shape, such as `[{token: []}]`. An operation that declares its own keeps it. Every scheme named must be declared |
 | `instructions` | string |  | Guidance about the server as a whole, such as when to use it or which tool to call first. Sent in the MCP `server/discover` result, or in `initialize` for a client on an older protocol version. Clients place it in the model's context. Blank text counts as unset. |
 
 ### auth.upstream
@@ -78,9 +80,8 @@ These fields say how the gateway authenticates to the upstream API. [Authorizati
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `type` | string | `none` | `none`, `bearer`, `api_key`, `oauth2`, or `passthrough`. It says whether the upstream credential is shared, obtained per user, or the caller's own, forwarded. `passthrough` is for the FastAPI integration |
-| `token` | string |  | The credential for `bearer` and `api_key`. Unset or empty, nothing is sent |
-| `api_key_header` | string | `X-API-Key` | Header name for `api_key` |
+| `type` | string | `none` | `none`, `oauth2`, or `passthrough`. It says whether a token is obtained per user or for the service, or the caller's own is forwarded. `passthrough` is for the FastAPI integration |
+| `credentials.<scheme>.value` | string |  | A static value for the security scheme named `<scheme>`, sent where the scheme places it. An `apiKey` scheme names a header, query parameter or cookie, and an HTTP `bearer` scheme sends `Authorization: Bearer`. Takes `${ENV_VAR}`, and one that resolves empty refuses startup. Combines with `none` or `oauth2`, and `passthrough` refuses it. [Which Credential Each Operation Carries](../guides/authorization.md#which-credential-each-operation-carries) gives the rules |
 | `flow` | string | from spec | `authorization_code` for per-user sign-in, `client_credentials` for one shared service token, `token_exchange` to exchange each caller's token from `auth.mcp.issuer`. Unset, the gateway prefers the spec's `authorizationCode` flow, then `clientCredentials` |
 | `client_id`, `client_secret` | string |  | The gateway's own credential at the upstream authorization server, or at the issuer under `token_exchange`. Required for `oauth2` |
 | `authorization_url` | string | from spec | For `authorization_code`. Overrides an incomplete `securitySchemes` |

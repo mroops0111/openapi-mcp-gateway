@@ -229,13 +229,13 @@ class TestUpstreamScopesPerSignIn:
     async def test_the_upstream_is_asked_for_what_the_mcp_grant_needs(self, make_provider, mcp_client_info):
         provider = make_provider(scopes=SECURED_CEILING, scope_registry=secured_registry())
         await provider.register_client(mcp_client_info)
-        upstream_url = await begin_upstream(provider, mcp_client_info, scopes=['pets:read'])
-        assert query_value(upstream_url, 'scope') == 'read:pets'
+        upstream_url = await begin_upstream(provider, mcp_client_info, scopes=['products:read'])
+        assert query_value(upstream_url, 'scope') == 'read:products'
 
     async def test_an_omitted_upstream_scope_records_what_this_sign_in_asked_for(self, make_provider, mcp_client_info):
         provider = make_provider(scopes=SECURED_CEILING, scope_registry=secured_registry())
-        token = await sign_in(provider, mcp_client_info, scopes=['pets:read'])
-        assert await _upstream_scopes_of(provider, token.access_token) == ['read:pets']
+        token = await sign_in(provider, mcp_client_info, scopes=['products:read'])
+        assert await _upstream_scopes_of(provider, token.access_token) == ['read:products']
 
 
 class TestUpstreamTokenLifetime:

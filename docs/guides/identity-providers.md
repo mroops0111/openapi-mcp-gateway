@@ -24,7 +24,7 @@ MCP clients register with the identity provider, not the gateway, since the iden
 
 ## Keycloak Example
 
-This is the reference setup the gateway's [Keycloak tests](https://github.com/mroops0111/openapi-mcp-gateway/blob/master/tests/e2e/keycloak.py) run against Keycloak 26.2. It meets the four [Provider Requirements](#provider-requirements) in Keycloak's terms, and assumes an MCP endpoint at `https://gw.example.com/pets/mcp` and an upstream API whose audience is `pets-api`.
+This is the reference setup the gateway's [Keycloak tests](https://github.com/mroops0111/openapi-mcp-gateway/blob/master/tests/e2e/keycloak.py) run against Keycloak 26.2. It meets the four [Provider Requirements](#provider-requirements) in Keycloak's terms, and assumes an MCP endpoint at `https://gw.example.com/shop/mcp` and an upstream API whose audience is `products-api`.
 
 ### Gateway Config
 
@@ -33,20 +33,20 @@ The gateway exchanges tokens as a Keycloak client named by its endpoint's URI.
 ```yaml
 url: https://gw.example.com
 servers:
-  - name: pets
-    spec: https://pets.example.com/openapi.json
+  - name: shop
+    spec: https://shop.example.com/openapi.json
     auth:
       upstream:
         type: oauth2
         flow: token_exchange
-        audience: pets-api
-        client_id: https://gw.example.com/pets/mcp
+        audience: products-api
+        client_id: https://gw.example.com/shop/mcp
         client_secret: ${GATEWAY_CLIENT_SECRET}
-        scopes: [read:pets, write:pets]
+        scopes: [read:products, write:products]
         enforce_scopes: true
       mcp:
-        issuer: https://keycloak.example.com/realms/pets
-        required_scopes: [pets:read]
+        issuer: https://keycloak.example.com/realms/shop
+        required_scopes: [products:read]
         operation_scopes:
           auto: tags
 ```
@@ -57,9 +57,9 @@ Each client scope below has "Include in token scope" on, so its name appears in 
 
 | Client Scope | Mapper | Purpose |
 | --- | --- | --- |
-| `mcp-audience` | Audience, included client `https://gw.example.com/pets/mcp`, added to the access token | puts the MCP endpoint in every caller's `aud` |
-| each MCP scope, such as `pets:read` | none | the scopes `operation_scopes` checks |
-| each upstream scope, such as `read:pets` | Audience, included client `pets-api`, added to the access token | the scopes an exchange asks for, each naming the upstream |
+| `mcp-audience` | Audience, included client `https://gw.example.com/shop/mcp`, added to the access token | puts the MCP endpoint in every caller's `aud` |
+| each MCP scope, such as `products:read` | none | the scopes `operation_scopes` checks |
+| each upstream scope, such as `read:products` | Audience, included client `products-api`, added to the access token | the scopes an exchange asks for, each naming the upstream |
 
 Keycloak ignores `resource` and `audience` on its authorization and token endpoints. Without the `mcp-audience` mapper a token's audience is only `account`, and the gateway refuses it.
 
@@ -69,8 +69,8 @@ Three kinds of client make up the realm. A confidential client is one that prove
 
 | Client | Settings |
 | --- | --- |
-| `https://gw.example.com/pets/mcp`, the gateway | confidential, Standard Token Exchange on, optional client scopes `read:pets` and `write:pets` |
-| `pets-api`, the upstream | confidential, the target an exchange names |
+| `https://gw.example.com/shop/mcp`, the gateway | confidential, Standard Token Exchange on, optional client scopes `read:products` and `write:products` |
+| `products-api`, the upstream | confidential, the target an exchange names |
 | each caller, such as a machine client | confidential, service account on, default client scope `mcp-audience`, optional client scopes are the MCP scopes it may hold |
 
 Each setting maps to a requirement, and shows the error Keycloak returns without it.
