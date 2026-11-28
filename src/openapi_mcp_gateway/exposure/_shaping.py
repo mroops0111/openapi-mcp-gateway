@@ -8,6 +8,101 @@ from ._shared import _get_override
 logger = logging.getLogger(__name__)
 
 
+def shape_operation(operation: OperationInfo) -> OperationInfo:
+    """Apply ``x-mcp-integration.tool.params`` to the LLM-facing surface of ``operation``.
+
+    Returns a shaped copy.
+    The input operation and its parameter schemas are never mutated.
+    Only what the LLM sees is changed here.
+    The value actually sent upstream is shaped later, by the ``request`` JSONata expression.
+
+    ``tool.params_strategy`` chooses how ``params`` relates to the spec's own parameters.
+    With ``merge`` each entry tweaks the matching spec parameter and the undeclared ones stay visible,
+    so naming a parameter the spec does not define is rejected at build time.
+    With ``replace`` the declared entries are the entire surface and every spec parameter is dropped,
+    so a ``request`` expression is required to route the declared parameters to the upstream.
+    The one exception is an entry that names a spec header, which is tweaked as under ``merge`` and stays a header,
+    so a required header such as an API version survives a replaced surface.
+    """
+    tool_override = _get_override(operation, 'tool')
+    if tool_override is None or not tool_override.params:
+        return operation
+
+    params = tool_override.params
+    if tool_override.params_strategy is None:
+        raise ValueError(
+            f'Operation "{operation.operation_id}" sets tool.params but no tool.params_strategy. '
+            'Set params_strategy to "merge" (layer onto the spec) or "replace" (declare the whole surface).'
+        )
+
+    shaped_operation = operation.model_copy(deep=True)
+    spec_names = {parameter.name for parameter in operation.parameters}
+
+    if tool_override.params_strategy == 'replace':
+        if not tool_override.request:
+            raise ValueError(
+                f'Operation "{operation.operation_id}" uses params_strategy "replace" but no tool.request. '
+                'Replaced parameters reach the upstream only through a request expression.'
+            )
+        spec_headers = {
+            parameter.name: parameter for parameter in shaped_operation.parameters if parameter.location == 'header'
+        }
+        declared_parameters: list[ParameterInfo] = []
+        for name, param_override in params.items():
+            spec_header = spec_headers.get(name)
+            if spec_header is None:
+                declared_parameters.append(_declared_parameter(name, param_override))
+            elif (header := _tweak_spec_parameter(spec_header, param_override)) is not None:
+                declared_parameters.append(header)
+        shaped_operation.parameters = declared_parameters
+        return shaped_operation
+
+    unsendable_parameter_names = [name for name in params if name in operation.unsendable_query_parameters]
+    if unsendable_parameter_names:
+        logger.warning(
+            'Operation "%s" tweaks query parameter(s) %s the gateway left out, since it cannot send their style. '
+            'The tweak is skipped.',
+            operation.operation_id,
+            unsendable_parameter_names,
+        )
+    unknown_names = [
+        name for name in params if name not in spec_names and name not in operation.unsendable_query_parameters
+    ]
+    if unknown_names:
+        raise ValueError(
+            f'Operation "{operation.operation_id}" uses params_strategy "merge" but names parameter(s) '
+            f'{unknown_names} the spec does not define. Merge only tweaks existing parameters. '
+            'Use params_strategy "replace" to declare a new friendly surface.'
+        )
+
+    kept_parameters: list[ParameterInfo] = []
+    for parameter in shaped_operation.parameters:
+        param_override = params.get(parameter.name)
+        if param_override is None:
+            kept_parameters.append(parameter)
+            continue
+        if (tweaked := _tweak_spec_parameter(parameter, param_override)) is not None:
+            kept_parameters.append(tweaked)
+
+    if not tool_override.request:
+        kept_path_parameter_names = {parameter.name for parameter in kept_parameters if parameter.location == 'path'}
+        unfilled_path_placeholders = [
+            placeholder_name
+            for placeholder_name in re.findall(r'{(\w+)}', operation.path)
+            if placeholder_name not in kept_path_parameter_names
+        ]
+        if unfilled_path_placeholders:
+            raise ValueError(
+                f'Operation "{operation.operation_id}" has path parameter(s) {unfilled_path_placeholders} '
+                'that shaping left with nothing to fill them, '
+                'no visible parameter, no default, and no tool.request. '
+                'Give each a default, keep it visible, or add a tool.request that supplies it.'
+            )
+
+    shaped_operation.parameters = kept_parameters
+    return shaped_operation
+
+
 def _declared_parameter(name: str, param_override: ParamOverride) -> ParameterInfo:
     """Build a friendly :class:`ParameterInfo` from a declaring ``params`` entry.
 
@@ -60,88 +155,3 @@ def _tweak_spec_parameter(parameter: ParameterInfo, param_override: ParamOverrid
         return None
     parameter.visible = False
     return parameter
-
-
-def shape_operation(operation: OperationInfo) -> OperationInfo:
-    """Apply ``x-mcp-integration.tool.params`` to the LLM-facing surface of ``operation``.
-
-    Returns a shaped copy.
-    The input operation and its parameter schemas are never mutated.
-    Only what the LLM sees is changed here.
-    The value actually sent upstream is shaped later, by the ``request`` JSONata expression.
-
-    ``tool.params_strategy`` chooses how ``params`` relates to the spec's own parameters.
-    With ``merge`` each entry tweaks the matching spec parameter and the undeclared ones stay visible,
-    so naming a parameter the spec does not define is rejected at build time.
-    With ``replace`` the declared entries are the entire surface and every spec parameter is dropped,
-    so a ``request`` expression is required to route the declared parameters to the upstream.
-    The one exception is an entry that names a spec header, which is tweaked as under ``merge`` and stays a header,
-    so a required header such as an API version survives a replaced surface.
-    """
-    tool_override = _get_override(operation, 'tool')
-    if tool_override is None or not tool_override.params:
-        return operation
-
-    params = tool_override.params
-    if tool_override.params_strategy is None:
-        raise ValueError(
-            f'Operation "{operation.operation_id}" sets tool.params but no tool.params_strategy. '
-            'Set params_strategy to "merge" (layer onto the spec) or "replace" (declare the whole surface).'
-        )
-
-    shaped_operation = operation.model_copy(deep=True)
-    spec_names = {parameter.name for parameter in operation.parameters}
-
-    if tool_override.params_strategy == 'replace':
-        if not tool_override.request:
-            raise ValueError(
-                f'Operation "{operation.operation_id}" uses params_strategy "replace" but no tool.request. '
-                'Replaced parameters reach the upstream only through a request expression.'
-            )
-        spec_headers = {
-            parameter.name: parameter for parameter in shaped_operation.parameters if parameter.location == 'header'
-        }
-        declared_parameters: list[ParameterInfo] = []
-        for name, param_override in params.items():
-            spec_header = spec_headers.get(name)
-            if spec_header is None:
-                declared_parameters.append(_declared_parameter(name, param_override))
-            elif (header := _tweak_spec_parameter(spec_header, param_override)) is not None:
-                declared_parameters.append(header)
-        shaped_operation.parameters = declared_parameters
-        return shaped_operation
-
-    unknown_names = [name for name in params if name not in spec_names]
-    if unknown_names:
-        raise ValueError(
-            f'Operation "{operation.operation_id}" uses params_strategy "merge" but names parameter(s) '
-            f'{unknown_names} the spec does not define. Merge only tweaks existing parameters. '
-            'Use params_strategy "replace" to declare a new friendly surface.'
-        )
-
-    kept_parameters: list[ParameterInfo] = []
-    for parameter in shaped_operation.parameters:
-        param_override = params.get(parameter.name)
-        if param_override is None:
-            kept_parameters.append(parameter)
-            continue
-        if (tweaked := _tweak_spec_parameter(parameter, param_override)) is not None:
-            kept_parameters.append(tweaked)
-
-    if not tool_override.request:
-        kept_path_parameter_names = {parameter.name for parameter in kept_parameters if parameter.location == 'path'}
-        unfilled_path_placeholders = [
-            placeholder_name
-            for placeholder_name in re.findall(r'{(\w+)}', operation.path)
-            if placeholder_name not in kept_path_parameter_names
-        ]
-        if unfilled_path_placeholders:
-            raise ValueError(
-                f'Operation "{operation.operation_id}" has path parameter(s) {unfilled_path_placeholders} '
-                'that shaping left with nothing to fill them, '
-                'no visible parameter, no default, and no tool.request. '
-                'Give each a default, keep it visible, or add a tool.request that supplies it.'
-            )
-
-    shaped_operation.parameters = kept_parameters
-    return shaped_operation

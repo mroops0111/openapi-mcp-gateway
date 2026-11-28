@@ -29,6 +29,23 @@ def operation(
     return OperationInfo(operation_id=operation_id, method=method, path=path, tags=list(tags), security=list(security))
 
 
+def query_parameter(
+    name: str = 'opt_fields',
+    *,
+    schema: dict[str, typing.Any] | None = None,
+    explode: bool | None = None,
+    style: str | None = None,
+) -> ParameterInfo:
+    """A query parameter as the spec parser produces it, an array of strings unless ``schema`` says otherwise."""
+    return ParameterInfo(
+        name=name,
+        location='query',
+        schema=schema or {'type': 'array', 'items': {'type': 'string'}},
+        declared_style=style,
+        declared_explode=explode,
+    )
+
+
 def shaped_operation(
     parameters: list[ParameterInfo],
     *,
@@ -41,6 +58,7 @@ def shaped_operation(
     path: str = '/things',
     operation_id: str = 'do_thing',
     summary: str = '',
+    unsendable_query_parameters: collections.abc.Sequence[str] = (),
 ) -> OperationInfo:
     """Build an operation whose ``x-mcp-integration.tool`` carries the given overrides.
 
@@ -63,6 +81,7 @@ def shaped_operation(
         summary=summary,
         parameters=parameters,
         x_mcp_integration=McpIntegration(tool=tool),
+        unsendable_query_parameters=list(unsendable_query_parameters),
     )
 
 

@@ -18,6 +18,9 @@ from .field_path import FieldMatch, FieldPath
 logger = logging.getLogger(__name__)
 
 
+# Where an expanded fragment points for a component schema, relative to the advertised input schema's root.
+DEFS_REF_PREFIX = '#/$defs/'
+
 # JSON Schema keywords whose value is a single nested schema.
 _SUBSCHEMA_KEYS = ('items', 'not', 'additionalProperties', 'propertyNames', 'contains', 'if', 'then', 'else')
 # Keywords whose value is a list of nested schemas.
@@ -26,9 +29,8 @@ _SUBSCHEMA_LIST_KEYS = ('oneOf', 'anyOf', 'prefixItems')
 # Keywords whose value maps a name to a nested schema.
 _SUBSCHEMA_MAP_KEYS = ('properties', 'patternProperties', 'dependentSchemas')
 
+# Where a reference to a component schema points in the spec.
 _COMPONENT_SCHEMA_PREFIX = '#/components/schemas/'
-# Where an expanded fragment points for a component schema, relative to the advertised input schema's root.
-DEFS_REF_PREFIX = '#/$defs/'
 # The component name grammar OpenAPI allows, which needs no JSON Pointer or URI escaping.
 _COMPONENT_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
 # The placeholder a component's entry holds while it expands, so a reference back into it stops there.
@@ -41,6 +43,14 @@ _COMPOSITION_KEYWORDS = ('allOf', 'oneOf', 'anyOf')
 _DEFAULT_MEDIA_TYPE = 'application/octet-stream'
 # The keywords a walk for media descends through, each of which beside a reference replaces the target's.
 _MEDIA_WALK_KEYWORDS = frozenset({'properties', 'items', *_COMPOSITION_KEYWORDS})
+
+# The style a parameter takes when the spec gives none, by location (OpenAPI 3.1.1 §4.8.12.2.2).
+# A body field takes ``form``, the style of a form-encoded body's fields (§4.8.15.1.2).
+_DEFAULT_STYLES = {'path': 'simple', 'query': 'form', 'header': 'simple', 'cookie': 'form', 'body': 'form'}
+
+# The styles the gateway can send a query parameter in.
+# A new style is a new entry here and a new ``QuerySerializer`` in ``exposure/_query_string.py``.
+_SENDABLE_QUERY_STYLES = frozenset({'form'})
 
 # Whatever ``_distinct`` dedupes, kept as the type it returns.
 _Item = typing.TypeVar('_Item')
@@ -62,6 +72,9 @@ class ParameterInfo(pydantic.BaseModel):
     required: bool = False
     description: str = ''
     schema_: dict[str, typing.Any] = pydantic.Field(default_factory=dict, alias='schema')
+    # The ``style`` and ``explode`` the spec declares, or ``None`` where it leaves the default.
+    declared_style: str | None = None
+    declared_explode: bool | None = None
     # Set by shape_operation from a ParamOverride default.
     # Marks a default the author wants sent upstream even when the LLM omits the parameter.
     # The LLM never sees this flag.
@@ -71,6 +84,16 @@ class ParameterInfo(pydantic.BaseModel):
     visible: bool = True
 
     model_config = pydantic.ConfigDict(populate_by_name=True, extra='forbid')
+
+    @property
+    def style(self) -> str:
+        """The declared style, or the default of the parameter's location."""
+        return self.declared_style or _DEFAULT_STYLES[self.location]
+
+    @property
+    def explode(self) -> bool:
+        """The declared ``explode``, or the default of the style, which is true only for ``form``."""
+        return self.style == 'form' if self.declared_explode is None else self.declared_explode
 
 
 class ExposedTool(typing.NamedTuple):
@@ -338,6 +361,8 @@ class OperationInfo(pydantic.BaseModel):
     schema_defs: dict[str, dict[str, typing.Any]] = pydantic.Field(default_factory=dict)
     # Where the success response schema declares media, or ``None`` when it declares none anywhere.
     response_media: ResponseMedia | None = None
+    # The optional query parameters left out of ``parameters``, by spec name, since the gateway cannot send them.
+    unsendable_query_parameters: list[str] = pydantic.Field(default_factory=list)
 
     @property
     def tool_exposed(self) -> bool:
@@ -395,6 +420,224 @@ def load_spec(source: str | pathlib.Path) -> dict[str, typing.Any]:
     logger.debug('Loading OpenAPI spec from file: %s', path)
     text = path.read_text(encoding='utf-8')
     return _load_yaml(text) if path.suffix in ('.yaml', '.yml') else json.loads(text)
+
+
+def schema_description(schema: dict[str, typing.Any], defs: dict[str, dict[str, typing.Any]]) -> str:
+    """Return the ``description`` of ``schema``, looking through a ``$defs`` reference at its root.
+
+    A description beside the reference describes this use, so it wins over the entry's.
+    """
+    if schema.get('description'):
+        return schema['description']
+    name = defs_reference(schema)
+    return defs.get(name, {}).get('description', '') if name is not None else ''
+
+
+def iter_subschemas(schema: dict[str, typing.Any]) -> typing.Iterator[dict[str, typing.Any]]:
+    """Yield every schema nested one level below ``schema``, through each nested-schema keyword.
+
+    ``allOf`` is included, unlike in the expansion keyword lists, since a walk has to see every branch.
+    """
+    for key in _SUBSCHEMA_KEYS:
+        if isinstance(schema.get(key), dict):
+            yield schema[key]
+    for key in (*_SUBSCHEMA_LIST_KEYS, 'allOf'):
+        if isinstance(schema.get(key), list):
+            yield from (item for item in schema[key] if isinstance(item, dict))
+    for key in _SUBSCHEMA_MAP_KEYS:
+        if isinstance(schema.get(key), dict):
+            yield from (sub for sub in schema[key].values() if isinstance(sub, dict))
+
+
+def map_subschemas(
+    schema: dict[str, typing.Any],
+    transform: typing.Callable[[dict[str, typing.Any]], dict[str, typing.Any]],
+) -> dict[str, typing.Any]:
+    """Return a copy of ``schema`` with ``transform`` applied to every schema nested one level below it.
+
+    Walks the same keywords as ``iter_subschemas``, leaving any non-schema value in their place untouched.
+    """
+    result = schema.copy()
+    for key in _SUBSCHEMA_KEYS:
+        if isinstance(result.get(key), dict):
+            result[key] = transform(result[key])
+    for key in (*_SUBSCHEMA_LIST_KEYS, 'allOf'):
+        if isinstance(result.get(key), list):
+            result[key] = [transform(item) if isinstance(item, dict) else item for item in result[key]]
+    for key in _SUBSCHEMA_MAP_KEYS:
+        if isinstance(result.get(key), dict):
+            result[key] = {name: transform(sub) if isinstance(sub, dict) else sub for name, sub in result[key].items()}
+    return result
+
+
+def defs_reference(schema: dict[str, typing.Any]) -> str | None:
+    """Return the name of the ``$defs`` entry ``schema`` refers to, or ``None`` when it is not such a reference."""
+    pointer = schema.get('$ref')
+    if isinstance(pointer, str) and pointer.startswith(DEFS_REF_PREFIX):
+        return pointer.removeprefix(DEFS_REF_PREFIX)
+    return None
+
+
+def count_defs_references(
+    schemas: typing.Iterable[dict[str, typing.Any]],
+    defs: dict[str, dict[str, typing.Any]],
+) -> collections.Counter[str]:
+    """Count the places in ``schemas`` that reach each entry of ``defs``, directly or through other entries.
+
+    An entry's own references are counted once, however often the entry is reached,
+    since the entry is written out once, whether under ``$defs`` or inlined at its only use.
+    The entries counted are exactly those ``schemas`` reach.
+    """
+    counts: collections.Counter[str] = collections.Counter()
+    pending = list(schemas)
+    while pending:
+        node = pending.pop()
+        name = defs_reference(node)
+        if name is not None and name in defs:
+            if name not in counts:
+                pending.append(defs[name])
+            counts[name] += 1
+        pending.extend(iter_subschemas(node))
+    return counts
+
+
+def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPISpec:
+    """Parse a decoded OpenAPI mapping into ``OpenAPISpec`` and ``OperationInfo`` models.
+
+    ``source`` is only used to resolve relative ``servers[].url`` values per OpenAPI 3.0 §4.7.5,
+    so pass the original URL or path the document was loaded from when it matters.
+    """
+    info = raw.get('info', {})
+    servers = _resolve_relative_servers(raw.get('servers', []), source)
+    security_schemes = raw.get('components', {}).get('securitySchemes', {})
+    global_security = raw.get('security', [])
+
+    operations: list[OperationInfo] = []
+    # Every component expanded so far, shared by all operations so each is expanded once.
+    defs: dict[str, dict[str, typing.Any]] = {}
+    response_media = _ResponseMediaBuilder(raw)
+    # Optional query parameters left out because the gateway cannot send them, counted by what stops them.
+    unsendable_reason_counts: collections.Counter[str] = collections.Counter()
+    operations_with_unsendable_parameters_count = 0
+
+    for path, path_item in raw.get('paths', {}).items():
+        if not isinstance(path_item, dict):
+            continue
+
+        for method in ('get', 'post', 'put', 'patch', 'delete'):
+            operation = path_item.get(method)
+            if not operation or not isinstance(operation, dict):
+                continue
+
+            operation_id = operation.get('operationId')
+            if not operation_id:
+                operation_id = f'{method}_{path}'.replace('/', '_').replace('{', '').replace('}', '').strip('_')
+
+            # Operation-level parameters override path-level (OpenAPI 3.0 §4.7.9.2).
+            parameters: list[ParameterInfo] = []
+            seen_parameter_keys: set[str] = set()
+            unsendable_parameter_names: list[str] = []
+            # A required parameter the gateway cannot send, as its name and what stops it, makes every call fail.
+            blocking_parameter: tuple[str, str] | None = None
+            for raw_parameter in operation.get('parameters', []) + path_item.get('parameters', []):
+                if '$ref' in raw_parameter:
+                    raw_parameter = _resolve_ref(raw, raw_parameter['$ref'])
+                location = raw_parameter.get('in', 'query')
+                if not raw_parameter.get('name'):
+                    # A parameter with no name cannot be sent, and would otherwise break the tool's signature.
+                    logger.warning('Skipping a %s parameter with no name on %s %s', location, method, path)
+                    continue
+                parameter_key = f'{location}:{raw_parameter["name"]}'
+                if parameter_key in seen_parameter_keys:
+                    continue
+                seen_parameter_keys.add(parameter_key)
+                parameter = ParameterInfo(
+                    name=raw_parameter['name'],
+                    location=location,
+                    required=raw_parameter.get('required', False),
+                    description=raw_parameter.get('description', ''),
+                    schema=_expand_schema(raw, raw_parameter.get('schema', {}), defs),
+                    declared_style=raw_parameter.get('style'),
+                    declared_explode=raw_parameter.get('explode'),
+                )
+                unsendable_reason = _unsendable_reason(raw_parameter, parameter)
+                if unsendable_reason is None:
+                    parameters.append(parameter)
+                elif parameter.required:
+                    blocking_parameter = (parameter.name, unsendable_reason)
+                    break
+                else:
+                    unsendable_parameter_names.append(parameter.name)
+                    unsendable_reason_counts[unsendable_reason] += 1
+
+            if blocking_parameter is not None:
+                logger.warning(
+                    'Skipping %s %s: the gateway cannot send its required query parameter %s, which uses %s',
+                    method.upper(),
+                    path,
+                    *blocking_parameter,
+                )
+                continue
+            operations_with_unsendable_parameters_count += bool(unsendable_parameter_names)
+
+            request_body = operation.get('requestBody', {})
+            if '$ref' in request_body:
+                request_body = _resolve_ref(raw, request_body['$ref'])
+            if request_body and method in ('post', 'put', 'patch'):
+                content = request_body.get('content', {}).get('application/json', {})
+                # The body is split into one parameter per property, so its own root reference is resolved in place.
+                schema = _expand_inline(raw, content.get('schema', {}), defs)
+
+                if _declares_object_properties(schema):
+                    required_props = schema.get('required', [])
+                    for prop_name, prop_schema in schema['properties'].items():
+                        parameters.append(
+                            ParameterInfo(
+                                name=prop_name,
+                                location='body',
+                                required=prop_name in required_props,
+                                description=schema_description(prop_schema, defs),
+                                schema=prop_schema,
+                            )
+                        )
+
+            operations.append(
+                OperationInfo(
+                    operation_id=operation_id,
+                    method=method,
+                    path=path,
+                    summary=operation.get('summary', ''),
+                    description=operation.get('description', ''),
+                    tags=operation.get('tags', []),
+                    parameters=parameters,
+                    security=operation.get('security', global_security),
+                    x_mcp_integration=operation.get('x-mcp-integration', {}),
+                    schema_defs={
+                        name: defs[name]
+                        for name in count_defs_references((parameter.schema_ for parameter in parameters), defs)
+                    },
+                    response_media=response_media.build(_success_response_schema(raw, operation)),
+                    unsendable_query_parameters=unsendable_parameter_names,
+                )
+            )
+
+    if unsendable_reason_counts:
+        logger.warning(
+            'Left out %d optional query parameters in %d operations of "%s", which the gateway cannot send: %s',
+            unsendable_reason_counts.total(),
+            operations_with_unsendable_parameters_count,
+            info.get('title', ''),
+            ', '.join(f'{reason} ({count})' for reason, count in unsendable_reason_counts.most_common()),
+        )
+
+    return OpenAPISpec(
+        title=info.get('title', ''),
+        version=info.get('version', ''),
+        description=info.get('description', ''),
+        servers=servers,
+        operations=operations,
+        security_schemes=security_schemes,
+    )
 
 
 def _load_yaml(text: str) -> typing.Any:
@@ -459,17 +702,6 @@ def _open_reference(
     if name is None or not other or defs_reference(other) == name or defs.get(name, _EXPANDING) is _EXPANDING:
         return schema
     return _deep_merge(defs[name], _siblings(schema), defs)
-
-
-def schema_description(schema: dict[str, typing.Any], defs: dict[str, dict[str, typing.Any]]) -> str:
-    """Return the ``description`` of ``schema``, looking through a ``$defs`` reference at its root.
-
-    A description beside the reference describes this use, so it wins over the entry's.
-    """
-    if schema.get('description'):
-        return schema['description']
-    name = defs_reference(schema)
-    return defs.get(name, {}).get('description', '') if name is not None else ''
 
 
 def _normalize_nullable(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
@@ -545,51 +777,6 @@ def _component_name(pointer: str) -> str | None:
         return None
     name = pointer.removeprefix(_COMPONENT_SCHEMA_PREFIX)
     return name if _COMPONENT_NAME.match(name) else None
-
-
-def iter_subschemas(schema: dict[str, typing.Any]) -> typing.Iterator[dict[str, typing.Any]]:
-    """Yield every schema nested one level below ``schema``, through each nested-schema keyword.
-
-    ``allOf`` is included, unlike in the expansion keyword lists, since a walk has to see every branch.
-    """
-    for key in _SUBSCHEMA_KEYS:
-        if isinstance(schema.get(key), dict):
-            yield schema[key]
-    for key in (*_SUBSCHEMA_LIST_KEYS, 'allOf'):
-        if isinstance(schema.get(key), list):
-            yield from (item for item in schema[key] if isinstance(item, dict))
-    for key in _SUBSCHEMA_MAP_KEYS:
-        if isinstance(schema.get(key), dict):
-            yield from (sub for sub in schema[key].values() if isinstance(sub, dict))
-
-
-def map_subschemas(
-    schema: dict[str, typing.Any],
-    transform: typing.Callable[[dict[str, typing.Any]], dict[str, typing.Any]],
-) -> dict[str, typing.Any]:
-    """Return a copy of ``schema`` with ``transform`` applied to every schema nested one level below it.
-
-    Walks the same keywords as ``iter_subschemas``, leaving any non-schema value in their place untouched.
-    """
-    result = schema.copy()
-    for key in _SUBSCHEMA_KEYS:
-        if isinstance(result.get(key), dict):
-            result[key] = transform(result[key])
-    for key in (*_SUBSCHEMA_LIST_KEYS, 'allOf'):
-        if isinstance(result.get(key), list):
-            result[key] = [transform(item) if isinstance(item, dict) else item for item in result[key]]
-    for key in _SUBSCHEMA_MAP_KEYS:
-        if isinstance(result.get(key), dict):
-            result[key] = {name: transform(sub) if isinstance(sub, dict) else sub for name, sub in result[key].items()}
-    return result
-
-
-def defs_reference(schema: dict[str, typing.Any]) -> str | None:
-    """Return the name of the ``$defs`` entry ``schema`` refers to, or ``None`` when it is not such a reference."""
-    pointer = schema.get('$ref')
-    if isinstance(pointer, str) and pointer.startswith(DEFS_REF_PREFIX):
-        return pointer.removeprefix(DEFS_REF_PREFIX)
-    return None
 
 
 def _expand_inline(
@@ -671,29 +858,6 @@ def _expand_schema(
     return _normalize_to_2020_12(result)
 
 
-def count_defs_references(
-    schemas: typing.Iterable[dict[str, typing.Any]],
-    defs: dict[str, dict[str, typing.Any]],
-) -> collections.Counter[str]:
-    """Count the places in ``schemas`` that reach each entry of ``defs``, directly or through other entries.
-
-    An entry's own references are counted once, however often the entry is reached,
-    since the entry is written out once, whether under ``$defs`` or inlined at its only use.
-    The entries counted are exactly those ``schemas`` reach.
-    """
-    counts: collections.Counter[str] = collections.Counter()
-    pending = list(schemas)
-    while pending:
-        node = pending.pop()
-        name = defs_reference(node)
-        if name is not None and name in defs:
-            if name not in counts:
-                pending.append(defs[name])
-            counts[name] += 1
-        pending.extend(iter_subschemas(node))
-    return counts
-
-
 def _declares_object_properties(schema: dict[str, typing.Any]) -> bool:
     """Report whether ``schema`` is an object whose ``properties`` become body parameters.
 
@@ -710,6 +874,18 @@ def _declares_object_properties(schema: dict[str, typing.Any]) -> bool:
     if isinstance(schema_type, list):
         return 'object' in schema_type
     return schema_type == 'object'
+
+
+def _unsendable_reason(raw_parameter: dict[str, typing.Any], parameter: ParameterInfo) -> str | None:
+    """Return what keeps the gateway from sending a query parameter, or ``None`` when it can send it.
+
+    The reason is the parameter's style, or ``content`` for one whose value a media type encodes instead of a schema.
+    """
+    if parameter.location != 'query':
+        return None
+    if 'content' in raw_parameter:
+        return 'content'
+    return None if parameter.style in _SENDABLE_QUERY_STYLES else parameter.style
 
 
 def _success_response_schema(raw: dict[str, typing.Any], operation: dict[str, typing.Any]) -> dict[str, typing.Any]:
@@ -939,109 +1115,3 @@ def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str 
         else:
             resolved.append(server)
     return resolved
-
-
-def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPISpec:
-    """Parse a decoded OpenAPI mapping into ``OpenAPISpec`` and ``OperationInfo`` models.
-
-    ``source`` is only used to resolve relative ``servers[].url`` values per OpenAPI 3.0 §4.7.5,
-    so pass the original URL or path the document was loaded from when it matters.
-    """
-    info = raw.get('info', {})
-    servers = _resolve_relative_servers(raw.get('servers', []), source)
-    security_schemes = raw.get('components', {}).get('securitySchemes', {})
-    global_security = raw.get('security', [])
-
-    operations: list[OperationInfo] = []
-    # Every component expanded so far, shared by all operations so each is expanded once.
-    defs: dict[str, dict[str, typing.Any]] = {}
-    response_media = _ResponseMediaBuilder(raw)
-
-    for path, path_item in raw.get('paths', {}).items():
-        if not isinstance(path_item, dict):
-            continue
-
-        for method in ('get', 'post', 'put', 'patch', 'delete'):
-            operation = path_item.get(method)
-            if not operation or not isinstance(operation, dict):
-                continue
-
-            operation_id = operation.get('operationId')
-            if not operation_id:
-                operation_id = f'{method}_{path}'.replace('/', '_').replace('{', '').replace('}', '').strip('_')
-
-            # Operation-level parameters override path-level (OpenAPI 3.0 §4.7.9.2).
-            params: list[ParameterInfo] = []
-            seen_params: set[str] = set()
-            for param in operation.get('parameters', []) + path_item.get('parameters', []):
-                if '$ref' in param:
-                    param = _resolve_ref(raw, param['$ref'])
-                if not param.get('name'):
-                    # A parameter with no name cannot be sent, and would otherwise break the tool's signature.
-                    logger.warning(
-                        'Skipping a %s parameter with no name on %s %s', param.get('in', 'query'), method, path
-                    )
-                    continue
-                param_key = f'{param.get("in", "query")}:{param["name"]}'
-                if param_key in seen_params:
-                    continue
-                seen_params.add(param_key)
-                param_schema = _expand_schema(raw, param.get('schema', {}), defs)
-                params.append(
-                    ParameterInfo(
-                        name=param['name'],
-                        location=param.get('in', 'query'),
-                        required=param.get('required', False),
-                        description=param.get('description', ''),
-                        schema=param_schema,
-                    )
-                )
-
-            request_body = operation.get('requestBody', {})
-            if '$ref' in request_body:
-                request_body = _resolve_ref(raw, request_body['$ref'])
-            if request_body and method in ('post', 'put', 'patch'):
-                content = request_body.get('content', {}).get('application/json', {})
-                # The body is split into one parameter per property, so its own root reference is resolved in place.
-                schema = _expand_inline(raw, content.get('schema', {}), defs)
-
-                if _declares_object_properties(schema):
-                    required_props = schema.get('required', [])
-                    for prop_name, prop_schema in schema['properties'].items():
-                        params.append(
-                            ParameterInfo(
-                                name=prop_name,
-                                location='body',
-                                required=prop_name in required_props,
-                                description=schema_description(prop_schema, defs),
-                                schema=prop_schema,
-                            )
-                        )
-
-            operations.append(
-                OperationInfo(
-                    operation_id=operation_id,
-                    method=method,
-                    path=path,
-                    summary=operation.get('summary', ''),
-                    description=operation.get('description', ''),
-                    tags=operation.get('tags', []),
-                    parameters=params,
-                    security=operation.get('security', global_security),
-                    x_mcp_integration=operation.get('x-mcp-integration', {}),
-                    schema_defs={
-                        name: defs[name]
-                        for name in count_defs_references((parameter.schema_ for parameter in params), defs)
-                    },
-                    response_media=response_media.build(_success_response_schema(raw, operation)),
-                )
-            )
-
-    return OpenAPISpec(
-        title=info.get('title', ''),
-        version=info.get('version', ''),
-        description=info.get('description', ''),
-        servers=servers,
-        operations=operations,
-        security_schemes=security_schemes,
-    )

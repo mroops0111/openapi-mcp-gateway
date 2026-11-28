@@ -13,7 +13,7 @@ from openapi_mcp_gateway.openapi import (
     parse_spec,
 )
 from tests.constants import API_URL, PETSTORE_URL
-from tests.spec import component_ref, defs_ref, operation_spec
+from tests.spec import combined_spec, component_ref, defs_ref, operation_spec
 
 
 class TestResolveRef:
@@ -591,6 +591,82 @@ class TestUnnamedParameters:
         operation = parse_spec(raw).operations[0]
         assert [parameter.name for parameter in operation.parameters] == ['id']
         assert 'no name' in caplog.text
+
+
+class TestQueryStyle:
+    """Which query parameters the gateway can send, and how, per OpenAPI 3.1.1 §4.8.12.2.2."""
+
+    @staticmethod
+    def _operation_spec(*parameters: dict, operation_id: str = 'listThings', path: str = '/things') -> dict:
+        """A GET operation with an ``id`` query parameter followed by ``parameters``."""
+        return operation_spec(
+            method='get',
+            path=path,
+            operation_id=operation_id,
+            parameters=[{'name': 'id', 'in': 'query', 'schema': {'type': 'string'}}, *parameters],
+        )
+
+    @staticmethod
+    def _unsendable_parameter(name: str, style: str = 'deepObject', **fields: typing.Any) -> dict:
+        return {'name': name, 'in': 'query', 'style': style, 'schema': {'type': 'object'}, **fields}
+
+    @pytest.mark.parametrize(
+        ('declared', 'explode'), [({}, True), ({'style': 'form'}, True), ({'explode': False}, False)]
+    )
+    def test_query_defaults_to_form_which_explodes(self, declared, explode):
+        """A query parameter with no ``style`` is ``form``, which explodes unless the spec says otherwise."""
+        parameter = {'name': 'fields', 'in': 'query', 'schema': {'type': 'array'}, **declared}
+        kept_parameter = parse_spec(self._operation_spec(parameter)).operations[0].parameters[1]
+        assert (kept_parameter.name, kept_parameter.style, kept_parameter.explode) == ('fields', 'form', explode)
+
+    @pytest.mark.parametrize('location', ['path', 'header'])
+    def test_path_and_header_default_to_simple_which_does_not_explode(self, location):
+        """``simple``, the path and header default, has ``explode`` false."""
+        parameter = {'name': 'ids', 'in': location, 'required': True, 'schema': {'type': 'array'}}
+        kept_parameter = parse_spec(self._operation_spec(parameter)).operations[0].parameters[1]
+        assert (kept_parameter.style, kept_parameter.explode) == ('simple', False)
+
+    @pytest.mark.parametrize(
+        'parameter',
+        [
+            _unsendable_parameter('filter', 'deepObject'),
+            _unsendable_parameter('filter', 'pipeDelimited'),
+            {'name': 'filter', 'in': 'query', 'content': {'application/json': {'schema': {'type': 'object'}}}},
+        ],
+    )
+    def test_optional_unsendable_parameter_is_left_out(self, parameter):
+        """An optional parameter in a style the gateway cannot send is left out, and the operation keeps the rest."""
+        operation = parse_spec(self._operation_spec(parameter)).operations[0]
+        assert [kept_parameter.name for kept_parameter in operation.parameters] == ['id']
+        assert operation.unsendable_query_parameters == ['filter']
+
+    def test_required_unsendable_parameter_skips_the_operation(self, caplog):
+        """A required parameter the gateway cannot send would fail every call, so its operation is skipped by name."""
+        raw = combined_spec(
+            self._operation_spec(self._unsendable_parameter('created', required=True)),
+            self._operation_spec(operation_id='listRefunds', path='/refunds'),
+        )
+        assert [operation.operation_id for operation in parse_spec(raw).operations] == ['listRefunds']
+        assert caplog.messages == [
+            'Skipping GET /things: the gateway cannot send its required query parameter created, which uses deepObject'
+        ]
+
+    def test_left_out_parameters_are_reported_once_per_spec(self, caplog):
+        """Every optional parameter left out of a spec is counted in one warning, by what stops it."""
+        parameters = (
+            self._unsendable_parameter('expand'),
+            self._unsendable_parameter('created'),
+            self._unsendable_parameter('tags', 'pipeDelimited'),
+        )
+        raw = combined_spec(
+            self._operation_spec(*parameters),
+            self._operation_spec(*parameters, operation_id='listRefunds', path='/refunds'),
+        )
+        parse_spec(raw)
+        assert caplog.messages == [
+            'Left out 6 optional query parameters in 2 operations of "Test API", which the gateway cannot send: '
+            'deepObject (4), pipeDelimited (2)'
+        ]
 
 
 class TestResponseMedia:
