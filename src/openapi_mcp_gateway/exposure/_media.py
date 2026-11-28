@@ -8,7 +8,7 @@ from mcp.types import ContentBlock
 
 from ..field_path import FieldMatch, FieldPath
 from ..openapi import MediaField, ResponseMedia
-from ._content import binary_content
+from ._binary_content import binary_content
 
 
 # What a promoted field holds once its media moves to a content block, so the model can tell which block it was.

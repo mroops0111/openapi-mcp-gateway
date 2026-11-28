@@ -8,9 +8,9 @@ import pytest
 import pytest_asyncio
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from openapi_mcp_gateway.exposure._upstream_http import UpstreamHttpClient
 from openapi_mcp_gateway.stores.memory import MemoryTokenStore
 from openapi_mcp_gateway.stores.redis import RedisTokenStore
-from openapi_mcp_gateway.upstream_http import UpstreamHttpClient
 from tests.spec import write_secured_petstore
 
 

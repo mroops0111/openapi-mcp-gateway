@@ -22,8 +22,9 @@ from ..scopes import (
 from ._bm25 import BM25FIndex
 from ._semantic import SemanticIndex, SemanticSearchOptions
 from ._shaping import shape_operation
-from ._shared import _get_override, build_input_schema, derive_description, derive_name
-from ._upstream import UpstreamConnection, _build_success_result
+from ._shared import build_input_schema, derive_description, derive_name, get_override
+from ._tool_result import build_success_result
+from ._upstream_call import UpstreamConnection
 from .tool import build_tool_function
 
 
@@ -139,7 +140,7 @@ class MetaToolGenerator:
             shaped_operation = shape_operation(operation)
             # The input schema is the operation's contract, built once and both shown by get_operation and enforced.
             input_schema = build_input_schema(shaped_operation)
-            tool_override = _get_override(shaped_operation, 'tool')
+            tool_override = get_override(shaped_operation, 'tool')
             name = derive_name(shaped_operation, tool_override.name if tool_override else None)
             self.scope_registry.register(name, operation)
             registered.append(
@@ -198,14 +199,14 @@ class MetaToolGenerator:
                 str | None, pydantic.Field(description='The `nextCursor` of the previous page.')
             ] = None,
         ) -> CallToolResult:
-            return _build_success_result(await registry.search(query, tags, cursor, self._visibility()))
+            return build_success_result(await registry.search(query, tags, cursor, self._visibility()))
 
         @self.mcp.tool(name='get_operation', description=_GET_OPERATION_DESCRIPTION)
         async def get_operation(name: str, ctx: Context) -> CallToolResult:
             operation = registry.get(name)
             if operation is None or not self._visibility()(name):
                 raise _unknown_operation_error(name)
-            return _build_success_result(
+            return build_success_result(
                 {'name': name, 'description': operation.description, 'input_schema': operation.input_schema}
             )
 

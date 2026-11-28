@@ -13,15 +13,15 @@ from ..scopes import McpUnrestrictedScopePolicy, ScopeRegistry
 from ._reauthorization import URL_ELICITATION_SIGN_IN_POLICY
 from ._shaping import shape_operation
 from ._shared import (
-    _get_override,
-    _iter_unique_sanitised_parameters,
-    _schema_to_python_type,
-    _SignatureTypes,
+    SignatureTypes,
     build_input_schema,
     derive_description,
     derive_name,
+    get_override,
+    iter_unique_sanitised_parameters,
+    schema_to_python_type,
 )
-from ._upstream import UpstreamConnection, UpstreamOperationCall
+from ._upstream_call import UpstreamConnection, UpstreamOperationCall
 
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,7 @@ class ToolGenerator:
             shaped_operation = shape_operation(operation)
             # The input schema is the tool's contract, built once and both advertised and enforced.
             input_schema = build_input_schema(shaped_operation)
-            tool_override = _get_override(shaped_operation, 'tool')
+            tool_override = get_override(shaped_operation, 'tool')
             tool_function = build_tool_function(
                 shaped_operation, self.connection, input_schema=input_schema, spec_operation=operation
             )
@@ -190,14 +190,14 @@ def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, 
     """
     ordered_parameters = [
         (name, parameter)
-        for name, parameter in _iter_unique_sanitised_parameters(operation.parameters)
+        for name, parameter in iter_unique_sanitised_parameters(operation.parameters)
         if parameter.visible
     ]
     # Namespace nested model names by operationId,
     # so two tools that expose a same-named body param get distinct generated classes in the resulting JSON Schema.
     operation_name_prefix = inflection.camelize(operation.operation_id)
     # One model per component for the whole tool, however many parameters or paths reach it.
-    signature_types = _SignatureTypes(operation.schema_defs, operation_name_prefix)
+    signature_types = SignatureTypes(operation.schema_defs, operation_name_prefix)
 
     annotations: dict[str, typing.Any] = {}
     signature_parameters: list[inspect.Parameter] = []
@@ -205,7 +205,7 @@ def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, 
     for parameter_name, parameter in ordered_parameters:
         if not parameter.required:
             continue
-        python_type = _schema_to_python_type(
+        python_type = schema_to_python_type(
             parameter.schema_,
             name_hint=f'{operation_name_prefix}{inflection.camelize(parameter_name)}',
             signature_types=signature_types,
@@ -232,7 +232,7 @@ def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, 
     for parameter_name, parameter in ordered_parameters:
         if parameter.required:
             continue
-        python_type = _schema_to_python_type(
+        python_type = schema_to_python_type(
             parameter.schema_,
             name_hint=f'{operation_name_prefix}{inflection.camelize(parameter_name)}',
             signature_types=signature_types,

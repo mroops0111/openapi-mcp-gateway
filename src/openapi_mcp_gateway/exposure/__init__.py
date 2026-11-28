@@ -4,7 +4,7 @@ from ._shared import (
     derive_description,
     derive_name,
 )
-from ._upstream import UpstreamConnection
+from ._upstream_call import UpstreamConnection
 from .meta_tool import DynamicOperationTarget, MetaToolGenerator
 from .resource import (
     ResourceGenerator,
