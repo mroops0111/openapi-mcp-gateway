@@ -115,7 +115,7 @@ class TestExpandSchema:
         assert set(result['required']) == {'name', 'owner'}
 
     def test_oneof(self, petstore_spec_raw):
-        """``oneOf`` branches are kept_parameter as a list with each branch independently expanded."""
+        """``oneOf`` branches are kept as a list with each branch independently expanded."""
         defs: dict = {}
         _expand_schema(petstore_spec_raw, component_ref('PetOrError'), defs)
         assert defs['PetOrError']['oneOf'] == [defs_ref('Pet'), defs_ref('Error')]
@@ -808,7 +808,7 @@ class TestResponseMedia:
         assert self._found(operation_spec(response=response, schemas=schemas), {'logo': 'l'}) == {'logo': 'image/png'}
 
     def test_a_reference_only_to_an_alias_keeps_nothing(self):
-        """A component kept_parameter only for the type it names leads nowhere, so a response of it alone has no media."""
+        """A component kept only for the type it names leads nowhere, so a response of it alone has no media."""
         schemas = {
             'Logo': {'type': 'object', 'properties': {'logo': {**component_ref('Typed'), 'contentEncoding': 'base64'}}},
             'Typed': component_ref('Png'),

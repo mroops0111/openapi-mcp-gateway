@@ -13,7 +13,6 @@ import pydantic
 import yaml
 
 from .field_path import FieldMatch, FieldPath
-from .query_string import QuerySerializer, query_serializer
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +47,10 @@ _MEDIA_WALK_KEYWORDS = frozenset({'properties', 'items', *_COMPOSITION_KEYWORDS}
 # The style a parameter takes when the spec gives none, by location (OpenAPI 3.1.1 §4.8.12.2.2).
 # A body field takes ``form``, the style of a form-encoded body's fields (§4.8.15.1.2).
 _DEFAULT_STYLES = {'path': 'simple', 'query': 'form', 'header': 'simple', 'cookie': 'form', 'body': 'form'}
+
+# The style and explode pairs the gateway can send a query parameter in.
+# A new one is a new entry here and a new ``QuerySerializer`` in ``exposure/_query_string.py``.
+_SENDABLE_QUERY_SHAPES = frozenset({('form', True), ('form', False)})
 
 # Whatever ``_distinct`` dedupes, kept as the type it returns.
 _Item = typing.TypeVar('_Item')
@@ -91,11 +94,6 @@ class ParameterInfo(pydantic.BaseModel):
     def explode(self) -> bool:
         """The declared ``explode``, or the default of the style, which is true only for ``form``."""
         return self.style == 'form' if self.declared_explode is None else self.declared_explode
-
-    @property
-    def query_serializer(self) -> QuerySerializer | None:
-        """How the gateway sends the parameter as a query value, or ``None`` when it cannot send its style."""
-        return query_serializer(self.style, self.explode)
 
 
 class ExposedTool(typing.NamedTuple):
@@ -887,7 +885,7 @@ def _unsendable_reason(raw_parameter: dict[str, typing.Any], parameter: Paramete
         return None
     if 'content' in raw_parameter:
         return 'content'
-    return None if parameter.query_serializer is not None else parameter.style
+    return None if (parameter.style, parameter.explode) in _SENDABLE_QUERY_SHAPES else parameter.style
 
 
 def _success_response_schema(raw: dict[str, typing.Any], operation: dict[str, typing.Any]) -> dict[str, typing.Any]:

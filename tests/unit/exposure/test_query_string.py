@@ -2,18 +2,19 @@ import typing
 
 import pytest
 
-from openapi_mcp_gateway.query_string import (
+from openapi_mcp_gateway.exposure._query_string import (
+    FormExplodedQuerySerializer,
+    FormJoinedQuerySerializer,
     QuerySerializer,
     UndeclaredQuerySerializer,
     encode_query_string,
-    query_serializer,
 )
 
 
 class TestFormExploded:
     """``form`` with ``explode: true``, the query default."""
 
-    serializer = query_serializer('form', True)
+    serializer = FormExplodedQuerySerializer()
 
     @pytest.mark.parametrize(
         ('value', 'expected'),
@@ -36,7 +37,7 @@ class TestFormExploded:
 class TestFormJoined:
     """``form`` with ``explode: false``."""
 
-    serializer = query_serializer('form', False)
+    serializer = FormJoinedQuerySerializer()
 
     @pytest.mark.parametrize(
         ('value', 'expected'),
@@ -78,20 +79,11 @@ class TestUndeclared:
         assert _query_string(UndeclaredQuerySerializer(), value, name='created') == expected
 
 
-@pytest.mark.parametrize(('style', 'explode'), [('deepObject', True), ('pipeDelimited', False), ('simple', False)])
-def test_unsupported_style_has_no_serializer(style, explode):
-    """A style the gateway cannot send has no serializer, so the parser leaves its parameters out."""
-    assert query_serializer(style, explode) is None
-
-
 def test_name_is_encoded():
     """A name with brackets, as Klaviyo's sparse fieldsets have, is percent-encoded."""
-    assert (
-        _query_string(query_serializer('form', False), ['a', 'b'], name='fields[account]') == 'fields%5Baccount%5D=a,b'
-    )
+    assert _query_string(FormJoinedQuerySerializer(), ['a', 'b'], name='fields[account]') == 'fields%5Baccount%5D=a,b'
 
 
-def _query_string(serializer: QuerySerializer | None, value: typing.Any, name: str = 'opt_fields') -> str:
+def _query_string(serializer: QuerySerializer, value: typing.Any, name: str = 'opt_fields') -> str:
     """The query string ``serializer`` sends ``value`` as, under the parameter ``name``."""
-    assert serializer is not None
     return encode_query_string(serializer.pairs(name, value))

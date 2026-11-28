@@ -15,11 +15,18 @@ from ..auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
 )
 from ..openapi import OperationInfo, ParameterInfo
-from ..query_string import QueryPair, QuerySerializer, UndeclaredQuerySerializer, encode_query_string
 from ..upstream_http import UpstreamBinaryBody, UpstreamSharedHttpClient
 from ._content import binary_content
 from ._media import MediaPromoter
 from ._progress import CallProgress
+from ._query_string import (
+    FormExplodedQuerySerializer,
+    FormJoinedQuerySerializer,
+    QueryPair,
+    QuerySerializer,
+    UndeclaredQuerySerializer,
+    encode_query_string,
+)
 from ._reauthorization import NO_SIGN_IN_POLICY, UpstreamSignInPolicy, send_with_renewal
 from ._shared import _get_override, _sanitize_name, _split_by_location
 from ._transform import TransformError, apply_transform, compile_expression
@@ -29,9 +36,6 @@ from ._transform import TransformError, apply_transform, compile_expression
 # The gateway sits on the hop between the MCP client and the upstream API,
 # so forwarding these verbatim stitches that hop into one distributed trace.
 _TRACE_CONTEXT_META_KEYS = ('traceparent', 'tracestate', 'baggage')
-
-# The serializer of every key a request expression adds that no query parameter of the spec declares.
-_UNDECLARED_QUERY_SERIALIZER = UndeclaredQuerySerializer()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -79,6 +83,15 @@ class UpstreamOperationCall:
     The query string follows its parameters, since shaping changes what the LLM sees, not what the upstream takes.
     """
 
+    # The serializer behind each query style and explode the parser keeps.
+    # A new one is a new ``QuerySerializer`` here and a new entry in ``openapi``'s sendable query shapes.
+    _QUERY_SERIALIZERS: typing.ClassVar[dict[tuple[str, bool], QuerySerializer]] = {
+        ('form', True): FormExplodedQuerySerializer(),
+        ('form', False): FormJoinedQuerySerializer(),
+    }
+    # The serializer of every key a request expression adds that no query parameter of the spec declares.
+    _UNDECLARED_QUERY_SERIALIZER: typing.ClassVar[QuerySerializer] = UndeclaredQuerySerializer()
+
     def __init__(
         self,
         operation: OperationInfo,
@@ -99,10 +112,9 @@ class UpstreamOperationCall:
         self._body_parameters = _parameters_keyed_by_sanitised_name(body_parameters)
         _, spec_query_parameters, _, _ = _split_by_location((spec_operation or operation).parameters)
         # How each query parameter is sent, by spec name.
-        self._query_serializers: dict[str, QuerySerializer] = {
-            parameter.name: serializer
+        self._query_serializers = {
+            parameter.name: self._QUERY_SERIALIZERS[(parameter.style, parameter.explode)]
             for parameter in spec_query_parameters
-            if (serializer := parameter.query_serializer) is not None
         }
         # The spec name of each header and query parameter, under its spec name and its sanitised name,
         # since a ``request`` expression may name it by either.
@@ -217,7 +229,7 @@ class UpstreamOperationCall:
         query_pairs: list[QueryPair] = []
         overriding_properties: list[str] = []
         for name, value in _to_jsonable(query_arguments).items():
-            for pair in self._query_serializers.get(name, _UNDECLARED_QUERY_SERIALIZER).pairs(name, value):
+            for pair in self._query_serializers.get(name, self._UNDECLARED_QUERY_SERIALIZER).pairs(name, value):
                 if pair.name != name and pair.name in self._query_serializers:
                     overriding_properties.append(f'{name}.{pair.name}')
                 query_pairs.append(pair)
