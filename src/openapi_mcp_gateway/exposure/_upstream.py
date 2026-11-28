@@ -20,8 +20,7 @@ from ._content import binary_content
 from ._media import MediaPromoter
 from ._progress import CallProgress
 from ._query_string import (
-    FormExplodedQuerySerializer,
-    FormJoinedQuerySerializer,
+    FormQuerySerializer,
     QueryPair,
     QuerySerializer,
     UndeclaredQuerySerializer,
@@ -83,11 +82,10 @@ class UpstreamOperationCall:
     The query string follows its parameters, since shaping changes what the LLM sees, not what the upstream takes.
     """
 
-    # The serializer behind each query style and explode the parser keeps.
-    # A new one is a new ``QuerySerializer`` here and a new entry in ``openapi``'s sendable query shapes.
-    _QUERY_SERIALIZERS: typing.ClassVar[dict[tuple[str, bool], QuerySerializer]] = {
-        ('form', True): FormExplodedQuerySerializer(),
-        ('form', False): FormJoinedQuerySerializer(),
+    # The serializer behind each query style the parser keeps.
+    # A new style is a new ``QuerySerializer`` here and a new entry in ``openapi``'s sendable query styles.
+    _QUERY_SERIALIZERS_BY_STYLE: typing.ClassVar[dict[str, QuerySerializer]] = {
+        'form': FormQuerySerializer(),
     }
     # The serializer of every key a request expression adds that no query parameter of the spec declares.
     _UNDECLARED_QUERY_SERIALIZER: typing.ClassVar[QuerySerializer] = UndeclaredQuerySerializer()
@@ -111,11 +109,8 @@ class UpstreamOperationCall:
         self._header_parameters = _parameters_keyed_by_sanitised_name(header_parameters)
         self._body_parameters = _parameters_keyed_by_sanitised_name(body_parameters)
         _, spec_query_parameters, _, _ = _split_by_location((spec_operation or operation).parameters)
-        # How each query parameter is sent, by spec name.
-        self._query_serializers = {
-            parameter.name: self._QUERY_SERIALIZERS[(parameter.style, parameter.explode)]
-            for parameter in spec_query_parameters
-        }
+        # The spec's own query parameters, by spec name, whose style and explode the query string follows.
+        self._spec_query_parameters = {parameter.name: parameter for parameter in spec_query_parameters}
         # The spec name of each header and query parameter, under its spec name and its sanitised name,
         # since a ``request`` expression may name it by either.
         self._header_spec_names = _spec_names_by_either_name(header_parameters)
@@ -229,13 +224,21 @@ class UpstreamOperationCall:
         query_pairs: list[QueryPair] = []
         overriding_properties: list[str] = []
         for name, value in _to_jsonable(query_arguments).items():
-            for pair in self._query_serializers.get(name, self._UNDECLARED_QUERY_SERIALIZER).pairs(name, value):
-                if pair.name != name and pair.name in self._query_serializers:
+            for pair in self._query_pairs(name, value):
+                if pair.name != name and pair.name in self._spec_query_parameters:
                     overriding_properties.append(f'{name}.{pair.name}')
                 query_pairs.append(pair)
         if overriding_properties:
             return _build_query_override_error_result(overriding_properties)
         return encode_query_string(query_pairs)
+
+    def _query_pairs(self, name: str, value: typing.Any) -> list[QueryPair]:
+        """Return the pairs ``value`` is sent as, in the style and explode of the spec parameter ``name``."""
+        parameter = self._spec_query_parameters.get(name)
+        if parameter is None:
+            # No parameter declares the key, so it takes ``form``'s default, which explodes.
+            return self._UNDECLARED_QUERY_SERIALIZER.pairs(name, value, explode=True)
+        return self._QUERY_SERIALIZERS_BY_STYLE[parameter.style].pairs(name, value, explode=parameter.explode)
 
     async def _send(self, context: Context, request: '_UpstreamRequest') -> typing.Any:
         connection = self._connection

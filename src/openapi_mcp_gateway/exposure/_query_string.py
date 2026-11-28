@@ -23,57 +23,49 @@ class QueryPair:
 class QuerySerializer(abc.ABC):
     """Strategy for how one query parameter's value becomes the pairs of a query string (OpenAPI 3.1.1 §4.8.12.4).
 
+    Each subclass is one ``style``, and ``explode`` picks between the two shapes every style has.
     An empty array or object sends nothing, and neither does a ``None`` item, as RFC 6570 leaves them undefined.
     """
 
     @abc.abstractmethod
-    def pairs(self, name: str, value: typing.Any) -> list[QueryPair]:
+    def pairs(self, name: str, value: typing.Any, *, explode: bool) -> list[QueryPair]:
         """Return the pairs ``value`` is sent as under the parameter ``name``."""
 
 
-class FormExplodedQuerySerializer(QuerySerializer):
-    """The ``form`` style with ``explode: true``.
+class FormQuerySerializer(QuerySerializer):
+    """The ``form`` style, the query default.
 
-    An array repeats ``name`` for each item, and an object spreads into its own property names.
-    """
-
-    def pairs(self, name: str, value: typing.Any) -> list[QueryPair]:
-        if isinstance(value, list):
-            return [QueryPair(name, _encoded_text(item)) for item in value if item is not None]
-        if isinstance(value, dict):
-            return [QueryPair(key, _encoded_text(item)) for key, item in value.items() if item is not None]
-        return [QueryPair(name, _encoded_text(value))]
-
-
-class FormJoinedQuerySerializer(QuerySerializer):
-    """The ``form`` style with ``explode: false``.
-
-    An array becomes one value of comma-separated items, and an object one value of alternating names and values.
+    With ``explode``, an array repeats ``name`` for each item, and an object spreads into its own property names.
+    Without it, an array becomes one value of comma-separated items, and an object one of alternating names and values.
     Each item is encoded before the join, so a comma inside an item stays apart from the commas between them.
     """
 
-    def pairs(self, name: str, value: typing.Any) -> list[QueryPair]:
+    def pairs(self, name: str, value: typing.Any, *, explode: bool) -> list[QueryPair]:
         if isinstance(value, list):
             items = [item for item in value if item is not None]
+            fields = [(name, item) for item in items]
         elif isinstance(value, dict):
-            items = [text for key, item in value.items() if item is not None for text in (key, item)]
+            fields = [(key, item) for key, item in value.items() if item is not None]
+            items = [text for field in fields for text in field]
         else:
             return [QueryPair(name, _encoded_text(value))]
+        if explode:
+            return [QueryPair(field_name, _encoded_text(item)) for field_name, item in fields]
         return [QueryPair(name, ','.join(_encoded_text(item) for item in items))] if items else []
 
 
-class UndeclaredQuerySerializer(FormExplodedQuerySerializer):
+class UndeclaredQuerySerializer(FormQuerySerializer):
     """A key a ``request`` expression adds that no query parameter of the spec declares.
 
-    An array repeats the key as ``form`` does.
+    An array repeats the key as ``form`` does with ``explode``.
     An object is sent whole as JSON under the key, since nothing declares how to spread it,
     and spreading it would lose the key.
     """
 
-    def pairs(self, name: str, value: typing.Any) -> list[QueryPair]:
+    def pairs(self, name: str, value: typing.Any, *, explode: bool) -> list[QueryPair]:
         if isinstance(value, dict):
             return [QueryPair(name, _encoded_text(value))] if value else []
-        return super().pairs(name, value)
+        return super().pairs(name, value, explode=explode)
 
 
 def encode_query_string(pairs: typing.Iterable[QueryPair]) -> str:

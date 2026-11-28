@@ -48,9 +48,9 @@ _MEDIA_WALK_KEYWORDS = frozenset({'properties', 'items', *_COMPOSITION_KEYWORDS}
 # A body field takes ``form``, the style of a form-encoded body's fields (§4.8.15.1.2).
 _DEFAULT_STYLES = {'path': 'simple', 'query': 'form', 'header': 'simple', 'cookie': 'form', 'body': 'form'}
 
-# The style and explode pairs the gateway can send a query parameter in.
-# A new one is a new entry here and a new ``QuerySerializer`` in ``exposure/_query_string.py``.
-_SENDABLE_QUERY_SHAPES = frozenset({('form', True), ('form', False)})
+# The styles the gateway can send a query parameter in.
+# A new style is a new entry here and a new ``QuerySerializer`` in ``exposure/_query_string.py``.
+_SENDABLE_QUERY_STYLES = frozenset({'form'})
 
 # Whatever ``_distinct`` dedupes, kept as the type it returns.
 _Item = typing.TypeVar('_Item')
@@ -885,7 +885,7 @@ def _unsendable_reason(raw_parameter: dict[str, typing.Any], parameter: Paramete
         return None
     if 'content' in raw_parameter:
         return 'content'
-    return None if (parameter.style, parameter.explode) in _SENDABLE_QUERY_SHAPES else parameter.style
+    return None if parameter.style in _SENDABLE_QUERY_STYLES else parameter.style
 
 
 def _success_response_schema(raw: dict[str, typing.Any], operation: dict[str, typing.Any]) -> dict[str, typing.Any]:
