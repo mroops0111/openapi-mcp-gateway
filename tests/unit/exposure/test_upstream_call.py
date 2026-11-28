@@ -6,8 +6,10 @@ import httpx
 import pytest
 from mcp import Client
 from mcp.server import MCPServer
-from mcp.types import CallToolResult, TextContent
+from mcp.server.mcpserver import Context
+from mcp.types import CallToolResult, InputRequiredResult, TextContent
 
+from openapi_mcp_gateway.auth.upstream.reauthorization import UpstreamReauthorizer
 from openapi_mcp_gateway.exposure import (
     MetaToolGenerator,
     ToolGenerator,
@@ -16,9 +18,12 @@ from openapi_mcp_gateway.exposure import (
 )
 from openapi_mcp_gateway.exposure import meta_tool as meta_tool_module
 from openapi_mcp_gateway.exposure import tool as tool_module
+from openapi_mcp_gateway.exposure._progress import CallProgress
+from openapi_mcp_gateway.exposure._reauthorization import UpstreamSignInPolicy
 from openapi_mcp_gateway.exposure._shared import (
     build_input_schema,
 )
+from openapi_mcp_gateway.exposure._upstream_call import UpstreamOperationCall
 from openapi_mcp_gateway.openapi import (
     OperationInfo,
     ParameterInfo,
@@ -27,6 +32,10 @@ from openapi_mcp_gateway.scopes import UpstreamNoGrantSource
 from tests.constants import API_URL
 from tests.context import stub_context
 from tests.operation import register_tool, shaped_operation
+
+
+# The one required string query parameter the sign-in wait tests call with.
+_REQUIRED_NAME_PARAMETER = ParameterInfo(name='name', location='query', required=True, schema={'type': 'string'})
 
 
 class TestStructuredContent:
@@ -441,6 +450,23 @@ class TestHeaders:
         assert captured['headers']['api-version'] == '2026-03-11'
         assert captured['path'] == '/pages/abc123'
 
+    async def test_replace_routes_a_spec_header_the_config_left_out(self, upstream_requests):
+        """Under replace, a request key naming a spec header the config does not keep still goes to that header."""
+        operation = shaped_operation(
+            [
+                ParameterInfo(name='name', location='body', schema={'type': 'string'}),
+                ParameterInfo(name='Api-Version', location='header', schema={'type': 'string'}),
+            ],
+            params={'version': {'type': 'string', 'required': True}},
+            params_strategy='replace',
+            request='{"Api-Version": version}',
+            method='post',
+        )
+        await register_tool(operation).run({'version': '2026-03-11'}, context=stub_context())
+        sent = upstream_requests[-1]
+        assert sent.headers['api-version'] == '2026-03-11'
+        assert sent.content == b''
+
     async def test_server_headers_sit_beneath_per_call_headers(self, mock_upstream):
         """Server headers go out on every call, and a header the call itself sends wins over them."""
         captured: dict = {}
@@ -462,3 +488,61 @@ class TestHeaders:
         await tool.run({}, context=stub_context())
         assert captured['headers']['x-team'] == 'wren'
         assert captured['headers']['api-version'] == '2026-03-11'
+
+
+class TestSignInWait:
+    """A call settles a sign-in an earlier round offered only once it has a request to send."""
+
+    @staticmethod
+    async def _call(operation: OperationInfo, sign_in_policy: UpstreamSignInPolicy, arguments: dict) -> CallToolResult:
+        """Call ``operation`` with ``arguments`` under ``sign_in_policy`` and return its tool result."""
+        upstream_call = UpstreamOperationCall(
+            operation,
+            UpstreamConnection(base_url=API_URL),
+            input_schema=build_input_schema(operation),
+            sign_in_policy=sign_in_policy,
+        )
+        return typing.cast(CallToolResult, await upstream_call(ctx=stub_context(), **arguments))
+
+    async def test_sendable_request_waits_for_the_answer(self, upstream_requests):
+        """A request that will be sent settles the sign-in answer first."""
+        sign_in_policy = _RecordingSignInPolicy()
+        operation = shaped_operation([_REQUIRED_NAME_PARAMETER])
+        result = await self._call(operation, sign_in_policy, {'name': 'x'})
+        assert result.is_error is False
+        assert sign_in_policy.awaited_answers == 1
+        assert len(upstream_requests) == 1
+
+    @pytest.mark.parametrize(
+        ('request_expression', 'arguments'),
+        [
+            pytest.param(None, {'name': 1}, id='validation'),
+            pytest.param('{"n": name + 1}', {'name': 'x'}, id='request-transform'),
+        ],
+    )
+    async def test_rejected_arguments_skip_the_wait(self, upstream_requests, request_expression, arguments):
+        """Arguments the request cannot be built from return their error without waiting for a sign-in."""
+        sign_in_policy = _RecordingSignInPolicy()
+        operation = shaped_operation([_REQUIRED_NAME_PARAMETER], request=request_expression)
+        result = await self._call(operation, sign_in_policy, arguments)
+        assert result.is_error is True
+        assert sign_in_policy.awaited_answers == 0
+        assert upstream_requests == []
+
+
+class _RecordingSignInPolicy(UpstreamSignInPolicy):
+    """Count each wait for a sign-in answer, and let every request through."""
+
+    def __init__(self) -> None:
+        self.awaited_answers = 0
+
+    async def await_answer(
+        self, context: Context, reauthorizer: UpstreamReauthorizer, progress: CallProgress
+    ) -> CallToolResult | None:
+        self.awaited_answers += 1
+        return None
+
+    async def ask(
+        self, context: Context, reauthorizer: UpstreamReauthorizer, response: httpx.Response
+    ) -> InputRequiredResult | None:
+        return None
