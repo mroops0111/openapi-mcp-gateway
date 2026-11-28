@@ -14,11 +14,11 @@ from ..openapi import (
     DEFS_REF_PREFIX,
     OperationInfo,
     ParameterInfo,
-    _deep_merge,
-    _siblings,
     count_defs_references,
     defs_reference,
     map_subschemas,
+    merge_schemas,
+    reference_siblings,
     schema_description,
 )
 
@@ -35,7 +35,7 @@ _ANNOTATION_KEYWORDS = frozenset(
 )
 
 
-def _sanitize_name(name: str) -> str:
+def sanitize_name(name: str) -> str:
     """Coerce ``name`` to a valid Python identifier (digit prefix, keyword suffix)."""
     sanitized_name = _INVALID_IDENTIFIER_CHARS.sub('_', name)
     if sanitized_name and sanitized_name[0].isdigit():
@@ -45,25 +45,8 @@ def _sanitize_name(name: str) -> str:
     return sanitized_name
 
 
-def _claim_name(candidate: str, taken: set[str], limit: int | None = None) -> str:
-    """Return ``candidate``, or it with the lowest numeric suffix not in ``taken``, and add the result to ``taken``.
-
-    ``limit`` caps the length, trimming ``candidate`` to make room for the suffix.
-    Checking against the names actually handed out, rather than deriving them collision-free,
-    holds for any spec, since the transforms that make a name readable are lossy.
-    """
-    name = candidate
-    counter = 1
-    while name in taken:
-        counter += 1
-        suffix = str(counter)
-        name = (candidate if limit is None else candidate[: limit - len(suffix)]) + suffix
-    taken.add(name)
-    return name
-
-
 @dataclasses.dataclass
-class _SignatureTypes:
+class SignatureTypes:
     """The generated types of one signature, with one per ``$defs`` entry and a distinct class name for every model.
 
     Every path reaching an entry shares its one type.
@@ -106,10 +89,10 @@ class _SignatureTypes:
         if name in self._building:
             self._recursive.add(name)
             return typing.ForwardRef(self._building[name])
-        class_name = self.claim(f'{self.prefix}{inflection.camelize(_sanitize_name(name))}')
+        class_name = self.claim(f'{self.prefix}{inflection.camelize(sanitize_name(name))}')
         self._building[name] = class_name
         try:
-            python_type = _schema_to_python_type(
+            python_type = schema_to_python_type(
                 self.defs.get(name, {}), name_hint=class_name, signature_types=self, name_claimed=True
             )
         finally:
@@ -130,11 +113,11 @@ class _SignatureTypes:
                 model.model_rebuild(_types_namespace=self._namespace)
 
 
-def _schema_to_python_type(
+def schema_to_python_type(
     schema: dict[str, typing.Any],
     *,
     name_hint: str = 'NestedObject',
-    signature_types: _SignatureTypes | None = None,
+    signature_types: SignatureTypes | None = None,
     name_claimed: bool = False,
 ) -> typing.Any:
     """Map a JSON Schema fragment to a Python type annotation.
@@ -154,15 +137,15 @@ def _schema_to_python_type(
     Callers should namespace it by operation and property, so the names stay readable.
     """
     if signature_types is None:
-        signature_types = _SignatureTypes({}, prefix='')
+        signature_types = SignatureTypes({}, prefix='')
 
     defs_name = defs_reference(schema)
     if defs_name is not None:
-        siblings = _siblings(schema)
+        siblings = reference_siblings(schema)
         if siblings.keys() <= _ANNOTATION_KEYWORDS:
             return signature_types.resolve(defs_name)
-        return _schema_to_python_type(
-            _deep_merge(signature_types.defs.get(defs_name, {}), siblings),
+        return schema_to_python_type(
+            merge_schemas(signature_types.defs.get(defs_name, {}), siblings),
             name_hint=name_hint,
             signature_types=signature_types,
             name_claimed=name_claimed,
@@ -171,7 +154,7 @@ def _schema_to_python_type(
     variants = schema.get('oneOf') or schema.get('anyOf')
     if variants:
         types = [
-            _schema_to_python_type(variant, name_hint=f'{name_hint}Variant{index}', signature_types=signature_types)
+            schema_to_python_type(variant, name_hint=f'{name_hint}Variant{index}', signature_types=signature_types)
             for index, variant in enumerate(variants)
         ]
         if len(types) == 1:
@@ -187,7 +170,7 @@ def _schema_to_python_type(
         member_types = [
             type(None)
             if member == 'null'
-            else _schema_to_python_type(
+            else schema_to_python_type(
                 {**schema, 'type': member},
                 name_hint=name_hint,
                 signature_types=signature_types,
@@ -212,7 +195,7 @@ def _schema_to_python_type(
         return bool
     if schema_type == 'array':
         items = schema.get('items', {})
-        item_type = _schema_to_python_type(items, name_hint=f'{name_hint}Item', signature_types=signature_types)
+        item_type = schema_to_python_type(items, name_hint=f'{name_hint}Item', signature_types=signature_types)
         return list[item_type]
     if schema_type == 'object':
         properties = schema.get('properties')
@@ -221,9 +204,9 @@ def _schema_to_python_type(
         required_property_names = set(schema.get('required', []))
         model_fields: dict[str, typing.Any] = {}
         for property_name, property_schema in properties.items():
-            property_type = _schema_to_python_type(
+            property_type = schema_to_python_type(
                 property_schema,
-                name_hint=f'{name_hint}{inflection.camelize(_sanitize_name(property_name))}',
+                name_hint=f'{name_hint}{inflection.camelize(sanitize_name(property_name))}',
                 signature_types=signature_types,
             )
             field_kwargs: dict[str, typing.Any] = {}
@@ -239,7 +222,7 @@ def _schema_to_python_type(
     return typing.Any
 
 
-def _split_by_location(
+def split_by_location(
     parameters: list[ParameterInfo],
 ) -> tuple[list[ParameterInfo], list[ParameterInfo], list[ParameterInfo], list[ParameterInfo]]:
     """Bucket ``parameters`` into ``(path, query, header, body)`` lists in spec order."""
@@ -251,20 +234,20 @@ def _split_by_location(
     )
 
 
-def _iter_unique_sanitised_parameters(
+def iter_unique_sanitised_parameters(
     parameters: typing.Iterable[ParameterInfo],
 ) -> typing.Iterator[tuple[str, ParameterInfo]]:
     """Yield ``(sanitised_name, parameter)`` for each parameter, skipping repeats of the same sanitised name."""
     seen_parameter_names: set[str] = set()
     for parameter in parameters:
-        parameter_name = _sanitize_name(parameter.name)
+        parameter_name = sanitize_name(parameter.name)
         if parameter_name in seen_parameter_names:
             continue
         seen_parameter_names.add(parameter_name)
         yield parameter_name, parameter
 
 
-def _get_override(operation: OperationInfo, kind: typing.Literal['tool', 'resource']) -> typing.Any:
+def get_override(operation: OperationInfo, kind: typing.Literal['tool', 'resource']) -> typing.Any:
     """Return ``operation.x_mcp_integration.<kind>`` or ``None`` when no override exists."""
     return getattr(operation.x_mcp_integration, kind)
 
@@ -276,8 +259,8 @@ def derive_name(operation: OperationInfo, override_name: str | None) -> str:
     Shared by tool, resource, and meta-tool exposure modes.
     """
     if override_name:
-        return _sanitize_name(override_name)
-    return _sanitize_name(inflection.underscore(operation.operation_id))
+        return sanitize_name(override_name)
+    return sanitize_name(inflection.underscore(operation.operation_id))
 
 
 def derive_description(operation: OperationInfo, override_description: str | None) -> str:
@@ -289,6 +272,48 @@ def derive_description(operation: OperationInfo, override_description: str | Non
     if override_description:
         return override_description
     return operation.description or operation.summary or f'{operation.method.upper()} {operation.path}'
+
+
+def build_input_schema(operation: OperationInfo) -> dict[str, typing.Any]:
+    """Build the JSON Schema describing ``operation`` inputs, the one a tool advertises and enforces.
+
+    Dedupes properties by sanitised name and only emits ``required`` when at least one parameter is required.
+    A component reached more than once is carried under ``$defs``, see ``_with_shared_defs``.
+    Used by the static tool exposure as the advertised ``inputSchema``,
+    and by the dynamic tool exposure to advertise per-operation input shapes through the ``get_operation`` meta-tool.
+    """
+    properties: dict[str, typing.Any] = {}
+    required_property_names: list[str] = []
+    for parameter_name, parameter in iter_unique_sanitised_parameters(operation.parameters):
+        if not parameter.visible:
+            continue
+        property_schema = dict(parameter.schema_) if parameter.schema_ else {'type': 'string'}
+        if parameter.description and not schema_description(property_schema, operation.schema_defs):
+            property_schema['description'] = parameter.description
+        properties[parameter_name] = property_schema
+        if parameter.required:
+            required_property_names.append(parameter_name)
+    schema: dict[str, typing.Any] = {'type': 'object', 'properties': properties}
+    if required_property_names:
+        schema['required'] = required_property_names
+    return _with_shared_defs(schema, operation.schema_defs)
+
+
+def _claim_name(candidate: str, taken: set[str], limit: int | None = None) -> str:
+    """Return ``candidate``, or it with the lowest numeric suffix not in ``taken``, and add the result to ``taken``.
+
+    ``limit`` caps the length, trimming ``candidate`` to make room for the suffix.
+    Checking against the names actually handed out, rather than deriving them collision-free,
+    holds for any spec, since the transforms that make a name readable are lossy.
+    """
+    name = candidate
+    counter = 1
+    while name in taken:
+        counter += 1
+        suffix = str(counter)
+        name = (candidate if limit is None else candidate[: limit - len(suffix)]) + suffix
+    taken.add(name)
+    return name
 
 
 def _defs_keys(names: typing.Iterable[str]) -> dict[str, str]:
@@ -328,10 +353,10 @@ def _inline_single_use(
     name = defs_reference(schema)
     if name is None or name not in defs:
         return map_subschemas(schema, inline)
-    siblings = map_subschemas(_siblings(schema), inline)
+    siblings = map_subschemas(reference_siblings(schema), inline)
     if name in shared_keys:
         return {'$ref': DEFS_REF_PREFIX + shared_keys[name], **siblings}
-    return _deep_merge(inline(defs[name]), siblings)
+    return merge_schemas(inline(defs[name]), siblings)
 
 
 def _with_shared_defs(schema: dict[str, typing.Any], defs: dict[str, dict[str, typing.Any]]) -> dict[str, typing.Any]:
@@ -353,28 +378,3 @@ def _with_shared_defs(schema: dict[str, typing.Any], defs: dict[str, dict[str, t
             shared_keys[name]: _inline_single_use(defs[name], defs, shared_keys) for name in sorted(shared_keys)
         }
     return result
-
-
-def build_input_schema(operation: OperationInfo) -> dict[str, typing.Any]:
-    """Build the JSON Schema describing ``operation`` inputs, the one a tool advertises and enforces.
-
-    Dedupes properties by sanitised name and only emits ``required`` when at least one parameter is required.
-    A component reached more than once is carried under ``$defs``, see ``_with_shared_defs``.
-    Used by the static tool exposure as the advertised ``inputSchema``,
-    and by the dynamic tool exposure to advertise per-operation input shapes through the ``get_operation`` meta-tool.
-    """
-    properties: dict[str, typing.Any] = {}
-    required_property_names: list[str] = []
-    for parameter_name, parameter in _iter_unique_sanitised_parameters(operation.parameters):
-        if not parameter.visible:
-            continue
-        property_schema = dict(parameter.schema_) if parameter.schema_ else {'type': 'string'}
-        if parameter.description and not schema_description(property_schema, operation.schema_defs):
-            property_schema['description'] = parameter.description
-        properties[parameter_name] = property_schema
-        if parameter.required:
-            required_property_names.append(parameter_name)
-    schema: dict[str, typing.Any] = {'type': 'object', 'properties': properties}
-    if required_property_names:
-        schema['required'] = required_property_names
-    return _with_shared_defs(schema, operation.schema_defs)

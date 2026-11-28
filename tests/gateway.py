@@ -1,7 +1,7 @@
 import typing
 
+from openapi_mcp_gateway.exposure._upstream_http import UpstreamSharedHttpClient
 from openapi_mcp_gateway.gateway import Gateway
-from openapi_mcp_gateway.upstream_http import UpstreamSharedHttpClient
 
 
 def auth_shutdown_hooks(gateway: Gateway) -> list[typing.Callable[[], typing.Awaitable[None]]]:

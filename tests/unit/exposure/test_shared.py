@@ -25,8 +25,8 @@ from openapi_mcp_gateway.exposure import (
 )
 from openapi_mcp_gateway.exposure._shaping import shape_operation
 from openapi_mcp_gateway.exposure._shared import (
-    _sanitize_name,
-    _schema_to_python_type,
+    sanitize_name,
+    schema_to_python_type,
 )
 from openapi_mcp_gateway.exposure.tool import _build_tool_signature
 from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ParamOverride, ToolOverride, parse_spec
@@ -69,29 +69,29 @@ class TestSanitizeName:
 
     def test_slash_to_underscore(self):
         """Slashes become underscores."""
-        assert _sanitize_name('meta/root') == 'meta_root'
+        assert sanitize_name('meta/root') == 'meta_root'
 
     def test_dash_to_underscore(self):
         """Dashes become underscores."""
-        assert _sanitize_name('enterprise-team') == 'enterprise_team'
+        assert sanitize_name('enterprise-team') == 'enterprise_team'
 
     def test_dot_to_underscore(self):
         """Dots become underscores."""
-        assert _sanitize_name('foo.bar') == 'foo_bar'
+        assert sanitize_name('foo.bar') == 'foo_bar'
 
     def test_leading_digit_prefixed(self):
         """A leading digit gets prefixed with ``_`` to form a valid identifier."""
-        assert _sanitize_name('1st_param') == '_1st_param'
+        assert sanitize_name('1st_param') == '_1st_param'
 
     def test_already_valid_unchanged(self):
         """A name that is already a valid identifier is unchanged."""
-        assert _sanitize_name('valid_name') == 'valid_name'
+        assert sanitize_name('valid_name') == 'valid_name'
 
     def test_python_keyword_suffixed(self):
         """Python keywords get a trailing underscore to avoid syntax errors."""
-        assert _sanitize_name('async') == 'async_'
-        assert _sanitize_name('class') == 'class_'
-        assert _sanitize_name('from') == 'from_'
+        assert sanitize_name('async') == 'async_'
+        assert sanitize_name('class') == 'class_'
+        assert sanitize_name('from') == 'from_'
 
 
 class TestSchemaToPythonType:
@@ -99,12 +99,12 @@ class TestSchemaToPythonType:
 
     def test_missing_type_falls_back_to_any(self):
         """A fragment with no ``type`` resolves to ``Any``, not ``str``."""
-        assert _schema_to_python_type({'format': 'date-time'}) is typing.Any
-        assert _schema_to_python_type({}) is typing.Any
+        assert schema_to_python_type({'format': 'date-time'}) is typing.Any
+        assert schema_to_python_type({}) is typing.Any
 
     def test_anyof_yields_union(self):
         """``anyOf`` variants are resolved into a Union."""
-        result = _schema_to_python_type({'anyOf': [{'type': 'string'}, {'type': 'integer'}]})
+        result = schema_to_python_type({'anyOf': [{'type': 'string'}, {'type': 'integer'}]})
         assert isinstance(result, types.UnionType)
         assert set(typing.get_args(result)) == {str, int}
 
@@ -123,19 +123,19 @@ class TestSchemaToPythonType:
                 ],
             },
         }
-        result = _schema_to_python_type(schema)
+        result = schema_to_python_type(schema)
         assert typing.get_origin(result) is list
         assert typing.get_args(result)[0] is not str
 
     def test_enum_yields_literal(self):
         """``enum`` collapses to ``Literal`` so the allowed values appear inline instead of hiding behind ``str``."""
-        result = _schema_to_python_type({'type': 'string', 'enum': ['left', 'center', 'right']})
+        result = schema_to_python_type({'type': 'string', 'enum': ['left', 'center', 'right']})
         assert typing.get_origin(result) is typing.Literal
         assert set(typing.get_args(result)) == {'left', 'center', 'right'}
 
     def test_nullable_list_type_becomes_optional(self):
         """A 2020-12 array ``type`` like ``["integer", "null"]`` maps to ``int | None``."""
-        result = _schema_to_python_type({'type': ['integer', 'null']})
+        result = schema_to_python_type({'type': ['integer', 'null']})
         assert isinstance(result, types.UnionType)
         assert set(typing.get_args(result)) == {int, type(None)}
 
@@ -155,7 +155,7 @@ class TestSchemaToPythonType:
                 'country': {'type': 'string', 'description': 'ISO 3166-1 alpha-2 country code.'},
             },
         }
-        model_type = _schema_to_python_type(schema, name_hint='Address')
+        model_type = schema_to_python_type(schema, name_hint='Address')
         assert issubclass(model_type, pydantic.BaseModel)
         json_schema = model_type.model_json_schema()
         assert set(json_schema['required']) == {'street', 'city'}
@@ -164,7 +164,7 @@ class TestSchemaToPythonType:
 
     def test_object_without_properties_falls_back_to_dict(self):
         """An untyped ``object`` (no ``properties``) keeps the ``dict[str, Any]`` shape for free-form maps."""
-        result = _schema_to_python_type({'type': 'object'})
+        result = schema_to_python_type({'type': 'object'})
         assert typing.get_origin(result) is dict
         assert typing.get_args(result) == (str, typing.Any)
 
@@ -186,7 +186,7 @@ class TestSchemaToPythonType:
                 },
             },
         }
-        list_type = _schema_to_python_type(schema, name_hint='LineItems')
+        list_type = schema_to_python_type(schema, name_hint='LineItems')
         item_type = typing.get_args(list_type)[0]
         assert issubclass(item_type, pydantic.BaseModel)
         json_schema = item_type.model_json_schema()

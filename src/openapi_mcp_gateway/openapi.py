@@ -640,22 +640,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
     )
 
 
-def _load_yaml(text: str) -> typing.Any:
-    return yaml.load(text, Loader=_YAML_LOADER)  # noqa: S506  # Both loaders are the safe variants.
-
-
-def _resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:
-    """Resolve a ``#/foo/bar`` JSON Pointer into ``raw``, returning ``{}`` if missing or not a mapping."""
-    parts = ref.lstrip('#/').split('/')
-    node = raw
-    for part in parts:
-        if not isinstance(node, dict) or part not in node:
-            return {}
-        node = node[part]
-    return node if isinstance(node, dict) else {}
-
-
-def _deep_merge(
+def merge_schemas(
     base: dict[str, typing.Any],
     override: dict[str, typing.Any],
     defs: dict[str, dict[str, typing.Any]] | None = None,
@@ -673,7 +658,7 @@ def _deep_merge(
     result = base.copy()
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value, defs)
+            result[key] = merge_schemas(result[key], value, defs)
         elif key == 'required' and isinstance(result.get(key), list) and isinstance(value, list):
             result[key] = list(dict.fromkeys(result[key] + value))
         else:
@@ -681,9 +666,24 @@ def _deep_merge(
     return result
 
 
-def _siblings(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
+def reference_siblings(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Return the keywords beside the ``$ref`` of ``schema``."""
     return {key: value for key, value in schema.items() if key != '$ref'}
+
+
+def _load_yaml(text: str) -> typing.Any:
+    return yaml.load(text, Loader=_YAML_LOADER)  # noqa: S506  # Both loaders are the safe variants.
+
+
+def _resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:
+    """Resolve a ``#/foo/bar`` JSON Pointer into ``raw``, returning ``{}`` if missing or not a mapping."""
+    parts = ref.lstrip('#/').split('/')
+    node = raw
+    for part in parts:
+        if not isinstance(node, dict) or part not in node:
+            return {}
+        node = node[part]
+    return node if isinstance(node, dict) else {}
 
 
 def _open_reference(
@@ -701,7 +701,7 @@ def _open_reference(
     name = defs_reference(schema)
     if name is None or not other or defs_reference(other) == name or defs.get(name, _EXPANDING) is _EXPANDING:
         return schema
-    return _deep_merge(defs[name], _siblings(schema), defs)
+    return merge_schemas(defs[name], reference_siblings(schema), defs)
 
 
 def _normalize_nullable(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
@@ -803,10 +803,10 @@ def _expand_inline(
         expanded = _truncate_at_cycle(resolved)
     else:
         expanded = _expand_inline(raw, resolved, defs, expanding | {pointer})
-    siblings = _siblings(schema)
+    siblings = reference_siblings(schema)
     if not siblings:
         return expanded
-    return _deep_merge(expanded, _expand_schema(raw, siblings, defs, expanding), defs)
+    return merge_schemas(expanded, _expand_schema(raw, siblings, defs, expanding), defs)
 
 
 def _expand_schema(
@@ -825,7 +825,7 @@ def _expand_schema(
     Whether an entry is advertised under ``$defs`` or inlined back is decided per tool, by ``build_input_schema``.
     Any other ``$ref`` is resolved in place.
 
-    ``allOf`` is flattened via ``_deep_merge``, opening a reference wherever two branches meet on it,
+    ``allOf`` is flattened via ``merge_schemas``, opening a reference wherever two branches meet on it,
     then every nested-schema keyword is recursed into so a construct buried at any depth is expanded too,
     and finally OpenAPI 3.0 keywords are rewritten into their JSON Schema 2020-12 equivalents.
     Recursion keys off each keyword's presence rather than off ``type``,
@@ -843,7 +843,7 @@ def _expand_schema(
             # A component is a document of its own, so the in-place path of whoever reached it does not carry over.
             defs[name] = _expand_inline(raw, {'$ref': schema['$ref']}, defs)
         reference = {'$ref': DEFS_REF_PREFIX + name}
-        siblings = _siblings(schema)
+        siblings = reference_siblings(schema)
         if not siblings:
             return reference
         return {**reference, **_expand_schema(raw, siblings, defs, expanding)}
@@ -851,7 +851,7 @@ def _expand_schema(
     if 'allOf' in schema:
         merged: dict[str, typing.Any] = {}
         for branch in schema['allOf']:
-            merged = _deep_merge(merged, _expand_inline(raw, branch, defs, expanding), defs)
+            merged = merge_schemas(merged, _expand_inline(raw, branch, defs, expanding), defs)
         return merged
 
     result = map_subschemas(schema, lambda subschema: _expand_schema(raw, subschema, defs, expanding))
@@ -992,7 +992,7 @@ class _ResponseMediaBuilder:
                 continue
             every_reference.add(reference)
             if len(node) > 1:
-                references, holds_base64 = _references_and_base64(_siblings(node))
+                references, holds_base64 = _references_and_base64(reference_siblings(node))
                 beside[reference] |= references
                 if holds_base64:
                     base64_beside.add(reference)

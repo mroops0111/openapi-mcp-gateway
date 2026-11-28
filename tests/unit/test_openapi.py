@@ -5,11 +5,11 @@ import pytest
 import yaml
 
 from openapi_mcp_gateway.openapi import (
-    _deep_merge,
     _expand_inline,
     _expand_schema,
     _resolve_ref,
     load_spec,
+    merge_schemas,
     parse_spec,
 )
 from tests.constants import API_URL, PETSTORE_URL
@@ -41,17 +41,17 @@ class TestResolveRef:
         assert result == {}
 
 
-class TestDeepMerge:
+class TestMergeSchemas:
     """Recursive dict merge used to combine ``allOf`` branches."""
 
     def test_basic_merge(self):
         """Two flat dicts merge into the union of their keys."""
-        result = _deep_merge({'a': 1}, {'b': 2})
+        result = merge_schemas({'a': 1}, {'b': 2})
         assert result == {'a': 1, 'b': 2}
 
     def test_nested_merge(self):
         """Nested dicts merge recursively, and later values override earlier."""
-        result = _deep_merge(
+        result = merge_schemas(
             {'props': {'a': 1, 'b': 2}},
             {'props': {'b': 3, 'c': 4}},
         )
@@ -59,7 +59,7 @@ class TestDeepMerge:
 
     def test_required_concatenation(self):
         """``required`` lists are concatenated and deduplicated, preserving order."""
-        result = _deep_merge(
+        result = merge_schemas(
             {'required': ['id', 'name']},
             {'required': ['name', 'owner']},
         )
@@ -67,7 +67,7 @@ class TestDeepMerge:
 
     def test_override_scalar(self):
         """Scalar values on the right-hand side override the left-hand side."""
-        result = _deep_merge({'type': 'string'}, {'type': 'integer'})
+        result = merge_schemas({'type': 'string'}, {'type': 'integer'})
         assert result['type'] == 'integer'
 
 
