@@ -10,8 +10,14 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 
 from openapi_mcp_gateway.auth.upstream.resolver import UpstreamAuthResolver
-from openapi_mcp_gateway.exposure import ToolGenerator, UpstreamConnection
-from openapi_mcp_gateway.exposure._upstream_http import UpstreamBinaryBody, UpstreamHttpClient, UpstreamSharedHttpClient
+from openapi_mcp_gateway.exposure import (
+    ToolGenerator,
+    UpstreamBinaryBody,
+    UpstreamConnection,
+    UpstreamHttpClient,
+    UpstreamSharedHttpClient,
+    redact_query,
+)
 from openapi_mcp_gateway.openapi import OperationInfo, ParameterInfo
 from tests.constants import API_URL
 
@@ -28,12 +34,25 @@ async def test_json_response_parsed():
     """``application/json`` responses are returned as the decoded dict."""
 
     def handler(_request):
-        return httpx.Response(200, json={'id': 1, 'name': 'fido'})
+        return httpx.Response(200, json={'id': 1, 'name': 'tote'})
 
     async with _client_with_handler(handler) as client:
-        result = await client.request('GET', '/pet/1')
+        result = await client.request('GET', '/product/1')
 
-    assert result == {'id': 1, 'name': 'fido'}
+    assert result == {'id': 1, 'name': 'tote'}
+
+
+@pytest.mark.parametrize('content_type', ['application/geo+json', 'application/problem+json; charset=utf-8'])
+async def test_a_json_suffixed_media_type_is_parsed(content_type):
+    """A media type with the ``+json`` suffix (RFC 6839) is JSON, as ``application/json`` is."""
+
+    def handler(_request):
+        return httpx.Response(200, content=b'{"type": "Feature"}', headers={'content-type': content_type})
+
+    async with _client_with_handler(handler) as client:
+        result = await client.request('GET', '/points/1,2')
+
+    assert result == {'type': 'Feature'}
 
 
 async def test_204_no_content():
@@ -43,7 +62,7 @@ async def test_204_no_content():
         return httpx.Response(204)
 
     async with _client_with_handler(handler) as client:
-        result = await client.request('DELETE', '/pet/1')
+        result = await client.request('DELETE', '/product/1')
 
     assert result == {'status': 204}
 
@@ -64,12 +83,12 @@ async def test_invalid_json_with_json_content_type_falls_back_to_text():
     """Bodies that claim ``application/json`` but fail to parse fall back to ``{'data': text}``."""
 
     def handler(_request):
-        return httpx.Response(200, content=b'Pet deleted', headers={'content-type': 'application/json'})
+        return httpx.Response(200, content=b'Product deleted', headers={'content-type': 'application/json'})
 
     async with _client_with_handler(handler) as client:
-        result = await client.request('DELETE', '/pet/1')
+        result = await client.request('DELETE', '/product/1')
 
-    assert result == {'data': 'Pet deleted'}
+    assert result == {'data': 'Product deleted'}
 
 
 async def test_binary_body_kept_as_bytes():
@@ -80,9 +99,9 @@ async def test_binary_body_kept_as_bytes():
         return httpx.Response(200, content=body, headers={'content-type': 'image/png'})
 
     async with _client_with_handler(handler) as client:
-        result = await client.request('GET', '/pet/1/photo')
+        result = await client.request('GET', '/product/1/photo')
 
-    assert result == UpstreamBinaryBody(body, 'image/png', 'https://example.com/pet/1/photo')
+    assert result == UpstreamBinaryBody(body, 'image/png', 'https://example.com/product/1/photo')
 
 
 @pytest.mark.parametrize(
@@ -93,12 +112,12 @@ async def test_body_that_decodes_as_utf8_stays_text(content_type):
     """The body decides, so text under any media type keeps the ``{'data': text}`` shape."""
 
     def handler(_request):
-        return httpx.Response(200, content=b'<pet/>', headers={'content-type': content_type})
+        return httpx.Response(200, content=b'<product/>', headers={'content-type': content_type})
 
     async with _client_with_handler(handler) as client:
-        result = await client.request('GET', '/pet/1')
+        result = await client.request('GET', '/product/1')
 
-    assert result == {'data': '<pet/>'}
+    assert result == {'data': '<product/>'}
 
 
 async def test_declared_charset_decodes_as_text():
@@ -143,7 +162,7 @@ async def test_http_error_raises_status_error(status_code):
 
     async with _client_with_handler(handler) as client:
         with pytest.raises(httpx.HTTPStatusError) as exception_info:
-            await client.request('GET', '/pet/missing')
+            await client.request('GET', '/product/missing')
 
     assert exception_info.value.response.status_code == status_code
 
@@ -178,6 +197,13 @@ async def test_a_cookie_header_on_the_request_is_sent_as_given():
     assert sent_cookies == [None, 'session=bob']
 
 
+class TestRedactQuery:
+    def test_the_named_values_are_hidden_and_the_fragment_stays_last(self):
+        url = httpx.URL('https://a.example/p?key=secret&x=1#frag')
+
+        assert redact_query(url, {'key'}) == 'https://a.example/p?key=[REDACTED]&x=1#frag'
+
+
 class TestUpstreamSharedHttpClient:
     """One ``UpstreamHttpClient`` per upstream server, bound to the event loop that first used it."""
 
@@ -206,13 +232,16 @@ class TestUpstreamSharedHttpClient:
 
         await shared.aclose()
 
-        assert client._client.is_closed
+        with pytest.raises(RuntimeError, match='client has been closed'):
+            await client.request('GET', '/me')
         assert shared.get() is not client
         await shared.aclose()
 
-    def test_aclose_on_another_loop_forgets_the_client_without_touching_it(self):
+    def test_aclose_on_another_loop_leaves_that_loops_client_open(self):
         """A shutdown hook run on a fresh loop, as stdio does, leaves the old loop's client alone."""
-        shared = UpstreamSharedHttpClient('https://example.com')
+        shared = UpstreamSharedHttpClient(
+            'https://example.com', transport=httpx.MockTransport(lambda _request: httpx.Response(200, json={}))
+        )
 
         async def open_client() -> UpstreamHttpClient:
             return shared.get()
@@ -220,8 +249,7 @@ class TestUpstreamSharedHttpClient:
         client = asyncio.run(open_client())
         asyncio.run(shared.aclose())
 
-        assert not client._client.is_closed
-        assert shared._client is None
+        assert asyncio.run(client.request('GET', '/me')) == {}
 
 
 class TestConcurrentCallsShareNothingButConnections:
@@ -294,12 +322,7 @@ class TestConcurrentCallsShareNothingButConnections:
 
 def _client_with_handler(handler):
     """Build an ``UpstreamHttpClient`` whose transport is a ``MockTransport`` over ``handler``."""
-    client = UpstreamHttpClient(base_url='https://example.com')
-    client._client = httpx.AsyncClient(
-        base_url='https://example.com',
-        transport=httpx.MockTransport(handler),
-    )
-    return client
+    return UpstreamHttpClient(base_url='https://example.com', transport=httpx.MockTransport(handler))
 
 
 class _CallerAuthResolver(UpstreamAuthResolver):

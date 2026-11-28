@@ -1,9 +1,12 @@
 import asyncio
+import collections.abc
+import contextvars
 import dataclasses
 import http.cookiejar
 import json
 import logging
 import typing
+import urllib.parse
 
 import httpx
 
@@ -12,6 +15,12 @@ logger = logging.getLogger(__name__)
 
 # The media type a binary body without a ``Content-Type`` is reported as.
 _FALLBACK_BINARY_MEDIA_TYPE = 'application/octet-stream'
+
+# What stands in for a credential's value wherever a URL carrying it is written.
+REDACTED = '[REDACTED]'
+
+# The query parameters the request being sent carries credentials in, read by the httpx request log's filter.
+_REDACTED_QUERY: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar('redacted_query', default=frozenset())
 
 # The connection pool of one upstream client.
 # No cap on open connections, so concurrent calls never queue for one, as when each call opened its own.
@@ -80,12 +89,14 @@ class UpstreamHttpClient:
         query_string: str = '',
         data: dict[str, typing.Any] | None = None,
         headers: dict[str, str] | None = None,
+        redacted_query: collections.abc.Collection[str] = (),
     ) -> dict[str, typing.Any] | UpstreamBinaryBody:
         """Send ``method`` to ``path`` with the already encoded ``query_string``, and return the decoded body.
 
-        Returns decoded JSON for ``application/json`` responses, ``{'status': code}`` for empty 204 responses,
+        Returns decoded JSON for ``application/json`` and ``+json`` responses, ``{'status': code}`` for empty 204 responses,
         ``{'data': text}`` for any other body that is text, or a ``UpstreamBinaryBody`` for one that is not.
         Raises ``httpx.HTTPStatusError`` on HTTP error status codes.
+        The ``redacted_query`` parameters carry credentials, so every URL written from here hides their values.
         """
         request_kwargs: dict[str, typing.Any] = {}
         if data is not None and method.upper() in ('POST', 'PUT', 'PATCH'):
@@ -95,18 +106,19 @@ class UpstreamHttpClient:
 
         logger.debug('Upstream request: %s %s', method.upper(), path)
         # A URL built with its query leaves the query's encoding as it is, so the comma a serializer kept stays one.
-        url = httpx.URL(path, query=query_string.encode()) if query_string else path
-        response = await self._client.request(method.upper(), url, **request_kwargs)
+        request_url = httpx.URL(path, query=query_string.encode()) if query_string else path
+        redacted = _REDACTED_QUERY.set(frozenset(redacted_query))
+        try:
+            response = await self._client.request(method.upper(), request_url, **request_kwargs)
+        finally:
+            _REDACTED_QUERY.reset(redacted)
+        url = redact_query(response.request.url, redacted_query)
         if response.is_error:
             logger.warning(
-                'Upstream error: %s %s → %d %s',
-                method.upper(),
-                response.request.url,
-                response.status_code,
-                response.reason_phrase,
+                'Upstream error: %s %s → %d %s', method.upper(), url, response.status_code, response.reason_phrase
             )
             raise httpx.HTTPStatusError(
-                f"{response.status_code} {response.reason_phrase} for '{response.request.url}': {response.text}",
+                f"{response.status_code} {response.reason_phrase} for '{url}': {response.text}",
                 request=response.request,
                 response=response,
             )
@@ -116,15 +128,15 @@ class UpstreamHttpClient:
             return {'status': response.status_code}
 
         content_type = response.headers.get('content-type', '')
-        if 'application/json' in content_type:
+        if is_json_media_type(content_type):
             try:
                 return response.json()
             except json.JSONDecodeError:
                 return {'data': response.text}
-        return self._decode_non_json_body(response)
+        return self._decode_non_json_body(response, url)
 
     @staticmethod
-    def _decode_non_json_body(response: httpx.Response) -> dict[str, typing.Any] | UpstreamBinaryBody:
+    def _decode_non_json_body(response: httpx.Response, url: str) -> dict[str, typing.Any] | UpstreamBinaryBody:
         """Return a non-JSON body as ``{'data': text}`` when it is text, and as a ``UpstreamBinaryBody`` otherwise.
 
         The body decides, not a list of media types.
@@ -137,9 +149,7 @@ class UpstreamHttpClient:
             return {'data': response.content.decode('utf-8')}
         except UnicodeDecodeError:
             media_type = response.headers.get('content-type', '').partition(';')[0].strip().lower()
-            return UpstreamBinaryBody(
-                response.content, media_type or _FALLBACK_BINARY_MEDIA_TYPE, str(response.request.url)
-            )
+            return UpstreamBinaryBody(response.content, media_type or _FALLBACK_BINARY_MEDIA_TYPE, url)
 
 
 class UpstreamSharedHttpClient:
@@ -175,6 +185,34 @@ class UpstreamSharedHttpClient:
             await client.aclose()
 
 
+def redact_query(url: httpx.URL, names: collections.abc.Collection[str]) -> str:
+    """``url`` as text, with the value of every query parameter in ``names`` replaced by ``REDACTED``."""
+    if not names or not any(name in names for name in url.params):
+        return str(url)
+    query = '&'.join(
+        f'{urllib.parse.quote(name)}={REDACTED}' if name in names else urllib.parse.urlencode([(name, value)])
+        for name, value in url.params.multi_items()
+    )
+    return str(url.copy_with(query=query.encode()))
+
+
+def is_json_media_type(content_type: str) -> bool:
+    """Whether ``content_type`` is JSON, ``application/json`` or a type with the ``+json`` suffix (RFC 6839 §3.1)."""
+    media_type = content_type.partition(';')[0].strip().lower()
+    return media_type == 'application/json' or media_type.endswith('+json')
+
+
+class _RedactQueryInRequestLog(logging.Filter):
+    """Hide the credentials in the URL of httpx's ``HTTP Request`` line, which it writes at INFO for every request."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        names = _REDACTED_QUERY.get()
+        arguments = record.args
+        if names and isinstance(arguments, tuple) and len(arguments) > 1 and isinstance(arguments[1], httpx.URL):
+            record.args = (arguments[0], redact_query(arguments[1], names), *arguments[2:])
+        return True
+
+
 class _RefuseCookiesPolicy(http.cookiejar.DefaultCookiePolicy):
     def set_ok(self, cookie: http.cookiejar.Cookie, request: typing.Any) -> bool:
         return False
@@ -185,3 +223,7 @@ def _running_loop() -> asyncio.AbstractEventLoop | None:
         return asyncio.get_running_loop()
     except RuntimeError:
         return None
+
+
+# httpx writes every request's full URL at INFO, so its logger hides the credentials as the gateway's own lines do.
+logging.getLogger('httpx').addFilter(_RedactQueryInRequestLog())

@@ -1,9 +1,9 @@
 ---
-description: Serve the public Petstore API over MCP, connect a client and call a tool, then move to a config file with two APIs and a desktop client.
+description: Serve the public PokéAPI over MCP, connect a client and call a tool, then move to a config file with two APIs and a desktop client.
 ---
 # Getting Started
 
-In this tutorial you serve the public Petstore API over MCP, connect a client, and call a tool. You then move to a config file with two APIs, and finish with a desktop client over stdio.
+In this tutorial you serve the public PokéAPI over MCP, connect a client, and call a tool. You then move to a config file with two APIs, and finish with a desktop client over stdio.
 
 ## Installation
 
@@ -28,16 +28,16 @@ uvx --from 'openapi-mcp-gateway[redis,oidc]' openapi-mcp-gateway --help
 
 To add the gateway to a project instead, run `uv add openapi-mcp-gateway`. [Deployment](guides/deployment.md#container-image) covers the container image.
 
-## Serving Petstore
+## Serving PokéAPI
 
-Point the gateway at the Petstore spec and name the server `petstore`:
+Point the gateway at the PokéAPI spec and name the server `pokeapi`:
 
 ```bash
 uvx openapi-mcp-gateway serve \
-    --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
+    --spec https://pokeapi.co/openapi.yml --name pokeapi
 ```
 
-The MCP endpoint is now `http://127.0.0.1:8000/petstore/mcp`. In a second terminal, confirm that the server is running:
+The MCP endpoint is now `http://127.0.0.1:8000/pokeapi/mcp`. In a second terminal, confirm that the server is running:
 
 ```bash
 curl http://127.0.0.1:8000/healthz
@@ -48,9 +48,9 @@ curl http://127.0.0.1:8000/healthz
   "status": "ok",
   "servers": [
     {
-      "name": "petstore",
-      "path": "/petstore",
-      "title": "Swagger Petstore - OpenAPI 3.0",
+      "name": "pokeapi",
+      "path": "/pokeapi",
+      "title": "PokéAPI",
       "auth": {"mcp": "open", "upstream": "none"}
     }
   ]
@@ -66,7 +66,7 @@ Any MCP client that speaks Streamable HTTP, the MCP transport over ordinary HTTP
 === "Claude Code"
 
     ```bash
-    claude mcp add --transport http petstore http://127.0.0.1:8000/petstore/mcp
+    claude mcp add --transport http pokeapi http://127.0.0.1:8000/pokeapi/mcp
     ```
 
 === "Cursor"
@@ -76,7 +76,7 @@ Any MCP client that speaks Streamable HTTP, the MCP transport over ordinary HTTP
     ```json
     {
       "mcpServers": {
-        "petstore": {"url": "http://127.0.0.1:8000/petstore/mcp"}
+        "pokeapi": {"url": "http://127.0.0.1:8000/pokeapi/mcp"}
       }
     }
     ```
@@ -88,9 +88,9 @@ Any MCP client that speaks Streamable HTTP, the MCP transport over ordinary HTTP
     ```json
     {
       "servers": {
-        "petstore": {
+        "pokeapi": {
           "type": "http",
-          "url": "http://127.0.0.1:8000/petstore/mcp"
+          "url": "http://127.0.0.1:8000/pokeapi/mcp"
         }
       }
     }
@@ -102,38 +102,35 @@ Any MCP client that speaks Streamable HTTP, the MCP transport over ordinary HTTP
 
     ```bash
     npx @modelcontextprotocol/inspector --cli \
-        http://127.0.0.1:8000/petstore/mcp --method tools/list
+        http://127.0.0.1:8000/pokeapi/mcp --method tools/list
     ```
 
     Without `--cli`, it opens a web UI where you enter the same URL.
 
-The server lists 19 tools, one per Petstore operation, such as `find_pets_by_status` and `get_pet_by_id`. Each name comes from the operation's `operationId`, and each title from its summary.
+The server lists 102 tools, one per PokéAPI operation, such as `pokemon_list` and `pokemon_retrieve`. Each name comes from the operation's `operationId`, and each title from its summary.
 
 ## Calling a Tool
 
-Call `find_pets_by_status` for available pets. In your client, ask "Which pets are available in the petstore?". With the Inspector:
+Call `pokemon_retrieve` for Pikachu. In your client, ask "What type is Pikachu?". With the Inspector:
 
 ```bash
-npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/petstore/mcp \
-    --method tools/call --tool-name find_pets_by_status \
-    --tool-arg status=available
+npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/pokeapi/mcp \
+    --method tools/call --tool-name pokemon_retrieve \
+    --tool-arg id=pikachu
 ```
 
-The gateway sends `GET /pet/findByStatus?status=available` upstream and returns the body as text:
+The gateway sends `GET /api/v2/pokemon/pikachu/` upstream and returns the body as text:
 
 ```json
 {
   "content": [
-    {"type": "text", "text": "[{\"id\": 4, \"name\": \"Dog 1\", ..."}
+    {"type": "text", "text": "{\"id\": 25, \"name\": \"pikachu\", ..."}
   ],
   "isError": false
 }
 ```
 
-A body that is a JSON object also arrives as `structuredContent`, so a client reads it without parsing the text.
-
-> [!NOTE]
-> Petstore is a shared public demo, so other people change its data and some calls return a server error at times. An upstream error comes back as a result with `isError: true` and the upstream's status and body.
+The body is a JSON object, so it also arrives as `structuredContent`, and a client reads it without parsing the text. An upstream error comes back as a result with `isError: true` and the upstream's status and body.
 
 Stop the server with Ctrl+C before the next step.
 
@@ -144,8 +141,8 @@ A config file serves several APIs from one process, each at its own mount path. 
 ```yaml
 servers:
   # Eligible GETs become MCP resources, and the rest stay tools.
-  - name: petstore
-    spec: https://petstore3.swagger.io/api/v3/openapi.json
+  - name: pokeapi
+    spec: https://pokeapi.co/openapi.yml
     exposure:
       promote_resources: true
 
@@ -163,10 +160,10 @@ uvx openapi-mcp-gateway serve --config config.yml --dry-run
 ```
 
 ```text
-✓ Valid   2 server(s), 16 tool(s), 6 resource(s)
+✓ Valid   2 server(s), 3 tool(s), 102 resource(s)
 ```
 
-Petstore now has 13 tools and 6 resources, and GitHub has three meta-tools, `search_operations`, `get_operation` and `call_operation`, which search, describe and call its operations. Then start the server:
+Every PokéAPI operation is now a resource, since each is a GET a client can read by its URL, and GitHub has three meta-tools, `search_operations`, `get_operation` and `call_operation`, which search, describe and call its operations. Then start the server:
 
 ```bash
 uvx openapi-mcp-gateway serve --config config.yml
@@ -194,11 +191,11 @@ A desktop client such as Claude Desktop or Cursor can launch the gateway itself 
 ```json
 {
   "mcpServers": {
-    "petstore": {
+    "pokeapi": {
       "command": "uvx",
       "args": [
         "openapi-mcp-gateway", "serve",
-        "--spec", "https://petstore3.swagger.io/api/v3/openapi.json",
+        "--spec", "https://pokeapi.co/openapi.yml",
         "--transport", "stdio"
       ]
     }

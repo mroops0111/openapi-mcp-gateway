@@ -7,7 +7,7 @@ from openapi_mcp_gateway.auth.mcp.client import McpPreRegisteredClient, McpPreRe
 from openapi_mcp_gateway.auth.mcp.client_credentials import (
     McpClientCredentialsError,
     McpClientCredentialsGrant,
-    _read_client_credentials,
+    read_client_credentials,
 )
 from openapi_mcp_gateway.auth.mcp.record_origin import McpRecordOrigin
 from openapi_mcp_gateway.auth.mcp.token_issuer import McpGatewayIssuerTokenVerifier, McpTokenIssuer, McpTokenPolicy
@@ -29,8 +29,8 @@ def grant(tokens) -> McpClientCredentialsGrant:
         client_secret='secret',
         token_endpoint_auth_method='client_secret_basic',
         redirect_uris=None,
-        scope='pets:read',
-        default_scopes=['pets:read'],
+        scope='products:read',
+        default_scopes=['products:read'],
     )
     return McpClientCredentialsGrant(tokens, McpPreRegisteredClientDirectory([agent]))
 
@@ -45,8 +45,8 @@ class TestGrant:
         verified = await McpGatewayIssuerTokenVerifier(tokens, grant.clients).verify_token(token.access_token)
 
         assert isinstance(verified, McpAccessToken)
-        assert verified.scopes == ['pets:read']
-        assert verified.mcp_grantable_scopes == ['pets:read']
+        assert verified.scopes == ['products:read']
+        assert verified.mcp_grantable_scopes == ['products:read']
         assert verified.upstream_scopes == []
 
     async def test_a_token_of_a_removed_client_is_refused(self, grant, tokens):
@@ -70,32 +70,32 @@ class TestClientAuthentication:
 
     def test_basic_credentials_are_percent_decoded(self):
         header = 'Basic ' + base64.b64encode(b'my%20agent:p%40ss').decode()
-        assert _read_client_credentials(_build_request(header), {}) == ('my agent', 'p@ss')
+        assert read_client_credentials(_build_request(header), {}) == ('my agent', 'p@ss')
 
     def test_a_raw_plus_in_a_secret_stays_a_plus(self):
         """``curl -u`` sends a secret unencoded, and a base64 secret often holds a ``+``."""
         header = 'Basic ' + base64.b64encode(b'agent:ab+cd').decode()
-        assert _read_client_credentials(_build_request(header), {}) == ('agent', 'ab+cd')
+        assert read_client_credentials(_build_request(header), {}) == ('agent', 'ab+cd')
 
     def test_the_scheme_name_is_matched_in_any_case(self):
         header = 'basic ' + base64.b64encode(b'agent:secret').decode()
-        assert _read_client_credentials(_build_request(header), {}) == ('agent', 'secret')
+        assert read_client_credentials(_build_request(header), {}) == ('agent', 'secret')
 
     def test_two_methods_at_once_are_refused(self):
         header = 'Basic ' + base64.b64encode(b'agent:secret').decode()
         with pytest.raises(McpClientCredentialsError) as raised:
-            _read_client_credentials(_build_request(header), {'client_secret': 'secret'})
+            read_client_credentials(_build_request(header), {'client_secret': 'secret'})
         assert raised.value.error == 'invalid_request'
 
     def test_malformed_basic_credentials_are_refused(self):
         with pytest.raises(McpClientCredentialsError) as raised:
-            _read_client_credentials(_build_request('Basic not-base64!'), {})
+            read_client_credentials(_build_request('Basic not-base64!'), {})
         assert raised.value.error == 'invalid_client'
 
     def test_a_basic_client_id_must_match_the_forms(self):
         header = 'Basic ' + base64.b64encode(b'agent:secret').decode()
         with pytest.raises(McpClientCredentialsError):
-            _read_client_credentials(_build_request(header), {'client_id': 'other'})
+            read_client_credentials(_build_request(header), {'client_id': 'other'})
 
 
 def _build_request(authorization: str) -> Request:

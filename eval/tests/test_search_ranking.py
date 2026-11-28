@@ -33,7 +33,7 @@ from openapi_mcp_gateway_eval.spec_pins import SpecChecksumError, SpecPin, sha25
 
 
 FIXTURES_DIR = pathlib.Path(__file__).parent / 'fixtures'
-PETSTORE = FIXTURES_DIR / 'petstore.json'
+SHOP = FIXTURES_DIR / 'shop.json'
 REPOSITORY_PROMPTS = pathlib.Path(__file__).parents[2] / 'benchmarks' / 'search_ranking' / dataset.PROMPTS_DIRECTORY
 
 # The phrase that tells the reviser's instructions apart from the query author's, which share a model.
@@ -41,15 +41,15 @@ REVISER_PHRASE = 'revising queries you wrote'
 
 # Three queries both annotators answer alike, which leave the adjudicator and the reviser nothing to do.
 AGREED_QUERIES = [
-    {'text': 'list all pets', 'style': 'literal', 'relevant': {'list_pets': 2}},
-    {'text': 'a new animal arrived', 'style': 'paraphrase', 'relevant': {'list_pets': 2}},
-    {'text': 'the dog moved away', 'style': 'indirect', 'relevant': {'list_pets': 2}},
+    {'text': 'list all products', 'style': 'literal', 'relevant': {'list_products': 2}},
+    {'text': 'a new item came in', 'style': 'paraphrase', 'relevant': {'list_products': 2}},
+    {'text': 'what is on the shelves', 'style': 'indirect', 'relevant': {'list_products': 2}},
 ]
 
 MANIFEST = """\
 version: 1
 specs:
-  pets: {{source: petstore.json, sha256: {sha256}}}
+  products: {{source: shop.json, sha256: {sha256}}}
 variants:
   default:
     type: gateway
@@ -147,28 +147,28 @@ class TestOverlap:
         assert overlap.term_overlap('combine this change into main', 'pulls_merge Merge a pull request') == 0.0
 
     def test_the_best_answer_counts(self):
-        summaries = {'list_pets': 'List all pets', 'get_pet_by_id': 'Info for a specific pet'}
-        assert overlap.best_term_overlap('list pets', ['get_pet_by_id', 'list_pets'], summaries) == 1.0
+        summaries = {'list_products': 'List all products', 'get_product_by_id': 'Info for a specific product'}
+        assert overlap.best_term_overlap('list products', ['get_product_by_id', 'list_products'], summaries) == 1.0
 
 
 class TestSpecPins:
     """Pinned specs are checked on every use."""
 
     def test_a_local_pin_resolves_against_its_directory(self):
-        pin = SpecPin(source=PETSTORE.name, sha256=sha256_of(PETSTORE))
-        assert pin.fetch(FIXTURES_DIR) == PETSTORE.resolve()
+        pin = SpecPin(source=SHOP.name, sha256=sha256_of(SHOP))
+        assert pin.fetch(FIXTURES_DIR) == SHOP.resolve()
 
     def test_a_changed_spec_is_refused(self):
         with pytest.raises(SpecChecksumError):
-            SpecPin(source=PETSTORE.name, sha256='0' * 64).fetch(FIXTURES_DIR)
+            SpecPin(source=SHOP.name, sha256='0' * 64).fetch(FIXTURES_DIR)
 
     def test_a_cached_download_is_reused(self, tmp_path, monkeypatch):
         """A remote pin already in the cache needs no network."""
         monkeypatch.setenv('OPENAPI_MCP_GATEWAY_CACHE', str(tmp_path))
-        digest = sha256_of(PETSTORE)
+        digest = sha256_of(SHOP)
         cached = tmp_path / 'specs' / f'{digest}.json'
         cached.parent.mkdir()
-        shutil.copy(PETSTORE, cached)
+        shutil.copy(SHOP, cached)
         assert SpecPin(source='https://unreachable.invalid/spec.json', sha256=digest).fetch(tmp_path) == cached
 
 
@@ -204,14 +204,14 @@ class TestAnnotations:
         assert sum(split == 'dev' for split in split_by_query.values()) == merge.DEV_QUERIES_PER_STYLE
 
     def test_build_reports_the_agreement(self, tmp_path):
-        path = merge.annotations_path(tmp_path, 'pets')
+        path = merge.annotations_path(tmp_path, 'products')
         path.parent.mkdir(parents=True)
         annotated = [
             _annotation('q1', {'a': 2}, {'a': 2}),
             _annotation('q2', {'a': 2}, {'b': 2}, adjudication={'relevant': {'b': 2}, 'note': 'b fits'}),
         ]
         path.write_text(''.join(annotation.model_dump_json(exclude_none=True) + '\n' for annotation in annotated))
-        spec_dataset, agreement = merge.build_spec_dataset(tmp_path, 'pets')
+        spec_dataset, agreement = merge.build_spec_dataset(tmp_path, 'products')
         assert spec_dataset.judgements['dev'] == {'q1': {'a': 2}, 'q2': {'b': 2}}
         assert (agreement.query_count, agreement.shared_answer_count, agreement.adjudicated_count) == (2, 1, 1)
 
@@ -220,29 +220,29 @@ class TestDataset:
     """Loading a benchmark and refusing an inconsistent one."""
 
     def test_round_trip(self, tmp_path):
-        benchmark = dataset.load(_petstore_benchmark(tmp_path))
-        assert set(benchmark.specs['pets'].judgements['test']) == {'p2', 'p3'}
-        assert benchmark.specs['pets'].queries['p1'].style == 'literal'
+        benchmark = dataset.load(_shop_benchmark(tmp_path))
+        assert set(benchmark.specs['products'].judgements['test']) == {'p2', 'p3'}
+        assert benchmark.specs['products'].queries['p1'].style == 'literal'
         assert isinstance(benchmark.manifest.variants['default'], GatewayVariant)
 
     def test_a_query_judged_in_both_splits_is_refused(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
-        with (dataset.spec_directory(benchmark_directory, 'pets') / 'qrels' / 'test.tsv').open('a') as file:
-            file.write('p1\tlist_pets\t2\n')
+        benchmark_directory = _shop_benchmark(tmp_path)
+        with (dataset.spec_directory(benchmark_directory, 'products') / 'qrels' / 'test.tsv').open('a') as file:
+            file.write('p1\tlist_products\t2\n')
         with pytest.raises(dataset.DatasetError, match='both dev and test'):
             dataset.load(benchmark_directory)
 
     def test_a_query_without_an_answer_is_refused(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
-        (dataset.spec_directory(benchmark_directory, 'pets') / 'qrels' / 'dev.tsv').write_text(
-            'query-id\tcorpus-id\tscore\np1\tlist_pets\t1\n'
+        benchmark_directory = _shop_benchmark(tmp_path)
+        (dataset.spec_directory(benchmark_directory, 'products') / 'qrels' / 'dev.tsv').write_text(
+            'query-id\tcorpus-id\tscore\np1\tlist_products\t1\n'
         )
         with pytest.raises(dataset.DatasetError, match='no operation graded 2'):
             dataset.load(benchmark_directory)
 
     def test_an_unknown_style_is_refused(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
-        queries = dataset.spec_directory(benchmark_directory, 'pets') / 'queries.jsonl'
+        benchmark_directory = _shop_benchmark(tmp_path)
+        queries = dataset.spec_directory(benchmark_directory, 'products') / 'queries.jsonl'
         queries.write_text(queries.read_text().replace('"literal"', '"poetic"'))
         with pytest.raises(dataset.DatasetError, match='style'):
             dataset.load(benchmark_directory)
@@ -258,7 +258,7 @@ class TestDataset:
     )
     def test_the_manifest_is_validated_on_load(self, tmp_path, original, replacement, message):
         """A wrong variant or gate fails when the manifest loads, not when a run reaches it."""
-        benchmark_directory = _petstore_benchmark(tmp_path)
+        benchmark_directory = _shop_benchmark(tmp_path)
         manifest = benchmark_directory / dataset.MANIFEST_FILE
         manifest.write_text(manifest.read_text().replace(original, replacement, 1))
         with pytest.raises(dataset.DatasetError, match=message):
@@ -269,34 +269,34 @@ class TestRun:
     """Running a benchmark against a gateway built in-process."""
 
     async def test_scores_every_query_under_each_system(self, tmp_path):
-        benchmark = dataset.load(_petstore_benchmark(tmp_path))
+        benchmark = dataset.load(_shop_benchmark(tmp_path))
         results = await runner.run(benchmark, 'test', runner.select_variants(benchmark))
         assert set(results) == {'default', 'names-only', 'random'}
         result_by_query = {result.query_id: result for result in results['default']}
-        assert result_by_query['p2'].ranking[0] == 'create_pet'
+        assert result_by_query['p2'].ranking[0] == 'create_product'
         assert result_by_query['p2'].scores['recall@1'] == 1.0
 
     async def test_a_new_kind_of_system_runs_without_changes_elsewhere(self, tmp_path):
-        benchmark = dataset.load(_petstore_benchmark(tmp_path))
+        benchmark = dataset.load(_shop_benchmark(tmp_path))
         results = await runner.run(benchmark, 'test', {'reversed': ReversedNameSystem()})
         assert [len(result.ranking) for result in results['reversed']] == [6, 6]
 
     async def test_a_judged_operation_the_spec_does_not_serve_is_refused(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
-        (dataset.spec_directory(benchmark_directory, 'pets') / 'qrels' / 'test.tsv').write_text(
-            'query-id\tcorpus-id\tscore\np2\tcreate_pet\t2\np3\tadopt_pet\t2\n'
+        benchmark_directory = _shop_benchmark(tmp_path)
+        (dataset.spec_directory(benchmark_directory, 'products') / 'qrels' / 'test.tsv').write_text(
+            'query-id\tcorpus-id\tscore\np2\tcreate_product\t2\np3\tbuy_product\t2\n'
         )
         benchmark = dataset.load(benchmark_directory)
-        with pytest.raises(dataset.DatasetError, match='adopt_pet'):
+        with pytest.raises(dataset.DatasetError, match='buy_product'):
             await runner.run(benchmark, 'test', runner.select_variants(benchmark))
 
     def test_an_unknown_system_name_is_refused(self, tmp_path):
-        benchmark = dataset.load(_petstore_benchmark(tmp_path))
+        benchmark = dataset.load(_shop_benchmark(tmp_path))
         with pytest.raises(dataset.DatasetError, match='missing'):
             runner.select_variants(benchmark, ['missing'])
 
     async def test_report_gate_scores_and_regressions(self, tmp_path):
-        benchmark = dataset.load(_petstore_benchmark(tmp_path))
+        benchmark = dataset.load(_shop_benchmark(tmp_path))
         results = await runner.run(benchmark, 'test', runner.select_variants(benchmark))
         built_report = report.build_report(benchmark, 'test', results)
         assert {comparison.against for comparison in built_report.comparisons} == {'names-only', 'random'}
@@ -311,7 +311,7 @@ class TestRun:
         assert scores.regressions(other_split, 0.01) == ["split is 'dev' in this run but 'test' in the gate scores"]
 
     async def test_comparisons_follow_the_gated_metrics(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
+        benchmark_directory = _shop_benchmark(tmp_path)
         manifest = benchmark_directory / dataset.MANIFEST_FILE
         manifest.write_text(manifest.read_text() + '  metrics: [mrr@10]\n')
         benchmark = dataset.load(benchmark_directory)
@@ -324,7 +324,7 @@ class TestCli:
     """The commands CI and a developer run."""
 
     def test_check_passes_against_its_own_gate_scores_and_fails_below_them(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
+        benchmark_directory = _shop_benchmark(tmp_path)
         cli = CliRunner()
         assert (
             cli.invoke(
@@ -351,7 +351,7 @@ class TestCli:
         assert 'macro ndcg@10' in failed.output
 
     def test_run_writes_a_report(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
+        benchmark_directory = _shop_benchmark(tmp_path)
         output = tmp_path / 'report.json'
         result = CliRunner().invoke(
             benchmark_command,
@@ -362,15 +362,15 @@ class TestCli:
         assert (written.benchmark_version, written.split, written.reference_variant) == (1, 'test', 'default')
 
     def test_an_unknown_system_is_a_clean_error(self, tmp_path):
-        benchmark_directory = str(_petstore_benchmark(tmp_path))
+        benchmark_directory = str(_shop_benchmark(tmp_path))
         arguments = ['search-ranking', 'run', '--benchmark-directory', benchmark_directory, '--variant', 'missing']
         result = CliRunner().invoke(benchmark_command, arguments)
         assert result.exit_code == 1
         assert 'Unknown variant' in result.output
 
     def test_a_stale_pin_is_a_clean_error(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
-        (benchmark_directory / 'petstore.json').write_text('{}')
+        benchmark_directory = _shop_benchmark(tmp_path)
+        (benchmark_directory / 'shop.json').write_text('{}')
         result = CliRunner().invoke(
             benchmark_command, ['search-ranking', 'run', '--benchmark-directory', str(benchmark_directory)]
         )
@@ -379,8 +379,8 @@ class TestCli:
         assert 'Traceback' not in result.output
 
     def test_a_malformed_query_line_is_a_clean_error(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
-        with (dataset.spec_directory(benchmark_directory, 'pets') / 'queries.jsonl').open('a') as file:
+        benchmark_directory = _shop_benchmark(tmp_path)
+        with (dataset.spec_directory(benchmark_directory, 'products') / 'queries.jsonl').open('a') as file:
             file.write('{not json\n')
         result = CliRunner().invoke(
             benchmark_command, ['search-ranking', 'run', '--benchmark-directory', str(benchmark_directory)]
@@ -390,8 +390,8 @@ class TestCli:
 
     def test_check_refuses_a_paraphrase_that_repeats_its_answer(self, tmp_path):
         """A mislabelled query fails the check before any ranking runs."""
-        benchmark_directory = _petstore_benchmark(tmp_path)
-        queries = dataset.spec_directory(benchmark_directory, 'pets') / 'queries.jsonl'
+        benchmark_directory = _shop_benchmark(tmp_path)
+        queries = dataset.spec_directory(benchmark_directory, 'products') / 'queries.jsonl'
         queries.write_text(queries.read_text().replace('"literal"}}\n{"_id": "p2"', '"paraphrase"}}\n{"_id": "p2"'))
         result = CliRunner().invoke(
             benchmark_command,
@@ -406,11 +406,11 @@ class TestPydanticAIKeywordSystem:
     """Pydantic AI's keyword tool search, run through the framework's public API."""
 
     async def test_ranks_by_the_framework_search(self, tmp_path):
-        benchmark = dataset.load(_petstore_benchmark(tmp_path))
-        corpus = await runner.load_corpus(benchmark, 'pets')
+        benchmark = dataset.load(_shop_benchmark(tmp_path))
+        corpus = await runner.load_corpus(benchmark, 'products')
         async with PydanticAIKeywordVariant().open(corpus) as retriever:
-            ranking = await retriever.rank('delete a pet', 20)
-        assert ranking[0] == 'delete_pet'
+            ranking = await retriever.rank('delete a product', 20)
+        assert ranking[0] == 'delete_product'
         assert len(ranking) == len(set(ranking))
 
 
@@ -418,18 +418,18 @@ class TestAnnotationPipeline:
     """Every annotator run through Pydantic AI, with scripted models in place of providers."""
 
     async def test_makes_the_data_with_every_role_and_retries_what_its_checks_refuse(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
+        benchmark_directory = _shop_benchmark(tmp_path)
         _copy_annotation_templates(benchmark_directory)
         authored = [
-            {'text': 'list all pets', 'style': 'literal', 'relevant': {'list_pets': 2}},
-            {'text': 'create a pet', 'style': 'paraphrase', 'relevant': {'create_pet': 2}},
-            {'text': 'the dog moved away', 'style': 'indirect', 'relevant': {'delete_pet': 2}},
+            {'text': 'list all products', 'style': 'literal', 'relevant': {'list_products': 2}},
+            {'text': 'create a product', 'style': 'paraphrase', 'relevant': {'create_product': 2}},
+            {'text': 'we stopped selling this item', 'style': 'indirect', 'relevant': {'delete_product': 2}},
         ]
         author = _ScriptedModel(
             {
                 REVISER_PHRASE: [
-                    [{'id': 'pets-q002', 'text': 'create my pet'}],
-                    [{'id': 'pets-q002', 'text': 'a new animal arrived'}],
+                    [{'id': 'products-q002', 'text': 'create my product'}],
+                    [{'id': 'products-q002', 'text': 'a new item came in'}],
                 ],
                 '': [[{**authored[0], 'relevant': {'no_such_operation': 2}}], authored],
             }
@@ -438,14 +438,16 @@ class TestAnnotationPipeline:
             {
                 '': [
                     [
-                        {'id': 'pets-q001', 'relevant': {'list_pets': 2}},
-                        {'id': 'pets-q002', 'relevant': {'create_pet_with_owner': 2}},
-                        {'id': 'pets-q003', 'relevant': {'delete_pet': 2}},
+                        {'id': 'products-q001', 'relevant': {'list_products': 2}},
+                        {'id': 'products-q002', 'relevant': {'create_product_with_owner': 2}},
+                        {'id': 'products-q003', 'relevant': {'delete_product': 2}},
                     ]
                 ]
             }
         )
-        adjudicator = _ScriptedModel({'': [[{'id': 'pets-q002', 'relevant': {'create_pet': 2}, 'note': 'no owner'}]]})
+        adjudicator = _ScriptedModel(
+            {'': [[{'id': 'products-q002', 'relevant': {'create_product': 2}, 'note': 'no owner'}]]}
+        )
         pipeline = _pipeline(benchmark_directory, author, assessor, adjudicator)
 
         [result] = await pipeline.run(tmp_path / 'work')
@@ -456,45 +458,45 @@ class TestAnnotationPipeline:
             ('adjudicator', 1),
             ('reviser', 2),
         ]
-        spec_dataset, agreement = merge.build_spec_dataset(benchmark_directory, 'pets')
-        assert spec_dataset.queries['pets-q002'].text == 'a new animal arrived'
+        spec_dataset, agreement = merge.build_spec_dataset(benchmark_directory, 'products')
+        assert spec_dataset.queries['products-q002'].text == 'a new item came in'
         assert (agreement.shared_answer_count, agreement.adjudicated_count) == (2, 1)
-        record = provenance.provenance_path(merge.annotations_path(benchmark_directory, 'pets'))
+        record = provenance.provenance_path(merge.annotations_path(benchmark_directory, 'products'))
         assert [run['role'] for run in json.loads(record.read_text())] == [run.role for run in result.runs]
-        assert (tmp_path / 'work' / 'pets' / f'independent_assessor{annotators.MESSAGES_SUFFIX}').exists()
+        assert (tmp_path / 'work' / 'products' / f'independent_assessor{annotators.MESSAGES_SUFFIX}').exists()
 
     async def test_the_assessor_never_sees_the_authors_answers(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
+        benchmark_directory = _shop_benchmark(tmp_path)
         _copy_annotation_templates(benchmark_directory)
         author = _ScriptedModel({'': [AGREED_QUERIES]})
-        judged = [{'id': f'pets-q00{number}', 'relevant': {'list_pets': 2}} for number in (1, 2, 3)]
+        judged = [{'id': f'products-q00{number}', 'relevant': {'list_products': 2}} for number in (1, 2, 3)]
         assessor = _ScriptedModel({'': [judged]})
         pipeline = _pipeline(benchmark_directory, author, assessor, _ScriptedModel({}))
 
-        await pipeline.annotate_spec('pets', tmp_path / 'work')
+        await pipeline.annotate_spec('products', tmp_path / 'work')
 
         [instructions] = assessor.instructions
-        assert '{"id":"pets-q002","text":"a new animal arrived"}' in instructions
+        assert '{"id":"products-q002","text":"a new item came in"}' in instructions
         assert '"relevant"' not in instructions
 
     async def test_a_failing_spec_writes_nothing(self, tmp_path):
-        benchmark_directory = _petstore_benchmark(tmp_path)
+        benchmark_directory = _shop_benchmark(tmp_path)
         _copy_annotation_templates(benchmark_directory)
-        wrong = [{'text': 'list pets', 'style': 'literal', 'relevant': {'no_such_operation': 2}}]
+        wrong = [{'text': 'list products', 'style': 'literal', 'relevant': {'no_such_operation': 2}}]
         author = _ScriptedModel({'': [wrong] * (annotators.OUTPUT_RETRIES + 1)})
         pipeline = _pipeline(benchmark_directory, author, _ScriptedModel({}), _ScriptedModel({}))
 
         with pytest.raises(UnexpectedModelBehavior):
             await pipeline.run(tmp_path / 'work')
 
-        assert not merge.annotations_path(benchmark_directory, 'pets').exists()
+        assert not merge.annotations_path(benchmark_directory, 'products').exists()
 
     def test_the_command_needs_all_three_models(self, tmp_path):
         arguments = [
             'search-ranking',
             'generate-annotations',
             '--benchmark-directory',
-            str(_petstore_benchmark(tmp_path)),
+            str(_shop_benchmark(tmp_path)),
         ]
         result = CliRunner().invoke(
             benchmark_command, [*arguments, '--author-model', 'test', '--assessor-model', 'test']
@@ -576,22 +578,22 @@ def _write_jsonl(path: pathlib.Path, records: list[dict[str, typing.Any]]) -> No
     path.write_text(''.join(json.dumps(record) + '\n' for record in records))
 
 
-def _petstore_benchmark(root: pathlib.Path) -> pathlib.Path:
-    """A three-query benchmark over the petstore fixture, pinned as a local file, with one dev and two test queries."""
+def _shop_benchmark(root: pathlib.Path) -> pathlib.Path:
+    """A three-query benchmark over the shop fixture, pinned as a local file, with one dev and two test queries."""
     benchmark_directory = root / 'benchmark'
     benchmark_directory.mkdir()
-    shutil.copy(PETSTORE, benchmark_directory / 'petstore.json')
-    (benchmark_directory / dataset.MANIFEST_FILE).write_text(MANIFEST.format(sha256=sha256_of(PETSTORE)))
+    shutil.copy(SHOP, benchmark_directory / 'shop.json')
+    (benchmark_directory / dataset.MANIFEST_FILE).write_text(MANIFEST.format(sha256=sha256_of(SHOP)))
     spec_dataset = dataset.SpecDataset(
-        name='pets',
+        name='products',
         queries={
-            'p1': dataset.Query(id='p1', text='list pets', style='literal'),
-            'p2': dataset.Query(id='p2', text='create a pet', style='literal'),
-            'p3': dataset.Query(id='p3', text='I no longer own this animal', style='indirect'),
+            'p1': dataset.Query(id='p1', text='list products', style='literal'),
+            'p2': dataset.Query(id='p2', text='create a product', style='literal'),
+            'p3': dataset.Query(id='p3', text='we stopped selling this item', style='indirect'),
         },
         judgements={
-            'dev': {'p1': {'list_pets': 2}},
-            'test': {'p2': {'create_pet': 2, 'create_pet_with_owner': 1}, 'p3': {'delete_pet': 2}},
+            'dev': {'p1': {'list_products': 2}},
+            'test': {'p2': {'create_product': 2, 'create_product_with_owner': 1}, 'p3': {'delete_product': 2}},
         },
     )
     dataset.write_spec_dataset(benchmark_directory, spec_dataset)

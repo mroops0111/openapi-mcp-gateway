@@ -51,7 +51,7 @@ class TokenExchangeBridge(UpstreamTokenSource, UpstreamGrantSource):
     ) -> None:
         self.upstream = upstream
         self._scope_registry = scope_registry
-        self._ceiling = list(ceiling)
+        self.ceiling = list(ceiling)
         self._required_scopes = list(required_scopes)
 
     # UpstreamTokenSource
@@ -90,7 +90,7 @@ class TokenExchangeBridge(UpstreamTokenSource, UpstreamGrantSource):
         if access_token is None:
             return None
         scopes = self._scope_registry.requested_upstream_scopes(
-            self._ceiling, self._required_scopes, access_token.scopes
+            self.ceiling, self._required_scopes, access_token.scopes
         )
         return await self.upstream.exchange(access_token.token, scopes)
 

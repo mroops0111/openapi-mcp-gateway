@@ -11,16 +11,16 @@ from testcontainers.core.wait_strategies import HttpWaitStrategy
 KEYCLOAK_IMAGE = 'quay.io/keycloak/keycloak:26.2'
 
 # The upstream API's client, which every exchanged token names as its audience.
-UPSTREAM_AUDIENCE = 'pets-api'
+UPSTREAM_AUDIENCE = 'products-api'
 
 # The secret every confidential client in a realm shares.
 CLIENT_SECRET = 'secret'
 
 # The agents a realm declares, by the MCP scopes each may be granted.
-AGENT_SCOPES = {'reader': ['pets:read'], 'writer': ['pets:read', 'pets:write', 'pets:delete']}
+AGENT_SCOPES = {'reader': ['products:read'], 'writer': ['products:read', 'products:write', 'products:delete']}
 
 # The upstream scopes the gateway may exchange for, each adding the upstream API to the token's audience.
-UPSTREAM_SCOPES = ['read:pets', 'write:pets']
+UPSTREAM_SCOPES = ['read:products', 'write:products']
 
 
 # The bootstrap administrator, who creates each test's realm.

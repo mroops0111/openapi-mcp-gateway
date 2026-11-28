@@ -142,7 +142,7 @@ These rules decide where each value goes and what happens when an expression fai
 - **Lists**: wrapping a mapping in `[ ... ]` keeps the result an array even when one item matches.
 - **Errors**: a broken expression fails startup. A runtime failure returns an `isError` result naming the side that broke.
 
-[`examples/movie-shaping.yml`](https://github.com/mroops0111/openapi-mcp-gateway/blob/master/examples/movie-shaping.yml) is a full `replace` example, where `request` maps a readable enum onto the raw query with `$lookup`.
+[`examples/github-shaping.yml`](https://github.com/mroops0111/openapi-mcp-gateway/blob/master/examples/github-shaping.yml) is a full `replace` example, where `request` builds GitHub's search query from a repository, a state and a label.
 
 ## Promoting Base64 Fields With `media`
 

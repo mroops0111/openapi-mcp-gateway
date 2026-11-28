@@ -1,0 +1,10 @@
+# PokéAPI: a public, read-only API that needs no auth.
+# Usage: openapi-mcp-gateway serve --config examples/pokeapi.yml
+
+host: "0.0.0.0"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: pokeapi
+    spec: https://pokeapi.co/openapi.yml

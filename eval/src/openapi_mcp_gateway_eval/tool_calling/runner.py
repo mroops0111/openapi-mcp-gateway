@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 TRANSIENT_ATTEMPTS = 4
 RETRY_WAIT_LIMIT_SECONDS = 60
 
-# Pydantic Evals names the repeats of a case like ``tmdb-t01 [2/3]``.
+# Pydantic Evals names the repeats of a case like ``github-t01 [2/3]``.
 REPEAT_SUFFIX = re.compile(r' \[(\d+)/\d+\]$')
 
 # What builds a model from its manifest name, which a test replaces with a scripted model.

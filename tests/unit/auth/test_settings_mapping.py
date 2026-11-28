@@ -27,7 +27,7 @@ class TestTokenPolicy:
     def test_operation_scopes_leave_no_endpoint_scope(self):
         """Each operation names its own scopes, so no endpoint-wide one is granted."""
         config = McpAuthConfig.model_validate(
-            {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {'scopes': ['pets:read']}}}
+            {'operation_scopes': {'auto': 'tags'}, 'clients': {'agent': {'scopes': ['products:read']}}}
         )
         assert build_mcp_token_policy(config).scopes == []
 
@@ -99,11 +99,11 @@ class TestClientMetadataDirectory:
 
     async def test_a_metadata_document_client_keeps_its_scopes_and_consent(self):
         directory = _build_metadata_directory(
-            {CLIENT_METADATA_URL: ClientConfig(scopes=['pets:write'], consent=False)}, ('api',)
+            {CLIENT_METADATA_URL: ClientConfig(scopes=['products:write'], consent=False)}, ('api',)
         )
         client = await directory.get(CLIENT_METADATA_URL)
         assert client is not None
-        assert (client.scope, client.token_endpoint_auth_method) == ('api pets:write', 'none')
+        assert (client.scope, client.token_endpoint_auth_method) == ('api products:write', 'none')
         assert directory.requires_consent(CLIENT_METADATA_URL) is False
 
     async def test_a_metadata_document_client_is_left_out_of_the_plain_directory(self):
@@ -125,11 +125,11 @@ class TestOtherClients:
 
     def test_its_scopes_are_granted_beside_the_endpoint_scopes(self):
         rule = build_mcp_other_clients(
-            OtherClientsConfig(scopes=['pets:read', 'pets:write'], default_scopes=['pets:read']), ('api',)
+            OtherClientsConfig(scopes=['products:read', 'products:write'], default_scopes=['products:read']), ('api',)
         )
         client = rule.build_client(CLIENT_METADATA_URL)
-        assert client.scope == 'api pets:read pets:write'
-        assert client.validate_scope(None) == ['api', 'pets:read']
+        assert client.scope == 'api products:read products:write'
+        assert client.validate_scope(None) == ['api', 'products:read']
 
     @pytest.mark.parametrize(
         ('trusted_hosts', 'admitted'), [(None, True), (['App.Example.com'], True), (['example.com'], False)]

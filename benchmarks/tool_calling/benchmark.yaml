@@ -1,12 +1,14 @@
 # The tool calling benchmark. See README.md for what it measures and how to run it.
 # Each spec is pinned to one revision and checked by SHA-256.
 # A change to a pin, a task, a variant, or the system prompt makes a new version.
-version: 2
+version: 5
 
 specs:
-  petstore:
-    source: https://raw.githubusercontent.com/swagger-api/swagger-petstore/5cb909fc7780bc708151bce0014939acba8b212a/src/main/resources/openapi.yaml
-    sha256: 65cfe2e8826c81db0eea34c51d18da3a305ae4840f1a778cd63b89d396efb687
+  # A copy of https://api.weather.gov/openapi.json taken on 2026-11-27 UTC,
+  # since the copy in the publisher's repository lags the live API by two years.
+  weather:
+    source: specs/weather.json
+    sha256: 9d7eff3ac32e6e8d8fa0e0262ffa5f650a311180044ff4999e5a27afba0539dc
   notion:
     source: https://raw.githubusercontent.com/APIs-guru/openapi-directory/f04b8d0bcd39c52e1cf3ad7a5fe744709832ae49/APIs/notion.com/1.0.0/openapi.yaml
     sha256: 9bc037c3d9d66ae4c85e1996319cf67a38867dbbd23bed4f5d8a633cca32c226
@@ -37,7 +39,7 @@ models:
   gemini-flash-lite:
     model: google:gemini-3.5-flash-lite
 
-scenarios: [petstore, notion, asana, discord, github, stripe, github-asana]
+scenarios: [weather, notion, asana, discord, github, stripe, github-asana]
 
 repeat: 3
 request_limit: 20

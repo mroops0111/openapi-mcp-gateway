@@ -2,7 +2,7 @@ import typing
 
 import pytest
 
-from openapi_mcp_gateway.exposure._query_string import (
+from openapi_mcp_gateway.exposure import (
     FormQuerySerializer,
     QuerySerializer,
     UndeclaredQuerySerializer,

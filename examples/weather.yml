@@ -1,0 +1,18 @@
+# National Weather Service API, whose spec asks for a User-Agent header as an apiKey scheme.
+# The config gives only the value, and the header name comes from the scheme.
+# Without it, startup is refused, since no operation could be called as the spec describes.
+#
+# Usage: WEATHER_USER_AGENT="my-app (me@example.com)" openapi-mcp-gateway serve --config examples/weather.yml
+
+host: "127.0.0.1"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: weather
+    spec: https://api.weather.gov/openapi.json
+    auth:
+      upstream:
+        credentials:
+          userAgent:
+            value: ${WEATHER_USER_AGENT}

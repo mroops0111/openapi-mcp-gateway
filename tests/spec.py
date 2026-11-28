@@ -5,12 +5,18 @@ import typing
 from tests.constants import API_URL
 
 
-# The upstream scopes each petstore operation declares in its OpenAPI ``security``, keyed by operationId.
-PETSTORE_UPSTREAM_SECURITY = {
-    'listPets': [{'oauth2': ['read:pets']}],
-    'getPetById': [{'oauth2': ['read:pets']}],
-    'createPet': [{'oauth2': ['write:pets']}],
-    'deletePet': [{'oauth2': ['read:pets', 'write:pets']}],
+# The upstream scopes each shop operation declares in its OpenAPI ``security``, keyed by operationId.
+SHOP_UPSTREAM_SECURITY = {
+    'listProducts': [{'oauth2': ['read:products']}],
+    'getProductById': [{'oauth2': ['read:products']}],
+    'createProduct': [{'oauth2': ['write:products']}],
+    'deleteProduct': [{'oauth2': ['read:products', 'write:products']}],
+}
+
+# A Trello-like API, whose every call needs two query keys together.
+TRELLO_SCHEMES = {
+    'APIKey': {'type': 'apiKey', 'in': 'query', 'name': 'key'},
+    'APIToken': {'type': 'apiKey', 'in': 'query', 'name': 'token'},
 }
 
 
@@ -75,11 +81,122 @@ def write_spec(directory: pathlib.Path, spec: dict[str, typing.Any], name: str =
     return path
 
 
-def write_secured_petstore(petstore_path: pathlib.Path, directory: pathlib.Path) -> pathlib.Path:
-    """Write the petstore at ``petstore_path`` under ``directory`` with each operation's upstream scopes declared."""
-    spec = json.loads(petstore_path.read_text())
+def write_secured_shop(shop_path: pathlib.Path, directory: pathlib.Path) -> pathlib.Path:
+    """Write the shop at ``shop_path`` under ``directory`` with each operation's upstream scopes declared."""
+    spec = json.loads(shop_path.read_text())
     for path_item in spec['paths'].values():
         for operation in path_item.values():
-            if isinstance(operation, dict) and operation.get('operationId') in PETSTORE_UPSTREAM_SECURITY:
-                operation['security'] = PETSTORE_UPSTREAM_SECURITY[operation['operationId']]
-    return write_spec(directory, spec, 'secured-petstore.json')
+            if isinstance(operation, dict) and operation.get('operationId') in SHOP_UPSTREAM_SECURITY:
+                operation['security'] = SHOP_UPSTREAM_SECURITY[operation['operationId']]
+    return write_spec(directory, spec, 'secured-shop.json')
+
+
+def write_board_spec(
+    tmp_path: pathlib.Path,
+    *,
+    schemes: dict[str, typing.Any] | None = None,
+    swagger_definitions: dict[str, typing.Any] | None = None,
+    security: list[dict[str, list[str]]] | None = None,
+    operations: dict[str, list[dict[str, list[str]]]] | None = None,
+) -> pathlib.Path:
+    """A board API served from ``API_URL``, with ``security`` at the root or each of ``operations`` its own.
+
+    ``getBoard`` is a GET and ``updateBoard`` a PUT on the same path.
+    """
+    securities = operations or {'getBoard': None}
+    path_item = {
+        method: {
+            'operationId': operation_id,
+            'parameters': [{'name': 'board_id', 'in': 'path', 'required': True, 'schema': {'type': 'string'}}],
+            'responses': {'200': {'description': 'ok'}},
+            **({'security': requirement} if requirement is not None else {}),
+        }
+        for operation_id, requirement in securities.items()
+        for method in ['get' if operation_id == 'getBoard' else 'put']
+    }
+    document: dict[str, typing.Any] = {
+        'openapi': '3.1.0',
+        'info': {'title': 'Boards', 'version': '1'},
+        'servers': [{'url': API_URL}],
+        'paths': {'/boards/{board_id}': path_item},
+    }
+    if schemes is not None:
+        document['components'] = {'securitySchemes': schemes}
+    if swagger_definitions is not None:
+        document['securityDefinitions'] = swagger_definitions
+    if security is not None:
+        document['security'] = security
+    path = tmp_path / 'boards.json'
+    path.write_text(json.dumps(document))
+    return path
+
+
+def nested_body_spec() -> dict:
+    """One operation whose body nests an object, an array of objects, and an enum with a default."""
+    return operation_spec(
+        operation_id='createOrder',
+        path='/orders',
+        version='3.0.0',
+        body={
+            'type': 'object',
+            'required': ['customer'],
+            'properties': {
+                'customer': {'type': 'object', 'properties': {'id': {'type': 'integer'}}},
+                'items': {
+                    'type': 'array',
+                    'items': {'type': 'object', 'properties': {'qty': {'type': 'integer', 'minimum': 1}}},
+                },
+                'priority': {'type': 'string', 'enum': ['low', 'normal', 'rush'], 'default': 'normal'},
+            },
+        },
+    )
+
+
+def shared_component_spec() -> dict:
+    """A body reaching ``SourceReference`` through three paths, plus a single-use and a recursive component."""
+    source_reference = component_ref('SourceReference')
+    return operation_spec(
+        operation_id='createProposal',
+        path='/proposals',
+        parameters=[
+            {
+                'name': 'status',
+                'in': 'query',
+                'description': 'Status to file the proposal under.',
+                'schema': component_ref('Status'),
+            }
+        ],
+        body=component_ref('ProposalInput'),
+        schemas={
+            'SourceReference': {
+                'type': 'object',
+                'required': ['sourceId'],
+                'properties': {
+                    'sourceId': {'type': 'string', 'description': 'Id of a source the workspace has registered.'},
+                    'line': {'type': 'integer', 'minimum': 1, 'description': 'First line covered, counted from 1.'},
+                },
+            },
+            'Patch': {'type': 'object', 'properties': {'sources': {'type': 'array', 'items': source_reference}}},
+            'Label': {'type': 'object', 'description': 'A label.', 'properties': {'text': {'type': 'string'}}},
+            'Node': {
+                'type': 'object',
+                'required': ['label'],
+                'properties': {
+                    'label': {'type': 'string'},
+                    'children': {'type': 'array', 'items': component_ref('Node')},
+                },
+            },
+            'Status': {'type': 'string', 'enum': ['open', 'closed']},
+            'ProposalInput': {
+                'type': 'object',
+                'required': ['payload'],
+                'properties': {
+                    'payload': source_reference,
+                    'payloads': {'type': 'array', 'items': source_reference},
+                    'patch': component_ref('Patch'),
+                    'label': component_ref('Label'),
+                    'tree': component_ref('Node'),
+                },
+            },
+        },
+    )

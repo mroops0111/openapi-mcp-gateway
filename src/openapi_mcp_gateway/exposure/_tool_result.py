@@ -7,7 +7,7 @@ from mcp.types import CallToolResult, ContentBlock, TextContent
 
 from ._binary_content import binary_content
 from ._transform import TransformError
-from ._upstream_http import UpstreamBinaryBody
+from ._upstream_http import UpstreamBinaryBody, is_json_media_type, redact_query
 
 
 def build_success_result(payload: typing.Any, media_contents: typing.Sequence[ContentBlock] = ()) -> CallToolResult:
@@ -31,18 +31,21 @@ def build_binary_result(body: UpstreamBinaryBody) -> CallToolResult:
     return CallToolResult(content=[binary_content(body.content, body.media_type, body.url)], is_error=False)
 
 
-def build_http_error_result(exception: httpx.HTTPStatusError) -> CallToolResult:
+def build_http_error_result(
+    exception: httpx.HTTPStatusError, redacted_query: typing.Collection[str] = ()
+) -> CallToolResult:
     """Wrap an upstream non-2xx as an ``isError`` ``CallToolResult``.
 
     Object-shaped JSON error bodies also land in ``structuredContent``,
     so the client retains structured access to fields like error codes or rate-limit hints.
     ``outputSchema`` does not apply when ``isError`` is true.
+    The ``redacted_query`` parameters carry credentials, so the URL in the message hides their values.
     """
     response = exception.response
     body_text = response.text
     structured_content = _parse_json_object(body_text, response.headers.get('content-type', ''))
     request = exception.request
-    message = f'Upstream {request.method} {request.url} returned {response.status_code} {response.reason_phrase}:\n{body_text}'
+    message = f'Upstream {request.method} {redact_query(request.url, redacted_query)} returned {response.status_code} {response.reason_phrase}:\n{body_text}'
     return CallToolResult(
         content=[TextContent(type='text', text=message)],
         structured_content=structured_content,
@@ -50,14 +53,18 @@ def build_http_error_result(exception: httpx.HTTPStatusError) -> CallToolResult:
     )
 
 
-def build_network_error_result(exception: httpx.RequestError) -> CallToolResult:
+def build_network_error_result(
+    exception: httpx.RequestError, redacted_query: typing.Collection[str] = ()
+) -> CallToolResult:
     """Wrap an httpx transport failure (such as a connect, timeout, or DNS error) as an ``isError`` result.
 
     No ``response`` is available, so ``structuredContent`` stays ``None``,
     and the message surfaces the exception type for diagnosis.
+    The ``redacted_query`` parameters carry credentials, so the URL in the message hides their values.
     """
     request = exception.request
-    message = f'Upstream {request.method} {request.url} failed: {type(exception).__name__}: {exception}'
+    url = redact_query(request.url, redacted_query)
+    message = f'Upstream {request.method} {url} failed: {type(exception).__name__}: {exception}'
     return CallToolResult(
         content=[TextContent(type='text', text=message)],
         structured_content=None,
@@ -121,7 +128,7 @@ def _parse_json_object(text: str, content_type: str) -> dict[str, typing.Any] | 
     Returns ``None`` when the content type is not JSON, the body is empty,
     the body is not valid JSON, or the parsed value is not an object.
     """
-    if 'application/json' not in content_type or not text:
+    if not is_json_media_type(content_type) or not text:
         return None
     try:
         parsed = json.loads(text)

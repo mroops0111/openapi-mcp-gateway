@@ -41,6 +41,7 @@ from tests.flow import (
     spec_with_authorization_code,
 )
 from tests.scope import SECURED_CEILING, secured_registry
+from tests.token_endpoint import TokenEndpoint
 
 
 class TestTokenExchangeFlowHandler:
@@ -65,7 +66,7 @@ class TestTokenExchangeFlowHandler:
         assert setup.provider is None
         assert setup.verifier is not None
         assert isinstance(setup.resolver, UpstreamTokenSourceAuthResolver)
-        assert isinstance(setup.resolver._token_source, TokenExchangeBridge)
+        assert isinstance(setup.resolver.token_source, TokenExchangeBridge)
         assert setup.mcp_summary == f'issuer ({ISSUER})'
 
     def test_verifier_audience_is_the_gateway_not_the_upstream(self):
@@ -98,8 +99,8 @@ class TestTokenExchangeFlowHandler:
         assert isinstance(setup.verifier, McpExternalIssuerTokenVerifier)
         assert setup.verifier.required_scopes == ('mcp.access',)
         assert isinstance(setup.resolver, UpstreamTokenSourceAuthResolver)
-        assert isinstance(setup.resolver._token_source, TokenExchangeBridge)
-        assert setup.resolver._token_source._ceiling == ['email', 'profile']
+        assert isinstance(setup.resolver.token_source, TokenExchangeBridge)
+        assert setup.resolver.token_source.ceiling == ['email', 'profile']
 
     def test_advertised_scopes_are_the_ones_a_caller_must_hold(self):
         """RFC 9728 ``scopes_supported`` tells a client what to register for, so it is the inbound set.
@@ -139,7 +140,7 @@ class TestTokenExchangeBridge:
         """The token the transport verified is what reaches the issuer's token endpoint."""
         upstream = _exchange_client(UpstreamExchangedToken('upstream-token', ()))
 
-        with authenticated_as(_caller(['pets:read'])):
+        with authenticated_as(_caller(['products:read'])):
             token = await _bridge(upstream).get_token()
 
         assert token == 'upstream-token'
@@ -157,7 +158,11 @@ class TestTokenExchangeBridge:
 
     @pytest.mark.parametrize(
         ('mcp_scopes', 'asked'),
-        [(['pets:read'], ['read:pets']), (['pets:delete'], ['read:pets', 'write:pets']), (['openid'], [])],
+        [
+            (['products:read'], ['read:products']),
+            (['products:delete'], ['read:products', 'write:products']),
+            (['openid'], []),
+        ],
     )
     async def test_each_exchange_asks_for_what_the_callers_mcp_scopes_open(self, mcp_scopes, asked):
         """An exchange asks the issuer for no more than a sign-in under the same MCP scopes would."""
@@ -169,13 +174,13 @@ class TestTokenExchangeBridge:
         upstream.exchange.assert_awaited_once_with('caller-token', asked)
 
     async def test_the_call_grant_is_what_the_exchange_granted(self):
-        upstream = _exchange_client(UpstreamExchangedToken('upstream-token', ('read:pets',)))
+        upstream = _exchange_client(UpstreamExchangedToken('upstream-token', ('read:products',)))
 
-        with authenticated_as(_caller(['pets:read'])):
+        with authenticated_as(_caller(['products:read'])):
             grant = await _bridge(upstream).read_call_grant()
 
-        assert grant.mcp_scopes == {'pets:read'}
-        assert grant.upstream_scopes == {'read:pets'}
+        assert grant.mcp_scopes == {'products:read'}
+        assert grant.upstream_scopes == {'read:products'}
 
     async def test_a_refused_exchange_leaves_the_grant_unavailable_for_the_issuers_reason(self):
         """An issuer that will not grant every scope may refuse the whole exchange, as Keycloak does."""
@@ -183,7 +188,7 @@ class TestTokenExchangeBridge:
         upstream.exchange = AsyncMock(side_effect=UpstreamTokenExchangeRefusedError('refused (invalid_scope)'))
 
         with (
-            authenticated_as(_caller(['pets:write'])),
+            authenticated_as(_caller(['products:write'])),
             pytest.raises(UpstreamGrantUnavailableError, match='invalid_scope'),
         ):
             await _bridge(upstream).read_call_grant()
@@ -199,7 +204,7 @@ class TestTokenExchangeBridge:
         upstream.exchange = AsyncMock(side_effect=failure)
 
         with (
-            authenticated_as(_caller(['pets:write'])),
+            authenticated_as(_caller(['products:write'])),
             pytest.raises(UpstreamGrantUnavailableError) as raised,
         ):
             await _bridge(upstream).read_call_grant()
@@ -208,18 +213,19 @@ class TestTokenExchangeBridge:
 
     async def test_a_call_grant_and_its_token_share_one_exchange(self):
         """The grant is read before the call and the token on it, and the exchange client serves both from one answer."""
-        upstream = UpstreamTokenExchangeClient(token_endpoint=TOKEN_URL, client_id='gateway', client_secret='secret')
-        response = MagicMock(status_code=200)
-        response.json.return_value = {'access_token': 'upstream-token', 'scope': 'read:pets', 'expires_in': 3600}
-        upstream._http_client = MagicMock()
-        upstream._http_client.post = AsyncMock(return_value=response)
+        endpoint = TokenEndpoint(
+            httpx.Response(200, json={'access_token': 'upstream-token', 'scope': 'read:products', 'expires_in': 3600})
+        )
+        upstream = UpstreamTokenExchangeClient(
+            token_endpoint=TOKEN_URL, client_id='gateway', client_secret='secret', transport=endpoint
+        )
         bridge = _bridge(upstream)
 
-        with authenticated_as(_caller(['pets:read'])):
+        with authenticated_as(_caller(['products:read'])):
             await bridge.read_call_grant()
             await bridge.get_token()
 
-        upstream._http_client.post.assert_awaited_once()
+        assert len(endpoint.forms) == 1
 
 
 def _token_exchange_entry(**overrides) -> ServerConfig:
@@ -259,7 +265,7 @@ def _build_token_exchange(entry: ServerConfig):
 
 
 def _bridge(upstream: typing.Any) -> TokenExchangeBridge:
-    """A bridge over the secured petstore, whose ceiling is every scope its operations declare."""
+    """A bridge over the secured shop, whose ceiling is every scope its operations declare."""
     return TokenExchangeBridge(upstream, secured_registry(), SECURED_CEILING, [])
 
 

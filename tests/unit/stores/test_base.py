@@ -90,23 +90,20 @@ class TestStoreTTL:
             result = await memory_store.get('ns', 'key')
         assert result is None
 
-    async def test_redis_sets_the_key_ttl(self, redis_store):
-        """Redis store sets the underlying key TTL (``-1`` when omitted)."""
+    async def test_redis_sets_the_key_ttl(self, redis_store, fake_redis):
+        """Redis store sets the underlying key TTL (``-1`` when omitted), on a key under its prefix."""
         await redis_store.set('ns', 'key', 'data', ttl=60)
-        full_key = redis_store._key('ns', 'key')
-        ttl = await redis_store._redis.ttl(full_key)
-        assert ttl > 0
+        assert await fake_redis.ttl('test:ns:key') > 0
 
         await redis_store.set('ns', 'key2', 'data')
-        ttl_no_expiry = await redis_store._redis.ttl(redis_store._key('ns', 'key2'))
-        assert ttl_no_expiry == -1
+        assert await fake_redis.ttl('test:ns:key2') == -1
 
     async def test_set_without_ttl_removes_expiry(self, memory_store):
-        """Re-setting a key without TTL clears any previous expiry record."""
+        """Re-setting a key without TTL clears any previous expiry, so the key outlives the old TTL."""
         await memory_store.set('ns', 'key', 'data', ttl=10)
         await memory_store.set('ns', 'key', 'data2')
-        full_key = 'ns:key'
-        assert full_key not in memory_store._expiry
+        with patch('time.time', return_value=time.time() + 20):
+            assert await memory_store.get('ns', 'key') == 'data2'
 
 
 class TestStoreMapping:
@@ -146,8 +143,8 @@ class TestStoreClose:
         await memory_store.close()
         assert await memory_store.get('ns', 'key') is None
 
-    async def test_close_redis(self, redis_store):
+    async def test_close_redis(self, redis_store, fake_redis):
         """Closing the Redis store closes its connection."""
-        with patch.object(redis_store._redis, 'aclose', AsyncMock()) as aclose:
+        with patch.object(fake_redis, 'aclose', AsyncMock()) as aclose:
             await redis_store.close()
         aclose.assert_awaited_once()

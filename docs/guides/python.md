@@ -14,13 +14,15 @@ from openapi_mcp_gateway import Gateway
 
 gateway = Gateway()
 gateway.add_server(
-    name="petstore",
-    spec="https://petstore3.swagger.io/api/v3/openapi.json",
+    name="pokeapi",
+    spec="https://pokeapi.co/openapi.yml",
 )
 gateway.add_server(
     name="github",
     spec="./github-openapi.json",
-    auth={"upstream": {"type": "bearer", "token": "${GITHUB_TOKEN}"}},
+    security_schemes={"token": {"type": "http", "scheme": "bearer"}},
+    security=[{"token": []}],
+    auth={"upstream": {"credentials": {"token": {"value": "${GITHUB_TOKEN}"}}}},
     policy={"allow": ["GET /repos/*"]},
 )
 gateway.run(port=8000)
@@ -100,6 +102,8 @@ The gateway reads the app's `securitySchemes` to choose upstream auth.
 - **No OAuth Flow**: `auth.upstream.type` stays `none`.
 - **Explicit `auth`**: an `AuthConfig` with credentials makes the gateway obtain its own upstream tokens instead.
 
+The app checks its own security in process, so a route whose scheme the gateway cannot meet, such as a key in the query, is still served, and the app refuses a call that lacks the key.
+
 [Architecture](../concepts/architecture.md#token-forwarding-policy) explains why `passthrough` belongs to this case only.
 
 ## Mounting Into an Existing App
@@ -116,7 +120,7 @@ gateway = Gateway.from_config(
     GatewayConfig(
         # The public URL, used for discovery and redirect URLs.
         url="https://your-app.example.com",
-        servers=[ServerConfig(name="petstore", spec="petstore.json")],
+        servers=[ServerConfig(name="shop", spec="shop.json")],
     )
 )
 
@@ -128,7 +132,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-# Mounts /petstore/mcp plus its OAuth and .well-known routes.
+# Mounts /shop/mcp plus its OAuth and .well-known routes.
 gateway.mount(app)
 ```
 

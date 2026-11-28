@@ -159,3 +159,14 @@ class Browser:
         return AuthorizationCodeResult(
             code=parameters['code'], state=parameters.get('state'), iss=parameters.get('iss')
         )
+
+
+async def list_tool_names(endpoint: str, auth: httpx2.Auth) -> list[str]:
+    """The tools an MCP client signed in through ``auth`` sees at ``endpoint``."""
+    async with connect(endpoint, auth) as client:
+        return [tool.name for tool in (await client.list_tools()).tools]
+
+
+def agent_auth(endpoint: str) -> httpx2.Auth:
+    """The client_credentials sign-in of the agent ``tests.oauth.shared_credential_server`` declares."""
+    return client_credentials_auth(endpoint, 'agent', 'agent-secret', 'products:read')

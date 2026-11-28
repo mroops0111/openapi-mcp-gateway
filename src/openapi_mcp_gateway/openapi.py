@@ -52,6 +52,14 @@ _DEFAULT_STYLES = {'path': 'simple', 'query': 'form', 'header': 'simple', 'cooki
 # A new style is a new entry here and a new ``QuerySerializer`` in ``exposure/_query_string.py``.
 _SENDABLE_QUERY_STYLES = frozenset({'form'})
 
+# The OpenAPI 3 name of each Swagger 2.0 OAuth flow.
+_SWAGGER_OAUTH_FLOWS = {
+    'implicit': 'implicit',
+    'password': 'password',
+    'application': 'clientCredentials',
+    'accessCode': 'authorizationCode',
+}
+
 # Whatever ``_distinct`` dedupes, kept as the type it returns.
 _Item = typing.TypeVar('_Item')
 
@@ -509,7 +517,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
     """
     info = raw.get('info', {})
     servers = _resolve_relative_servers(raw.get('servers', []), source)
-    security_schemes = raw.get('components', {}).get('securitySchemes', {})
+    security_schemes = _security_schemes(raw)
     global_security = raw.get('security', [])
 
     operations: list[OperationInfo] = []
@@ -541,7 +549,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
             blocking_parameter: tuple[str, str] | None = None
             for raw_parameter in operation.get('parameters', []) + path_item.get('parameters', []):
                 if '$ref' in raw_parameter:
-                    raw_parameter = _resolve_ref(raw, raw_parameter['$ref'])
+                    raw_parameter = resolve_ref(raw, raw_parameter['$ref'])
                 location = raw_parameter.get('in', 'query')
                 if not raw_parameter.get('name'):
                     # A parameter with no name cannot be sent, and would otherwise break the tool's signature.
@@ -556,7 +564,7 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
                     location=location,
                     required=raw_parameter.get('required', False),
                     description=raw_parameter.get('description', ''),
-                    schema=_expand_schema(raw, raw_parameter.get('schema', {}), defs),
+                    schema=expand_schema(raw, raw_parameter.get('schema', {}), defs),
                     declared_style=raw_parameter.get('style'),
                     declared_explode=raw_parameter.get('explode'),
                 )
@@ -582,11 +590,11 @@ def parse_spec(raw: dict[str, typing.Any], source: str | None = None) -> OpenAPI
 
             request_body = operation.get('requestBody', {})
             if '$ref' in request_body:
-                request_body = _resolve_ref(raw, request_body['$ref'])
+                request_body = resolve_ref(raw, request_body['$ref'])
             if request_body and method in ('post', 'put', 'patch'):
                 content = request_body.get('content', {}).get('application/json', {})
                 # The body is split into one parameter per property, so its own root reference is resolved in place.
-                schema = _expand_inline(raw, content.get('schema', {}), defs)
+                schema = expand_inline(raw, content.get('schema', {}), defs)
 
                 if _declares_object_properties(schema):
                     required_props = schema.get('required', [])
@@ -671,11 +679,7 @@ def reference_siblings(schema: dict[str, typing.Any]) -> dict[str, typing.Any]:
     return {key: value for key, value in schema.items() if key != '$ref'}
 
 
-def _load_yaml(text: str) -> typing.Any:
-    return yaml.load(text, Loader=_YAML_LOADER)  # noqa: S506  # Both loaders are the safe variants.
-
-
-def _resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:
+def resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:
     """Resolve a ``#/foo/bar`` JSON Pointer into ``raw``, returning ``{}`` if missing or not a mapping."""
     parts = ref.lstrip('#/').split('/')
     node = raw
@@ -684,6 +688,89 @@ def _resolve_ref(raw: dict[str, typing.Any], ref: str) -> dict[str, typing.Any]:
             return {}
         node = node[part]
     return node if isinstance(node, dict) else {}
+
+
+def expand_inline(
+    raw: dict[str, typing.Any],
+    schema: dict[str, typing.Any],
+    defs: dict[str, dict[str, typing.Any]],
+    expanding: frozenset[str] = frozenset(),
+) -> dict[str, typing.Any]:
+    """Expand ``schema`` like ``expand_schema``, but resolve a ``$ref`` at its root in place.
+
+    This serves the places a reference cannot stand, which are an ``allOf`` branch, merged key by key,
+    a request body, whose properties become parameters, and a component's own ``$defs`` entry.
+    References below the root still become ``$defs`` references.
+
+    ``expanding`` holds the pointers resolved in place on the current path, and callers leave it empty.
+    Re-entering one means the schema can only be described by inlining itself, so that branch is truncated.
+    The set is passed down rather than mutated, so it holds only the current path.
+    """
+    if '$ref' not in schema:
+        return expand_schema(raw, schema, defs, expanding)
+    pointer = schema['$ref']
+    resolved = resolve_ref(raw, pointer)
+    if pointer in expanding:
+        expanded = _truncate_at_cycle(resolved)
+    else:
+        expanded = expand_inline(raw, resolved, defs, expanding | {pointer})
+    siblings = reference_siblings(schema)
+    if not siblings:
+        return expanded
+    return merge_schemas(expanded, expand_schema(raw, siblings, defs, expanding), defs)
+
+
+def expand_schema(
+    raw: dict[str, typing.Any],
+    schema: dict[str, typing.Any],
+    defs: dict[str, dict[str, typing.Any]],
+    expanding: frozenset[str] = frozenset(),
+) -> dict[str, typing.Any]:
+    """Expand a JSON Schema fragment into the form the gateway advertises.
+
+    A ``$ref`` to a component schema stays a reference, rewritten to ``#/$defs/<Name>``,
+    and the component itself is expanded once into ``defs`` under its name.
+    Keywords beside the reference, which OpenAPI 3.1 allows, are kept beside it, since they describe this use.
+    So one shape reached through several paths can be described once rather than once per path,
+    and a component that refers to itself needs no truncation, since the reference stops at its own entry.
+    Whether an entry is advertised under ``$defs`` or inlined back is decided per tool, by ``build_input_schema``.
+    Any other ``$ref`` is resolved in place.
+
+    ``allOf`` is flattened via ``merge_schemas``, opening a reference wherever two branches meet on it,
+    then every nested-schema keyword is recursed into so a construct buried at any depth is expanded too,
+    and finally OpenAPI 3.0 keywords are rewritten into their JSON Schema 2020-12 equivalents.
+    Recursion keys off each keyword's presence rather than off ``type``,
+    since ``type`` is optional and a fragment may carry ``properties`` or ``items`` without declaring it.
+
+    ``defs`` is shared across a whole spec, so each component is expanded once however many operations reach it.
+    """
+    if '$ref' in schema:
+        name = _component_name(schema['$ref'])
+        if name is None:
+            return expand_inline(raw, schema, defs, expanding)
+        if name not in defs:
+            # Reserve the entry first, so a reference back into the component while it expands stops here.
+            defs[name] = _EXPANDING
+            # A component is a document of its own, so the in-place path of whoever reached it does not carry over.
+            defs[name] = expand_inline(raw, {'$ref': schema['$ref']}, defs)
+        reference = {'$ref': DEFS_REF_PREFIX + name}
+        siblings = reference_siblings(schema)
+        if not siblings:
+            return reference
+        return {**reference, **expand_schema(raw, siblings, defs, expanding)}
+
+    if 'allOf' in schema:
+        merged: dict[str, typing.Any] = {}
+        for branch in schema['allOf']:
+            merged = merge_schemas(merged, expand_inline(raw, branch, defs, expanding), defs)
+        return merged
+
+    result = map_subschemas(schema, lambda subschema: expand_schema(raw, subschema, defs, expanding))
+    return _normalize_to_2020_12(result)
+
+
+def _load_yaml(text: str) -> typing.Any:
+    return yaml.load(text, Loader=_YAML_LOADER)  # noqa: S506  # Both loaders are the safe variants.
 
 
 def _open_reference(
@@ -779,89 +866,10 @@ def _component_name(pointer: str) -> str | None:
     return name if _COMPONENT_NAME.match(name) else None
 
 
-def _expand_inline(
-    raw: dict[str, typing.Any],
-    schema: dict[str, typing.Any],
-    defs: dict[str, dict[str, typing.Any]],
-    expanding: frozenset[str] = frozenset(),
-) -> dict[str, typing.Any]:
-    """Expand ``schema`` like ``_expand_schema``, but resolve a ``$ref`` at its root in place.
-
-    This serves the places a reference cannot stand, which are an ``allOf`` branch, merged key by key,
-    a request body, whose properties become parameters, and a component's own ``$defs`` entry.
-    References below the root still become ``$defs`` references.
-
-    ``expanding`` holds the pointers resolved in place on the current path, and callers leave it empty.
-    Re-entering one means the schema can only be described by inlining itself, so that branch is truncated.
-    The set is passed down rather than mutated, so it holds only the current path.
-    """
-    if '$ref' not in schema:
-        return _expand_schema(raw, schema, defs, expanding)
-    pointer = schema['$ref']
-    resolved = _resolve_ref(raw, pointer)
-    if pointer in expanding:
-        expanded = _truncate_at_cycle(resolved)
-    else:
-        expanded = _expand_inline(raw, resolved, defs, expanding | {pointer})
-    siblings = reference_siblings(schema)
-    if not siblings:
-        return expanded
-    return merge_schemas(expanded, _expand_schema(raw, siblings, defs, expanding), defs)
-
-
-def _expand_schema(
-    raw: dict[str, typing.Any],
-    schema: dict[str, typing.Any],
-    defs: dict[str, dict[str, typing.Any]],
-    expanding: frozenset[str] = frozenset(),
-) -> dict[str, typing.Any]:
-    """Expand a JSON Schema fragment into the form the gateway advertises.
-
-    A ``$ref`` to a component schema stays a reference, rewritten to ``#/$defs/<Name>``,
-    and the component itself is expanded once into ``defs`` under its name.
-    Keywords beside the reference, which OpenAPI 3.1 allows, are kept beside it, since they describe this use.
-    So one shape reached through several paths can be described once rather than once per path,
-    and a component that refers to itself needs no truncation, since the reference stops at its own entry.
-    Whether an entry is advertised under ``$defs`` or inlined back is decided per tool, by ``build_input_schema``.
-    Any other ``$ref`` is resolved in place.
-
-    ``allOf`` is flattened via ``merge_schemas``, opening a reference wherever two branches meet on it,
-    then every nested-schema keyword is recursed into so a construct buried at any depth is expanded too,
-    and finally OpenAPI 3.0 keywords are rewritten into their JSON Schema 2020-12 equivalents.
-    Recursion keys off each keyword's presence rather than off ``type``,
-    since ``type`` is optional and a fragment may carry ``properties`` or ``items`` without declaring it.
-
-    ``defs`` is shared across a whole spec, so each component is expanded once however many operations reach it.
-    """
-    if '$ref' in schema:
-        name = _component_name(schema['$ref'])
-        if name is None:
-            return _expand_inline(raw, schema, defs, expanding)
-        if name not in defs:
-            # Reserve the entry first, so a reference back into the component while it expands stops here.
-            defs[name] = _EXPANDING
-            # A component is a document of its own, so the in-place path of whoever reached it does not carry over.
-            defs[name] = _expand_inline(raw, {'$ref': schema['$ref']}, defs)
-        reference = {'$ref': DEFS_REF_PREFIX + name}
-        siblings = reference_siblings(schema)
-        if not siblings:
-            return reference
-        return {**reference, **_expand_schema(raw, siblings, defs, expanding)}
-
-    if 'allOf' in schema:
-        merged: dict[str, typing.Any] = {}
-        for branch in schema['allOf']:
-            merged = merge_schemas(merged, _expand_inline(raw, branch, defs, expanding), defs)
-        return merged
-
-    result = map_subschemas(schema, lambda subschema: _expand_schema(raw, subschema, defs, expanding))
-    return _normalize_to_2020_12(result)
-
-
 def _declares_object_properties(schema: dict[str, typing.Any]) -> bool:
     """Report whether ``schema`` is an object whose ``properties`` become body parameters.
 
-    Keying off ``properties`` rather than ``type`` matches ``_expand_schema``, since ``type`` is optional,
+    Keying off ``properties`` rather than ``type`` matches ``expand_schema``, since ``type`` is optional,
     and normalization turns a nullable object into ``{type: ["object", "null"]}``,
     so an equality test against ``"object"`` would drop every body field of an optional request.
     A declared non-object ``type`` still wins.
@@ -897,7 +905,7 @@ def _success_response_schema(raw: dict[str, typing.Any], operation: dict[str, ty
             continue
         response = responses[status]
         if '$ref' in response:
-            response = _resolve_ref(raw, response['$ref'])
+            response = resolve_ref(raw, response['$ref'])
         for media_type, content in response.get('content', {}).items():
             if 'json' in media_type and isinstance(content, dict):
                 return content.get('schema', {})
@@ -920,7 +928,7 @@ class _ResponseMediaBuilder:
         self._reaching_or_aliased = self._with_aliased(raw, self._reaching)
         components: dict[str, _MediaNode] = {}
         for reference in self._reaching_or_aliased:
-            node = self._node(_resolve_ref(raw, reference), component=True)
+            node = self._node(resolve_ref(raw, reference), component=True)
             if node is not None:
                 components[reference] = node
         self._components = types.MappingProxyType(components)
@@ -1004,7 +1012,7 @@ class _ResponseMediaBuilder:
             reference = pending.pop()
             if reference in graph:
                 continue
-            references, holds_base64 = _references_and_base64(_resolve_ref(raw, reference))
+            references, holds_base64 = _references_and_base64(resolve_ref(raw, reference))
             references |= beside.get(reference, set())
             graph[reference] = (references, holds_base64 or reference in base64_beside)
             pending.extend(references - graph.keys())
@@ -1020,7 +1028,7 @@ class _ResponseMediaBuilder:
         kept = set(references)
         pending = list(references)
         while pending:
-            alias = _resolve_ref(raw, pending.pop()).get('$ref')
+            alias = resolve_ref(raw, pending.pop()).get('$ref')
             if isinstance(alias, str) and alias not in kept:
                 kept.add(alias)
                 pending.append(alias)
@@ -1115,3 +1123,31 @@ def _resolve_relative_servers(servers: list[dict[str, typing.Any]], source: str 
         else:
             resolved.append(server)
     return resolved
+
+
+def _security_schemes(raw: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """The document's security schemes in the OpenAPI 3 shape, whichever version declares them.
+
+    Swagger 2.0 declares them under ``securityDefinitions`` and spells two of them differently,
+    so each is rewritten as OpenAPI 3 has it.
+    A scheme under ``components.securitySchemes`` wins over one of the same name, which is how a config override lands.
+    """
+    definitions = raw.get('securityDefinitions', {})
+    converted = {
+        name: _security_scheme_from_swagger(definition)
+        for name, definition in definitions.items()
+        if isinstance(definition, dict)
+    }
+    return {**converted, **raw.get('components', {}).get('securitySchemes', {})}
+
+
+def _security_scheme_from_swagger(definition: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """One Swagger 2.0 security definition as the OpenAPI 3 security scheme it stands for."""
+    scheme_type = definition.get('type')
+    if scheme_type == 'basic':
+        return {'type': 'http', 'scheme': 'basic'}
+    if scheme_type == 'oauth2':
+        flow_name = _SWAGGER_OAUTH_FLOWS.get(definition.get('flow', ''))
+        flow = {key: definition[key] for key in ('authorizationUrl', 'tokenUrl', 'scopes') if key in definition}
+        return {'type': 'oauth2', 'flows': {flow_name: flow} if flow_name else {}}
+    return definition

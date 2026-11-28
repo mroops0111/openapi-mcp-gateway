@@ -14,7 +14,6 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.types import TextContent
 
-from openapi_mcp_gateway import Gateway
 from openapi_mcp_gateway.exposure import (
     MetaToolGenerator,
     ToolGenerator,
@@ -22,18 +21,16 @@ from openapi_mcp_gateway.exposure import (
     build_input_schema,
     derive_description,
     derive_name,
-)
-from openapi_mcp_gateway.exposure._shaping import shape_operation
-from openapi_mcp_gateway.exposure._shared import (
     sanitize_name,
     schema_to_python_type,
+    shape_operation,
 )
-from openapi_mcp_gateway.exposure.tool import _build_tool_signature
+from openapi_mcp_gateway.exposure.tool import build_tool_signature
 from openapi_mcp_gateway.openapi import McpIntegration, OperationInfo, ParamOverride, ToolOverride, parse_spec
 from openapi_mcp_gateway.scopes import UpstreamNoGrantSource
 from tests.constants import API_URL
 from tests.operation import expose_resource
-from tests.spec import component_ref, defs_ref, operation_spec, write_spec
+from tests.spec import component_ref, defs_ref, operation_spec, shared_component_spec
 
 
 # The ``$defs`` key grammar Anthropic's API accepts in a tool input schema,
@@ -45,7 +42,7 @@ _PROVIDER_DEFS_KEY = re.compile(r'^[a-zA-Z0-9_.-]{1,64}$')
 _COLLIDING_NAMES_ARGUMENTS = {
     'owner': {'name': 'n'},
     'keeper': {'title': 't'},
-    'pet': {'tag': {'label': 'l'}},
+    'product': {'tag': {'label': 'l'}},
     'badge': {'code': 'c'},
     'tags': [{'label': 'l'}],
     'marker': {'slot': 's'},
@@ -194,47 +191,6 @@ class TestSchemaToPythonType:
         assert json_schema['properties']['name']['description'] == 'Display name.'
 
 
-class TestExposedToolDetail:
-    """A caller deciding what to expose reads the same contract the model is given."""
-
-    def test_the_description_is_the_one_the_model_receives(self, petstore_json_path):
-        """Reporting anything else would let the preview and the served tool disagree."""
-        gateway = Gateway()
-        gateway.add_server(name='pets', spec=str(petstore_json_path))
-        tool = next(t for t in gateway.describe_servers()[0].tools if t.name == 'get_pet_by_id')
-
-        assert tool.description
-        assert tool.description != tool.name
-
-    def test_the_schema_is_the_advertised_one_rather_than_a_copy(self, petstore_json_path):
-        """A second representation is a second thing to keep in step, so there is only one."""
-        gateway = Gateway()
-        gateway.add_server(name='pets', spec=str(petstore_json_path))
-        bundle = gateway.describe_servers()[0]
-        tool = next(t for t in bundle.tools if t.name == 'get_pet_by_id')
-        operation = next(o for o in bundle.spec.operations if o.operation_id == 'getPetById')
-
-        assert tool.input_schema == build_input_schema(operation)
-
-    def test_a_nested_body_keeps_its_shape(self, tmp_path):
-        """Flattening body properties into a list loses exactly what a reviewer needs.
-
-        A summary that reports ``priority: string`` cannot answer what the model may send.
-        The answer lives below the top level, in an enum, a default, a pattern and a numeric bound.
-        """
-        spec = write_spec(tmp_path, _nested_body_spec())
-        gateway = Gateway()
-        gateway.add_server(name='o', spec=str(spec))
-        schema = gateway.describe_servers()[0].tools[0].input_schema
-
-        assert schema is not None
-        assert schema['properties']['priority']['enum'] == ['low', 'normal', 'rush']
-        assert schema['properties']['priority']['default'] == 'normal'
-        assert schema['properties']['customer']['properties']['id']['type'] == 'integer'
-        assert schema['properties']['items']['items']['properties']['qty']['minimum'] == 1
-        assert schema['required'] == ['customer']
-
-
 class TestAdvertisedSchema:
     """What ``build_input_schema`` advertises when a component is reached more than once."""
 
@@ -318,27 +274,6 @@ class TestAdvertisedSchema:
         assert 'tree' not in schema['properties']
         assert set(schema['$defs']) == {'SourceReference'}
 
-    def test_a_tool_without_repetition_has_no_defs(self, petstore_json_path):
-        """A spec with no shape reached twice advertises the fully inlined schema, unchanged from before."""
-        gateway = Gateway()
-        gateway.add_server(name='pets', spec=str(petstore_json_path))
-
-        for tool in gateway.describe_servers()[0].tools:
-            assert tool.input_schema is not None
-            assert '$defs' not in tool.input_schema
-            assert '$ref' not in json.dumps(tool.input_schema)
-
-    def test_the_dry_run_summary_shows_the_advertised_form(self, tmp_path):
-        """``describe()`` reports the same ``$defs`` form a client receives, not an expanded copy."""
-        spec = write_spec(tmp_path, _shared_component_spec())
-        gateway = Gateway()
-        gateway.add_server(name='p', spec=str(spec))
-
-        schema = gateway.describe()['servers'][0]['tools'][0]['input_schema']
-
-        assert schema['properties']['payload'] == defs_ref('SourceReference')
-        assert set(schema['$defs']) == {'SourceReference', 'Node'}
-
     def test_defs_keys_fit_what_providers_accept(self):
         """Component names past 64 characters still advertise keys a strict client passes on, one per component.
 
@@ -403,7 +338,7 @@ class TestGeneratedModels:
 
     def test_one_model_per_component_within_a_tool(self):
         """Every path to a component maps to the same generated class, namespaced by the operation."""
-        signature, _ = _build_tool_signature(_operation())
+        signature, _ = build_tool_signature(_operation())
 
         payload_type = signature.parameters['payload'].annotation
         payloads_type = typing.get_args(typing.get_args(signature.parameters['payloads'].annotation)[0])[0]
@@ -412,7 +347,7 @@ class TestGeneratedModels:
 
     def test_a_recursive_component_is_its_own_field_type(self):
         """``Node.children`` holds ``Node`` itself, so every level is parsed the same way rather than as ``Any``."""
-        signature, _ = _build_tool_signature(_operation())
+        signature, _ = build_tool_signature(_operation())
 
         node = _model(signature.parameters['tree'].annotation)
 
@@ -421,7 +356,7 @@ class TestGeneratedModels:
     @pytest.mark.parametrize('property_order', [('root', 'branch'), ('branch', 'root')])
     def test_mutually_recursive_components_refer_to_each_other(self, property_order):
         """Which property reaches the cycle first does not decide which field degrades to ``Any``."""
-        signature, _ = _build_tool_signature(_operation(_mutual_recursion_spec(property_order)))
+        signature, _ = build_tool_signature(_operation(_mutual_recursion_spec(property_order)))
 
         a = _model(signature.parameters['root'].annotation)
         b = _model(signature.parameters['branch'].annotation)
@@ -445,7 +380,7 @@ class TestGeneratedModels:
 
         Two same-named models in one signature leave pydantic to disambiguate them with module-qualified keys.
         """
-        signature, _ = _build_tool_signature(_operation(_colliding_names_spec()))
+        signature, _ = build_tool_signature(_operation(_colliding_names_spec()))
 
         models = _generated_models(signature)
         names = collections.Counter(model.__name__ for model in models)
@@ -458,7 +393,7 @@ class TestGeneratedModels:
         operation = _operation(_colliding_names_spec())
 
         async with Client(_register(operation)) as client:
-            result = await client.call_tool('create_pet', _COLLIDING_NAMES_ARGUMENTS)
+            result = await client.call_tool('create_product', _COLLIDING_NAMES_ARGUMENTS)
 
         assert result.is_error is False
         assert _upstream_body(upstream_requests) == _COLLIDING_NAMES_ARGUMENTS
@@ -561,22 +496,22 @@ class TestDeriveNameWithResourceOverride:
     def test_default_from_operation_id(self):
         """With no override, the name is the underscored, sanitised ``operationId``."""
         operation = OperationInfo(
-            operation_id='getPet',
+            operation_id='getProduct',
             method='get',
-            path='/pets/{petId}',
+            path='/products/{productId}',
             x_mcp_integration=expose_resource(),
         )
-        assert derive_name(operation, _resource_override_name(operation)) == 'get_pet'
+        assert derive_name(operation, _resource_override_name(operation)) == 'get_product'
 
     def test_override_wins(self):
         """An explicit ``name`` override on the resource opt-in replaces the default."""
         operation = OperationInfo(
-            operation_id='getPet',
+            operation_id='getProduct',
             method='get',
-            path='/pets/{petId}',
-            x_mcp_integration=expose_resource(name='pet'),
+            path='/products/{productId}',
+            x_mcp_integration=expose_resource(name='product'),
         )
-        assert derive_name(operation, _resource_override_name(operation)) == 'pet'
+        assert derive_name(operation, _resource_override_name(operation)) == 'product'
 
 
 class TestDeriveDescriptionWithResourceOverride:
@@ -585,109 +520,39 @@ class TestDeriveDescriptionWithResourceOverride:
     def test_default_from_description(self):
         """The OpenAPI ``description`` is used when set and the override is absent."""
         operation = OperationInfo(
-            operation_id='getPet',
+            operation_id='getProduct',
             method='get',
-            path='/pets/{petId}',
-            description='Fetch one pet.',
+            path='/products/{productId}',
+            description='Fetch one product.',
             x_mcp_integration=expose_resource(),
         )
-        assert derive_description(operation, _resource_override_description(operation)) == 'Fetch one pet.'
+        assert derive_description(operation, _resource_override_description(operation)) == 'Fetch one product.'
 
     def test_fallback_to_method_path(self):
         """Without description or summary, fall back to ``METHOD /path``."""
         operation = OperationInfo(
-            operation_id='getPet',
+            operation_id='getProduct',
             method='get',
-            path='/pets/{petId}',
+            path='/products/{productId}',
             x_mcp_integration=expose_resource(),
         )
-        assert derive_description(operation, _resource_override_description(operation)) == 'GET /pets/{petId}'
+        assert derive_description(operation, _resource_override_description(operation)) == 'GET /products/{productId}'
 
     def test_override_wins(self):
         """An explicit ``description`` override on the resource opt-in replaces the default."""
         operation = OperationInfo(
-            operation_id='getPet',
+            operation_id='getProduct',
             method='get',
-            path='/pets/{petId}',
-            description='Fetch one pet.',
+            path='/products/{productId}',
+            description='Fetch one product.',
             x_mcp_integration=expose_resource(description='Custom blurb.'),
         )
         assert derive_description(operation, _resource_override_description(operation)) == 'Custom blurb.'
 
 
-def _nested_body_spec() -> dict:
-    return operation_spec(
-        operation_id='createOrder',
-        path='/orders',
-        version='3.0.0',
-        body={
-            'type': 'object',
-            'required': ['customer'],
-            'properties': {
-                'customer': {'type': 'object', 'properties': {'id': {'type': 'integer'}}},
-                'items': {
-                    'type': 'array',
-                    'items': {'type': 'object', 'properties': {'qty': {'type': 'integer', 'minimum': 1}}},
-                },
-                'priority': {'type': 'string', 'enum': ['low', 'normal', 'rush'], 'default': 'normal'},
-            },
-        },
-    )
-
-
 def _object(*fields: str) -> dict:
     """An object schema with one string property per name in ``fields``."""
     return {'type': 'object', 'properties': {field: {'type': 'string'} for field in fields}}
-
-
-def _shared_component_spec() -> dict:
-    """A body reaching ``SourceReference`` through three paths, plus a single-use and a recursive component."""
-    source_reference = component_ref('SourceReference')
-    return operation_spec(
-        operation_id='createProposal',
-        path='/proposals',
-        parameters=[
-            {
-                'name': 'status',
-                'in': 'query',
-                'description': 'Status to file the proposal under.',
-                'schema': component_ref('Status'),
-            }
-        ],
-        body=component_ref('ProposalInput'),
-        schemas={
-            'SourceReference': {
-                'type': 'object',
-                'required': ['sourceId'],
-                'properties': {
-                    'sourceId': {'type': 'string', 'description': 'Id of a source the workspace has registered.'},
-                    'line': {'type': 'integer', 'minimum': 1, 'description': 'First line covered, counted from 1.'},
-                },
-            },
-            'Patch': {'type': 'object', 'properties': {'sources': {'type': 'array', 'items': source_reference}}},
-            'Label': {'type': 'object', 'description': 'A label.', 'properties': {'text': {'type': 'string'}}},
-            'Node': {
-                'type': 'object',
-                'required': ['label'],
-                'properties': {
-                    'label': {'type': 'string'},
-                    'children': {'type': 'array', 'items': component_ref('Node')},
-                },
-            },
-            'Status': {'type': 'string', 'enum': ['open', 'closed']},
-            'ProposalInput': {
-                'type': 'object',
-                'required': ['payload'],
-                'properties': {
-                    'payload': source_reference,
-                    'payloads': {'type': 'array', 'items': source_reference},
-                    'patch': component_ref('Patch'),
-                    'label': component_ref('Label'),
-                    'tree': component_ref('Node'),
-                },
-            },
-        },
-    )
 
 
 def _extended_body_spec(*, person_shared: bool) -> dict:
@@ -746,22 +611,22 @@ def _extended_body_spec(*, person_shared: bool) -> dict:
 def _colliding_names_spec() -> dict:
     """A body whose properties and components all map onto a handful of generated model names.
 
-    Each pair below lands on the same ``CreatePet…`` class name under a naive scheme.
+    Each pair below lands on the same ``CreateProduct…`` class name under a naive scheme.
     They are an inline object and a component of the same name,
     an inline nested object and a component named after its path, the same for array items and ``anyOf`` variants,
     two nesting paths that camelize alike, two property spellings of one word,
     and five component spellings OpenAPI allows of one name.
     """
     return operation_spec(
-        operation_id='createPet',
-        path='/pets',
+        operation_id='createProduct',
+        path='/products',
         body={
             'type': 'object',
             'properties': {
                 'owner': _object('name'),
                 'keeper': component_ref('Owner'),
-                'pet': {'type': 'object', 'properties': {'tag': _object('label')}},
-                'badge': component_ref('PetTag'),
+                'product': {'type': 'object', 'properties': {'tag': _object('label')}},
+                'badge': component_ref('ProductTag'),
                 'tags': {'type': 'array', 'items': _object('label')},
                 'marker': component_ref('TagsItem'),
                 'choice': {'anyOf': [_object('left'), _object('right')]},
@@ -786,7 +651,7 @@ def _colliding_names_spec() -> dict:
         },
         schemas={
             'Owner': _object('title'),
-            'PetTag': _object('code'),
+            'ProductTag': _object('code'),
             'TagsItem': _object('slot'),
             'ChoiceVariant0': _object('pick'),
             'foo_bar': _object('snake'),
@@ -857,7 +722,7 @@ def _union_recursion_spec() -> dict:
 
 
 def _operation(raw: dict | None = None) -> OperationInfo:
-    return parse_spec(raw or _shared_component_spec()).operations[0]
+    return parse_spec(raw or shared_component_spec()).operations[0]
 
 
 def _register(operation: OperationInfo | None = None) -> MCPServer:

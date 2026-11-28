@@ -6,7 +6,6 @@ from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamCompositeAuthResolver,
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
-    UpstreamStaticAuthResolver,
     UpstreamTokenSourceAuthResolver,
 )
 from tests.context import stub_context
@@ -25,20 +24,6 @@ class TestNoCredentialAuthResolver:
         """Every call returns ``{}`` regardless of context."""
         resolver = UpstreamNoCredentialAuthResolver()
         assert await resolver.resolve(mock_context) == {}
-
-
-class TestStaticAuthResolver:
-    """``UpstreamStaticAuthResolver`` returns one fixed header whose name and value are chosen at construction."""
-
-    async def test_default_header_name_is_authorization(self, mock_context):
-        """Without an override the resolver targets the ``Authorization`` header."""
-        resolver = UpstreamStaticAuthResolver('Bearer my-token')
-        assert await resolver.resolve(mock_context) == {'Authorization': 'Bearer my-token'}
-
-    async def test_custom_header_name(self, mock_context):
-        """``header_name`` lets api-key style schemes route to a non-Authorization field."""
-        resolver = UpstreamStaticAuthResolver('api-key-123', header_name='X-API-Key')
-        assert await resolver.resolve(mock_context) == {'X-API-Key': 'api-key-123'}
 
 
 class TestTokenSourceAuthResolver:

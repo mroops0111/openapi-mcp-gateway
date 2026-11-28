@@ -17,9 +17,15 @@ class RedisTokenStore(TokenStore):
     All data is stored as JSON strings under a configurable key prefix.
     """
 
-    def __init__(self, url: str = 'redis://localhost:6379', prefix: str = 'mcp_gw') -> None:
+    def __init__(
+        self, url: str = 'redis://localhost:6379', prefix: str = 'mcp_gw', client: aioredis.Redis | None = None
+    ) -> None:
+        """Connect to ``url``, or use ``client`` in its place, such as an in-process Redis in tests.
+
+        A given ``client`` must decode responses, as one built from ``url`` does.
+        """
         self._prefix = prefix
-        self._redis: aioredis.Redis = aioredis.from_url(url, decode_responses=True)
+        self._redis: aioredis.Redis = client or aioredis.from_url(url, decode_responses=True)
         logger.debug('RedisTokenStore connected: url=%s prefix=%s', url, prefix)
 
     def _key(self, namespace: str, key: str) -> str:

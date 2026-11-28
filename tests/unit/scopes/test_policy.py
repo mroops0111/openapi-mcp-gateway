@@ -12,12 +12,12 @@ from openapi_mcp_gateway.scopes import (
     build_mcp_scope_policy,
     build_upstream_scope_policy,
 )
-from tests.operation import PETSTORE_OPERATIONS, operation
+from tests.operation import SHOP_OPERATIONS, operation
 from tests.scope import (
-    CREATE_PET,
-    DELETE_PET,
-    DELETE_PET_UPSTREAM_REFUSAL,
-    LIST_PETS,
+    CREATE_PRODUCT,
+    DELETE_PRODUCT,
+    DELETE_PRODUCT_UPSTREAM_REFUSAL,
+    LIST_PRODUCTS,
     SCHEMES,
     SECURED_CEILING,
     SECURED_OPERATIONS,
@@ -38,8 +38,8 @@ class TestConfiguredMcpScopePolicy:
     def test_derived_and_manual_scopes_add_up(self):
         """An operation a manual scope also covers opens to either scope."""
         policy = configured_policy(auto='tags', manual={'admin': {'description': 'Admin', 'operations': ['DELETE *']}})
-        requirement = policy.requirement_for(operation_named('deletePet'))
-        assert requirement.challenge == ('admin', 'pets:delete')
+        requirement = policy.requirement_for(operation_named('deleteProduct'))
+        assert requirement.challenge == ('admin', 'products:delete')
 
     @pytest.mark.parametrize(
         ('unscoped', 'expected'), [('deny', UnreachableRequirement), ('allow', UnrestrictedRequirement)]
@@ -47,24 +47,24 @@ class TestConfiguredMcpScopePolicy:
     def test_unscoped_decides_an_operation_no_scope_covers(self, unscoped, expected):
         """An untagged operation under ``auto: tags`` is unscoped, like any other no scope covers."""
         policy = configured_policy(auto='tags', unscoped=unscoped)
-        assert isinstance(policy.requirement_for(operation_named('adminListPets')), expected)
+        assert isinstance(policy.requirement_for(operation_named('adminListProducts')), expected)
 
     def test_defined_mcp_scopes_carry_descriptions(self):
         """Every scope is listed with what a person approving it is shown."""
         policy = configured_policy(
-            auto='tags', manual={'admin': {'description': 'Manage pets', 'operations': ['admin*']}}
+            auto='tags', manual={'admin': {'description': 'Manage products', 'operations': ['admin*']}}
         )
         assert policy.mcp_defined_scopes == {
-            'pets:read': 'Read pets',
-            'pets:write': 'Create and change pets',
-            'pets:delete': 'Delete pets',
-            'admin': 'Manage pets',
+            'products:read': 'Read products',
+            'products:write': 'Create and change products',
+            'products:delete': 'Delete products',
+            'admin': 'Manage products',
         }
 
     def test_a_manual_scope_cannot_reuse_a_derived_name(self):
         """The two definitions would otherwise merge into one scope without anyone noticing."""
-        with pytest.raises(ValueError, match=r'reuses names .* \(pets:read\)'):
-            configured_policy(auto='tags', manual={'pets:read': {'description': 'Read', 'operations': ['GET *']}})
+        with pytest.raises(ValueError, match=r'reuses names .* \(products:read\)'):
+            configured_policy(auto='tags', manual={'products:read': {'description': 'Read', 'operations': ['GET *']}})
 
     def test_a_pattern_matching_nothing_is_warned(self, caplog):
         """A typo in a pattern only ever shortens what a scope opens, so it is reported at startup."""
@@ -80,7 +80,7 @@ class TestConfiguredMcpScopePolicy:
         [record] = [record for record in caplog.records if 'no scope covers' in record.message]
         assert record.levelno == level
         assert '2 operation(s)' in record.message
-        assert 'createPetWithOwner, adminListPets' in record.message
+        assert 'createProductWithOwner, adminListProducts' in record.message
 
     def test_lists_vary_by_token(self):
         """``tools/list`` is cached per token once scopes filter it."""
@@ -95,10 +95,10 @@ class TestUnrestrictedMcpScopePolicy:
     """A server without ``auth.mcp.operation_scopes`` restricts nothing."""
 
     def test_every_operation_is_open(self):
-        policy = build_mcp_scope_policy(None, PETSTORE_OPERATIONS, 'petstore')
+        policy = build_mcp_scope_policy(None, SHOP_OPERATIONS, 'shop')
         assert isinstance(policy, McpUnrestrictedScopePolicy)
         assert all(
-            isinstance(policy.requirement_for(candidate), UnrestrictedRequirement) for candidate in PETSTORE_OPERATIONS
+            isinstance(policy.requirement_for(candidate), UnrestrictedRequirement) for candidate in SHOP_OPERATIONS
         )
         assert policy.mcp_defined_scopes == {}
         assert policy.list_cache_scope == 'public'
@@ -127,6 +127,44 @@ class TestSpecSecurityUpstreamScopePolicy:
         requirement = UpstreamSpecSecurityScopePolicy(SCHEMES, {}).requirement_for(operation(security=security))
         assert requirement.is_met(frozenset(granted)) is met
 
+    @pytest.mark.parametrize(
+        ('security', 'granted', 'met'),
+        [
+            pytest.param([{'basic': []}], set(), True, id='a configured credential needs no upstream scope'),
+            pytest.param(
+                [{'basic': []}, {'oauth': ['a']}], set(), True, id='the first met credential serves without a token'
+            ),
+            pytest.param(
+                [{'oauth': ['a'], 'basic': []}], {'a'}, True, id='a requirement needing both is met with its scopes'
+            ),
+            pytest.param(
+                [{'oauth': ['a']}, {'basic': []}],
+                set(),
+                False,
+                id='a later credential alternative is not carried, so the token needs its scopes',
+            ),
+            pytest.param(
+                [{}, {'oauth': ['a']}, {'basic': []}],
+                set(),
+                True,
+                id='an empty alternative yields to the credential, which needs no scope',
+            ),
+        ],
+    )
+    def test_a_configured_credential_meets_its_scheme(self, security, granted, met):
+        spec_security = UpstreamSpecSecurityScopePolicy(SCHEMES, {}, credential_schemes={'basic'})
+        assert spec_security.requirement_for(operation(security=security)).is_met(frozenset(granted)) is met
+
+    def test_a_scheme_the_token_meets_needs_no_scope(self):
+        """The plan settles on ``bearer``, which the flow's token meets, so the later OAuth alternative's scope is not needed."""
+        schemes = {**SCHEMES, 'bearer': {'type': 'http', 'scheme': 'bearer'}}
+        spec_security = UpstreamSpecSecurityScopePolicy(
+            schemes, {}, met_without_credentials={'bearer', 'oauth', 'oidc'}
+        )
+        requirement = spec_security.requirement_for(operation(security=[{'bearer': []}, {'oauth': ['admin']}]))
+
+        assert requirement.is_met(frozenset())
+
     def test_a_spec_without_an_oauth_scheme_restricts_nothing(self):
         """Such a spec describes some other credential, so it says nothing about the token the gateway holds."""
         spec_security = UpstreamSpecSecurityScopePolicy({'basic': SCHEMES['basic']}, {})
@@ -141,20 +179,20 @@ class TestSpecSecurityUpstreamScopePolicy:
     def test_the_declared_scopes_are_every_scope_the_operations_name(self):
         """Every alternative counts, since each is a way to meet its operation."""
         operations = [
-            LIST_PETS,
-            DELETE_PET,
-            operation('getPet', security=[{'oauth': ['read:pets']}, {'oauth': ['admin']}]),
+            LIST_PRODUCTS,
+            DELETE_PRODUCT,
+            operation('getProduct', security=[{'oauth': ['read:products']}, {'oauth': ['admin']}]),
             operation('health', security=[{}]),
         ]
         assert UpstreamSpecSecurityScopePolicy(SCHEMES, {}).declared_scopes(operations) == [
-            'read:pets',
-            'write:pets',
+            'read:products',
+            'write:products',
             'admin',
         ]
 
     def test_the_refusal_names_the_scopes_and_both_remedies(self):
-        requirement = UpstreamSpecSecurityScopePolicy(SCHEMES, {}).requirement_for(DELETE_PET)
-        assert requirement.refusal == DELETE_PET_UPSTREAM_REFUSAL
+        requirement = UpstreamSpecSecurityScopePolicy(SCHEMES, {}).requirement_for(DELETE_PRODUCT)
+        assert requirement.refusal == DELETE_PRODUCT_UPSTREAM_REFUSAL
 
 
 class TestSpecSecuritySignInScopes:
@@ -163,9 +201,9 @@ class TestSpecSecuritySignInScopes:
     @pytest.mark.parametrize(
         ('opened_operations', 'requested'),
         [
-            ([LIST_PETS], ['read:pets']),
-            ([CREATE_PET], ['write:pets']),
-            ([DELETE_PET], ['read:pets', 'write:pets']),
+            ([LIST_PRODUCTS], ['read:products']),
+            ([CREATE_PRODUCT], ['write:products']),
+            ([DELETE_PRODUCT], ['read:products', 'write:products']),
             ([], []),
         ],
     )
@@ -173,9 +211,12 @@ class TestSpecSecuritySignInScopes:
         assert _requested_scopes(SECURED_CEILING, opened_operations) == requested
 
     def test_the_request_keeps_the_ceilings_order(self):
-        assert _requested_scopes(['write:pets', 'read:pets'], [LIST_PETS, CREATE_PET]) == ['write:pets', 'read:pets']
+        assert _requested_scopes(['write:products', 'read:products'], [LIST_PRODUCTS, CREATE_PRODUCT]) == [
+            'write:products',
+            'read:products',
+        ]
 
-    @pytest.mark.parametrize('opened_operations', [[LIST_PETS], []])
+    @pytest.mark.parametrize('opened_operations', [[LIST_PRODUCTS], []])
     def test_a_required_scope_is_asked_for_at_every_sign_in_and_first(self, opened_operations):
         """``offline_access`` serves the sign-in itself, so no operation would ever ask for it."""
         requested = _requested_scopes(SECURED_CEILING, opened_operations, required_scopes=['offline_access'])
@@ -183,20 +224,20 @@ class TestSpecSecuritySignInScopes:
 
     def test_a_ceiling_scope_no_operation_declares_is_not_asked_for(self):
         """Only ``required_scopes`` says a scope serves every sign-in, so the ceiling alone never does."""
-        assert _requested_scopes([*SECURED_CEILING, 'offline_access'], [LIST_PETS]) == ['read:pets']
+        assert _requested_scopes([*SECURED_CEILING, 'offline_access'], [LIST_PRODUCTS]) == ['read:products']
 
     def test_a_scope_a_required_one_implies_is_not_asked_for_again(self):
-        scope_implies = {'admin': ['read:pets']}
-        requested = _requested_scopes(SECURED_CEILING, [LIST_PETS], scope_implies, required_scopes=['admin'])
+        scope_implies = {'admin': ['read:products']}
+        requested = _requested_scopes(SECURED_CEILING, [LIST_PRODUCTS], scope_implies, required_scopes=['admin'])
         assert requested == ['admin']
 
     def test_a_declared_scope_outside_the_ceiling_is_asked_for_through_one_implying_it(self):
-        scope_implies = {'admin': ['read:pets', 'write:pets']}
-        assert _requested_scopes(['admin'], [LIST_PETS], scope_implies) == ['admin']
+        scope_implies = {'admin': ['read:products', 'write:products']}
+        assert _requested_scopes(['admin'], [LIST_PRODUCTS], scope_implies) == ['admin']
         assert _requested_scopes(['admin'], [], scope_implies) == []
 
     def test_a_declared_scope_nothing_in_the_ceiling_covers_is_not_asked_for(self):
-        assert _requested_scopes(['read:pets'], [CREATE_PET]) == []
+        assert _requested_scopes(['read:products'], [CREATE_PRODUCT]) == []
 
     @pytest.mark.parametrize(
         ('ceiling', 'opened_operations', 'requested'),
@@ -226,21 +267,21 @@ class TestSpecSecuritySignInAlternatives:
         ('security', 'ceiling', 'scope_implies', 'requested'),
         [
             pytest.param(
-                [{'oauth': ['read:pets']}, {'oauth': ['admin']}],
-                ['read:pets', 'admin'],
+                [{'oauth': ['read:products']}, {'oauth': ['admin']}],
+                ['read:products', 'admin'],
                 {},
-                ['read:pets'],
+                ['read:products'],
                 id='the requirement asking least',
             ),
             pytest.param(
-                [{'oauth': ['admin']}, {'oauth': ['read:pets']}],
-                ['admin', 'read:pets'],
-                {'admin': ['read:pets', 'write:pets']},
-                ['read:pets'],
+                [{'oauth': ['admin']}, {'oauth': ['read:products']}],
+                ['admin', 'read:products'],
+                {'admin': ['read:products', 'write:products']},
+                ['read:products'],
                 id='what a scope implies counts against it',
             ),
             pytest.param(
-                [{'oauth': ['read:pets']}, {'oauth': ['admin']}],
+                [{'oauth': ['read:products']}, {'oauth': ['admin']}],
                 ['admin'],
                 {},
                 ['admin'],
@@ -254,22 +295,22 @@ class TestSpecSecuritySignInAlternatives:
                 id='the first the spec lists among equals',
             ),
             pytest.param(
-                [{'oauth': ['read:pets', 'write:pets']}, {'oauth': ['admin']}],
-                ['read:pets', 'write:pets', 'admin'],
+                [{'oauth': ['read:products', 'write:products']}, {'oauth': ['admin']}],
+                ['read:products', 'write:products', 'admin'],
                 {},
                 ['admin'],
                 id='a requirement needing two scopes asks more than one needing one',
             ),
             pytest.param(
-                [{}, {'oauth': ['read:pets']}],
-                ['read:pets'],
+                [{}, {'oauth': ['read:products']}],
+                ['read:products'],
                 {},
                 [],
                 id='an empty requirement needs no scope',
             ),
             pytest.param(
-                [{'oauth': ['read:pets'], 'basic': []}],
-                ['read:pets'],
+                [{'oauth': ['read:products'], 'basic': []}],
+                ['read:products'],
                 {},
                 [],
                 id='a requirement naming another credential cannot be met',
@@ -282,8 +323,10 @@ class TestSpecSecuritySignInAlternatives:
 
     def test_a_requirement_the_required_scopes_meet_asks_for_nothing_more(self):
         spec_security = UpstreamSpecSecurityScopePolicy(SCHEMES, {})
-        get_pet = operation(security=[{'oauth': ['admin']}, {'oauth': ['read:pets']}])
-        assert spec_security.requested_scopes(['admin', 'read:pets'], ['read:pets'], [get_pet]) == ['read:pets']
+        get_product = operation(security=[{'oauth': ['admin']}, {'oauth': ['read:products']}])
+        assert spec_security.requested_scopes(['admin', 'read:products'], ['read:products'], [get_product]) == [
+            'read:products'
+        ]
 
 
 class TestUnreachableOperations:
@@ -292,23 +335,23 @@ class TestUnreachableOperations:
     def test_an_operation_the_ceiling_cannot_meet_is_left_out(self, caplog):
         with caplog.at_level(logging.WARNING):
             kept = UpstreamSpecSecurityScopePolicy(SCHEMES, {}).drop_unreachable_operations(
-                SECURED_OPERATIONS, ['read:pets'], [], 'petstore'
+                SECURED_OPERATIONS, ['read:products'], [], 'shop'
             )
-        assert kept == [LIST_PETS]
-        assert '(createPet needs write:pets, deletePet needs write:pets)' in caplog.text
+        assert kept == [LIST_PRODUCTS]
+        assert '(createProduct needs write:products, deleteProduct needs write:products)' in caplog.text
 
     @pytest.mark.parametrize(
         ('ceiling', 'required_scopes', 'scope_implies'),
         [
-            pytest.param(['read:pets', 'write:pets'], [], {}, id='the ceiling'),
-            pytest.param(['read:pets'], ['write:pets'], {}, id='a required scope'),
-            pytest.param(['admin'], [], {'admin': ['read:pets', 'write:pets']}, id='a scope implying them'),
+            pytest.param(['read:products', 'write:products'], [], {}, id='the ceiling'),
+            pytest.param(['read:products'], ['write:products'], {}, id='a required scope'),
+            pytest.param(['admin'], [], {'admin': ['read:products', 'write:products']}, id='a scope implying them'),
         ],
     )
     def test_an_operation_some_sign_in_can_open_is_kept(self, caplog, ceiling, required_scopes, scope_implies):
         with caplog.at_level(logging.WARNING):
             kept = UpstreamSpecSecurityScopePolicy(SCHEMES, scope_implies).drop_unreachable_operations(
-                SECURED_OPERATIONS, ceiling, required_scopes, 'petstore'
+                SECURED_OPERATIONS, ceiling, required_scopes, 'shop'
             )
         assert kept == list(SECURED_OPERATIONS)
         assert not caplog.messages
@@ -316,7 +359,9 @@ class TestUnreachableOperations:
     def test_an_operation_needing_another_credential_is_left_out(self):
         login = operation('login', security=[{'basic': []}])
         policy = UpstreamSpecSecurityScopePolicy(SCHEMES, {})
-        assert policy.drop_unreachable_operations([login, LIST_PETS], ['read:pets'], [], 'petstore') == [LIST_PETS]
+        assert policy.drop_unreachable_operations([login, LIST_PRODUCTS], ['read:products'], [], 'shop') == [
+            LIST_PRODUCTS
+        ]
 
 
 class TestSignInWarnings:
@@ -325,18 +370,18 @@ class TestSignInWarnings:
     def test_a_ceiling_scope_no_operation_declares_is_warned_about(self, caplog):
         with caplog.at_level(logging.WARNING):
             UpstreamSpecSecurityScopePolicy(SCHEMES, {}).warn_on_unasked_ceiling_scopes(
-                SECURED_OPERATIONS, [*SECURED_CEILING, 'offline_access'], 'petstore'
+                SECURED_OPERATIONS, [*SECURED_CEILING, 'offline_access'], 'shop'
             )
         assert caplog.messages == [
-            'Server "petstore": no operation declares what auth.upstream.scopes offline_access cover, '
+            'Server "shop": no operation declares what auth.upstream.scopes offline_access cover, '
             'so no sign-in asks for them. Move a scope every sign-in needs to auth.upstream.required_scopes, '
             'or declare it under operations.<id>.security.'
         ]
 
     def test_a_ceiling_scope_implying_a_declared_one_is_not_warned_about(self, caplog):
         with caplog.at_level(logging.WARNING):
-            UpstreamSpecSecurityScopePolicy(SCHEMES, {'admin': ['read:pets']}).warn_on_unasked_ceiling_scopes(
-                SECURED_OPERATIONS, ['admin'], 'petstore'
+            UpstreamSpecSecurityScopePolicy(SCHEMES, {'admin': ['read:products']}).warn_on_unasked_ceiling_scopes(
+                SECURED_OPERATIONS, ['admin'], 'shop'
             )
         assert not caplog.messages
 
@@ -345,7 +390,7 @@ class TestSignInWarnings:
         [
             pytest.param([operation('health', security=[{}])], [], True, id='nothing declared'),
             pytest.param([operation('health', security=[{}])], ['offline_access'], False, id='a required scope'),
-            pytest.param([LIST_PETS], [], False, id='an open operation declares a scope'),
+            pytest.param([LIST_PRODUCTS], [], False, id='an open operation declares a scope'),
         ],
     )
     def test_a_sign_in_granted_no_mcp_scope_asking_for_nothing_is_warned_about(
@@ -354,7 +399,7 @@ class TestSignInWarnings:
         """A wider grant asks for at least as much, so the grant of no MCP scope is the one to check."""
         with caplog.at_level(logging.WARNING):
             UpstreamSpecSecurityScopePolicy(SCHEMES, {}).warn_on_empty_sign_in(
-                operations, SECURED_CEILING, required_scopes, McpUnrestrictedScopePolicy(), 'petstore'
+                operations, SECURED_CEILING, required_scopes, McpUnrestrictedScopePolicy(), 'shop'
             )
         assert ('its sign-in or token exchange carries no scope parameter' in caplog.text) is warned
 
@@ -362,7 +407,7 @@ class TestSignInWarnings:
         """Tag-derived scopes close every operation to a grant of none."""
         with caplog.at_level(logging.WARNING):
             UpstreamSpecSecurityScopePolicy(SCHEMES, {}).warn_on_empty_sign_in(
-                SECURED_OPERATIONS, SECURED_CEILING, [], tag_scopes(*SECURED_OPERATIONS), 'petstore'
+                SECURED_OPERATIONS, SECURED_CEILING, [], tag_scopes(*SECURED_OPERATIONS), 'shop'
             )
         assert 'its sign-in or token exchange carries no scope parameter' in caplog.text
 
@@ -371,30 +416,30 @@ class TestUnrequestedScopeWarning:
     """Startup warns about the clients that can reach operations the requested upstream scopes cannot open."""
 
     def test_each_client_is_warned_about_what_it_can_reach(self, caplog):
-        """A reader never reaches ``deletePet``, so only the deleter hears about the scope it needs."""
-        mcp_policy = tag_scopes(LIST_PETS, DELETE_PET)
+        """A reader never reaches ``deleteProduct``, so only the deleter hears about the scope it needs."""
+        mcp_policy = tag_scopes(LIST_PRODUCTS, DELETE_PRODUCT)
         with caplog.at_level(logging.WARNING):
             UpstreamSpecSecurityScopePolicy(SCHEMES, {}).warn_on_unrequested_scopes(
-                [LIST_PETS, DELETE_PET],
-                ['read:pets'],
+                [LIST_PRODUCTS, DELETE_PRODUCT],
+                ['read:products'],
                 mcp_policy,
-                {'reader': ['pets:read'], 'deleter': ['pets:read', 'pets:delete']},
-                'petstore',
+                {'reader': ['products:read'], 'deleter': ['products:read', 'products:delete']},
+                'shop',
             )
         assert caplog.messages == [
-            'Server "petstore": "deleter" can reach 1 operation(s) the requested upstream scopes cannot open '
-            '(deletePet needs write:pets). '
+            'Server "shop": "deleter" can reach 1 operation(s) the requested upstream scopes cannot open '
+            '(deleteProduct needs write:products). '
             'Add the scopes to auth.upstream.scopes, or correct an operation under operations.<id>.security.'
         ]
 
     def test_without_clients_every_operation_counts(self, caplog):
-        operations = [LIST_PETS, operation('login', security=[{'basic': []}])]
+        operations = [LIST_PRODUCTS, operation('login', security=[{'basic': []}])]
         with caplog.at_level(logging.WARNING):
             UpstreamSpecSecurityScopePolicy(SCHEMES, {}).warn_on_unrequested_scopes(
-                operations, [], McpUnrestrictedScopePolicy(), {}, 'petstore'
+                operations, [], McpUnrestrictedScopePolicy(), {}, 'shop'
             )
-        assert '"petstore": every client can reach 2 operation(s)' in caplog.text
-        assert '(listPets needs read:pets, login needs a non-OAuth credential)' in caplog.text
+        assert '"shop": every client can reach 2 operation(s)' in caplog.text
+        assert '(listProducts needs read:products, login needs a non-OAuth credential)' in caplog.text
 
 
 class TestUpstreamScopePolicy:
@@ -409,18 +454,18 @@ class TestUpstreamScopePolicy:
         spec_security = UpstreamSpecSecurityScopePolicy({'basic': SCHEMES['basic']}, {})
         assert isinstance(build_upstream_scope_policy(True, spec_security), UpstreamUnrestrictedScopePolicy)
         with caplog.at_level(logging.WARNING):
-            spec_security.warn_on_missing_oauth_scheme('petstore')
+            spec_security.warn_on_missing_oauth_scheme('shop')
         assert 'the spec declares no OAuth security scheme' in caplog.text
 
     def test_a_spec_with_an_oauth_scheme_is_not_warned_about(self, caplog):
         with caplog.at_level(logging.WARNING):
-            UpstreamSpecSecurityScopePolicy(SCHEMES, {}).warn_on_missing_oauth_scheme('petstore')
+            UpstreamSpecSecurityScopePolicy(SCHEMES, {}).warn_on_missing_oauth_scheme('shop')
         assert not caplog.messages
 
     def test_without_enforcement_every_sign_in_asks_for_the_whole_ceiling(self):
         """The spec's ``security`` is not trusted then, so it cannot narrow a sign-in."""
         policy = build_upstream_scope_policy(False, UpstreamSpecSecurityScopePolicy(SCHEMES, {}))
-        assert policy.requested_scopes(SECURED_CEILING, ['offline_access'], [LIST_PETS]) == [
+        assert policy.requested_scopes(SECURED_CEILING, ['offline_access'], [LIST_PRODUCTS]) == [
             'offline_access',
             *SECURED_CEILING,
         ]
@@ -432,6 +477,6 @@ def _requested_scopes(
     scope_implies: dict[str, list[str]] | None = None,
     required_scopes: list[str] | None = None,
 ) -> list[str]:
-    """What a sign-in to the secured petstore opening ``opened_operations`` asks for, beyond ``required_scopes``."""
+    """What a sign-in to the secured shop opening ``opened_operations`` asks for, beyond ``required_scopes``."""
     spec_security = UpstreamSpecSecurityScopePolicy(SCHEMES, scope_implies or {})
     return spec_security.requested_scopes(ceiling, required_scopes or [], opened_operations)

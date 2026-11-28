@@ -57,8 +57,8 @@ jobs:
   smoke:
     name: Smoke (External Deps)
     runs-on: ubuntu-latest
-    # Hits the live FastAPI repo + public OpenAPI spec URLs (Petstore, GitHub,
-    # Asana). Network-dependent — failures here often mean a third-party URL
+    # Clones the live FastAPI repo and downloads the spec of every example in examples/,
+    # without calling any of the APIs. Network-dependent — failures here often mean a third-party URL
     # is down, not a real regression. Investigate before assuming a bug.
     steps:
       - uses: actions/checkout@v4

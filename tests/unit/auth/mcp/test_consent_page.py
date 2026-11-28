@@ -7,13 +7,13 @@ from openapi_mcp_gateway.auth.mcp.consent_page import McpConsentPrompt, McpDescr
 
 # A prompt for a client that registered itself under a name meant to break out of the page.
 HOSTILE_PROMPT = McpConsentPrompt(
-    server_name='petstore',
+    server_name='shop',
     next_sign_in_host='auth.example.com',
     client_id='client-1',
     client_name='<script>alert(1)</script>',
     redirect_uri='https://app.example.com/cb?next="><img src=x>',
     next_sign_in_scopes=[McpDescribedScope('read', None)],
-    mcp_scopes=[McpDescribedScope('pets:read', '<b>Read</b> pets')],
+    mcp_scopes=[McpDescribedScope('products:read', '<b>Read</b> products')],
     opens_unscoped_tools=False,
     csrf_token='token',
 )
@@ -33,11 +33,11 @@ class TestConsentPage:
 
     def test_a_client_without_a_name_is_shown_by_its_id(self):
         page = _page_text(dataclasses.replace(HOSTILE_PROMPT, client_name=None))
-        assert 'Allow client-1 to use petstore?' in page
+        assert 'Allow client-1 to use shop?' in page
 
     def test_a_document_client_is_named_with_its_verified_host(self):
         prompt = dataclasses.replace(HOSTILE_PROMPT, client_name='Claude Code', client_host='claude.ai')
-        assert 'Allow Claude Code (claude.ai) to use petstore?' in _page_text(prompt)
+        assert 'Allow Claude Code (claude.ai) to use shop?' in _page_text(prompt)
 
     def test_a_hostile_client_host_is_escaped(self):
         page = _page_text(dataclasses.replace(HOSTILE_PROMPT, client_host='<i>host</i>'))
@@ -52,13 +52,15 @@ class TestConsentPage:
         assert ('a program on this computer' in page) is warned
 
     def test_a_hostile_scope_description_is_escaped(self):
-        assert '&lt;b&gt;Read&lt;/b&gt; pets<code class="aside">pets:read</code>' in _page_text(HOSTILE_PROMPT)
+        assert '&lt;b&gt;Read&lt;/b&gt; products<code class="aside">products:read</code>' in _page_text(HOSTILE_PROMPT)
 
     def test_a_scope_a_step_up_adds_is_marked_new(self):
         prompt = dataclasses.replace(
-            HOSTILE_PROMPT, mcp_scopes=[McpDescribedScope('pets:write', 'Write pets', new=True)]
+            HOSTILE_PROMPT, mcp_scopes=[McpDescribedScope('products:write', 'Write products', new=True)]
         )
-        assert 'Write pets<code class="aside">pets:write</code><span class="new">New</span>' in _page_text(prompt)
+        assert 'Write products<code class="aside">products:write</code><span class="new">New</span>' in _page_text(
+            prompt
+        )
 
     def test_a_scope_without_a_description_is_shown_by_its_name(self):
         assert '<li><span><code>read</code></span></li>' in _page_text(HOSTILE_PROMPT)
@@ -68,11 +70,11 @@ class TestConsentPage:
         """A list of scopes alone would understate what a server that opens unscoped tools grants."""
         prompt = dataclasses.replace(HOSTILE_PROMPT, mcp_scopes=mcp_scopes, opens_unscoped_tools=True)
         page = _page_text(prompt)
-        assert 'Use the tools on petstore open to every client' in page
+        assert 'Use the tools on shop open to every client' in page
         assert 'No tools' not in page
 
     def test_a_client_with_nothing_open_to_it_is_told_so(self):
-        assert 'No tools on petstore' in _page_text(dataclasses.replace(HOSTILE_PROMPT, mcp_scopes=[]))
+        assert 'No tools on shop' in _page_text(dataclasses.replace(HOSTILE_PROMPT, mcp_scopes=[]))
 
     def test_no_next_sign_in_scopes_leaves_their_list_out(self):
         page = _page_text(dataclasses.replace(HOSTILE_PROMPT, next_sign_in_scopes=[]))
@@ -82,7 +84,7 @@ class TestConsentPage:
         """With no sign-in after consent, the page does not promise one."""
         page = _page_text(dataclasses.replace(HOSTILE_PROMPT, next_sign_in_host=None, next_sign_in_scopes=[]))
         assert 'You sign in at' not in page
-        assert 'Then client-1 can use petstore on your behalf.' in _page_text(
+        assert 'Then client-1 can use shop on your behalf.' in _page_text(
             dataclasses.replace(HOSTILE_PROMPT, client_name=None, next_sign_in_host=None, next_sign_in_scopes=[])
         )
 

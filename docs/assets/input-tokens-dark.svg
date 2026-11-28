@@ -13,18 +13,18 @@
 <line x1="530.0" y1="52" x2="530.0" y2="278" stroke="#3a3e48" stroke-width="1"/>
 <text x="530.0" y="302" font-size="12" fill="#a8a49c" text-anchor="middle">1M</text>
 <text x="178" y="85.0" font-size="14" fill="#e8e6e1" text-anchor="end" font-weight="400">baseline</text>
-<path d="M190,69.0 h315.6 a4,4 0 0 1 4,4 v14 a4,4 0 0 1 -4,4 h-315.6 z" fill="#6b6f78"/>
-<text x="517.6" y="85.0" font-size="13" fill="#e8e6e1">940k, 86% passed</text>
+<path d="M190,69.0 h319.9 a4,4 0 0 1 4,4 v14 a4,4 0 0 1 -4,4 h-319.9 z" fill="#6b6f78"/>
+<text x="521.9" y="85.0" font-size="13" fill="#e8e6e1">953k, 86% passed</text>
 <text x="178" y="129.0" font-size="14" fill="#e8e6e1" text-anchor="end" font-weight="400">pydantic-ai-tool-search</text>
-<path d="M190,113.0 h88.3 a4,4 0 0 1 4,4 v14 a4,4 0 0 1 -4,4 h-88.3 z" fill="#6b6f78"/>
-<text x="290.3" y="129.0" font-size="13" fill="#e8e6e1">272k, 71% passed</text>
+<path d="M190,113.0 h88.1 a4,4 0 0 1 4,4 v14 a4,4 0 0 1 -4,4 h-88.1 z" fill="#6b6f78"/>
+<text x="290.1" y="129.0" font-size="13" fill="#e8e6e1">271k, 68% passed</text>
 <text x="178" y="173.0" font-size="14" fill="#e8e6e1" text-anchor="end" font-weight="600">generated</text>
-<path d="M190,157.0 h40.2 a4,4 0 0 1 4,4 v14 a4,4 0 0 1 -4,4 h-40.2 z" fill="#3ba3b4"/>
-<text x="242.2" y="173.0" font-size="13" fill="#e8e6e1">130k, 92% passed</text>
+<path d="M190,157.0 h40.7 a4,4 0 0 1 4,4 v14 a4,4 0 0 1 -4,4 h-40.7 z" fill="#3ba3b4"/>
+<text x="242.7" y="173.0" font-size="13" fill="#e8e6e1">131k, 88% passed</text>
 <text x="178" y="217.0" font-size="14" fill="#e8e6e1" text-anchor="end" font-weight="600">dynamic</text>
-<path d="M190,201.0 h22.0 a4,4 0 0 1 4,4 v14 a4,4 0 0 1 -4,4 h-22.0 z" fill="#3ba3b4"/>
-<text x="224.0" y="217.0" font-size="13" fill="#e8e6e1">76k, 100% passed</text>
+<path d="M190,201.0 h21.8 a4,4 0 0 1 4,4 v14 a4,4 0 0 1 -4,4 h-21.8 z" fill="#3ba3b4"/>
+<text x="223.8" y="217.0" font-size="13" fill="#e8e6e1">76k, 100% passed</text>
 <text x="178" y="261.0" font-size="14" fill="#e8e6e1" text-anchor="end" font-weight="600">generated-shaped</text>
-<path d="M190,245.0 h19.0 a4,4 0 0 1 4,4 v14 a4,4 0 0 1 -4,4 h-19.0 z" fill="#3ba3b4"/>
-<text x="221.0" y="261.0" font-size="13" fill="#e8e6e1">68k, 86% passed</text>
+<path d="M190,245.0 h18.8 a4,4 0 0 1 4,4 v14 a4,4 0 0 1 -4,4 h-18.8 z" fill="#3ba3b4"/>
+<text x="220.8" y="261.0" font-size="13" fill="#e8e6e1">67k, 82% passed</text>
 </svg>

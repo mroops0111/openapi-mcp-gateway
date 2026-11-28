@@ -133,7 +133,7 @@ class McpExternalIssuerTokenVerifier(TokenVerifier):
         self.jwks_uri = jwks_uri
         self.required_scopes = tuple(required_scopes)
         self.mcp_grantable_scopes = None if mcp_grantable_scopes is None else list(mcp_grantable_scopes)
-        self._jwk_client = _build_jwk_client(jwks_uri)
+        self._jwk_client = build_jwk_client(jwks_uri)
 
     async def verify_token(self, token: str) -> McpAccessToken | None:
         """Return an ``AccessToken`` for an acceptable token, or ``None`` for anything else.
@@ -204,7 +204,7 @@ class McpExternalIssuerTokenVerifier(TokenVerifier):
         )
 
 
-def _build_jwk_client(jwks_uri: str) -> typing.Any:
+def build_jwk_client(jwks_uri: str) -> typing.Any:
     """Construct a ``PyJWKClient``, turning a missing dependency into actionable guidance."""
     try:
         from jwt import PyJWKClient

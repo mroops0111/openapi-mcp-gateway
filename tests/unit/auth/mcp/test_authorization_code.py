@@ -273,12 +273,12 @@ class TestClientRegistrationIssuer:
 
     async def test_a_client_registered_with_one_server_is_unknown_to_another(self, make_provider, mcp_client_info):
         """Two servers share the store, but not each other's clients."""
-        petstore = make_provider(issuer=GATEWAY_ISSUER)
+        shop = make_provider(issuer=GATEWAY_ISSUER)
         inventory = make_provider(issuer=OTHER_GATEWAY_ISSUER)
 
-        await petstore.register_client(mcp_client_info)
+        await shop.register_client(mcp_client_info)
 
-        assert await petstore.get_client('mcp-client-123') is not None
+        assert await shop.get_client('mcp-client-123') is not None
         assert await inventory.get_client('mcp-client-123') is None
 
     async def test_a_registration_stored_before_issuer_keys_degrades_to_re_registration(
@@ -358,13 +358,13 @@ class TestTokenOrigin:
 
     async def test_a_token_minted_by_one_server_is_refused_by_another(self, make_provider, mcp_client_info):
         """Otherwise one server's token would unlock the upstream credential mapped behind it on another."""
-        petstore = make_provider(issuer=GATEWAY_ISSUER)
+        shop = make_provider(issuer=GATEWAY_ISSUER)
         inventory = make_provider(issuer=OTHER_GATEWAY_ISSUER)
-        token = await sign_in(petstore, mcp_client_info)
+        token = await sign_in(shop, mcp_client_info)
         # The client is known to both, so only the origin can tell the tokens apart.
         await inventory.register_client(mcp_client_info)
 
-        assert await petstore.load_access_token(token.access_token) is not None
+        assert await shop.load_access_token(token.access_token) is not None
         assert await inventory.load_access_token(token.access_token) is None
         assert token.refresh_token is not None
         assert await inventory.load_refresh_token(mcp_client_info, token.refresh_token) is None

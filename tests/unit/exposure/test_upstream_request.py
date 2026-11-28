@@ -3,8 +3,8 @@ import json
 import pytest
 
 from openapi_mcp_gateway.openapi import OperationInfo, ParameterInfo
-from tests.context import stub_context
 from tests.operation import query_parameter, register_tool, shaped_operation
+from tests.tool_result import text_of
 
 
 class TestQuerySerialization:
@@ -13,7 +13,7 @@ class TestQuerySerialization:
     @staticmethod
     async def _sent_query(upstream_requests, operation: OperationInfo, arguments: dict) -> str:
         """Call ``operation`` as a registered tool with ``arguments`` and return the query string it sent."""
-        result = await register_tool(operation).run(arguments, context=stub_context())
+        result = await register_tool(operation).call(arguments)
         assert result.is_error is False
         return upstream_requests[-1].url.query.decode()
 
@@ -69,9 +69,7 @@ class TestQuerySerialization:
         operation = shaped_operation(
             [filter_parameter, format_parameter], params={'format': {'hidden': True, 'default': 'json'}}
         )
-        result = await register_tool(operation).run(
-            {'filter': {'format': 'xml', 'color': 'red'}}, context=stub_context()
-        )
+        result = await register_tool(operation).call({'filter': {'format': 'xml', 'color': 'red'}})
         assert result.is_error is True
-        assert 'filter.format' in result.content[0].text
+        assert 'filter.format' in text_of(result)
         assert upstream_requests == []

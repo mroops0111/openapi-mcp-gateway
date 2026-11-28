@@ -5,39 +5,39 @@ import pytest
 import yaml
 
 from openapi_mcp_gateway.openapi import (
-    _expand_inline,
-    _expand_schema,
-    _resolve_ref,
+    expand_inline,
+    expand_schema,
     load_spec,
     merge_schemas,
     parse_spec,
+    resolve_ref,
 )
-from tests.constants import API_URL, PETSTORE_URL
+from tests.constants import API_URL, SHOP_URL
 from tests.spec import combined_spec, component_ref, defs_ref, operation_spec
 
 
 class TestResolveRef:
     """JSON-pointer ``$ref`` resolution against a parsed spec document."""
 
-    def test_simple_ref(self, petstore_spec_raw):
+    def test_simple_ref(self, shop_spec_raw):
         """A direct schema ref resolves to the target node."""
-        result = _resolve_ref(petstore_spec_raw, '#/components/schemas/Pet')
+        result = resolve_ref(shop_spec_raw, '#/components/schemas/Product')
         assert result['type'] == 'object'
         assert 'name' in result['properties']
 
-    def test_nested_ref(self, petstore_spec_raw):
+    def test_nested_ref(self, shop_spec_raw):
         """A nested ref through ``components/parameters`` resolves correctly."""
-        result = _resolve_ref(petstore_spec_raw, '#/components/parameters/LimitParam')
+        result = resolve_ref(shop_spec_raw, '#/components/parameters/LimitParam')
         assert result['name'] == 'limit'
 
-    def test_bad_ref_returns_empty(self, petstore_spec_raw):
+    def test_bad_ref_returns_empty(self, shop_spec_raw):
         """A ref to a non-existent schema returns an empty dict instead of raising."""
-        result = _resolve_ref(petstore_spec_raw, '#/components/schemas/DoesNotExist')
+        result = resolve_ref(shop_spec_raw, '#/components/schemas/DoesNotExist')
         assert result == {}
 
-    def test_bad_path_returns_empty(self, petstore_spec_raw):
+    def test_bad_path_returns_empty(self, shop_spec_raw):
         """A ref through a non-existent intermediate node returns an empty dict."""
-        result = _resolve_ref(petstore_spec_raw, '#/foo/bar/baz')
+        result = resolve_ref(shop_spec_raw, '#/foo/bar/baz')
         assert result == {}
 
 
@@ -74,75 +74,75 @@ class TestMergeSchemas:
 class TestExpandSchema:
     """``$ref`` / ``allOf`` / ``oneOf`` / ``anyOf`` expansion on schema nodes."""
 
-    def test_component_ref_becomes_a_defs_reference(self, petstore_spec_raw):
+    def test_component_ref_becomes_a_defs_reference(self, shop_spec_raw):
         """A component ``$ref`` stays a reference, now into ``$defs``, with the component expanded under its name."""
         defs: dict = {}
-        result = _expand_schema(petstore_spec_raw, component_ref('Pet'), defs)
-        assert result == defs_ref('Pet')
-        assert defs['Pet']['type'] == 'object'
-        assert 'name' in defs['Pet']['properties']
+        result = expand_schema(shop_spec_raw, component_ref('Product'), defs)
+        assert result == defs_ref('Product')
+        assert defs['Product']['type'] == 'object'
+        assert 'name' in defs['Product']['properties']
 
-    def test_component_expanded_once_however_often_reached(self, petstore_spec_raw):
-        """``NestedOwner`` reaches ``Pet`` twice, both as references to the one entry."""
+    def test_component_expanded_once_however_often_reached(self, shop_spec_raw):
+        """``NestedOwner`` reaches ``Product`` twice, both as references to the one entry."""
         defs: dict = {}
-        _expand_schema(petstore_spec_raw, component_ref('NestedOwner'), defs)
-        assert defs['NestedOwner']['properties']['pet'] == defs_ref('Pet')
-        assert defs['NestedOwner']['properties']['pets']['items'] == defs_ref('Pet')
-        assert set(defs) == {'NestedOwner', 'Pet'}
+        expand_schema(shop_spec_raw, component_ref('NestedOwner'), defs)
+        assert defs['NestedOwner']['properties']['product'] == defs_ref('Product')
+        assert defs['NestedOwner']['properties']['products']['items'] == defs_ref('Product')
+        assert set(defs) == {'NestedOwner', 'Product'}
 
-    def test_pointer_into_a_component_is_inlined(self, petstore_spec_raw):
+    def test_pointer_into_a_component_is_inlined(self, shop_spec_raw):
         """Only a whole component becomes an entry, a pointer to part of one resolves in place."""
         defs: dict = {}
-        result = _expand_schema(petstore_spec_raw, {'$ref': '#/components/schemas/Pet/properties/name'}, defs)
+        result = expand_schema(shop_spec_raw, {'$ref': '#/components/schemas/Product/properties/name'}, defs)
         assert result == {'type': 'string'}
         assert defs == {}
 
-    def test_inline_resolves_the_root_reference(self, petstore_spec_raw):
-        """``_expand_inline`` resolves a root reference in place, so a request body can be split into properties."""
+    def test_inline_resolves_the_root_reference(self, shop_spec_raw):
+        """``expand_inline`` resolves a root reference in place, so a request body can be split into properties."""
         defs: dict = {}
-        result = _expand_inline(petstore_spec_raw, component_ref('NestedOwner'), defs)
-        assert result['properties']['pet'] == defs_ref('Pet')
-        assert set(defs) == {'Pet'}
+        result = expand_inline(shop_spec_raw, component_ref('NestedOwner'), defs)
+        assert result['properties']['product'] == defs_ref('Product')
+        assert set(defs) == {'Product'}
 
-    def test_allof_merge(self, petstore_spec_raw):
+    def test_allof_merge(self, shop_spec_raw):
         """``allOf`` branches are merged into a single schema with combined required, references resolved in place."""
         defs: dict = {}
-        _expand_schema(petstore_spec_raw, component_ref('PetWithOwner'), defs)
-        result = defs['PetWithOwner']
+        expand_schema(shop_spec_raw, component_ref('ProductWithOwner'), defs)
+        result = defs['ProductWithOwner']
         assert 'id' in result['properties']
         assert 'name' in result['properties']
         assert 'owner' in result['properties']
         assert set(result['required']) == {'name', 'owner'}
 
-    def test_oneof(self, petstore_spec_raw):
+    def test_oneof(self, shop_spec_raw):
         """``oneOf`` branches are kept as a list with each branch independently expanded."""
         defs: dict = {}
-        _expand_schema(petstore_spec_raw, component_ref('PetOrError'), defs)
-        assert defs['PetOrError']['oneOf'] == [defs_ref('Pet'), defs_ref('Error')]
-        assert defs['Pet']['properties']['name']['type'] == 'string'
+        expand_schema(shop_spec_raw, component_ref('ProductOrError'), defs)
+        assert defs['ProductOrError']['oneOf'] == [defs_ref('Product'), defs_ref('Error')]
+        assert defs['Product']['properties']['name']['type'] == 'string'
         assert defs['Error']['properties']['code']['type'] == 'integer'
 
-    def test_anyof(self, petstore_spec_raw):
+    def test_anyof(self, shop_spec_raw):
         """``anyOf`` branches expand independently, including non-object branches like ``null``."""
         defs: dict = {}
-        _expand_schema(petstore_spec_raw, component_ref('MaybePet'), defs)
-        assert defs['MaybePet']['anyOf'] == [defs_ref('Pet'), {'type': 'null'}]
+        expand_schema(shop_spec_raw, component_ref('MaybeProduct'), defs)
+        assert defs['MaybeProduct']['anyOf'] == [defs_ref('Product'), {'type': 'null'}]
 
-    def test_plain_schema_unchanged(self, petstore_spec_raw):
+    def test_plain_schema_unchanged(self, shop_spec_raw):
         """A schema without refs or composite keywords is returned unchanged."""
         schema = {'type': 'string', 'description': 'A name'}
-        result = _expand_schema(petstore_spec_raw, schema, {})
+        result = expand_schema(shop_spec_raw, schema, {})
         assert result == schema
 
-    def test_inline_allof(self, petstore_spec_raw):
+    def test_inline_allof(self, shop_spec_raw):
         """Inline ``allOf`` (mixing refs and literal schemas) merges correctly."""
         schema = {
             'allOf': [
-                component_ref('Pet'),
+                component_ref('Product'),
                 {'type': 'object', 'properties': {'color': {'type': 'string'}}},
             ],
         }
-        result = _expand_schema(petstore_spec_raw, schema, {})
+        result = expand_schema(shop_spec_raw, schema, {})
         assert 'name' in result['properties']
         assert 'color' in result['properties']
 
@@ -169,7 +169,7 @@ class TestRecursiveSchemas:
         )
         defs: dict = {}
 
-        result = _expand_schema(raw, component_ref('Node'), defs)
+        result = expand_schema(raw, component_ref('Node'), defs)
 
         assert result == defs_ref('Node')
         assert defs['Node']['properties']['name'] == {'type': 'string'}
@@ -185,7 +185,7 @@ class TestRecursiveSchemas:
         )
         defs: dict = {}
 
-        _expand_schema(raw, component_ref('A'), defs)
+        expand_schema(raw, component_ref('A'), defs)
 
         assert defs['A']['properties']['b'] == defs_ref('B')
         assert defs['B']['properties']['a'] == defs_ref('A')
@@ -202,7 +202,7 @@ class TestRecursiveSchemas:
         )
         defs: dict = {}
 
-        _expand_schema(raw, component_ref('Tree'), defs)
+        expand_schema(raw, component_ref('Tree'), defs)
 
         assert defs['Tree']['properties']['kids']['items'] == defs_ref('Tree')
 
@@ -222,7 +222,7 @@ class TestRecursiveSchemas:
         )
         defs: dict = {}
 
-        _expand_schema(raw, component_ref('Loop'), defs)
+        expand_schema(raw, component_ref('Loop'), defs)
 
         assert defs['Loop'] == {'type': 'object', 'description': 'Extends itself.'}
 
@@ -303,19 +303,19 @@ class TestNullable:
 
     def test_v30_nullable_becomes_union(self):
         """A 3.0 ``{type, nullable: true}`` becomes ``type: [..., "null"]`` and drops ``nullable``."""
-        assert _expand_schema({}, {'type': 'string', 'nullable': True}, {}) == {'type': ['string', 'null']}
+        assert expand_schema({}, {'type': 'string', 'nullable': True}, {}) == {'type': ['string', 'null']}
 
     def test_v30_nullable_false_is_dropped(self):
         """``nullable: false`` is not a 2020-12 keyword, so it is dropped without touching ``type``."""
-        assert _expand_schema({}, {'type': 'string', 'nullable': False}, {}) == {'type': 'string'}
+        assert expand_schema({}, {'type': 'string', 'nullable': False}, {}) == {'type': 'string'}
 
     def test_v31_array_type_is_left_as_is(self):
         """A 3.1 array ``type`` is already canonical and passes through unchanged."""
-        assert _expand_schema({}, {'type': ['integer', 'null']}, {}) == {'type': ['integer', 'null']}
+        assert expand_schema({}, {'type': ['integer', 'null']}, {}) == {'type': ['integer', 'null']}
 
     def test_nullable_object_recurses_into_properties(self):
         """A nullable object still expands its properties, then normalizes its own type."""
-        result = _expand_schema(
+        result = expand_schema(
             {},
             {'type': 'object', 'nullable': True, 'properties': {'inner': {'type': 'string', 'nullable': True}}},
             {},
@@ -426,17 +426,17 @@ class TestExclusiveBounds:
 
     def test_boolean_exclusive_minimum_becomes_number(self):
         """``{minimum, exclusiveMinimum: true}`` folds the bound into a numeric ``exclusiveMinimum``."""
-        result = _expand_schema({}, {'type': 'integer', 'minimum': 0, 'exclusiveMinimum': True}, {})
+        result = expand_schema({}, {'type': 'integer', 'minimum': 0, 'exclusiveMinimum': True}, {})
         assert result == {'type': 'integer', 'exclusiveMinimum': 0}
 
     def test_boolean_exclusive_minimum_false_is_dropped(self):
         """``exclusiveMinimum: false`` marks an inclusive bound, so only the flag is dropped."""
-        result = _expand_schema({}, {'type': 'integer', 'minimum': 0, 'exclusiveMinimum': False}, {})
+        result = expand_schema({}, {'type': 'integer', 'minimum': 0, 'exclusiveMinimum': False}, {})
         assert result == {'type': 'integer', 'minimum': 0}
 
     def test_numeric_exclusive_maximum_is_left_as_is(self):
         """A 2020-12 numeric ``exclusiveMaximum`` passes through unchanged."""
-        result = _expand_schema({}, {'type': 'integer', 'exclusiveMaximum': 10}, {})
+        result = expand_schema({}, {'type': 'integer', 'exclusiveMaximum': 10}, {})
         assert result == {'type': 'integer', 'exclusiveMaximum': 10}
 
 
@@ -445,86 +445,86 @@ class TestDeepNormalization:
 
     def test_properties_without_type_still_recurses(self):
         """A fragment with ``properties`` but no ``type`` is a common shape and must still normalize its fields."""
-        result = _expand_schema({}, {'properties': {'inner': {'type': 'string', 'nullable': True}}}, {})
+        result = expand_schema({}, {'properties': {'inner': {'type': 'string', 'nullable': True}}}, {})
         assert result['properties']['inner'] == {'type': ['string', 'null']}
 
     def test_items_without_array_type_still_recurses(self):
         """An ``items`` fragment normalizes even when the parent omits ``type: array``."""
-        result = _expand_schema({}, {'items': {'type': 'integer', 'nullable': True}}, {})
+        result = expand_schema({}, {'items': {'type': 'integer', 'nullable': True}}, {})
         assert result['items'] == {'type': ['integer', 'null']}
 
     def test_additional_properties_value_recurses(self):
         """A map's value schema, declared through ``additionalProperties``, is normalized too."""
-        result = _expand_schema(
+        result = expand_schema(
             {}, {'type': 'object', 'additionalProperties': {'type': 'integer', 'nullable': True}}, {}
         )
         assert result['additionalProperties'] == {'type': ['integer', 'null']}
 
     def test_pattern_properties_value_recurses(self):
         """A ``patternProperties`` value schema is normalized like any other nested schema."""
-        result = _expand_schema({}, {'patternProperties': {'^x-': {'type': 'string', 'nullable': True}}}, {})
+        result = expand_schema({}, {'patternProperties': {'^x-': {'type': 'string', 'nullable': True}}}, {})
         assert result['patternProperties']['^x-'] == {'type': ['string', 'null']}
 
     def test_prefix_items_recurse(self):
         """Each ``prefixItems`` entry, the 2020-12 tuple form, is normalized in place."""
-        result = _expand_schema({}, {'prefixItems': [{'type': 'string', 'nullable': True}]}, {})
+        result = expand_schema({}, {'prefixItems': [{'type': 'string', 'nullable': True}]}, {})
         assert result['prefixItems'] == [{'type': ['string', 'null']}]
 
     def test_not_recurses(self):
         """A schema nested under ``not`` is normalized so it stays valid 2020-12."""
-        result = _expand_schema({}, {'not': {'type': 'string', 'nullable': True}}, {})
+        result = expand_schema({}, {'not': {'type': 'string', 'nullable': True}}, {})
         assert result['not'] == {'type': ['string', 'null']}
 
 
 class TestParseSpec:
-    """End-to-end ``parse_spec`` against the petstore fixture."""
+    """End-to-end ``parse_spec`` against the shop fixture."""
 
     @pytest.fixture(autouse=True)
-    def _setup(self, petstore_spec_raw):
-        """Parse the petstore fixture once per test method."""
-        self.spec = parse_spec(petstore_spec_raw)
+    def _setup(self, shop_spec_raw):
+        """Parse the shop fixture once per test method."""
+        self.spec = parse_spec(shop_spec_raw)
 
     def test_metadata(self):
         """Title, version, and default base URL are surfaced from the spec."""
-        assert self.spec.title == 'Petstore'
+        assert self.spec.title == 'Shop'
         assert self.spec.version == '1.0.0'
-        assert self.spec.default_base_url == PETSTORE_URL
+        assert self.spec.default_base_url == SHOP_URL
 
     def test_every_operation_is_parsed(self):
         """All declared operations show up by id."""
         ids = [op.operation_id for op in self.spec.operations]
-        assert 'listPets' in ids
-        assert 'createPet' in ids
-        assert 'getPetById' in ids
-        assert 'deletePet' in ids
-        assert 'createPetWithOwner' in ids
-        assert 'adminListPets' in ids
+        assert 'listProducts' in ids
+        assert 'createProduct' in ids
+        assert 'getProductById' in ids
+        assert 'deleteProduct' in ids
+        assert 'createProductWithOwner' in ids
+        assert 'adminListProducts' in ids
 
     def test_param_dedup(self):
-        """``listPets`` has ``limit`` at both path-level and operation-level, should dedup."""
-        list_pets = next(op for op in self.spec.operations if op.operation_id == 'listPets')
-        limit_params = [param for param in list_pets.parameters if param.name == 'limit']
+        """``listProducts`` has ``limit`` at both path-level and operation-level, should dedup."""
+        list_products = next(op for op in self.spec.operations if op.operation_id == 'listProducts')
+        limit_params = [param for param in list_products.parameters if param.name == 'limit']
         assert len(limit_params) == 1
 
     def test_ref_parameter_resolved(self):
         """Path-level ``$ref`` parameters (``LimitParam``) are resolved into ``ParameterInfo``."""
-        list_pets = next(op for op in self.spec.operations if op.operation_id == 'listPets')
-        limit = next(param for param in list_pets.parameters if param.name == 'limit')
+        list_products = next(op for op in self.spec.operations if op.operation_id == 'listProducts')
+        limit = next(param for param in list_products.parameters if param.name == 'limit')
         assert limit.location == 'query'
         assert limit.schema_.get('type') == 'integer'
 
     def test_request_body_expanded(self):
-        """``createPet`` body schema becomes individual body params with required flags."""
-        create_pet = next(op for op in self.spec.operations if op.operation_id == 'createPet')
-        body_params = [param for param in create_pet.parameters if param.location == 'body']
+        """``createProduct`` body schema becomes individual body params with required flags."""
+        create_product = next(op for op in self.spec.operations if op.operation_id == 'createProduct')
+        body_params = [param for param in create_product.parameters if param.location == 'body']
         names = {param.name for param in body_params}
         assert names == {'id', 'name', 'tag'}
         name_param = next(param for param in body_params if param.name == 'name')
         assert name_param.required is True
 
     def test_allof_request_body_expanded(self):
-        """``createPetWithOwner`` body uses ``allOf``, should merge ``Pet`` and owner."""
-        operation = next(op for op in self.spec.operations if op.operation_id == 'createPetWithOwner')
+        """``createProductWithOwner`` body uses ``allOf``, should merge ``Product`` and owner."""
+        operation = next(op for op in self.spec.operations if op.operation_id == 'createProductWithOwner')
         body_params = [param for param in operation.parameters if param.location == 'body']
         names = {param.name for param in body_params}
         assert 'id' in names
@@ -533,19 +533,19 @@ class TestParseSpec:
 
     def test_x_mcp_integration(self):
         """``x-mcp`` extension on an operation flips ``tool_exposed`` accordingly."""
-        admin_op = next(op for op in self.spec.operations if op.operation_id == 'adminListPets')
+        admin_op = next(op for op in self.spec.operations if op.operation_id == 'adminListProducts')
         assert admin_op.tool_exposed is True
 
-        list_op = next(op for op in self.spec.operations if op.operation_id == 'listPets')
+        list_op = next(op for op in self.spec.operations if op.operation_id == 'listProducts')
         assert list_op.tool_exposed is False
 
     def test_x_mcp_integration_tool_override_parsed(self):
         """``tool.name`` and ``description`` reach the typed model."""
-        admin_op = next(op for op in self.spec.operations if op.operation_id == 'adminListPets')
+        admin_op = next(op for op in self.spec.operations if op.operation_id == 'adminListProducts')
         override = admin_op.x_mcp_integration.tool
         assert override is not None
-        assert override.name == 'listAdminPets'
-        assert override.description == 'List pets visible only to admin users.'
+        assert override.name == 'listAdminProducts'
+        assert override.description == 'List products visible only to admin users.'
 
     def test_generated_operation_id(self):
         """Operations without ``operationId`` get one synthesised from method+path."""
@@ -566,6 +566,52 @@ class TestParseSpec:
     def test_security_schemes_parsed(self):
         """Top-level ``components.securitySchemes`` is exposed on the parsed spec."""
         assert 'oauth2' in self.spec.security_schemes
+
+
+class TestSwaggerSecurityDefinitions:
+    """A Swagger 2.0 document declares its schemes under ``securityDefinitions``, read as OpenAPI 3 has them."""
+
+    def test_api_key_is_read_as_declared(self):
+        spec = parse_spec(
+            {'swagger': '2.0', 'securityDefinitions': {'key': {'type': 'apiKey', 'in': 'query', 'name': 'key'}}}
+        )
+        assert spec.security_schemes == {'key': {'type': 'apiKey', 'in': 'query', 'name': 'key'}}
+
+    def test_basic_becomes_http_basic(self):
+        spec = parse_spec({'swagger': '2.0', 'securityDefinitions': {'basic': {'type': 'basic'}}})
+        assert spec.security_schemes == {'basic': {'type': 'http', 'scheme': 'basic'}}
+
+    def test_oauth2_flow_is_renamed_into_flows(self):
+        definition = {
+            'type': 'oauth2',
+            'flow': 'accessCode',
+            'authorizationUrl': 'https://auth.example.com/authorize',
+            'tokenUrl': 'https://auth.example.com/token',
+            'scopes': {'read': 'Read'},
+        }
+        spec = parse_spec({'swagger': '2.0', 'securityDefinitions': {'oauth': definition}})
+        assert spec.security_schemes == {
+            'oauth': {
+                'type': 'oauth2',
+                'flows': {
+                    'authorizationCode': {
+                        'authorizationUrl': 'https://auth.example.com/authorize',
+                        'tokenUrl': 'https://auth.example.com/token',
+                        'scopes': {'read': 'Read'},
+                    }
+                },
+            }
+        }
+
+    def test_components_scheme_wins_over_a_definition_of_the_same_name(self):
+        spec = parse_spec(
+            {
+                'swagger': '2.0',
+                'securityDefinitions': {'key': {'type': 'apiKey', 'in': 'query', 'name': 'key'}},
+                'components': {'securitySchemes': {'key': {'type': 'apiKey', 'in': 'header', 'name': 'X-Key'}}},
+            }
+        )
+        assert spec.security_schemes == {'key': {'type': 'apiKey', 'in': 'header', 'name': 'X-Key'}}
 
 
 class TestUnnamedParameters:
@@ -934,8 +980,8 @@ class TestRelativeServerResolution:
 
     def test_resolves_path_against_url_source(self, relative_spec_raw):
         """A relative server URL is resolved against the HTTP source URL."""
-        spec = parse_spec(relative_spec_raw, source='https://petstore3.swagger.io/api/v3/openapi.json')
-        assert spec.default_base_url == 'https://petstore3.swagger.io/api/v3'
+        spec = parse_spec(relative_spec_raw, source='https://api.example.com/api/v3/openapi.json')
+        assert spec.default_base_url == 'https://api.example.com/api/v3'
 
     def test_leaves_absolute_url_alone(self):
         """An absolute server URL is preserved regardless of source."""
@@ -962,11 +1008,11 @@ class TestRelativeServerResolution:
 class TestLoadSpec:
     """File loading for both JSON and YAML spec formats."""
 
-    def test_json_and_yaml_equivalent(self, petstore_json_path, petstore_yml_path):
+    def test_json_and_yaml_equivalent(self, shop_json_path, shop_yml_path):
         """A ``.json`` and a ``.yml`` file of the same spec load into identical dicts."""
-        json_raw = load_spec(petstore_json_path)
-        yaml_raw = load_spec(petstore_yml_path)
-        assert json_raw['info']['title'] == 'Petstore'
+        json_raw = load_spec(shop_json_path)
+        yaml_raw = load_spec(shop_yml_path)
+        assert json_raw['info']['title'] == 'Shop'
         assert json_raw == yaml_raw
 
     def test_file_not_found(self, tmp_path):

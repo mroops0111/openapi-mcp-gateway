@@ -20,23 +20,23 @@ auth:
       auto: tags
       unscoped: deny
       manual:
-        pets:admin:
-          description: Manage every pet
-          operations: [createPet, deletePet]
+        products:admin:
+          description: Manage every product
+          operations: [createProduct, deleteProduct]
 ```
 
-- **`auto: tags`**: derives `{tag}:read` for GET and HEAD, `{tag}:write` for POST, PUT and PATCH, and `{tag}:delete` for DELETE. A tag is lowercased and its spaces become hyphens. So `pets:write` opens every POST, PUT and PATCH under the `pets` tag, and a `manual` scope opens a narrower set, such as one operation alone. `none` derives nothing.
+- **`auto: tags`**: derives `{tag}:read` for GET and HEAD, `{tag}:write` for POST, PUT and PATCH, and `{tag}:delete` for DELETE. A tag is lowercased and its spaces become hyphens. So `products:write` opens every POST, PUT and PATCH under the `products` tag, and a `manual` scope opens a narrower set, such as one operation alone. `none` derives nothing.
 - **`manual`**: each scope has a `description`, which the consent page shows, and `operations`, which takes the same patterns as `policy.allow`.
 - **`unscoped`**: decides an operation no scope covers. `deny` closes it to every token, and `allow` opens it to every token.
 
-[`auth.mcp`](../reference/configuration.md#authmcp) gives each key's default. Several scopes covering one operation add up, so holding any one is enough. With the config above and a spec whose operations carry the `pets` tag, the operations open as follows.
+[`auth.mcp`](../reference/configuration.md#authmcp) gives each key's default. Several scopes covering one operation add up, so holding any one is enough. With the config above and a spec whose operations carry the `products` tag, the operations open as follows.
 
 | Operation | Method | From `auto: tags` | From `manual` | Opens To |
 | --- | --- | --- | --- | --- |
-| `listPets` | GET | `pets:read` |  | `pets:read` |
-| `createPet` | POST | `pets:write` | `pets:admin` | `pets:write` or `pets:admin` |
-| `updatePet` | PUT | `pets:write` |  | `pets:write` |
-| `deletePet` | DELETE | `pets:delete` | `pets:admin` | `pets:delete` or `pets:admin` |
+| `listProducts` | GET | `products:read` |  | `products:read` |
+| `createProduct` | POST | `products:write` | `products:admin` | `products:write` or `products:admin` |
+| `updateProduct` | PUT | `products:write` |  | `products:write` |
+| `deleteProduct` | DELETE | `products:delete` | `products:admin` | `products:delete` or `products:admin` |
 | an operation with no tag |  |  |  | no token, under `unscoped: deny` |
 
 > [!WARNING]
@@ -53,11 +53,11 @@ auth:
       auto: tags
     clients:
       https://claude.ai/oauth/claude-code-client-metadata:
-        scopes: [pets:read, pets:write]
-        default_scopes: [pets:read]
+        scopes: [products:read, products:write]
+        default_scopes: [products:read]
     other_clients:
       trusted_hosts: [vscode.dev]
-      scopes: [pets:read]
+      scopes: [products:read]
 ```
 
 A sign-in is granted these scopes.
@@ -113,13 +113,13 @@ auth:
   upstream:
     type: oauth2
     flow: authorization_code
-    client_id: ${PETS_CLIENT_ID}
-    client_secret: ${PETS_CLIENT_SECRET}
+    client_id: ${PRODUCTS_CLIENT_ID}
+    client_secret: ${PRODUCTS_CLIENT_SECRET}
     enforce_scopes: true
-    scopes: [read:pets, write:pets, admin]
+    scopes: [read:products, write:products, admin]
     required_scopes: [offline_access]
     scope_implies:
-      admin: [read:pets, write:pets]
+      admin: [read:products, write:products]
 ```
 
 - **`scopes`**: the ceiling, the most a sign-in asks for. Unset under `enforce_scopes`, it is every scope the exposed operations declare.
@@ -130,8 +130,8 @@ With the config above, each MCP grant asks the upstream for the following. [Down
 
 | MCP Grant | Asked Upstream |
 | --- | --- |
-| `pets:read` | `offline_access read:pets` |
-| `pets:read pets:write` | `offline_access read:pets write:pets` |
+| `products:read` | `offline_access read:products` |
+| `products:read products:write` | `offline_access read:products write:products` |
 | none | `offline_access` |
 
 Without `enforce_scopes`, every sign-in or exchange asks for `required_scopes` plus all of `scopes`, and no call is checked against the upstream grant.
@@ -142,17 +142,17 @@ Without `enforce_scopes`, every sign-in or exchange asks for `required_scopes` p
 
 ```yaml
 operations:
-  createPet:
+  createProduct:
     security:
-      - oauth: [write:pets]
+      - oauth: [write:products]
 auth:
   upstream:
     scope_implies:
-      admin: [read:pets, write:pets]
+      admin: [read:products, write:products]
 ```
 
 - **`operations.<operationId>.security`**: replaces one operation's `security`, in the same OpenAPI form. It takes an operationId only, no pattern, and leaves `x-mcp-integration` as it is. Each scheme it names, such as `oauth` here, must be one the spec declares under `components.securitySchemes`.
-- **`auth.upstream.scope_implies`**: maps an upstream scope to the narrower ones it covers, such as `admin` covering `read:pets` and `write:pets` above. It applies transitively. Take it from the upstream's documentation, never from scope names.
+- **`auth.upstream.scope_implies`**: maps an upstream scope to the narrower ones it covers, such as `admin` covering `read:products` and `write:products` above. It applies transitively. Take it from the upstream's documentation, never from scope names.
 
 A spec with no `security` at all skips the upstream grant check, and the upstream refuses a short token itself.
 

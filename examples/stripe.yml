@@ -1,0 +1,23 @@
+# Stripe API with a secret key, sent as the bearer token Stripe's spec declares.
+#
+# Prerequisites:
+#   export STRIPE_SECRET_KEY="sk_test_..."   # https://dashboard.stripe.com/test/apikeys
+#
+# Usage: openapi-mcp-gateway serve --config examples/stripe.yml
+
+host: "127.0.0.1"
+port: 8000
+transport: streamable-http
+
+servers:
+  - name: stripe
+    spec: https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json
+    auth:
+      upstream:
+        credentials:
+          # The spec accepts basicAuth or bearerAuth, and every operation settles on bearerAuth.
+          bearerAuth:
+            value: ${STRIPE_SECRET_KEY}
+    # 612 operations sit behind three meta-tools.
+    exposure:
+      style: dynamic

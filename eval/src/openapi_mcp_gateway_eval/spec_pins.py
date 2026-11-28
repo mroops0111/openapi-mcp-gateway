@@ -3,9 +3,13 @@ import logging
 import os
 import pathlib
 import tempfile
+import typing
 
 import httpx
 import pydantic
+import yaml
+
+from openapi_mcp_gateway.openapi import load_spec
 
 
 logger = logging.getLogger(__name__)
@@ -13,6 +17,17 @@ logger = logging.getLogger(__name__)
 # Where downloaded specs are kept between runs, unless OPENAPI_MCP_GATEWAY_CACHE names another directory.
 CACHE_DIRECTORY_VARIABLE = 'OPENAPI_MCP_GATEWAY_CACHE'
 DEFAULT_CACHE_DIRECTORY = pathlib.Path('~/.cache/openapi-mcp-gateway').expanduser()
+
+# The operation keys of a path item, the ones that may carry their own ``security``.
+_OPERATION_KEYS = frozenset({'get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'})
+
+# The version of how a copy without security is derived, part of its cached name.
+# Raise it whenever that copy would come out different, such as a change to ``_strip_security``,
+# since a copy's name otherwise depends only on the spec it came from, and an old one would be reused.
+_WITHOUT_SECURITY_DERIVATION = 1
+
+# The YAML writer for a derived spec, the libyaml one when PyYAML was built with it.
+_YAML_DUMPER = getattr(yaml, 'CSafeDumper', yaml.SafeDumper)
 
 # Specs run to tens of megabytes, so a download gets longer than an ordinary request.
 DOWNLOAD_TIMEOUT_SECONDS = 120
@@ -84,6 +99,25 @@ def pin_as_it_is(source: str, base_directory: pathlib.Path) -> SpecPin:
     return pin
 
 
+def without_security(path: pathlib.Path) -> pathlib.Path:
+    """A cached copy of the spec at ``path`` that declares no ``security``, at the root or on any operation.
+
+    A benchmark never reaches the real API, since a replay answers instead or nothing is called at all,
+    so a gateway in front of it needs no credential, whatever the real API requires.
+    Every operation and schema is kept, so the tools a gateway lists from the copy are the ones the spec gives.
+    """
+    content = path.read_bytes()
+    cached = (
+        cache_directory()
+        / 'specs'
+        / f'{hashlib.sha256(content).hexdigest()}.without-security-v{_WITHOUT_SECURITY_DERIVATION}.yaml'
+    )
+    if not cached.exists():
+        document = _strip_security(load_spec(path))
+        _write_cache(cached, yaml.dump(document, Dumper=_YAML_DUMPER, sort_keys=False, allow_unicode=True).encode())
+    return cached
+
+
 def cache_directory() -> pathlib.Path:
     """The directory downloaded specs are kept in."""
     configured = os.environ.get(CACHE_DIRECTORY_VARIABLE)
@@ -93,6 +127,22 @@ def cache_directory() -> pathlib.Path:
 def sha256_of(path: pathlib.Path) -> str:
     """The hex SHA-256 of a file, for writing a new pin."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _strip_security(document: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    stripped = {key: value for key, value in document.items() if key != 'security'}
+    stripped['paths'] = {
+        template: {
+            key: {field: value for field, value in item.items() if field != 'security'}
+            if key in _OPERATION_KEYS and isinstance(item, dict)
+            else item
+            for key, item in path_item.items()
+        }
+        if isinstance(path_item, dict)
+        else path_item
+        for template, path_item in document.get('paths', {}).items()
+    }
+    return stripped
 
 
 def _cached_path(source: str, sha256: str) -> pathlib.Path:

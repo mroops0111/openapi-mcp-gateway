@@ -31,11 +31,11 @@ uvx openapi-mcp-gateway serve --config config.yml --dry-run
 ```
 
 ```text
-✓ Valid   1 server(s), 13 tool(s), 6 resource(s)
+✓ Valid   1 server(s), 1 tool(s), 102 resource(s)
     transport      streamable-http
 
-  petstore
-    mount          /petstore
+  pokeapi
+    mount          /pokeapi
     ...
 ```
 
@@ -71,22 +71,27 @@ The tasks file holds the tasks and the settings every run over them shares.
 
 ```yaml
 # Optional, the benchmark's own prompt by default.
-system_prompt: You keep the shop's pet records.
+system_prompt: You keep the shop's product records.
 # Optional, by server, operations that only read though they POST.
 read_only_operations:
-  pets: ['POST /pets/search']
+  shop: ['POST /products/search']
 tasks:
-  - id: adopted
-    prompt: Pet 7 was adopted, take it off the list.
+  - id: discontinued
+    prompt: Product 7 was discontinued, take it off the list.
     expected_calls:
-      - server: pets
+      - server: shop
         method: DELETE
-        path: '/pets/{petId}'
-        path_parameters: {petId: '7'}
+        path: '/products/{productId}'
+        path_parameters: {productId: '7'}
     solution:
-      - {server: pets, operation: delete_pet, arguments: {petId: 7}}
+      - server: shop
+        operation: delete_product
+        arguments: {productId: 7}
     upstream_responses:
-      - {server: pets, method: GET, path: /pets, body: [{id: 7, name: Rex}]}
+      - server: shop
+        method: GET
+        path: /products
+        body: [{id: 7, name: Canvas tote}]
 ```
 
 - **`id` and `prompt`**: the task's name in the report, and what the user asks.

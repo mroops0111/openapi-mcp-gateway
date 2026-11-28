@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from fastapi.security import APIKeyHeader, APIKeyQuery, OAuth2AuthorizationCodeBearer
 
+from openapi_mcp_gateway import Gateway
 from openapi_mcp_gateway.auth.upstream.oauth_flow import UpstreamOAuthFlow
 from openapi_mcp_gateway.fastapi import (
     ToolMetadata,
@@ -11,6 +13,7 @@ from openapi_mcp_gateway.fastapi import (
     override_with_metadata,
 )
 from openapi_mcp_gateway.openapi import OperationInfo, parse_spec
+from tests.constants import AUTHORIZE_URL, TOKEN_URL
 
 
 class TestMcpToolDecorator:
@@ -160,6 +163,65 @@ class TestInferAuthFromDeclaredFlows:
         config = infer_auth_from_declared_flows(declared)
         assert config.upstream.type == 'passthrough'
         assert config.upstream.flow is None
+
+
+class TestGatewayFromFastapiAssembly:
+    """``Gateway.from_fastapi`` wires decorators, transport, and auto-detected auth."""
+
+    def test_no_auth_no_provider(self):
+        """A FastAPI app without security schemes registers a server without an auth provider."""
+        app = FastAPI()
+
+        @app.get('/ping')
+        @mcp_tool()
+        def ping():
+            return {'pong': True}
+
+        gateway = Gateway.from_fastapi(app, name='svc')
+        bundle = gateway.describe_servers()[0]
+        assert bundle.auth.provider is None
+        assert bundle.auth.settings is None
+        assert bundle.auth.on_shutdown is None
+
+    def test_a_route_checking_its_own_key_registers(self):
+        """The app checks a key in the query in process, so the gateway leaves the refusal to it."""
+        api_key = APIKeyQuery(name='api_key', auto_error=False)
+        app = FastAPI()
+
+        @app.get('/secured')
+        @mcp_tool()
+        def secured(_key: str | None = Depends(api_key)):
+            return {'ok': True}
+
+        gateway = Gateway.from_fastapi(app, name='svc')
+
+        assert [server.name for server in gateway.describe_servers()] == ['svc']
+
+    def test_mixed_security_emits_warning(self, caplog):
+        """Mixed security schemes across marked routes log a single startup warning."""
+        oauth = OAuth2AuthorizationCodeBearer(
+            authorizationUrl=AUTHORIZE_URL,
+            tokenUrl=TOKEN_URL,
+            auto_error=False,
+        )
+        api_key = APIKeyHeader(name='X-API-Key', auto_error=False)
+        app = FastAPI()
+
+        @app.get('/oauth')
+        @mcp_tool()
+        def oauth_route(_token: str | None = Depends(oauth)):
+            return {'kind': 'oauth'}
+
+        @app.get('/apikey')
+        @mcp_tool()
+        def apikey_route(_key: str | None = Depends(api_key)):
+            return {'kind': 'apikey'}
+
+        with caplog.at_level('WARNING', logger='openapi_mcp_gateway.gateway'):
+            Gateway.from_fastapi(app, name='svc')
+
+        warnings = [record for record in caplog.records if 'distinct security schemes' in record.message]
+        assert len(warnings) == 1
 
 
 def _build_app() -> FastAPI:

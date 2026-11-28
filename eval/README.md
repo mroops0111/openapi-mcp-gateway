@@ -114,6 +114,21 @@ uv run omgw benchmark tool-calling check                     # what CI runs, cal
 
 `run` serves each scenario's gateway and a replay upstream on loopback ports, connects a Pydantic AI agent to the gateway over MCP, and runs every test task under every variant and model as many times as the manifest says, through Pydantic Evals. `check` proves every task can pass. `generate-config` writes the generated variants with a model running the skill, which the [README](../benchmarks/tool_calling/README.md#data-provenance) walks through. `run` and `generate-config` need each provider's API key in its usual variable, such as `ANTHROPIC_API_KEY`.
 
+### Grading
+
+Each task in a scenario's `tasks.yaml` carries what the grader checks.
+
+- **Expected Calls**: the requests the upstream must receive, by method, path template and the values the request decides. Endpoints that do the same step sit under `any_of`, and requests that together do one step under `all_of`.
+- **Solution**: the calls an ideal model makes, which `check` runs to prove the task can pass.
+- **Upstream Responses**: what the upstream answers for the data a task needs, with a decoy beside the answer, on every route a model could read it by.
+- **Forbidden Calls**: requests that fail the task, only where the request says what to leave alone.
+
+A run passes when every expected call reaches the upstream and no forbidden call does. Any other write counts as an extra write without failing the run. An operation that only reads though its method writes, such as a search by `POST`, is listed under `read_only_operations` and counts as a read. A model may fix a tool call the gateway refused up to `tool_retries` times, three by default.
+
+### Replay Upstream
+
+No real API is called. The replay answers each request from the task's upstream responses, else from the spec's example, else from a fixed sample of the response schema, so a model may call any operation. It records every request for the grader.
+
 ### Metrics
 
 Each scenario, variant, and model reports six metrics.

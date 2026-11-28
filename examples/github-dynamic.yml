@@ -25,7 +25,15 @@ servers:
       # search:
       #   field_weights:
       #     description: 1
+    # GitHub's description declares no security scheme, so the server declares the bearer token GitHub takes.
+    security_schemes:
+      token:
+        type: http
+        scheme: bearer
+    security:
+      - token: []
     auth:
       upstream:
-        type: bearer
-        token: ${GITHUB_TOKEN}
+        credentials:
+          token:
+            value: ${GITHUB_TOKEN}

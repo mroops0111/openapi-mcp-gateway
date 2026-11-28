@@ -40,7 +40,7 @@ async def test_no_auth_tutorial_assembles(fastapi_docs_src: pathlib.Path, catego
     assert marked, f'{module_path} has no endpoints to mark'
 
     gateway = Gateway.from_fastapi(app, name='smoke')
-    bundle = gateway._servers[0]
+    bundle = gateway.describe_servers()[0]
     async with Client(bundle.mcp) as session:
         listed = await session.list_tools()
         assert listed.tools, f'{module_path} produced no MCP tools'
@@ -73,7 +73,7 @@ async def test_http_basic_tutorial_assembles(fastapi_docs_src: pathlib.Path):
     assert marked, 'HTTPBasic tutorial has no endpoints to mark'
 
     gateway = Gateway.from_fastapi(app, name='smoke')
-    bundle = gateway._servers[0]
+    bundle = gateway.describe_servers()[0]
     async with Client(bundle.mcp) as session:
         listed = await session.list_tools()
         assert listed.tools

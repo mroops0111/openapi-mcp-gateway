@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from mcp.server.mcpserver import Context
 
-from openapi_mcp_gateway.exposure._progress import CallProgress
+from openapi_mcp_gateway.exposure import CallProgress
 
 
 async def test_progress_only_grows_and_ends_at_its_total():

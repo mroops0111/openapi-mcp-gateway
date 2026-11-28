@@ -18,7 +18,7 @@ from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, ScopeRegistry
 from openapi_mcp_gateway.settings import GatewayConfig
 from openapi_mcp_gateway.stores.base import TokenStore
-from tests.constants import GATEWAY_URL
+from tests.constants import GATEWAY_URL, SHARED_CREDENTIAL_SECURITY, SHARED_CREDENTIAL_UPSTREAM
 
 
 # Where the MCP client asks to be sent back once it is authorized, a loopback address as a CLI client uses.
@@ -41,7 +41,7 @@ def authorization_code_server(
     upstream: UpstreamAuthorizationCodeClient,
     policy: McpTokenPolicy | None = None,
     clients: McpClientDirectory | None = None,
-    server_name: str = 'petstore',
+    server_name: str = 'shop',
     scope_registry: ScopeRegistry | None = None,
 ) -> McpAuthorizationCodeServer:
     """The MCP authorization server ``AuthorizationCodeFlowHandler`` builds, joined to ``upstream`` by its Bridge.
@@ -85,7 +85,7 @@ def authorization_code_gateway(
     other_clients: dict[str, typing.Any] | None = None,
     client_metadata_resolver: McpClientMetadataResolver | None = None,
 ) -> Gateway:
-    """A gateway at ``url`` serving ``spec`` as ``petstore`` behind an ``authorization_code`` server for ``clients``.
+    """A gateway at ``url`` serving ``spec`` as ``shop`` behind an ``authorization_code`` server for ``clients``.
 
     ``upstream`` is merged into ``auth.upstream``, which otherwise requests ``read``.
     ``other_clients`` becomes ``auth.mcp.other_clients`` when given,
@@ -105,7 +105,7 @@ def authorization_code_gateway(
             **({'other_clients': other_clients} if other_clients is not None else {}),
         },
     }
-    server = {'name': 'petstore', 'spec': str(spec), 'auth': auth, 'exposure': exposure or {}}
+    server = {'name': 'shop', 'spec': str(spec), 'auth': auth, 'exposure': exposure or {}}
     return Gateway.from_config(
         GatewayConfig.model_validate({'url': url, 'servers': [server]}),
         client_metadata_resolver=client_metadata_resolver,
@@ -113,15 +113,16 @@ def authorization_code_gateway(
 
 
 def shared_credential_server(spec_path: pathlib.Path, name: str, path_prefix: str) -> dict[str, typing.Any]:
-    """The config of a bearer-token server named ``name`` under ``path_prefix``, issuing MCP tokens to one agent."""
+    """The config of a shared-credential server named ``name`` under ``path_prefix``, issuing MCP tokens to one agent."""
     return {
         'name': name,
         'path_prefix': path_prefix,
         'spec': str(spec_path),
+        **SHARED_CREDENTIAL_SECURITY,
         'auth': {
-            'upstream': {'type': 'bearer', 'token': 'upstream-pat'},
+            'upstream': SHARED_CREDENTIAL_UPSTREAM,
             'mcp': {
-                'clients': {'agent': {'client_secret': 'agent-secret', 'scopes': ['pets:read']}},
+                'clients': {'agent': {'client_secret': 'agent-secret', 'scopes': ['products:read']}},
                 'operation_scopes': {'auto': 'tags'},
             },
         },

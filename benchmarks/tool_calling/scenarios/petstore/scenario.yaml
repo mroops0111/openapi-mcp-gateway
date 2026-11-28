@@ -1,4 +1,0 @@
-# What the user wants these APIs for. The scenario's own config was written from this sentence alone.
-intent: "Run a small pet shop: keep its pets listed with the right status, and handle customers' orders."
-servers:
-  petstore: petstore

@@ -113,6 +113,6 @@ def discovered_external_issuer(jwk_client: MagicMock | None = None) -> typing.It
         patch(
             'openapi_mcp_gateway.auth.external_issuer_setup.fetch_mcp_external_issuer_metadata', return_value=metadata
         ) as fetch,
-        patch('openapi_mcp_gateway.auth.mcp.external_issuer._build_jwk_client', return_value=jwk_client or MagicMock()),
+        patch('openapi_mcp_gateway.auth.mcp.external_issuer.build_jwk_client', return_value=jwk_client or MagicMock()),
     ):
         yield fetch

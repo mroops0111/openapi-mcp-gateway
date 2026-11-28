@@ -7,15 +7,12 @@ from openapi_mcp_gateway.auth.factory import build_auth
 from openapi_mcp_gateway.auth.upstream.resolver import (
     UpstreamNoCredentialAuthResolver,
     UpstreamPassthroughAuthResolver,
-    UpstreamStaticAuthResolver,
 )
 from openapi_mcp_gateway.auth.upstream_types import AUTH_TYPE_HANDLERS
-from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.openapi import OpenAPISpec
 from openapi_mcp_gateway.scopes import McpUnrestrictedScopePolicy, ScopeRegistry
 from openapi_mcp_gateway.settings import (
     AuthConfig,
-    GatewayConfig,
     McpAuthConfig,
     ServerConfig,
     UpstreamAuthConfig,
@@ -34,7 +31,7 @@ from tests.flow import (
 
 
 # The upstream of each kind, with what it needs to build, and the spec it builds against.
-BEARER = {'type': 'bearer', 'token': 't'}
+SHARED_CREDENTIAL = {'credentials': {'bearerAuth': {'value': 't'}}}
 CLIENT_CREDENTIALS = {'type': 'oauth2', 'flow': 'client_credentials', 'client_id': 'cid', 'client_secret': 'sec'}
 AUTHORIZATION_CODE = {'type': 'oauth2', 'flow': 'authorization_code', 'client_id': 'cid', 'client_secret': 'sec'}
 TOKEN_EXCHANGE = {
@@ -54,49 +51,30 @@ TOKEN_EXCHANGE_MCP = {'issuer': ISSUER, 'required_scopes': ['mcp']}
 
 
 class TestStaticCredentials:
-    """``bearer`` and ``api_key`` differ only in how the credential is framed."""
+    """``auth.upstream.credentials`` rides per operation, so the server's own resolver carries no credential."""
 
-    def test_bearer_prefixes_the_token(self):
-        """A bearer credential travels as ``Authorization: Bearer <token>``."""
-        setup = build_auth(_context(AuthConfig(upstream=UpstreamAuthConfig(type='bearer', token='my-token'))))
-
-        assert isinstance(setup.resolver, UpstreamStaticAuthResolver)
-        assert setup.resolver._header_name == 'Authorization'
-        assert setup.resolver._header_value == 'Bearer my-token'
-
-    def test_api_key_sends_the_token_unprefixed(self):
-        """An API key is the whole header value, on a header the API names."""
-        setup = build_auth(_context(AuthConfig(upstream=UpstreamAuthConfig(type='api_key', token='key123'))))
-
-        assert isinstance(setup.resolver, UpstreamStaticAuthResolver)
-        assert setup.resolver._header_name == 'X-API-Key'
-        assert setup.resolver._header_value == 'key123'
-
-    def test_api_key_header_is_configurable(self):
-        """``api_key_header`` names the header, since APIs disagree on it."""
-        setup = build_auth(
-            _context(AuthConfig(upstream=UpstreamAuthConfig(type='api_key', token='key123', api_key_header='X-Custom')))
-        )
-
-        assert isinstance(setup.resolver, UpstreamStaticAuthResolver)
-        assert setup.resolver._header_name == 'X-Custom'
-
-    def test_env_var_substitution_reaches_the_header(self, monkeypatch):
-        """``${VAR}`` resolves on the way through, so config never holds the secret."""
-        monkeypatch.setenv('TEST_TOKEN', 'env-token')
-        setup = build_auth(_context(AuthConfig(upstream=UpstreamAuthConfig(type='bearer', token='${TEST_TOKEN}'))))
-
-        assert isinstance(setup.resolver, UpstreamStaticAuthResolver)
-        assert setup.resolver._header_value == 'Bearer env-token'
-
-    def test_a_declared_type_without_a_token_sends_nothing(self):
-        """A half-filled config serves the API unauthenticated rather than failing at startup.
-
-        The upstream rejects the call, which is a clearer signal than a gateway that will not boot.
-        """
-        setup = build_auth(_context(AuthConfig(upstream=UpstreamAuthConfig(type='bearer'))))
+    def test_credentials_alone_send_nothing_from_the_resolver(self):
+        setup = build_auth(_context(AuthConfig.model_validate({'upstream': SHARED_CREDENTIAL})))
 
         assert isinstance(setup.resolver, UpstreamNoCredentialAuthResolver)
+        assert setup.upstream_description.summary == 'credentials (bearerAuth)'
+
+    def test_credentials_are_named_beside_a_flow(self):
+        setup = _build({'upstream': {**CLIENT_CREDENTIALS, 'credentials': {'api_key': {'value': 'k'}}}})
+
+        assert setup.upstream_description.summary == 'oauth2 (client_credentials) + credentials (api_key)'
+
+    @pytest.mark.parametrize(
+        ('upstream', 'removed'),
+        [
+            ({'type': 'bearer', 'token': 't'}, r'auth\.upstream\.type bearer, auth\.upstream\.token no longer exist'),
+            ({'type': 'api_key'}, r'auth\.upstream\.type api_key no longer exist'),
+            ({'api_key_header': 'X-Key'}, r'auth\.upstream\.api_key_header no longer exist'),
+        ],
+    )
+    def test_the_removed_static_settings_name_the_new_shape(self, upstream, removed):
+        with pytest.raises(ValueError, match=rf'{removed}\. Static credentials are now auth\.upstream\.credentials'):
+            AuthConfig.model_validate({'upstream': upstream})
 
 
 class TestOtherTypes:
@@ -108,10 +86,12 @@ class TestOtherTypes:
 
         assert isinstance(setup.resolver, UpstreamNoCredentialAuthResolver)
 
-    def test_a_token_alongside_none_is_refused(self):
-        """Previously the token was quietly ignored, which read as auth that was never applied."""
-        with pytest.raises(ValueError, match='no effect'):
-            build_auth(_context(AuthConfig(upstream=UpstreamAuthConfig(type='none', token='ignored'))))
+    def test_credentials_beside_passthrough_are_refused(self):
+        """Passthrough forwards the caller's own credential, so a static one beside it would have no clear owner."""
+        with pytest.raises(
+            ValueError, match=r'credentials needs auth\.upstream\.type none, or auth\.upstream\.type oauth2'
+        ):
+            build_auth(_context(AuthConfig.model_validate({'upstream': {'type': 'passthrough', **SHARED_CREDENTIAL}})))
 
 
 class TestDispatch:
@@ -141,10 +121,9 @@ class TestPassthroughAuthType:
 
     def test_resolves_without_consulting_a_flow(self):
         """It never reaches the flow factory, so no spec or flow value is involved."""
-        gateway = Gateway.from_config(GatewayConfig())
         entry = server_entry(AuthConfig(upstream=UpstreamAuthConfig(type='passthrough')))
 
-        setup = gateway._resolve_auth(entry, build_spec(), ScopeRegistry(McpUnrestrictedScopePolicy()))
+        setup = build_auth(auth_context(entry, build_spec()))
 
         assert isinstance(setup.resolver, UpstreamPassthroughAuthResolver)
         assert setup.provider is None
@@ -159,8 +138,7 @@ class TestUpstreamPrincipal:
         ('auth', 'principal'),
         [
             ({'upstream': {'type': 'none'}}, 'gateway'),
-            ({'upstream': BEARER}, 'gateway'),
-            ({'upstream': {'type': 'api_key', 'token': 'k'}}, 'gateway'),
+            ({'upstream': SHARED_CREDENTIAL}, 'gateway'),
             ({'upstream': CLIENT_CREDENTIALS}, 'gateway'),
             ({'upstream': {**CLIENT_CREDENTIALS, 'flow': None}}, 'gateway'),
             ({'upstream': AUTHORIZATION_CODE}, 'user'),
@@ -189,13 +167,8 @@ class TestUpstreamSettingsWithoutEffect:
     @pytest.mark.parametrize(
         ('upstream', 'refusal'),
         [
-            ({**BEARER, 'api_key_header': 'X-Custom'}, r'api_key_header needs auth\.upstream\.type api_key,'),
-            (
-                {**CLIENT_CREDENTIALS, 'token': 'ignored'},
-                r'token needs auth\.upstream\.type bearer, or auth\.upstream\.type api_key,',
-            ),
-            ({**BEARER, 'audience': 'https://api'}, r'audience needs auth\.upstream\.type oauth2,'),
-            ({**BEARER, 'flow': 'client_credentials'}, r'flow needs auth\.upstream\.type oauth2,'),
+            ({**SHARED_CREDENTIAL, 'audience': 'https://api'}, r'audience needs auth\.upstream\.type oauth2,'),
+            ({**SHARED_CREDENTIAL, 'flow': 'client_credentials'}, r'flow needs auth\.upstream\.type oauth2,'),
             ({**CLIENT_CREDENTIALS, 'issuer': ISSUER}, r'issuer needs auth\.upstream\.flow authorization_code,'),
             (
                 {**CLIENT_CREDENTIALS, 'enforce_scopes': True},
@@ -219,8 +192,7 @@ class TestUpstreamSettingsWithoutEffect:
     @pytest.mark.parametrize(
         'auth',
         [
-            {'upstream': BEARER},
-            {'upstream': {'type': 'api_key', 'token': 'k', 'api_key_header': 'X-Custom'}},
+            {'upstream': SHARED_CREDENTIAL},
             {'upstream': {**AUTHORIZATION_CODE, 'issuer': ISSUER, 'required_scopes': ['openid']}},
             {'upstream': {**CLIENT_CREDENTIALS, 'scopes': ['api'], 'audience': API_URL}},
             {'upstream': {'type': 'none'}},
@@ -242,10 +214,13 @@ class TestMcpSettingsWithoutEffect:
         ('auth', 'refusal'),
         [
             (
-                {'upstream': BEARER, 'mcp': {'required_scopes': ['x']}},
+                {'upstream': SHARED_CREDENTIAL, 'mcp': {'required_scopes': ['x']}},
                 r'required_scopes needs auth\.mcp\.issuer on .*, or auth\.mcp\.clients on',
             ),
-            ({'upstream': BEARER, 'mcp': {'access_token_ttl': 60}}, r'access_token_ttl needs auth\.mcp\.clients on'),
+            (
+                {'upstream': SHARED_CREDENTIAL, 'mcp': {'access_token_ttl': 60}},
+                r'access_token_ttl needs auth\.mcp\.clients on',
+            ),
             (
                 {'upstream': CLIENT_CREDENTIALS, 'mcp': {'access_token_ttl': 60}},
                 r'access_token_ttl needs auth\.mcp\.clients on',
@@ -263,7 +238,10 @@ class TestMcpSettingsWithoutEffect:
                 r'clients needs auth\.upstream\.flow authorization_code, where',
             ),
             (
-                {'upstream': BEARER, 'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'other_clients': {}}},
+                {
+                    'upstream': SHARED_CREDENTIAL,
+                    'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'other_clients': {}},
+                },
                 r'other_clients needs auth\.upstream\.flow authorization_code',
             ),
             (
@@ -284,7 +262,7 @@ class TestMcpSettingsWithoutEffect:
             {'upstream': TOKEN_EXCHANGE, 'mcp': {**TOKEN_EXCHANGE_MCP, 'required_scopes': ['x']}},
             {'upstream': {**CLIENT_CREDENTIALS, 'flow': None}, 'mcp': {'issuer': ISSUER, 'required_scopes': ['x']}},
             {
-                'upstream': BEARER,
+                'upstream': SHARED_CREDENTIAL,
                 'mcp': {'clients': {'agent': {'client_secret': 's'}}, 'access_token_ttl': 600},
             },
             {
@@ -318,11 +296,14 @@ class TestMcpSettingsWithoutEffect:
                 r'auth\.mcp\.issuer needs auth\.mcp\.required_scopes, the scopes every client asks the issuer for first',
             ),
             (
-                {'upstream': BEARER, 'mcp': {'issuer': ISSUER}},
+                {'upstream': SHARED_CREDENTIAL, 'mcp': {'issuer': ISSUER}},
                 r'auth\.mcp\.issuer needs auth\.mcp\.required_scopes',
             ),
             (
-                {'upstream': BEARER, 'mcp': {'issuer': ISSUER, 'clients': {'agent': {'client_secret': 's'}}}},
+                {
+                    'upstream': SHARED_CREDENTIAL,
+                    'mcp': {'issuer': ISSUER, 'clients': {'agent': {'client_secret': 's'}}},
+                },
                 r"auth\.mcp\.issuer on .* and auth\.mcp\.clients on .* each issue this endpoint's tokens",
             ),
         ],
@@ -370,6 +351,6 @@ def _build(auth: dict):
 def _build_context(auth: dict) -> AuthTypeContext:
     """What ``build_auth`` receives for a server carrying ``auth``, against a spec declaring its flow."""
     upstream = auth['upstream']
-    flow = upstream.get('flow') or ('client_credentials' if upstream['type'] == 'oauth2' else None)
+    flow = upstream.get('flow') or ('client_credentials' if upstream.get('type') == 'oauth2' else None)
     spec = SPEC_BY_FLOW[flow]() if flow in SPEC_BY_FLOW else build_spec()
     return auth_context(server_entry(AuthConfig.model_validate(auth)), spec)

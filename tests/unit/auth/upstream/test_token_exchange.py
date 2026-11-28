@@ -1,6 +1,6 @@
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+import typing
 
+import httpx
 import pytest
 
 from openapi_mcp_gateway.auth.upstream.token_exchange import (
@@ -9,10 +9,11 @@ from openapi_mcp_gateway.auth.upstream.token_exchange import (
     UpstreamTokenExchangeRefusedError,
 )
 from tests.constants import API_URL, TOKEN_URL
+from tests.token_endpoint import TokenEndpoint
 
 
 # The upstream scopes each exchange asks for.
-ASKED = ['pets.read', 'pets.write']
+ASKED = ['products.read', 'products.write']
 
 
 class TestUpstreamTokenExchangeClient:
@@ -20,35 +21,35 @@ class TestUpstreamTokenExchangeClient:
 
     async def test_posts_rfc_8693_grant(self):
         """The request carries the token-exchange grant, the subject token, and the target audience."""
-        source = _exchange_client(_build_response(200, {'access_token': 'upstream', 'expires_in': 3600}))
+        source, endpoint = _exchange_client(_build_response(200, {'access_token': 'upstream', 'expires_in': 3600}))
 
         exchanged = await source.exchange('caller-token', ASKED)
 
         assert exchanged.access_token == 'upstream'
-        posted = _posted(source)
+        posted = endpoint.forms[-1]
         assert posted['grant_type'] == 'urn:ietf:params:oauth:grant-type:token-exchange'
         assert posted['subject_token'] == 'caller-token'
         assert posted['subject_token_type'] == 'urn:ietf:params:oauth:token-type:access_token'
         assert posted['audience'] == API_URL
         assert posted['client_id'] == 'gateway'
-        assert posted['scope'] == 'pets.read pets.write'
+        assert posted['scope'] == 'products.read products.write'
 
 
 class TestExchangeCache:
     """One MCP session makes many tool calls, so a fresh result is reused for the same subject token and scopes."""
 
     async def test_repeat_exchange_is_cached(self):
-        source = _exchange_client(_build_response(200, {'access_token': 'upstream', 'expires_in': 3600}))
+        source, endpoint = _exchange_client(_build_response(200, {'access_token': 'upstream', 'expires_in': 3600}))
 
         first = (await source.exchange('caller-token', ASKED)).access_token
         second = (await source.exchange('caller-token', ASKED)).access_token
 
         assert first == second == 'upstream'
-        _post_of(source).assert_awaited_once()
+        assert len(endpoint.forms) == 1
 
     async def test_different_subject_tokens_do_not_share_a_result(self):
         """Keying by user instead would let a new session inherit credentials minted for an old one."""
-        source = _exchange_client(
+        source, _ = _exchange_client(
             _build_response(200, {'access_token': 'upstream-a', 'expires_in': 3600}),
             _build_response(200, {'access_token': 'upstream-b', 'expires_in': 3600}),
         )
@@ -58,49 +59,38 @@ class TestExchangeCache:
 
     async def test_different_scopes_do_not_share_a_result(self):
         """A token exchanged for fewer scopes would refuse a call the wider exchange opens."""
-        source = _exchange_client(
+        source, _ = _exchange_client(
             _build_response(200, {'access_token': 'narrow', 'expires_in': 3600}),
             _build_response(200, {'access_token': 'wide', 'expires_in': 3600}),
         )
 
-        assert (await source.exchange('caller-token', ['pets.read'])).access_token == 'narrow'
+        assert (await source.exchange('caller-token', ['products.read'])).access_token == 'narrow'
         assert (await source.exchange('caller-token', ASKED)).access_token == 'wide'
 
     async def test_expired_cache_entry_triggers_a_new_exchange(self):
         """A result past its renewal time is discarded rather than returned stale."""
-        source = _exchange_client(
+        now = [1000.0]
+        source, _ = _exchange_client(
             _build_response(200, {'access_token': 'first', 'expires_in': 10}),
             _build_response(200, {'access_token': 'second', 'expires_in': 3600}),
             refresh_skew_seconds=5.0,
+            clock=lambda: now[0],
         )
 
         assert (await source.exchange('caller-token', ASKED)).access_token == 'first'
-        with patch('time.monotonic', return_value=time.monotonic() + 6):
-            assert (await source.exchange('caller-token', ASKED)).access_token == 'second'
+        now[0] += 6
+        assert (await source.exchange('caller-token', ASKED)).access_token == 'second'
 
     async def test_a_lifetime_shorter_than_the_skew_is_still_reused_for_half_of_it(self):
         """Otherwise every call made with such a token would exchange it again."""
-        source = _exchange_client(
+        source, endpoint = _exchange_client(
             _build_response(200, {'access_token': 'short', 'expires_in': 20}), refresh_skew_seconds=30.0
         )
 
         await source.exchange('caller-token', ASKED)
         await source.exchange('caller-token', ASKED)
 
-        _post_of(source).assert_awaited_once()
-
-    async def test_an_expired_entry_is_dropped_on_the_next_exchange(self):
-        """Callers whose tokens rotate do not grow the cache without bound."""
-        source = _exchange_client(
-            _build_response(200, {'access_token': 'first', 'expires_in': 1}),
-            _build_response(200, {'access_token': 'second', 'expires_in': 3600}),
-        )
-
-        await source.exchange('old-caller-token', ASKED)
-        with patch('time.monotonic', return_value=time.monotonic() + 10):
-            await source.exchange('new-caller-token', ASKED)
-
-        assert set(source._cache) == {('new-caller-token', tuple(ASKED))}
+        assert len(endpoint.forms) == 1
 
 
 class TestExchangeFailure:
@@ -108,14 +98,14 @@ class TestExchangeFailure:
 
     @pytest.mark.parametrize('error_code', ['invalid_scope', 'invalid_target'])
     async def test_a_refused_scope_or_target_names_the_scopes_and_not_the_response(self, error_code):
-        source = _exchange_client(
+        source, _ = _exchange_client(
             _build_response(400, {'error': error_code, 'error_description': 'internal detail'}, text='internal detail')
         )
 
         with pytest.raises(UpstreamTokenExchangeRefusedError) as raised:
             await source.exchange('caller-token', ASKED)
 
-        assert 'pets.read pets.write' in str(raised.value)
+        assert 'products.read products.write' in str(raised.value)
         assert error_code in str(raised.value)
         assert 'internal detail' not in str(raised.value)
 
@@ -126,7 +116,7 @@ class TestExchangeFailure:
     )
     async def test_any_other_failure_explains_the_likely_causes(self, status_code, payload):
         """Support for the grant varies between authorization servers, so the error names what to check."""
-        source = _exchange_client(_build_response(status_code, payload, text='detail'))
+        source, _ = _exchange_client(_build_response(status_code, payload, text='detail'))
 
         with pytest.raises(UpstreamTokenExchangeError, match='RFC 8693') as raised:
             await source.exchange('caller-token', ASKED)
@@ -134,9 +124,7 @@ class TestExchangeFailure:
         assert not isinstance(raised.value, UpstreamTokenExchangeRefusedError)
 
     async def test_a_response_that_is_not_json_is_a_failed_exchange(self):
-        response = _build_response(200)
-        response.json.side_effect = ValueError('not JSON')
-        source = _exchange_client(response)
+        source, _ = _exchange_client(httpx.Response(200, content=b'not JSON'))
 
         with pytest.raises(UpstreamTokenExchangeError, match='not JSON'):
             await source.exchange('caller-token', ASKED)
@@ -148,61 +136,46 @@ class TestExchangedScopes:
     @pytest.mark.parametrize(
         ('payload', 'granted'),
         [
-            ({'access_token': 'upstream', 'scope': 'pets.read'}, ('pets.read',)),
-            ({'access_token': 'upstream'}, ('pets.read', 'pets.write')),
+            ({'access_token': 'upstream', 'scope': 'products.read'}, ('products.read',)),
+            ({'access_token': 'upstream'}, ('products.read', 'products.write')),
         ],
         ids=['narrowed by the issuer', 'left out, so as asked'],
     )
     async def test_the_granted_scopes_come_from_the_response(self, payload, granted):
         """RFC 8693 §2.2.1 lets a response leave ``scope`` out when it equals what was asked for."""
-        source = _exchange_client(_build_response(200, payload))
+        source, _ = _exchange_client(_build_response(200, payload))
 
         assert (await source.exchange('caller-token', ASKED)).scopes == granted
 
     async def test_no_scope_is_sent_when_none_is_asked_for(self):
         """The issuer then applies its own default, as an ``authorization_code`` sign-in leaves it to the upstream."""
-        source = _exchange_client(_build_response(200, {'access_token': 'upstream'}))
+        source, endpoint = _exchange_client(_build_response(200, {'access_token': 'upstream'}))
 
         await source.exchange('caller-token', [])
 
-        assert 'scope' not in _posted(source)
+        assert 'scope' not in endpoint.forms[-1]
 
 
-def _exchange_client(*responses: MagicMock, **overrides) -> UpstreamTokenExchangeClient:
+def _exchange_client(
+    *responses: httpx.Response, **overrides: typing.Any
+) -> tuple[UpstreamTokenExchangeClient, TokenEndpoint]:
     """An exchange client of the gateway against ``TOKEN_URL``, naming the API as its audience.
 
-    Its token endpoint answers with ``responses`` in turn.
+    Its token endpoint, returned beside it, answers with ``responses`` in turn.
     """
-    defaults = {
+    endpoint = TokenEndpoint(*responses)
+    defaults: dict[str, typing.Any] = {
         'token_endpoint': TOKEN_URL,
         'client_id': 'gateway',
         'client_secret': 'secret',
         'audience_params': {'audience': API_URL},
+        'transport': endpoint,
     }
-    source = UpstreamTokenExchangeClient(**{**defaults, **overrides})
-    source._http_client = MagicMock()
-    source._http_client.post = AsyncMock(side_effect=list(responses))
-    return source
+    return UpstreamTokenExchangeClient(**{**defaults, **overrides}), endpoint
 
 
-def _post_of(source: UpstreamTokenExchangeClient) -> AsyncMock:
-    """The mocked post the token endpoint of ``source`` is called through."""
-    post = source._http_client.post if source._http_client is not None else None
-    assert isinstance(post, AsyncMock)
-    return post
-
-
-def _posted(source: UpstreamTokenExchangeClient) -> dict[str, str]:
-    """The form the last exchange of ``source`` posted."""
-    await_args = _post_of(source).await_args
-    assert await_args is not None
-    return await_args.kwargs['data']
-
-
-def _build_response(status_code: int, payload: dict | None = None, text: str = '') -> MagicMock:
-    """Construct a MagicMock that mimics ``httpx.Response`` enough for the source."""
-    response = MagicMock()
-    response.status_code = status_code
-    response.json.return_value = payload or {}
-    response.text = text
-    return response
+def _build_response(status_code: int, payload: dict | None = None, text: str = '') -> httpx.Response:
+    """A token endpoint's answer, JSON when ``payload`` is given and ``text`` otherwise."""
+    if payload is not None:
+        return httpx.Response(status_code, json=payload)
+    return httpx.Response(status_code, text=text)

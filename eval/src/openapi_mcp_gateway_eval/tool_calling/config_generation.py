@@ -15,6 +15,7 @@ from openapi_mcp_gateway.gateway import Gateway
 from openapi_mcp_gateway.settings import GatewayConfig
 
 from ..provenance import PROVENANCE_SUFFIX, ModelRun, model_run_fields, write_provenance
+from ..spec_pins import without_security
 from .dataset import (
     PROMPTS_DIRECTORY,
     SCENARIOS_DIRECTORY,
@@ -128,13 +129,17 @@ def _config_generator(benchmark: Benchmark) -> ConfigGenerator:
 
 
 def _prepare_workspace(benchmark: Benchmark, scenario: Scenario, workspace: pathlib.Path) -> dict[str, pathlib.Path]:
-    """A fresh workspace with each server's pinned spec and a starter config naming them, keyed by server."""
+    """A fresh workspace with each server's pinned spec and a starter config naming them, keyed by server.
+
+    Each spec is copied without its ``security``, as the replay the variant runs against answers to it,
+    since the benchmark sets the auth itself.
+    """
     if workspace.exists():
         shutil.rmtree(workspace)
     workspace.mkdir(parents=True)
     spec_paths = {}
     for server, spec in scenario.servers.items():
-        cached = benchmark.manifest.specs[spec].fetch(benchmark.root)
+        cached = without_security(benchmark.manifest.specs[spec].fetch(benchmark.root))
         spec_paths[server] = workspace / f'{server}{cached.suffix}'
         shutil.copyfile(cached, spec_paths[server])
     starter = {

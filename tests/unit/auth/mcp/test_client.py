@@ -189,7 +189,7 @@ class TestClientMetadataDirectory:
     """A metadata document URL signs in when listed or admitted as another client, with its document's redirects."""
 
     async def test_a_listed_document_client_keeps_its_listing_and_takes_its_name_and_redirects(self):
-        listed = _pre_registered(scopes=('pets:write',), consent_required=False, client_id=CLIENT_METADATA_URL)
+        listed = _pre_registered(scopes=('products:write',), consent_required=False, client_id=CLIENT_METADATA_URL)
         directory = _metadata_directory([listed])
         client = await directory.get(CLIENT_METADATA_URL)
         assert client is not None
@@ -197,14 +197,14 @@ class TestClientMetadataDirectory:
             'Example Agent',
             ['http://127.0.0.1/callback'],
         )
-        assert client.validate_scope(None) == ['pets:write']
+        assert client.validate_scope(None) == ['products:write']
         assert directory.requires_consent(CLIENT_METADATA_URL) is False
 
     async def test_another_client_on_a_trusted_host_is_granted_the_other_clients_scopes(self):
         directory = _metadata_directory(other_clients=_other_clients(trusted_hosts=frozenset({CLIENT_METADATA_HOST})))
         client = await directory.get(CLIENT_METADATA_URL)
         assert client is not None
-        assert client.validate_scope(None) == ['pets:read']
+        assert client.validate_scope(None) == ['products:read']
         assert client.token_endpoint_auth_method == 'none'
         assert directory.requires_consent(CLIENT_METADATA_URL) is True
 
@@ -319,7 +319,7 @@ def _metadata_directory(
 
 
 def _other_clients(trusted_hosts: frozenset[str] | None = None) -> McpOtherClients:
-    return McpOtherClients(scope='pets:read', default_scopes=['pets:read'], trusted_hosts=trusted_hosts)
+    return McpOtherClients(scope='products:read', default_scopes=['products:read'], trusted_hosts=trusted_hosts)
 
 
 def _pre_registered(

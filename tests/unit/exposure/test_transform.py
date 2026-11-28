@@ -7,7 +7,6 @@ from mcp.types import TextContent
 from openapi_mcp_gateway.openapi import (
     ParameterInfo,
 )
-from tests.context import stub_context
 from tests.operation import register_tool, shaped_operation
 
 
@@ -24,7 +23,7 @@ class TestRequestTransform:
 
         mock_upstream(handler)
         op = shaped_operation([], request='{"include_adult": false, "language": "en-US"}')
-        await register_tool(op).run({}, context=stub_context())
+        await register_tool(op).call({})
         assert captured['params']['include_adult'] == 'false'
         assert captured['params']['language'] == 'en-US'
 
@@ -41,7 +40,7 @@ class TestRequestTransform:
             [ParameterInfo(name='query', location='query', required=True, schema={'type': 'string'})],
             request='{"v[any_searchable][]": query}',
         )
-        await register_tool(op).run({'query': 'hello'}, context=stub_context())
+        await register_tool(op).call({'query': 'hello'})
         assert captured['params']['v[any_searchable][]'] == 'hello'
         assert 'query' not in captured['params']
 
@@ -65,7 +64,7 @@ class TestRequestTransform:
             ],
             request='{"op[status_id]": $lookup({"open": "o", "closed": "c", "any": "*"}, status)}',
         )
-        await register_tool(op).run({'status': 'open'}, context=stub_context())
+        await register_tool(op).call({'status': 'open'})
         assert captured['params']['op[status_id]'] == 'o'
 
     async def test_routes_key_to_path(self, mock_upstream):
@@ -78,12 +77,12 @@ class TestRequestTransform:
 
         mock_upstream(handler)
         op = shaped_operation(
-            [ParameterInfo(name='movie_id', location='path', required=True, schema={'type': 'integer'})],
-            request='{"movie_id": movie_id, "language": "en-US"}',
-            path='/movie/{movie_id}',
+            [ParameterInfo(name='product_id', location='path', required=True, schema={'type': 'integer'})],
+            request='{"product_id": product_id, "language": "en-US"}',
+            path='/products/{product_id}',
         )
-        await register_tool(op).run({'movie_id': 42}, context=stub_context())
-        assert captured['path'] == '/movie/42'
+        await register_tool(op).call({'product_id': 42})
+        assert captured['path'] == '/products/42'
 
     async def test_routes_to_body_for_post(self, mock_upstream):
         """For a body method, non-path keys become the JSON body."""
@@ -100,7 +99,7 @@ class TestRequestTransform:
             method='post',
             path='/docs',
         )
-        await register_tool(op).run({'title': 'hello'}, context=stub_context())
+        await register_tool(op).call({'title': 'hello'})
         assert captured['body'] == {'name': 'hello', 'source': 'gateway'}
 
     async def test_null_value_dropped(self, mock_upstream):
@@ -113,7 +112,7 @@ class TestRequestTransform:
 
         mock_upstream(handler)
         op = shaped_operation([], request='{"kept": "yes", "dropped": null}')
-        await register_tool(op).run({}, context=stub_context())
+        await register_tool(op).call({})
         assert captured['params']['kept'] == 'yes'
         assert 'dropped' not in captured['params']
 
@@ -130,7 +129,7 @@ class TestRequestTransform:
             [ParameterInfo(name='query', location='query', required=True, schema={'type': 'string'})],
             request='{"f[]": ["any_searchable", "status_id"], "v[any_searchable][]": query}',
         )
-        await register_tool(op).run({'query': 'bug'}, context=stub_context())
+        await register_tool(op).call({'query': 'bug'})
         assert ('f[]', 'any_searchable') in captured['multi']
         assert ('f[]', 'status_id') in captured['multi']
         assert ('v[any_searchable][]', 'bug') in captured['multi']
@@ -148,7 +147,7 @@ class TestRequestTransform:
             [ParameterInfo(name='page', location='query', required=False, schema={'type': 'integer'})],
             request='{"page": page, "language": "en-US"}',
         )
-        await register_tool(op).run({}, context=stub_context())
+        await register_tool(op).call({})
         assert 'page' not in captured['params']
         assert captured['params']['language'] == 'en-US'
 
@@ -173,7 +172,7 @@ class TestRequestTransform:
             params={'sort': {'default': 'popular'}},
             request='{"sort_by": $lookup({"popular": "popularity.desc", "newest": "primary_release_date.desc"}, sort)}',
         )
-        await register_tool(op).run({}, context=stub_context())
+        await register_tool(op).call({})
         assert captured['params']['sort_by'] == 'popularity.desc'
 
     async def test_evaluation_error_returns_is_error(self, mock_upstream):
@@ -189,7 +188,7 @@ class TestRequestTransform:
             [ParameterInfo(name='name', location='query', required=True, schema={'type': 'string'})],
             request='{"n": name + 1}',
         )
-        result = await register_tool(op).run({'name': 'x'}, context=stub_context())
+        result = await register_tool(op).call({'name': 'x'})
         assert result.is_error is True
         message = result.content[0]
         assert isinstance(message, TextContent)
@@ -212,14 +211,14 @@ class TestResponseTransform:
             lambda _request: httpx.Response(200, json={'data': {'items': [1, 2]}, 'pagination': {'total': 100}})
         )
         op = shaped_operation([], response='{"items": data.items, "count": pagination.total}')
-        result = await register_tool(op).run({}, context=stub_context())
+        result = await register_tool(op).call({})
         assert result.structured_content == {'items': [1, 2], 'count': 100}
 
     async def test_unwrap_via_path(self, mock_upstream):
         """A bare path expression unwraps an envelope down to the inner object."""
         mock_upstream(lambda _request: httpx.Response(200, json={'issue': {'id': 1, 'subject': 's'}}))
         op = shaped_operation([], response='issue')
-        result = await register_tool(op).run({}, context=stub_context())
+        result = await register_tool(op).call({})
         assert result.structured_content == {'id': 1, 'subject': 's'}
 
     async def test_array_projection(self, mock_upstream):
@@ -231,7 +230,7 @@ class TestResponseTransform:
             )
         )
         op = shaped_operation([], response='results.{"title": title, "rating": vote_average}')
-        result = await register_tool(op).run({}, context=stub_context())
+        result = await register_tool(op).call({})
         content = result.content[0]
         assert isinstance(content, TextContent)
         assert json.loads(content.text) == [{'title': 'A', 'rating': 7}, {'title': 'B', 'rating': 8}]
@@ -240,7 +239,7 @@ class TestResponseTransform:
         """A failing response expression returns an ``isError`` result."""
         mock_upstream(lambda _request: httpx.Response(200, json={'total': 'not-a-number'}))
         op = shaped_operation([], response='{"n": total + 1}')
-        result = await register_tool(op).run({}, context=stub_context())
+        result = await register_tool(op).call({})
         assert result.is_error is True
         message = result.content[0]
         assert isinstance(message, TextContent)

@@ -16,13 +16,14 @@ from openapi_mcp_gateway.openapi import (
     ToolOverride,
 )
 from tests.constants import API_URL
+from tests.served_tool import ServedTool
 
 
 def operation(
-    operation_id: str = 'listPets',
+    operation_id: str = 'listProducts',
     method: str = 'get',
-    path: str = '/pets',
-    tags: collections.abc.Sequence[str] = ('pets',),
+    path: str = '/products',
+    tags: collections.abc.Sequence[str] = ('products',),
     security: collections.abc.Sequence[dict[str, list[str]]] = (),
 ) -> OperationInfo:
     """An operation as the spec parser produces it, with only what scopes read from it."""
@@ -85,11 +86,11 @@ def shaped_operation(
     )
 
 
-def register_tool(operation: OperationInfo):
-    """Register ``operation`` as a static tool and return the registered Tool named ``do_thing``."""
+def register_tool(operation: OperationInfo) -> ServedTool:
+    """Register ``operation`` as a static tool, and return the tool named ``do_thing`` as a client reaches it."""
     mcp = MCPServer('test')
     ToolGenerator(mcp=mcp, connection=UpstreamConnection(base_url=API_URL)).register([operation])
-    return next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'do_thing')
+    return ServedTool(mcp, 'do_thing')
 
 
 def expose_resource(**kwargs) -> McpIntegration:
@@ -97,12 +98,12 @@ def expose_resource(**kwargs) -> McpIntegration:
     return McpIntegration(resource=ResourceOverride(**kwargs))
 
 
-# The petstore fixture's operations as scopes see them, tagged and untagged alike.
-PETSTORE_OPERATIONS = (
-    operation('listPets', 'get', '/pets'),
-    operation('createPet', 'post', '/pets'),
-    operation('getPetById', 'get', '/pets/{petId}'),
-    operation('deletePet', 'delete', '/pets/{petId}'),
-    operation('createPetWithOwner', 'post', '/pets/with-owner', tags=()),
-    operation('adminListPets', 'get', '/admin/pets', tags=()),
+# The shop fixture's operations as scopes see them, tagged and untagged alike.
+SHOP_OPERATIONS = (
+    operation('listProducts', 'get', '/products'),
+    operation('createProduct', 'post', '/products'),
+    operation('getProductById', 'get', '/products/{productId}'),
+    operation('deleteProduct', 'delete', '/products/{productId}'),
+    operation('createProductWithOwner', 'post', '/products/with-owner', tags=()),
+    operation('adminListProducts', 'get', '/admin/products', tags=()),
 )

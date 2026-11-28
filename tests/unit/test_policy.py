@@ -9,34 +9,34 @@ class TestMatchesPattern:
 
     def test_exact_operation_id(self):
         """An exact operation id matches only that operation."""
-        assert matches_pattern(OPERATIONS[0], 'listPets') is True
-        assert matches_pattern(OPERATIONS[0], 'createPet') is False
+        assert matches_pattern(OPERATIONS[0], 'listProducts') is True
+        assert matches_pattern(OPERATIONS[0], 'createProduct') is False
 
     def test_wildcard_operation_id(self):
         """``*`` wildcards match operation id substrings."""
         assert matches_pattern(OPERATIONS[0], 'list*') is True
-        assert matches_pattern(OPERATIONS[0], '*Pets') is True
+        assert matches_pattern(OPERATIONS[0], '*Products') is True
         assert matches_pattern(OPERATIONS[0], '*User*') is False
 
     def test_method_path_exact(self):
         """``METHOD /path`` matches when both method and path are exact."""
-        assert matches_pattern(OPERATIONS[0], 'GET /pets') is True
-        assert matches_pattern(OPERATIONS[0], 'POST /pets') is False
+        assert matches_pattern(OPERATIONS[0], 'GET /products') is True
+        assert matches_pattern(OPERATIONS[0], 'POST /products') is False
 
     def test_method_path_wildcard(self):
         """Wildcards inside ``METHOD /path`` cover sub-paths."""
-        assert matches_pattern(OPERATIONS[2], 'GET /pets/*') is True
-        assert matches_pattern(OPERATIONS[3], 'DELETE /pets/*') is True
+        assert matches_pattern(OPERATIONS[2], 'GET /products/*') is True
+        assert matches_pattern(OPERATIONS[3], 'DELETE /products/*') is True
         assert matches_pattern(OPERATIONS[3], 'DELETE *') is True
 
     def test_method_case_insensitive(self):
         """The HTTP method is matched case-insensitively."""
-        assert matches_pattern(OPERATIONS[0], 'get /pets') is True
-        assert matches_pattern(OPERATIONS[0], 'Get /pets') is True
+        assert matches_pattern(OPERATIONS[0], 'get /products') is True
+        assert matches_pattern(OPERATIONS[0], 'Get /products') is True
 
     def test_path_case_sensitive(self):
         """The path component is matched case-sensitively."""
-        assert matches_pattern(OPERATIONS[0], 'GET /Pets') is False
+        assert matches_pattern(OPERATIONS[0], 'GET /Products') is False
 
 
 class TestFilterOperations:
@@ -50,8 +50,8 @@ class TestFilterOperations:
     @pytest.mark.parametrize(
         ('allow', 'expected'),
         [
-            (['GET /pets/*'], ['getPetById']),
-            (['GET /pets', 'GET /users'], ['listPets', 'listUsers']),
+            (['GET /products/*'], ['getProductById']),
+            (['GET /products', 'GET /users'], ['listProducts', 'listUsers']),
         ],
     )
     def test_allow(self, allow, expected):
@@ -64,28 +64,28 @@ class TestFilterOperations:
         """``deny`` drops operations matching any pattern."""
         result = filter_operations(OPERATIONS, deny=['DELETE *'])
         ids = [op.operation_id for op in result]
-        assert 'deletePet' not in ids
-        assert 'listPets' in ids
+        assert 'deleteProduct' not in ids
+        assert 'listProducts' in ids
 
     def test_allow_and_deny(self):
         """``deny`` is applied after ``allow``."""
-        result = filter_operations(OPERATIONS, allow=['*Pet*'], deny=['DELETE *'])
+        result = filter_operations(OPERATIONS, allow=['*Product*'], deny=['DELETE *'])
         ids = [op.operation_id for op in result]
-        assert 'listPets' in ids
-        assert 'createPet' in ids
-        assert 'deletePet' not in ids
+        assert 'listProducts' in ids
+        assert 'createProduct' in ids
+        assert 'deleteProduct' not in ids
 
     def test_annotated_only(self):
         """``annotated_only`` keeps only operations with the ``x-mcp`` expose marker."""
         result = filter_operations(OPERATIONS, annotated_only=True)
         assert len(result) == 1
-        assert result[0].operation_id == 'adminListPets'
+        assert result[0].operation_id == 'adminListProducts'
 
     def test_annotated_only_with_allow(self):
         """``annotated_only`` and ``allow`` intersect, not union."""
-        # ``listPets`` matches the pattern but carries no marker, so a union would keep it.
-        result = filter_operations(OPERATIONS, allow=['*Pets'], annotated_only=True)
-        assert [operation.operation_id for operation in result] == ['adminListPets']
+        # ``listProducts`` matches the pattern but carries no marker, so a union would keep it.
+        result = filter_operations(OPERATIONS, allow=['*Products'], annotated_only=True)
+        assert [operation.operation_id for operation in result] == ['adminListProducts']
 
     def test_allow_matches_nothing(self):
         """An ``allow`` that matches no operation yields an empty list."""
@@ -106,10 +106,10 @@ def _operation(operation_id: str, method: str = 'get', path: str = '/test', mcp_
 
 # The operations every pattern and filter test runs against, one of them marked for exposure.
 OPERATIONS = [
-    _operation('listPets', 'get', '/pets'),
-    _operation('createPet', 'post', '/pets'),
-    _operation('getPetById', 'get', '/pets/{petId}'),
-    _operation('deletePet', 'delete', '/pets/{petId}'),
+    _operation('listProducts', 'get', '/products'),
+    _operation('createProduct', 'post', '/products'),
+    _operation('getProductById', 'get', '/products/{productId}'),
+    _operation('deleteProduct', 'delete', '/products/{productId}'),
     _operation('listUsers', 'get', '/users'),
-    _operation('adminListPets', 'get', '/admin/pets', mcp_marker=True),
+    _operation('adminListProducts', 'get', '/admin/products', mcp_marker=True),
 ]

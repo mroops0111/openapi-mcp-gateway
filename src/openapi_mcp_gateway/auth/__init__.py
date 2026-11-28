@@ -15,7 +15,6 @@ from .upstream.oauth_flow import UpstreamOAuthFlow, detect_upstream_oauth_flows
 from .upstream.resolver import (
     UpstreamAuthResolver,
     UpstreamNoCredentialAuthResolver,
-    UpstreamStaticAuthResolver,
     UpstreamTokenSourceAuthResolver,
 )
 from .upstream.token_source import UpstreamTokenSource
@@ -40,7 +39,6 @@ __all__ = [
     'UpstreamClientCredentialsTokenSource',
     'UpstreamNoCredentialAuthResolver',
     'UpstreamOAuthFlow',
-    'UpstreamStaticAuthResolver',
     'UpstreamTokenSource',
     'UpstreamTokenSourceAuthResolver',
     'build_auth',

@@ -27,7 +27,7 @@ class TestGrantedScopes:
     @pytest.mark.parametrize(
         ('scope', 'granted'),
         [
-            pytest.param('read:pets write:pets', ['read:pets', 'write:pets'], id='space-delimited'),
+            pytest.param('read:products write:products', ['read:products', 'write:products'], id='space-delimited'),
             pytest.param(None, ['previous'], id='omitted means unchanged'),
             pytest.param('', [], id='empty grants nothing'),
             pytest.param('read:user,repo', ['read:user,repo'], id='a comma belongs to the scope'),

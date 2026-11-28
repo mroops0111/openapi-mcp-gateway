@@ -58,7 +58,7 @@ def make_provider(memory_store) -> typing.Callable[..., McpAuthorizationCodeServ
 
 @pytest.fixture
 def provider(make_provider):
-    """The petstore server's provider, requesting ``read`` and ``write`` upstream."""
+    """The shop server's provider, requesting ``read`` and ``write`` upstream."""
     return make_provider(scopes=['read', 'write'])
 
 

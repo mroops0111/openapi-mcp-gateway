@@ -10,7 +10,6 @@ from mcp.types import CallToolResult, InputRequiredResult, ToolAnnotations
 
 from ..openapi import ExposedTool, OperationInfo, ToolOverride
 from ..scopes import McpUnrestrictedScopePolicy, ScopeRegistry
-from ._reauthorization import URL_ELICITATION_SIGN_IN_POLICY
 from ._shaping import shape_operation
 from ._shared import (
     SignatureTypes,
@@ -22,6 +21,7 @@ from ._shared import (
     schema_to_python_type,
 )
 from ._upstream_call import UpstreamConnection, UpstreamOperationCall
+from .reauthorization import URL_ELICITATION_SIGN_IN_POLICY
 
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ def build_tool_function(
     async def tool_function(**kwargs: typing.Any) -> CallToolResult | InputRequiredResult:
         return await upstream_call(**kwargs)
 
-    signature, annotations = _build_tool_signature(operation)
+    signature, annotations = build_tool_signature(operation)
     tool_function.__signature__ = signature  # type: ignore[attr-defined]
     tool_function.__annotations__ = annotations
     return tool_function
@@ -158,7 +158,7 @@ class ToolGenerator:
                     name,
                     shaped_operation.method,
                     shaped_operation.path,
-                    _shaping(tool_override),
+                    describe_shaping(tool_override),
                     description=description,
                     input_schema=input_schema,
                 )
@@ -168,7 +168,7 @@ class ToolGenerator:
         return exposed_tools
 
 
-def _shaping(tool_override: ToolOverride | None) -> dict[str, typing.Any] | None:
+def describe_shaping(tool_override: ToolOverride | None) -> dict[str, typing.Any] | None:
     """Report which reshaping took effect, or ``None`` when the call passes through untouched."""
     if tool_override is None:
         return None
@@ -181,7 +181,7 @@ def _shaping(tool_override: ToolOverride | None) -> dict[str, typing.Any] | None
     return shaping if any(shaping.values()) else None
 
 
-def _build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, dict[str, typing.Any]]:
+def build_tool_signature(operation: OperationInfo) -> tuple[inspect.Signature, dict[str, typing.Any]]:
     """Build the ``inspect.Signature`` and annotations MCPServer reads to derive the tool input schema.
 
     Parameter order is required parameters first, then the framework-injected ``ctx``,

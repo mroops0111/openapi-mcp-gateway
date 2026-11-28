@@ -13,7 +13,7 @@ from openapi_mcp_gateway.openapi import (
     OperationInfo,
 )
 from tests.constants import API_URL
-from tests.context import stub_context
+from tests.served_tool import ServedTool
 
 
 class TestBinaryResponses:
@@ -30,8 +30,8 @@ class TestBinaryResponses:
                 OperationInfo(operation_id='download', method='get', path='/files/report'),
             ]
         )
-        tool = next(tool for tool in mcp._tool_manager.list_tools() if tool.name == 'download')
-        return await tool.run({}, context=stub_context())
+        tool = ServedTool(mcp, 'download')
+        return await tool.call({})
 
     @pytest.mark.parametrize(
         ('content_type', 'block_type'), [('image/png', ImageContent), ('audio/mpeg', AudioContent)]

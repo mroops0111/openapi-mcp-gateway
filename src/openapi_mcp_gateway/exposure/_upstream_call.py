@@ -1,10 +1,12 @@
 import dataclasses
 import typing
+import urllib.parse
 
 import httpx
 from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult, InputRequiredResult
 
+from ..auth.upstream.credentials import UpstreamCredentialPlan
 from ..auth.upstream.reauthorization import UpstreamNoReauthorizer, UpstreamReauthorizer
 from ..auth.upstream.resolver import (
     UPSTREAM_CREDENTIAL_UNAVAILABLE,
@@ -13,11 +15,11 @@ from ..auth.upstream.resolver import (
 )
 from ..openapi import OperationInfo
 from ._progress import CallProgress
-from ._reauthorization import NO_SIGN_IN_POLICY, UpstreamSignInPolicy, send_with_renewal
 from ._shaping import RequestShaper, ResponseShaper
 from ._tool_result import build_http_error_result, build_network_error_result
 from ._upstream_http import UpstreamSharedHttpClient
 from ._upstream_request import UpstreamRequest, UpstreamRequestBuilder
+from .reauthorization import NO_SIGN_IN_POLICY, UpstreamSignInPolicy, send_with_renewal
 
 
 # W3C trace-context keys the 2026-07-28 spec carries in a request's ``_meta`` (spec minor #2).
@@ -32,16 +34,20 @@ class UpstreamConnection:
 
     It holds where the API is, how each call authenticates, the static headers every call sends,
     and the one HTTP client every call goes through.
+    ``auth_resolver`` supplies the flow's credential on every call to an operation that needs it,
+    and ``credential_plan`` the static credentials each operation settled on at startup, which win a collision.
     ``reauthorizer`` cures an upstream refusal of the caller's own upstream token, where the flow holds one.
+    The static headers and the plan may hold secrets, so the ``repr`` leaves them out.
     """
 
     base_url: str
     auth_resolver: UpstreamAuthResolver = dataclasses.field(default_factory=UpstreamNoCredentialAuthResolver)
+    credential_plan: UpstreamCredentialPlan = dataclasses.field(default_factory=UpstreamCredentialPlan, repr=False)
     reauthorizer: UpstreamReauthorizer = dataclasses.field(default_factory=UpstreamNoReauthorizer)
     timeout: float = 90
     transport: httpx.AsyncBaseTransport | None = None
     # Static per-server headers, sent on every call beneath the auth and per-call headers.
-    headers: dict[str, str] = dataclasses.field(default_factory=dict)
+    headers: dict[str, str] = dataclasses.field(default_factory=dict, repr=False)
     # The one HTTP client every call to this server goes through, built from the fields above.
     client: UpstreamSharedHttpClient = dataclasses.field(init=False, repr=False, compare=False)
 
@@ -80,7 +86,15 @@ class UpstreamOperationCall:
         spec_operation: OperationInfo | None = None,
     ) -> None:
         self._connection = connection
-        self._sign_in_policy = sign_in_policy
+        plan = connection.credential_plan
+        self._credentials = plan.credentials_for(operation.operation_id)
+        # An operation its static credentials serve alone carries no token, so none is fetched, renewed or asked for.
+        if plan.carries_flow_credential(operation.operation_id):
+            self._auth_resolver, self._reauthorizer = connection.auth_resolver, connection.reauthorizer
+            self._sign_in_policy = sign_in_policy
+        else:
+            self._auth_resolver, self._reauthorizer = UpstreamNoCredentialAuthResolver(), UpstreamNoReauthorizer()
+            self._sign_in_policy = NO_SIGN_IN_POLICY
         self._method = operation.method
         self._path = operation.path
         self._request_shaper = RequestShaper(operation, input_schema)
@@ -97,22 +111,22 @@ class UpstreamOperationCall:
             return request
 
         progress = CallProgress(context)
-        unsent = await self._sign_in_policy.await_answer(context, self._connection.reauthorizer, progress)
+        unsent = await self._sign_in_policy.await_answer(context, self._reauthorizer, progress)
         if unsent is not None:
             return unsent
         await progress.report(f'Sending request to {self._method.upper()} {self._path} ...')
 
         try:
-            body = await send_with_renewal(lambda: self._send(context, request), self._connection.reauthorizer)
+            body = await send_with_renewal(lambda: self._send(context, request), self._reauthorizer)
         except httpx.HTTPStatusError as exception:
             await progress.finish('Request completed (upstream error)')
-            offered = await self._sign_in_policy.ask(context, self._connection.reauthorizer, exception.response)
+            offered = await self._sign_in_policy.ask(context, self._reauthorizer, exception.response)
             if offered is not None:
                 return offered
-            return build_http_error_result(exception)
+            return build_http_error_result(exception, self._credentials.query)
         except httpx.RequestError as exception:
             await progress.finish('Request failed (network error)')
-            return build_network_error_result(exception)
+            return build_network_error_result(exception, self._credentials.query)
 
         await progress.finish('Request completed')
         return self._response_shaper.shape_response(body, f'{self._connection.base_url.rstrip("/")}{request.path}')
@@ -121,14 +135,28 @@ class UpstreamOperationCall:
         connection = self._connection
         # Resolved on each attempt, so a retry carries the token a renewal put in place.
         try:
-            auth_headers = await connection.auth_resolver.resolve(context)
+            auth_headers = await self._auth_resolver.resolve(context)
         except httpx.HTTPError as exception:
             # Failing to obtain a credential is the gateway's failure, so it is not reported as the API's.
             raise RuntimeError(UPSTREAM_CREDENTIAL_UNAVAILABLE) from exception
-        headers = {**connection.headers, **_trace_context_headers(context), **auth_headers, **request.headers}
+        credentials = self._credentials
+        # Header names ignore case, so a later source replaces an earlier one's header however either spells it.
+        # A credential comes last, so an argument the model fills in never replaces it.
+        headers = _merge_headers(
+            connection.headers, _trace_context_headers(context), request.headers, auth_headers, credentials.headers
+        )
+        cookie_header_name = next((name for name in headers if name.lower() == 'cookie'), 'Cookie')
+        cookie = credentials.merged_cookie_header(headers.pop(cookie_header_name, None))
+        if cookie:
+            headers[cookie_header_name] = cookie
         # The client is shared by every call to this server, so every header, auth included, rides on the request.
         return await connection.client.get().request(
-            self._method, request.path, query_string=request.query_string, data=request.body or None, headers=headers
+            self._method,
+            request.path,
+            query_string=_with_query_credentials(request.query_string, credentials.query),
+            data=request.body or None,
+            headers=headers,
+            redacted_query=credentials.query.keys(),
         )
 
 
@@ -145,3 +173,26 @@ def _trace_context_headers(context: Context) -> dict[str, str]:
     if not meta:
         return {}
     return {key: str(value) for key in _TRACE_CONTEXT_META_KEYS if (value := meta.get(key)) is not None}
+
+
+def _merge_headers(*sources: typing.Mapping[str, str]) -> dict[str, str]:
+    """The headers of ``sources``, where a later source's header replaces an earlier one of the same name in any case."""
+    merged: dict[str, str] = {}
+    for source in sources:
+        for name, value in source.items():
+            for existing in [existing for existing in merged if existing.lower() == name.lower()]:
+                del merged[existing]
+            merged[name] = value
+    return merged
+
+
+def _with_query_credentials(query_string: str, credentials: typing.Mapping[str, str]) -> str:
+    """``query_string`` with each credential appended, dropping any parameter of the same name it already sends."""
+    if not credentials:
+        return query_string
+    kept = [
+        pair
+        for pair in query_string.split('&')
+        if pair and urllib.parse.unquote_plus(pair.partition('=')[0]) not in credentials
+    ]
+    return '&'.join([*kept, urllib.parse.urlencode(credentials)])

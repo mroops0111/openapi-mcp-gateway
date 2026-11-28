@@ -15,7 +15,7 @@ class TransformError(ValueError):
 def compile_expression(expression: str, *, label: str) -> Jsonata:
     """Compile a JSONata expression once at registration, raising ``TransformError`` on a syntax error.
 
-    ``label`` names the offending expression (for example ``"discover_movies request"``) in the message,
+    ``label`` names the offending expression (for example ``"find_issues request"``) in the message,
     so a broken override fails fast at startup rather than on the first call.
     """
     try:

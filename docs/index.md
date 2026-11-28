@@ -7,7 +7,7 @@ Mount any OpenAPI (Swagger) spec as a [Model Context Protocol (MCP)](https://mod
 
 ```bash
 uvx openapi-mcp-gateway serve \
-    --spec https://petstore3.swagger.io/api/v3/openapi.json --name petstore
+    --spec https://pokeapi.co/openapi.yml --name pokeapi
 ```
 
 [Getting Started](getting-started.md) covers the steps from this command to a connected client and a config file.

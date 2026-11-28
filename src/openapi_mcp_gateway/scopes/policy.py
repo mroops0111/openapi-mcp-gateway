@@ -3,6 +3,7 @@ import collections.abc
 import logging
 import typing
 
+from ..auth.upstream.credentials import met_alternatives
 from ..openapi import OperationInfo
 from ..policy import matches_pattern, unmatched_patterns
 from ..settings import OperationScopesConfig
@@ -194,10 +195,15 @@ class UpstreamUnrestrictedScopePolicy(UnrestrictedScopePolicy, UpstreamScopePoli
 class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
     """The upstream scopes each operation's OpenAPI ``security`` declares, checked against the gateway's credential.
 
-    The gateway holds one upstream credential, an OAuth token,
-    so a requirement is met only through the schemes whose ``type`` is ``oauth2`` or ``openIdConnect``.
+    The gateway holds one OAuth token, beside the static values ``auth.upstream.credentials`` configures.
+    So a requirement is met through the schemes whose ``type`` is ``oauth2`` or ``openIdConnect``,
+    together with the ``credential_schemes`` those values serve
+    and the ``met_without_credentials`` the token or a forwarded header meets, as the credential plan counts them.
     A requirement naming any other scheme, such as HTTP basic, cannot be met,
     while an empty requirement or an empty ``security`` needs nothing.
+    An operation carries the static credentials of the requirement the credential plan settles on,
+    so a requirement needing a static one it does not carry is passed over,
+    and an operation whose first one needs no OAuth token needs no upstream scope.
     A spec declaring no OAuth scheme describes some other credential, so it restricts nothing.
     ``scope_implies`` maps an upstream scope to the narrower scopes it covers, such as GitHub's ``repo``.
     """
@@ -206,6 +212,8 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
         self,
         security_schemes: collections.abc.Mapping[str, typing.Any],
         scope_implies: collections.abc.Mapping[str, collections.abc.Sequence[str]],
+        credential_schemes: collections.abc.Collection[str] = (),
+        met_without_credentials: collections.abc.Collection[str] = (),
     ) -> None:
         self.oauth_schemes = frozenset(
             name
@@ -213,6 +221,8 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
             if isinstance(scheme, dict) and scheme.get('type') in _OAUTH_SCHEME_TYPES
         )
         self._scope_implies = scope_implies
+        self._credential_schemes = frozenset(credential_schemes) - self.oauth_schemes
+        self._available_schemes = self.oauth_schemes | self._credential_schemes | frozenset(met_without_credentials)
 
     @property
     def list_cache_scope(self) -> typing.Literal['public', 'private']:
@@ -455,10 +465,12 @@ class UpstreamSpecSecurityScopePolicy(UpstreamScopePolicy):
         """The scope sets ``operation`` requires, or ``None`` when it needs no upstream scope."""
         if not self.oauth_schemes or not operation.security:
             return None
+        met = met_alternatives(operation.security, self._available_schemes)
+        carried = met[0].keys() & self._credential_schemes if met else frozenset()
         scope_sets = [
-            {scope for scopes in requirement.values() for scope in scopes}
-            for requirement in operation.security
-            if requirement.keys() <= self.oauth_schemes
+            {scope for name, scopes in requirement.items() if name in self.oauth_schemes for scope in scopes}
+            for requirement in met
+            if requirement.keys() & self._credential_schemes <= carried
         ]
         if any(not scope_set for scope_set in scope_sets):
             return None

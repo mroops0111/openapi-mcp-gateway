@@ -69,21 +69,21 @@ A requirement is a list of alternatives. Any one alternative meets it, and an al
 - **MCP Side**: each scope that covers the operation is one alternative, so holding any one of them is enough.
 - **Upstream Side**: each entry of the operation's `security` is one alternative, and `scope_implies` lets a broader granted scope stand in for a narrower one.
 
-For example, take an operation whose `security` lists two entries, with `scope_implies` mapping `write:pets` to `read:pets`:
+For example, take an operation whose `security` lists two entries, with `scope_implies` mapping `write:products` to `read:products`:
 
 ```yaml
 security:
-  - oauth: [read:pets, delete:pets]
+  - oauth: [read:products, delete:products]
   - oauth: [admin]
 ```
 
-Its upstream requirement reads `(read:pets AND delete:pets) OR admin`. Four grants compare as follows.
+Its upstream requirement reads `(read:products AND delete:products) OR admin`. Four grants compare as follows.
 
 | Upstream Grant | Met | Reason |
 | --- | --- | --- |
-| `read:pets delete:pets` | yes | the first entry holds all its scopes |
-| `write:pets delete:pets` | yes | `write:pets` implies `read:pets` |
-| `read:pets` | no | the first entry lacks `delete:pets`, and `admin` is missing |
+| `read:products delete:products` | yes | the first entry holds all its scopes |
+| `write:products delete:products` | yes | `write:products` implies `read:products` |
+| `read:products` | no | the first entry lacks `delete:products`, and `admin` is missing |
 | `admin` | yes | the second entry holds all its scopes |
 
 ## Visibility
@@ -103,7 +103,7 @@ An external issuer alone knows the most it would grant, so under it every operat
 
 Step-up lets a client start with few scopes and ask for more only when a call needs them. A call short of an MCP scope gets a `403` naming it, the client signs in again for the wider grant, and retries the call. Under `authorization_code`, the new sign-in shows the consent page with the added scopes marked New.
 
-![The gateway's consent page during a step-up. Claude Code asks to use the pets server. It already holds pets:read and now also asks for pets:write, marked New, and the upstream sign-in at auth.pets.example.com will ask for read:pets and the new write:pets.](../assets/consent-step-up-light.png#only-light){ width="420" }
+![The gateway's consent page during a step-up. Claude Code asks to use the shop server. It already holds products:read and now also asks for products:write, marked New, and the upstream sign-in at auth.shop.example.com will ask for read:products and the new write:products.](../assets/consent-step-up-light.png#only-light){ width="420" }
 ![The consent page during a step-up, as described above.](../assets/consent-step-up-dark.png#only-dark){ width="420" }
 
 The whole exchange runs as follows.
@@ -115,9 +115,9 @@ sequenceDiagram
     participant Gateway
     participant User as Browser
     participant Upstream as Upstream<br>authorization server
-    Client->>Gateway: createPet (pets:read)
-    Gateway-->>Client: 403, pets:write
-    Client->>Gateway: authorize + pets:write
+    Client->>Gateway: createProduct (products:read)
+    Gateway-->>Client: 403, products:write
+    Client->>Gateway: authorize + products:write
     Gateway->>User: consent page
     User->>Gateway: approve
     Gateway->>User: redirect
@@ -126,7 +126,7 @@ sequenceDiagram
     Gateway->>Upstream: exchange code
     Upstream-->>Gateway: upstream token
     Gateway-->>Client: token, both scopes
-    Client->>Gateway: retry createPet
+    Client->>Gateway: retry createProduct
 ```
 
 [Consent Page](../guides/scopes.md#consent-page) states when the consent page is skipped. An agent with its own credentials has no browser and requests a new token with the wider `scope`. Under an external issuer, the `403` names the missing scope and points the client to the issuer, which alone decides whether to grant it.
@@ -141,7 +141,7 @@ Step-down, which would shrink a grant once given, does not exist, since holding 
 
 ## Downscoping
 
-Downscoping keeps each upstream sign-in no wider than the MCP grant. A client granted only `pets:read` makes the user sign in to the upstream for `read:pets` alone, not for every scope in `auth.upstream.scopes`. [Asking the Upstream for Less](../guides/scopes.md#asking-the-upstream-for-less) shows the setting and a worked example. The gateway builds each request in these steps, within that ceiling, and never narrows a grant the upstream already gave.
+Downscoping keeps each upstream sign-in no wider than the MCP grant. A client granted only `products:read` makes the user sign in to the upstream for `read:products` alone, not for every scope in `auth.upstream.scopes`. [Asking the Upstream for Less](../guides/scopes.md#asking-the-upstream-for-less) shows the setting and a worked example. The gateway builds each request in these steps, within that ceiling, and never narrows a grant the upstream already gave.
 
 1. **Opened Operations**: the operations the grant's MCP scopes open.
 2. **Cheapest Entry**: for each, the `security` entry needing the fewest scopes beyond `required_scopes`, the first listed among equals.

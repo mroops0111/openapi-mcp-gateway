@@ -17,6 +17,7 @@ from .app import ServerBundle, build_app, mount_mcp_apps, register_auth_routes, 
 from .auth.assembly import AuthTypeContext, ServerAuthSetup
 from .auth.factory import build_auth
 from .auth.mcp.client_metadata import McpClientMetadataResolver
+from .auth.upstream.credentials import plan_upstream_credentials, schemes_met_without_credentials
 from .auth.upstream.oauth_flow import detect_unsupported_upstream_oauth_flows, detect_upstream_oauth_flows
 from .auth.upstream.resolver import (
     UpstreamAuthResolver,
@@ -52,7 +53,7 @@ from .settings import (
     SemanticSearchConfig,
     ServerConfig,
 )
-from .stores import create_store
+from .stores import TokenStore, create_store
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,9 @@ logger = logging.getLogger(__name__)
 
 _FASTAPI_BASE_URL = 'http://fastapi.local'
 _DEFAULT_FASTAPI_PASSTHROUGH_HEADERS: tuple[str, ...] = ('Authorization', 'X-API-Key')
+
+# The caller's headers each upstream type forwards on its own, beside any ``passthrough_headers``.
+_PASSTHROUGH_HEADERS: dict[str, tuple[str, ...]] = {'passthrough': ('Authorization',)}
 
 # The list and discover results are static for a running gateway,
 # so advertise a freshness hint (2026-07-28 CacheableResult).
@@ -72,7 +76,7 @@ class Gateway:
     Typical usage::
 
         gateway = Gateway()
-        gateway.add_server(name="petstore", spec="petstore.json")
+        gateway.add_server(name="shop", spec="shop.json")
         gateway.run()
 
     Or load multiple servers from YAML::
@@ -82,8 +86,17 @@ class Gateway:
     """
 
     def __init__(
-        self, config: GatewayConfig | None = None, *, client_metadata_resolver: McpClientMetadataResolver | None = None
+        self,
+        config: GatewayConfig | None = None,
+        *,
+        client_metadata_resolver: McpClientMetadataResolver | None = None,
+        store: TokenStore | None = None,
     ):
+        """Build a gateway with no server yet.
+
+        ``client_metadata_resolver`` replaces how Client ID Metadata Documents are fetched,
+        and ``store`` replaces the token store ``config.store`` describes, as tests need.
+        """
         self._config = config or GatewayConfig()
         # One resolver serves every server, so a client's metadata document is fetched once for all of them.
         self._client_metadata_resolver = client_metadata_resolver or McpClientMetadataResolver()
@@ -92,7 +105,7 @@ class Gateway:
         # The session managers ``mount`` created, which only the host app's lifespan can start.
         self._session_managers: list[StreamableHTTPSessionManager] = []
         store_config = self._config.store
-        self._store = create_store(
+        self._store = store or create_store(
             store_type=store_config.type,
             url=store_config.redis_url,
             prefix=store_config.key_prefix,
@@ -101,13 +114,17 @@ class Gateway:
 
     @classmethod
     def from_config(
-        cls, config: GatewayConfig, *, client_metadata_resolver: McpClientMetadataResolver | None = None
+        cls,
+        config: GatewayConfig,
+        *,
+        client_metadata_resolver: McpClientMetadataResolver | None = None,
+        store: TokenStore | None = None,
     ) -> typing.Self:
         """Build a gateway and register every entry in ``config.servers``.
 
-        ``client_metadata_resolver`` replaces how Client ID Metadata Documents are fetched, as tests need.
+        ``client_metadata_resolver`` and ``store`` replace their defaults, as in ``Gateway``.
         """
-        gateway: typing.Self = cls(config=config, client_metadata_resolver=client_metadata_resolver)
+        gateway: typing.Self = cls(config=config, client_metadata_resolver=client_metadata_resolver, store=store)
         for server_config in config.servers:
             gateway._add_server_from_server_config(server_config=server_config)
         return gateway
@@ -156,10 +173,13 @@ class Gateway:
         exposure: dict[str, typing.Any] | None = None,
         headers: dict[str, str] | None = None,
         instructions: str | None = None,
+        security_schemes: dict[str, dict[str, typing.Any]] | None = None,
+        security: list[dict[str, list[str]]] | None = None,
     ) -> None:
         """Register a server inline (convenience over building ``ServerConfig`` directly).
 
-        ``auth``, ``policy``, ``exposure`` and ``headers`` take the same mappings their YAML keys do.
+        ``auth``, ``policy``, ``exposure``, ``headers``, ``security_schemes`` and ``security``
+        take the same values their YAML keys do.
         """
         server_config = ServerConfig(
             name=name,
@@ -172,6 +192,8 @@ class Gateway:
             exposure=ExposureConfig.model_validate(exposure) if exposure else ExposureConfig(),
             headers=headers or {},
             instructions=instructions,
+            security_schemes=security_schemes or {},
+            security=security,
         )
         self._add_server_from_server_config(server_config=server_config)
 
@@ -206,7 +228,6 @@ class Gateway:
         transport = transport if transport is not None else self._config.transport
         host = host if host is not None else self._config.host
         port = port if port is not None else self._config.port
-        _warn_if_deprecated_transport(transport)
 
         if transport == 'stdio':
             if len(self._servers) != 1:
@@ -225,7 +246,7 @@ class Gateway:
                 self._run_shutdown_hooks_blocking()
             return
 
-        app = self._build_app(transport=transport, host=host)
+        app = self.build_app(transport=transport, host=host)
         logger.info(
             'Starting gateway: transport=%s bind=%s:%d servers=%d',
             transport,
@@ -266,7 +287,8 @@ class Gateway:
     def _add_server_from_server_config(self, server_config: ServerConfig) -> None:
         logger.info('Loading server "%s" from spec=%s', server_config.name, server_config.spec)
         raw = load_spec(server_config.spec)
-        spec = parse_spec(raw, source=server_config.spec)
+        spec = parse_spec(_with_security_overrides(raw, server_config), source=server_config.spec)
+        _refuse_undeclared_root_security(server_config, spec.security_schemes)
         logger.debug(
             'Parsed spec for "%s": title=%r version=%r operations=%d',
             server_config.name,
@@ -304,7 +326,7 @@ class Gateway:
                 'Check your allow/deny rules or the OpenAPI spec.'
             )
 
-        operations = _apply_yaml_overrides(
+        operations = apply_yaml_overrides(
             operations, server_config.operations, server_config.name, spec.security_schemes
         )
 
@@ -365,6 +387,7 @@ class Gateway:
             base_url=_FASTAPI_BASE_URL,
             transport=httpx.ASGITransport(app=app),
             forward_incoming_headers=passthrough_headers,
+            security_checked_in_process=True,
         )
 
     def _register_server_bundle(
@@ -376,11 +399,35 @@ class Gateway:
         base_url: str,
         transport: httpx.AsyncBaseTransport | None = None,
         forward_incoming_headers: tuple[str, ...] = (),
+        security_checked_in_process: bool = False,
     ) -> None:
-        scope_setup = ServerScopeSetup.build(server_config, spec, operations)
+        """Register one server.
+
+        ``security_checked_in_process`` says the upstream is an app in this process that checks its own security,
+        so every scheme counts as met, and an operation no credential meets is the app's to refuse.
+        """
+        upstream = server_config.auth.upstream
+        met_without_credentials = (
+            frozenset(spec.security_schemes)
+            if security_checked_in_process
+            else schemes_met_without_credentials(
+                spec.security_schemes,
+                carries_bearer=upstream.type == 'oauth2',
+                forwarded_headers=(*forward_incoming_headers, *_PASSTHROUGH_HEADERS.get(upstream.type, ())),
+            )
+        )
+        scope_setup = ServerScopeSetup.build(server_config, spec, operations, met_without_credentials)
         server_config, scope_registry = scope_setup.server_config, scope_setup.registry
         auth = self._resolve_auth(server_config, spec, scope_registry)
         operations = scope_setup.select_exposed_operations(operations, auth.upstream_grant_source.records_user_grant)
+        # Planned over the exposed operations, after the auth checks, so a credential only a dropped one used is refused.
+        credential_plan = plan_upstream_credentials(
+            server_config.name,
+            operations,
+            spec.security_schemes,
+            upstream.resolve_credentials(),
+            met_without_credentials,
+        )
         auth_resolver = _compose_with_passthrough(auth.resolver, forward_incoming_headers)
         mcp = self._build_mcp_server(server_config.name, auth, server_config.instructions, scope_registry)
         for routes in auth.routes:
@@ -389,6 +436,7 @@ class Gateway:
         connection = UpstreamConnection(
             base_url=base_url,
             auth_resolver=auth_resolver,
+            credential_plan=credential_plan,
             reauthorizer=auth.reauthorizer,
             timeout=server_config.timeout,
             transport=transport,
@@ -419,12 +467,12 @@ class Gateway:
                 connection=connection,
                 field_weight_overrides=search.field_weights.model_dump(exclude_none=True) if search else None,
                 scope_registry=scope_registry,
-                semantic_search=_semantic_search_options(server_config.name, search.semantic if search else None),
+                semantic_search=semantic_search_options(server_config.name, search.semantic if search else None),
                 grant_source=auth.upstream_grant_source,
             ).register(operations)
             tool_call_target = DynamicOperationTarget()
         else:
-            resource_ops, tool_ops = _partition_operations(
+            resource_ops, tool_ops = partition_operations(
                 operations, server_config.name, server_config.exposure.promote_resources
             )
             if resource_ops:
@@ -447,7 +495,7 @@ class Gateway:
                 tool_call_target=tool_call_target,
                 base_url=base_url,
                 auth_type=server_config.auth.upstream.type,
-                policy_summary=_policy_summary(server_config.policy),
+                policy_summary=describe_policy(server_config.policy),
                 exposure=server_config.exposure.style,
                 instructions=server_config.instructions,
                 tools=tuple(exposed_tools),
@@ -541,7 +589,17 @@ class Gateway:
             # Loop already running (unlikely on stdio shutdown), so this is best-effort.
             logger.warning('Could not run shutdown hooks: event loop already running')
 
-    def _build_app(self, transport: str, host: str | None = None) -> FastAPI:
+    def build_app(self, transport: str | None = None, host: str | None = None) -> FastAPI:
+        """The FastAPI app ``run`` serves, for an ASGI server of the caller's choice.
+
+        ``transport`` and ``host`` default to the config's, and ``host`` sets the DNS rebinding checks for that bind.
+        The app's lifespan runs every server's session manager, then the shutdown hooks, and closes the token store.
+        Raises ``ValueError`` for ``stdio``, which serves no HTTP app.
+        """
+        transport = transport if transport is not None else self._config.transport
+        if transport == 'stdio':
+            raise ValueError('The stdio transport serves no HTTP app. Call run() for stdio, or pick an HTTP transport.')
+        _warn_if_deprecated_transport(transport)
         return build_app(
             servers=self._servers,
             config=self._config,
@@ -550,6 +608,140 @@ class Gateway:
             transport=transport,
             host=host if host is not None else self._config.host,
         )
+
+
+def validate_resource_eligibility(operation: OperationInfo, server_name: str) -> None:
+    """Raise ``ValueError`` when an explicit ``resource`` opt-in cannot be honored.
+
+    Covers both the basic eligibility rules and the ``uri_template`` scheme override,
+    which only spec-side opt-ins can carry.
+    """
+    ineligibility = _resource_eligibility_problem(operation)
+    if ineligibility is not None:
+        reason, hint = ineligibility
+        raise ValueError(
+            f'Server "{server_name}": operation "{operation.operation_id}" declares '
+            f'x-mcp-integration.resource but {reason}. {hint}'
+        )
+
+    override = operation.x_mcp_integration.resource
+    if override and override.uri_template and not override.uri_template.startswith(f'{server_name}://'):
+        raise ValueError(
+            f'Server "{server_name}": operation "{operation.operation_id}".resource.uri_template '
+            f'must start with "{server_name}://" (got "{override.uri_template}").'
+        )
+
+
+def apply_yaml_overrides(
+    operations: list[OperationInfo],
+    yaml_overrides: dict[str, OperationOverride],
+    server_name: str,
+    security_schemes: dict[str, typing.Any],
+) -> list[OperationInfo]:
+    """Return ``operations`` with the YAML-side ``operations.<id>`` override applied to each match.
+
+    Each override fully replaces the spec-side ``x-mcp-integration`` for that operation, with no merging,
+    unless it overrides ``security`` alone.
+    A ``security`` override replaces the spec's ``security`` for that operation.
+    Raises ``ValueError`` if an ``operation_id`` in ``yaml_overrides`` is not exposed by this server,
+    or if a ``security`` override names a scheme the spec does not declare.
+    """
+    if not yaml_overrides:
+        return operations
+    unmatched = set(yaml_overrides) - {operation.operation_id for operation in operations}
+    if unmatched:
+        raise ValueError(
+            f'Server "{server_name}": YAML operations override targets unknown operation_id(s) {sorted(unmatched)!r}; '
+            'check the spec or your allow / deny / annotated_only policy.'
+        )
+    for operation_id, override in yaml_overrides.items():
+        undeclared = sorted(
+            {scheme for requirement in override.security or () for scheme in requirement} - set(security_schemes)
+        )
+        if undeclared:
+            raise ValueError(
+                f'Server "{server_name}": operations.{operation_id}.security names schemes the spec does not declare '
+                f'{undeclared!r}; use the names under components.securitySchemes, or declare them in security_schemes.'
+            )
+    return [
+        _apply_yaml_override(operation, yaml_overrides[operation.operation_id])
+        if operation.operation_id in yaml_overrides
+        else operation
+        for operation in operations
+    ]
+
+
+def partition_operations(
+    operations: list[OperationInfo],
+    server_name: str,
+    promote_resources: bool = False,
+) -> tuple[list[OperationInfo], list[OperationInfo]]:
+    """Split ``operations`` into ``(resource_operations, tool_operations)``.
+
+    With ``promote_resources`` off, the default,
+    every operation becomes a tool and ``x-mcp-integration.resource`` declarations are ignored.
+
+    With it on, an operation becomes a resource when it either declares ``resource`` explicitly,
+    or qualifies for promotion (no ``tool`` and the eligibility rules pass).
+    Declaring both ``tool`` and ``resource`` registers the operation in both lists.
+    """
+    if not promote_resources:
+        return [], list(operations)
+
+    resource_operations: list[OperationInfo] = []
+    tool_operations: list[OperationInfo] = []
+    for operation in operations:
+        if operation.resource_exposed:
+            validate_resource_eligibility(operation, server_name)
+            resource_operations.append(operation)
+            if operation.tool_exposed:
+                tool_operations.append(operation)
+        elif not operation.tool_exposed and _resource_eligibility_problem(operation) is None:
+            resource_operations.append(operation)
+        else:
+            tool_operations.append(operation)
+    return resource_operations, tool_operations
+
+
+def describe_policy(policy: PolicyConfig) -> str:
+    """A short human label for which operations a server exposes.
+
+    Printed so a tool count reads as the result of a decision rather than a bare number.
+    An unfiltered server says so outright, since that is the case worth noticing.
+    """
+    filters = []
+    if policy.annotated_only:
+        filters.append('annotated only')
+    if policy.allow:
+        filters.append(f'allow {policy.allow}')
+    if policy.deny:
+        filters.append(f'deny {policy.deny}')
+    return ', '.join(filters) if filters else 'no filter, every operation exposed'
+
+
+def semantic_search_options(server_name: str, config: SemanticSearchConfig | None) -> SemanticSearchOptions | None:
+    """The semantic search a server's config asks for, refused without the ``embeddings`` extra or a usable model."""
+    if config is None:
+        return None
+    if not embeddings_available():
+        raise ValueError(
+            f'Server "{server_name}": exposure.search.semantic needs the embeddings extra. '
+            'Install openapi-mcp-gateway[embeddings].'
+        )
+    try:
+        embedder = build_embedder(config.model)
+    except Exception as error:
+        raise ValueError(
+            f'Server "{server_name}": exposure.search.semantic cannot use {config.model!r}: {error}'
+        ) from error
+    return SemanticSearchOptions(
+        model=config.model,
+        embedder=embedder,
+        dimensions=config.dimensions,
+        # Each server keeps its vectors in its own directory, so servers sharing one never overwrite each other.
+        cache_directory=config.cache_directory.expanduser() / server_name if config.cache_directory else None,
+        retrieval=config.retrieval,
+    )
 
 
 def _warn_if_deprecated_transport(transport: str) -> None:
@@ -605,65 +797,37 @@ def _resource_eligibility_problem(operation: OperationInfo) -> tuple[str, str] |
     return None
 
 
-def _validate_resource_eligibility(operation: OperationInfo, server_name: str) -> None:
-    """Raise ``ValueError`` when an explicit ``resource`` opt-in cannot be honored.
+def _with_security_overrides(raw: dict[str, typing.Any], server_config: ServerConfig) -> dict[str, typing.Any]:
+    """Return ``raw`` with the server's ``security_schemes`` and ``security`` written into it, leaving ``raw`` as it is.
 
-    Covers both the basic eligibility rules and the ``uri_template`` scheme override,
-    which only spec-side opt-ins can carry.
+    Both override the spec in its own shape, so they are applied to the document before it is parsed,
+    and every operation that declares no ``security`` of its own inherits the overridden root.
     """
-    ineligibility = _resource_eligibility_problem(operation)
-    if ineligibility is not None:
-        reason, hint = ineligibility
+    if not server_config.security_schemes and server_config.security is None:
+        return raw
+    components = raw.get('components', {})
+    overridden = {
+        **raw,
+        'components': {
+            **components,
+            'securitySchemes': {**components.get('securitySchemes', {}), **server_config.security_schemes},
+        },
+    }
+    if server_config.security is not None:
+        overridden['security'] = server_config.security
+    return overridden
+
+
+def _refuse_undeclared_root_security(server_config: ServerConfig, security_schemes: dict[str, typing.Any]) -> None:
+    """Refuse a ``security`` override naming a scheme neither the spec nor ``security_schemes`` declares."""
+    undeclared = sorted(
+        {scheme for requirement in server_config.security or () for scheme in requirement} - set(security_schemes)
+    )
+    if undeclared:
         raise ValueError(
-            f'Server "{server_name}": operation "{operation.operation_id}" declares '
-            f'x-mcp-integration.resource but {reason}. {hint}'
+            f'Server "{server_config.name}": security names schemes the spec does not declare {undeclared!r}. '
+            'Use the names under components.securitySchemes, or declare them in security_schemes.'
         )
-
-    override = operation.x_mcp_integration.resource
-    if override and override.uri_template and not override.uri_template.startswith(f'{server_name}://'):
-        raise ValueError(
-            f'Server "{server_name}": operation "{operation.operation_id}".resource.uri_template '
-            f'must start with "{server_name}://" (got "{override.uri_template}").'
-        )
-
-
-def _apply_yaml_overrides(
-    operations: list[OperationInfo],
-    yaml_overrides: dict[str, OperationOverride],
-    server_name: str,
-    security_schemes: dict[str, typing.Any],
-) -> list[OperationInfo]:
-    """Return ``operations`` with the YAML-side ``operations.<id>`` override applied to each match.
-
-    Each override fully replaces the spec-side ``x-mcp-integration`` for that operation, with no merging,
-    unless it overrides ``security`` alone.
-    A ``security`` override replaces the spec's ``security`` for that operation.
-    Raises ``ValueError`` if an ``operation_id`` in ``yaml_overrides`` is not exposed by this server,
-    or if a ``security`` override names a scheme the spec does not declare.
-    """
-    if not yaml_overrides:
-        return operations
-    unmatched = set(yaml_overrides) - {operation.operation_id for operation in operations}
-    if unmatched:
-        raise ValueError(
-            f'Server "{server_name}": YAML operations override targets unknown operation_id(s) {sorted(unmatched)!r}; '
-            'check the spec or your allow / deny / annotated_only policy.'
-        )
-    for operation_id, override in yaml_overrides.items():
-        undeclared = sorted(
-            {scheme for requirement in override.security or () for scheme in requirement} - set(security_schemes)
-        )
-        if undeclared:
-            raise ValueError(
-                f'Server "{server_name}": operations.{operation_id}.security names schemes the spec does not declare '
-                f'{undeclared!r}; use the names under components.securitySchemes.'
-            )
-    return [
-        _apply_yaml_override(operation, yaml_overrides[operation.operation_id])
-        if operation.operation_id in yaml_overrides
-        else operation
-        for operation in operations
-    ]
 
 
 def _apply_yaml_override(operation: OperationInfo, override: OperationOverride) -> OperationInfo:
@@ -695,59 +859,11 @@ def _warn_on_ignored_resource_declarations(server_config: ServerConfig, operatio
         )
 
 
-def _partition_operations(
-    operations: list[OperationInfo],
-    server_name: str,
-    promote_resources: bool = False,
-) -> tuple[list[OperationInfo], list[OperationInfo]]:
-    """Split ``operations`` into ``(resource_operations, tool_operations)``.
-
-    With ``promote_resources`` off, the default,
-    every operation becomes a tool and ``x-mcp-integration.resource`` declarations are ignored.
-
-    With it on, an operation becomes a resource when it either declares ``resource`` explicitly,
-    or qualifies for promotion (no ``tool`` and the eligibility rules pass).
-    Declaring both ``tool`` and ``resource`` registers the operation in both lists.
-    """
-    if not promote_resources:
-        return [], list(operations)
-
-    resource_operations: list[OperationInfo] = []
-    tool_operations: list[OperationInfo] = []
-    for operation in operations:
-        if operation.resource_exposed:
-            _validate_resource_eligibility(operation, server_name)
-            resource_operations.append(operation)
-            if operation.tool_exposed:
-                tool_operations.append(operation)
-        elif not operation.tool_exposed and _resource_eligibility_problem(operation) is None:
-            resource_operations.append(operation)
-        else:
-            tool_operations.append(operation)
-    return resource_operations, tool_operations
-
-
 @dataclasses.dataclass
 class _AppContext:
     """Per-server lifespan context injected into MCPServer tool handlers."""
 
     auth_provider: OAuthAuthorizationServerProvider[typing.Any, typing.Any, typing.Any] | None = None
-
-
-def _policy_summary(policy: PolicyConfig) -> str:
-    """A short human label for which operations a server exposes.
-
-    Printed so a tool count reads as the result of a decision rather than a bare number.
-    An unfiltered server says so outright, since that is the case worth noticing.
-    """
-    filters = []
-    if policy.annotated_only:
-        filters.append('annotated only')
-    if policy.allow:
-        filters.append(f'allow {policy.allow}')
-    if policy.deny:
-        filters.append(f'deny {policy.deny}')
-    return ', '.join(filters) if filters else 'no filter, every operation exposed'
 
 
 def _cache_hints(scope_registry: ScopeRegistry) -> dict[CacheableMethod, CacheHint]:
@@ -764,31 +880,6 @@ def _cache_hints(scope_registry: ScopeRegistry) -> dict[CacheableMethod, CacheHi
     }
 
 
-def _semantic_search_options(server_name: str, config: SemanticSearchConfig | None) -> SemanticSearchOptions | None:
-    """The semantic search a server's config asks for, refused without the ``embeddings`` extra or a usable model."""
-    if config is None:
-        return None
-    if not embeddings_available():
-        raise ValueError(
-            f'Server "{server_name}": exposure.search.semantic needs the embeddings extra. '
-            'Install openapi-mcp-gateway[embeddings].'
-        )
-    try:
-        embedder = build_embedder(config.model)
-    except Exception as error:
-        raise ValueError(
-            f'Server "{server_name}": exposure.search.semantic cannot use {config.model!r}: {error}'
-        ) from error
-    return SemanticSearchOptions(
-        model=config.model,
-        embedder=embedder,
-        dimensions=config.dimensions,
-        # Each server keeps its vectors in its own directory, so servers sharing one never overwrite each other.
-        cache_directory=config.cache_directory.expanduser() / server_name if config.cache_directory else None,
-        retrieval=config.retrieval,
-    )
-
-
 def _format_log_label(label: str) -> str:
     """``label`` as one token, so a ``key=value`` log line stays parseable."""
-    return label.replace(' (', '(')
+    return label.replace(' ', '')

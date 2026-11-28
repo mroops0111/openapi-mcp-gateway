@@ -26,8 +26,8 @@ _HOST_NAME = re.compile(r'[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-
 # A config written for the old layout is refused with the new place named, rather than with a bare unknown key.
 _MOVED_AUTH_KEYS = {
     'type': 'auth.upstream.type',
-    'token': 'auth.upstream.token',
-    'api_key_header': 'auth.upstream.api_key_header',
+    'token': 'auth.upstream.credentials',
+    'api_key_header': 'auth.upstream.credentials',
     'flow': 'auth.upstream.flow',
     'issuer': 'auth.mcp.issuer',
     'required_scopes': 'auth.mcp.required_scopes',
@@ -38,23 +38,47 @@ _MOVED_AUTH_KEYS = {
 }
 
 
+# The static credential settings ``auth.upstream.credentials`` replaced, refused with the new shape named.
+_REMOVED_UPSTREAM_TYPES = ('bearer', 'api_key')
+_REMOVED_UPSTREAM_KEYS = ('token', 'api_key_header')
+_CREDENTIALS_SHAPE = (
+    'Static credentials are now auth.upstream.credentials, keyed by the security scheme they serve, '
+    'such as credentials: {api_key: {value: ${API_KEY}}}. '
+    'Where each one travels comes from the scheme, which security_schemes declares when the spec does not.'
+)
+
+
 # The resolver moved to the leaf ``env`` module so exposure/ can reuse it without importing settings.
 # Kept as a private alias here so AuthConfig's existing call sites need no change.
 _resolve_env_var = resolve_env_var
 
 
-class UpstreamAuthConfig(pydantic.BaseModel):
-    """How the gateway authenticates to the upstream API, the outbound half of ``auth``.
+class UpstreamCredentialConfig(pydantic.BaseModel):
+    """One static credential, for the security scheme ``auth.upstream.credentials`` keys it by.
 
-    ``type`` says where the credential comes from.
-    ``token`` and ``api_key_header`` serve the static types, and the rest serve ``type: oauth2``.
+    The scheme says where it travels, so only the value is configured here.
     """
 
     model_config = pydantic.ConfigDict(coerce_numbers_to_str=True, extra='forbid')
 
-    type: typing.Literal['bearer', 'api_key', 'oauth2', 'passthrough', 'none'] = 'none'
-    token: str | None = None
-    api_key_header: str = 'X-API-Key'
+    value: str
+
+    def resolve_value(self) -> str | None:
+        """The credential after env-var substitution."""
+        return _resolve_env_var(self.value)
+
+
+class UpstreamAuthConfig(pydantic.BaseModel):
+    """How the gateway authenticates to the upstream API, the outbound half of ``auth``.
+
+    ``type`` says where a flow's credential comes from, and the rest besides ``credentials`` serve ``type: oauth2``.
+    ``credentials`` holds static values keyed by security scheme, sent beside a flow's or on their own.
+    """
+
+    model_config = pydantic.ConfigDict(coerce_numbers_to_str=True, extra='forbid')
+
+    type: typing.Literal['oauth2', 'passthrough', 'none'] = 'none'
+    credentials: dict[str, UpstreamCredentialConfig] = pydantic.Field(default_factory=dict)
 
     flow: typing.Literal['authorization_code', 'client_credentials', 'token_exchange'] | None = None
 
@@ -90,6 +114,19 @@ class UpstreamAuthConfig(pydantic.BaseModel):
     enforce_scopes: bool = False
     scope_implies: dict[str, list[str]] = pydantic.Field(default_factory=dict)
 
+    @pydantic.model_validator(mode='before')
+    @classmethod
+    def _refuse_removed_static_settings(cls, data: typing.Any) -> typing.Any:
+        """Name the shape that replaced ``type: bearer``, ``type: api_key``, ``token`` and ``api_key_header``."""
+        if not isinstance(data, dict):
+            return data
+        removed = [f'auth.upstream.{key}' for key in _REMOVED_UPSTREAM_KEYS if key in data]
+        if data.get('type') in _REMOVED_UPSTREAM_TYPES:
+            removed.insert(0, f'auth.upstream.type {data["type"]}')
+        if removed:
+            raise ValueError(f'{", ".join(removed)} no longer exist. {_CREDENTIALS_SHAPE}')
+        return data
+
     @pydantic.field_validator('scope_implies')
     @classmethod
     def _validate_implied_scope_names(cls, scope_implies: dict[str, list[str]]) -> dict[str, list[str]]:
@@ -97,13 +134,9 @@ class UpstreamAuthConfig(pydantic.BaseModel):
         _refuse_invalid_scope_tokens([*scope_implies, *implied], 'auth.upstream.scope_implies')
         return scope_implies
 
-    def resolve_token(self) -> str | None:
-        """Static credential after env-var substitution.
-
-        How it is framed as a header belongs to the auth type handler rather than here,
-        since ``Bearer <token>`` is protocol knowledge rather than configuration.
-        """
-        return _resolve_env_var(self.token)
+    def resolve_credentials(self) -> dict[str, str | None]:
+        """Each static credential's value after env-var substitution, keyed by its security scheme."""
+        return {scheme: credential.resolve_value() for scheme, credential in self.credentials.items()}
 
     def resolve_client_id(self) -> str | None:
         """OAuth client id after env-var substitution."""
@@ -325,7 +358,7 @@ class AuthConfig(pydantic.BaseModel):
     ``upstream`` is how the gateway reaches the API, and ``mcp`` is who may call this MCP endpoint.
     Each field is in exactly one of the two, so a name such as ``issuer`` means one thing in each.
 
-    ``token``, the issuers and the OAuth client fields accept substitution at resolve time,
+    Credential values, the issuers and the OAuth client fields accept substitution at resolve time,
     in both the ``${ENV_VAR}`` and ``${ENV_VAR:-default}`` forms.
     Numeric OAuth credentials are coerced from int to str,
     so unquoted YAML values still parse on providers that use numeric ``client_id``.
@@ -541,6 +574,11 @@ class ServerConfig(pydantic.BaseModel):
     timeout: float = 90
     exposure: ExposureConfig = ExposureConfig()
     operations: dict[str, OperationOverride] = pydantic.Field(default_factory=dict)
+    # The spec's own security, overridden in the spec's own shape.
+    # ``security_schemes`` merges into ``components.securitySchemes``, replacing a scheme of the same name,
+    # and ``security`` replaces the root ``security`` every operation without its own inherits.
+    security_schemes: dict[str, dict[str, typing.Any]] = pydantic.Field(default_factory=dict)
+    security: list[dict[str, list[str]]] | None = None
     # Static headers sent on every upstream call, such as an API version the whole API requires.
     headers: dict[str, str] = pydantic.Field(default_factory=dict)
     # Guidance about the server as a whole, such as when to use it rather than another.
@@ -678,6 +716,8 @@ def single_spec_layer(
     name: str = 'api',
     base_url: str | None = None,
     auth: AuthConfig | None = None,
+    security_schemes: dict[str, dict[str, typing.Any]] | None = None,
+    security: list[dict[str, list[str]]] | None = None,
 ) -> dict[str, typing.Any]:
     """Build a partial-settings dict for the single-spec CLI / API entry path.
 
@@ -687,6 +727,10 @@ def single_spec_layer(
     server: dict[str, typing.Any] = {'name': name, 'spec': spec}
     if base_url is not None:
         server['base_url'] = base_url
+    if security_schemes:
+        server['security_schemes'] = security_schemes
+    if security is not None:
+        server['security'] = security
     # Only what the caller actually set, so a default never arrives looking like a choice.
     # Dumping everything would also make every field count as explicitly set on the way back in,
     # which is what the applicability check reads to tell a decision from a default.
@@ -710,7 +754,7 @@ def build_gateway_config(*layers: dict[str, typing.Any]) -> GatewayConfig:
     """
     merged: dict[str, typing.Any] = {}
     for layer in layers:
-        merged = _deep_merge(merged, layer)
+        merged = deep_merge(merged, layer)
     return GatewayConfig.model_validate(merged)
 
 
@@ -719,7 +763,7 @@ def is_url_client_id(client_id: str) -> bool:
     return urllib.parse.urlsplit(client_id).scheme in ('http', 'https')
 
 
-def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
+def deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Recursively merge ``override`` into ``base``, with ``override`` winning for non-dict values.
 
     Keys present only in ``base`` are preserved.
@@ -729,7 +773,7 @@ def _deep_merge(base: dict[str, typing.Any], override: dict[str, typing.Any]) ->
     result = dict(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = _deep_merge(result[key], value)
+            result[key] = deep_merge(result[key], value)
         else:
             result[key] = value
     return result
